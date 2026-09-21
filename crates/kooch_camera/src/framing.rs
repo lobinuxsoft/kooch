@@ -35,8 +35,8 @@ pub struct CameraFraming {
     /// Seconds the camera takes to bring the target back to the dead zone's edge once it stops —
     /// exactly, a tween that restarts while the target keeps moving. Past the soft zone the camera
     /// does not wait. Zero is rigid.
-    #[reflect(range = TIME_RANGE)]
-    pub soft_time: f32,
+    #[reflect(range = TIME_RANGE, alias = "soft_time")]
+    pub soft_duration: f32,
 }
 
 const SCREEN_RANGE: FieldRange = FieldRange {
@@ -64,7 +64,7 @@ impl Default for CameraFraming {
             screen: Vec2::ZERO,
             dead_zone: Vec2::new(0.1, 0.1),
             soft_zone: Vec2::new(0.6, 0.6),
-            soft_time: 0.5,
+            soft_duration: 0.5,
         }
     }
 }
@@ -121,7 +121,7 @@ impl CameraFraming {
             right * excess.x + up * excess.y
         };
         let goal = tracked + past(tracked, self.dead_zone);
-        let point = chase.step(tracked, goal, dt, self.soft_time);
+        let point = chase.step(tracked, goal, dt, self.soft_duration);
         let point = point + past(point, self.soft_zone.max(self.dead_zone));
         point + forward * (target - point).dot(forward)
     }

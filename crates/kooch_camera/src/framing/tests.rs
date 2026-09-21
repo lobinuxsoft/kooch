@@ -57,7 +57,7 @@ fn the_soft_edge_is_hard() {
 #[test]
 fn a_rigid_soft_zone_reaches_the_dead_edge() {
     let rigid = CameraFraming {
-        soft_time: 0.0,
+        soft_duration: 0.0,
         ..framing()
     };
     let tracked = step(&rigid, Vec3::ZERO, Vec3::new(0.4, 0.0, 0.0));
@@ -96,11 +96,11 @@ fn the_aim_offsets_the_screen() {
     assert!((aim.x + 0.5).abs() < 1e-5, "{aim}");
 }
 
-/// Once the target stops, the soft zone closes in exactly `soft_time`: at 30 fps or 144.
+/// Once the target stops, the soft zone closes in exactly `soft_duration`: at 30 fps or 144.
 #[test]
 fn the_soft_zone_arrives_on_time() {
     let framing = CameraFraming {
-        soft_time: 0.5,
+        soft_duration: 0.5,
         ..framing()
     };
     let target = Vec3::new(0.4, 0.0, 0.0);

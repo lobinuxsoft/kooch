@@ -143,7 +143,7 @@ fn rig_damped(collision: bool, damping: bool) -> (Resources, Entity, Entity) {
             look_at: LOOK_AT_SIMPLE,
             distance: ARM,
             damping,
-            damping_time: Vec3::splat(0.5),
+            damping_duration: Vec3::splat(0.5),
             ..Default::default()
         },
     );
@@ -212,7 +212,7 @@ fn no_collision_goes_through() {
     assert!((held - ARM).abs() < 0.1, "{held}");
 }
 
-/// 🔴 The return lasts `return_time` with the rig's own damping on. The damping used to continue
+/// 🔴 The return lasts `return_duration` with the rig's own damping on. The damping used to continue
 /// from where the wall had put the camera, so the rig itself crept back out at its own pace and the
 /// return's seconds came on top — a 0.35 s return that took over a second.
 #[test]

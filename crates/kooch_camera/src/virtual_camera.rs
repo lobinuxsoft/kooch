@@ -152,12 +152,12 @@ pub struct VirtualCamera {
     pub damping: bool,
     /// Seconds the camera takes to reach its pose once the target stops, per world axis — exactly,
     /// a tween that restarts while the target keeps moving. Zero is rigid.
-    #[reflect(shown_when = DAMPING_WHEN, alias = "damping_value")]
-    pub damping_time: Vec3,
+    #[reflect(shown_when = DAMPING_WHEN, alias = "damping_value, damping_time")]
+    pub damping_duration: Vec3,
     /// Seconds the handover **to** this vcam lasts, exactly; zero cuts. The incoming vcam owns it
     /// because how you arrive matters, not what came before.
-    #[reflect(alias = "blend_duration")]
-    pub blend_time: f32,
+    #[reflect(alias = "blend_time")]
+    pub blend_duration: f32,
     /// Shape of the blend, one of the `CURVE_*` constants. Shown even at zero duration:
     /// `shown_when` cannot enumerate every float above zero.
     #[reflect(choices = crate::blend::BLEND_CURVE_CHOICES)]
@@ -176,8 +176,8 @@ pub struct VirtualCamera {
     pub inactive_update: u32,
     /// Seconds to turn into a new orientation, exactly, so a changing up does not snap the horizon.
     /// Rotation only; zero is rigid.
-    #[reflect(shown_when = DAMPING_WHEN, alias = "rotation_damping_value")]
-    pub rotation_damping_time: f32,
+    #[reflect(shown_when = DAMPING_WHEN, alias = "rotation_damping_value, rotation_damping_time")]
+    pub rotation_damping_duration: f32,
 }
 
 /// The damping values only matter when damping is on.
@@ -199,15 +199,15 @@ impl Default for VirtualCamera {
             pitch: 20.0,
             look_at: LOOK_AT_SIMPLE,
             damping: true,
-            damping_time: Vec3::splat(0.5),
+            damping_duration: Vec3::splat(0.5),
             up_mode: UP_WORLD,
             // Long enough to read as a transition, short enough not to
             // feel like the game took the camera away.
-            blend_time: 0.5,
+            blend_duration: 0.5,
             blend_curve: crate::blend::CURVE_SINE,
             blend_ease: crate::blend::EASE_IN_OUT,
             inactive_update: INACTIVE_NEVER,
-            rotation_damping_time: 0.5,
+            rotation_damping_duration: 0.5,
         }
     }
 }
@@ -288,7 +288,7 @@ impl VirtualCamera {
         (swung * cos_pitch + up * sin_pitch) * self.distance.max(0.0)
     }
 
-    /// Tweens `current` towards `desired`, per axis, arriving `damping_time` after it stops moving.
+    /// Tweens `current` towards `desired`, per axis, arriving `damping_duration` after it stops moving.
     pub fn damped(&self, damping: &mut Damping, current: Vec3, desired: Vec3, dt: f32) -> Vec3 {
         if !self.damping {
             damping.position = [
@@ -299,7 +299,7 @@ impl VirtualCamera {
             return desired;
         }
         let [x, y, z] = &mut damping.position;
-        let time = self.damping_time;
+        let time = self.damping_duration;
         Vec3::new(
             x.step(current.x, desired.x, dt, time.x),
             y.step(current.y, desired.y, dt, time.y),
@@ -316,7 +316,7 @@ impl VirtualCamera {
         dt: f32,
     ) -> glam::Quat {
         let time = match self.damping {
-            true => self.rotation_damping_time,
+            true => self.rotation_damping_duration,
             false => 0.0,
         };
         damping.rotation.step(current, desired, dt, time)

@@ -156,7 +156,7 @@ fn damped_for(r: &VirtualCamera, desired: Vec3, fps: f32, seconds: f32) -> Vec3 
 #[test]
 fn damping_arrives_on_time() {
     let r = VirtualCamera {
-        damping_time: Vec3::splat(0.5),
+        damping_duration: Vec3::splat(0.5),
         ..Default::default()
     };
     let desired = Vec3::new(10.0, -2.0, 4.0);
@@ -188,7 +188,7 @@ fn damping_off_snaps_exactly() {
 fn a_zero_time_is_rigid_on_that_axis_only() {
     let r = VirtualCamera {
         damping: true,
-        damping_time: Vec3::new(0.0, 0.2, 0.2),
+        damping_duration: Vec3::new(0.0, 0.2, 0.2),
         ..Default::default()
     };
     let got = r.damped(&mut rest(), Vec3::ZERO, Vec3::splat(10.0), 1.0 / 60.0);
@@ -389,7 +389,7 @@ fn a_zero_up_falls_back_to_world_instead_of_nan() {
 fn rotation_damping_eases_instead_of_snapping() {
     let r = VirtualCamera {
         damping: true,
-        rotation_damping_time: 0.2,
+        rotation_damping_duration: 0.2,
         ..Default::default()
     };
     let from = glam::Quat::IDENTITY;
@@ -416,7 +416,7 @@ fn rotation_damping_eases_instead_of_snapping() {
 fn rotation_damping_takes_the_short_way_round() {
     let r = VirtualCamera {
         damping: true,
-        rotation_damping_time: 0.2,
+        rotation_damping_duration: 0.2,
         ..Default::default()
     };
     let from = glam::Quat::IDENTITY;
@@ -557,13 +557,13 @@ fn an_unchanged_up_changes_nothing() {
     assert!((carried - reference).length() < 1e-5);
 }
 
-/// Scenes saved before the rename keep their blend.
+/// Scenes saved under `blend_time` keep their blend.
 #[test]
-fn blend_duration_still_loads() {
+fn blend_time_still_loads() {
     let mut vcam = VirtualCamera::default();
-    vcam.reflect_set("blend_duration", kooch_ecs::reflect::ReflectValue::F32(0.1))
+    vcam.reflect_set("blend_time", kooch_ecs::reflect::ReflectValue::F32(0.1))
         .unwrap();
-    assert_eq!(vcam.blend_time, 0.1);
+    assert_eq!(vcam.blend_duration, 0.1);
 }
 
 /// And so do the damping times.
@@ -580,6 +580,29 @@ fn damping_value_still_loads() {
         kooch_ecs::reflect::ReflectValue::F32(0.2),
     )
     .unwrap();
-    assert_eq!(vcam.damping_time, Vec3::splat(0.3));
-    assert_eq!(vcam.rotation_damping_time, 0.2);
+    assert_eq!(vcam.damping_duration, Vec3::splat(0.3));
+    assert_eq!(vcam.rotation_damping_duration, 0.2);
+}
+
+/// Every name a camera duration was saved under still loads.
+#[test]
+fn old_duration_names_load() {
+    use kooch_ecs::reflect::ReflectValue::F32;
+    let mut vcam = VirtualCamera::default();
+    vcam.reflect_set(
+        "damping_time",
+        kooch_ecs::reflect::ReflectValue::Vec3(Vec3::splat(0.4)),
+    )
+    .unwrap();
+    vcam.reflect_set("rotation_damping_time", F32(0.4)).unwrap();
+    assert_eq!(vcam.damping_duration, Vec3::splat(0.4));
+    assert_eq!(vcam.rotation_damping_duration, 0.4);
+
+    let mut framing = crate::CameraFraming::default();
+    framing.reflect_set("soft_time", F32(0.4)).unwrap();
+    assert_eq!(framing.soft_duration, 0.4);
+
+    let mut collision = crate::CameraCollision::default();
+    collision.reflect_set("return_time", F32(0.4)).unwrap();
+    assert_eq!(collision.return_duration, 0.4);
 }
