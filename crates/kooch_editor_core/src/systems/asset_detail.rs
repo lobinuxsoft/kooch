@@ -6,6 +6,7 @@ use kooch_core::asset_database::AssetDatabase;
 use kooch_core::asset_loader::AssetServer;
 use kooch_core::assets::Assets;
 use kooch_core::resource::Resources;
+use kooch_ecs::reflect::ReflectValue;
 use kooch_render::material::{Material, Shader, ShaderParam};
 use kooch_render::meshlet::MeshletMesh;
 use kooch_render::texture::{Image, ImageFormat};
@@ -176,6 +177,10 @@ fn gather_prefab(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
     // than compiled into the editor. Asking only the reflected registry is what left a project's
     // own component with no fields to edit (#722).
     let dynamic = resources.get::<kooch_ecs::component::DynamicTypeRegistry>();
+    // And the fourth: the connected project's schema. Over a remote session the project's own
+    // components are known only from the wire — never compiled in, never loaded as a plugin — so a
+    // prefab of the player showed every one of them as unknown and none of them editable.
+    let remote = crate::queries::remote_schema(resources);
 
     let entities = document
         .entities
@@ -196,6 +201,7 @@ fn gather_prefab(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
                 registry.as_deref(),
                 names.as_deref(),
                 dynamic.as_deref(),
+                remote,
             ),
         })
         .collect();
@@ -214,6 +220,7 @@ fn sorted_visible(
     registry: Option<&kooch_ecs::component::ComponentRegistry>,
     names: Option<&kooch_ecs::component::ComponentNames>,
     dynamic: Option<&kooch_ecs::component::DynamicTypeRegistry>,
+    remote: Option<&[kooch_remote::protocol::ComponentSchema]>,
 ) -> Vec<PrefabComponentView> {
     let mut components: Vec<PrefabComponentView> = entity
         .components
@@ -250,27 +257,63 @@ fn sorted_visible(
             // Not in the reflected registry, but a project's plugin declared it. Its fields are
             // known and its values are right here in the document, so it renders like any other —
             // which is what `DynamicTypeRegistry`'s own docs already promise.
+            let declared = dynamic
+                .is_some_and(|registry| registry.get(&component.type_name).is_some())
+                || remote.is_some_and(|schema| {
+                    schema
+                        .iter()
+                        .any(|known| known.type_name == component.type_name)
+                });
             let resolved = resolved.or_else(|| {
-                dynamic
-                    .filter(|registry| registry.get(&component.type_name).is_some())
-                    .map(|_| ResolvedComponent {
-                        type_id: None,
-                        component: names
-                            .and_then(|n| n.id(&component.type_name))
-                            .unwrap_or(kooch_ecs::component::ComponentId::INVALID),
-                        field_metas: None,
-                    })
+                declared.then(|| ResolvedComponent {
+                    type_id: None,
+                    component: names
+                        .and_then(|n| n.id(&component.type_name))
+                        .unwrap_or(kooch_ecs::component::ComponentId::INVALID),
+                    field_metas: None,
+                })
             });
             Some(PrefabComponentView {
                 short_name: short_name(&component.type_name).to_owned(),
                 type_name: component.type_name.clone(),
-                fields: component.fields.clone(),
+                fields: with_new_references(&component.type_name, &component.fields, remote),
                 resolved,
             })
         })
         .collect();
     components.sort_by(|a, b| crate::queries::display_order(&a.short_name, &b.short_name));
     components
+}
+
+/// The document's fields, plus the asset references the project's schema has and the document does
+/// not. A field added to a component after the prefab was saved is otherwise invisible in it —
+/// nothing to click to assign it. Only references: their empty value is known without the type, and
+/// any other kind would need a default the wire does not carry.
+fn with_new_references(
+    type_name: &str,
+    fields: &[(String, ReflectValue)],
+    remote: Option<&[kooch_remote::protocol::ComponentSchema]>,
+) -> Vec<(String, ReflectValue)> {
+    let mut all = fields.to_vec();
+    let Some(schema) = remote
+        .and_then(|schema| schema.iter().find(|known| known.type_name == type_name))
+        .and_then(|known| known.fields.as_ref())
+    else {
+        return all;
+    };
+    for field in schema {
+        if field.asset_type.is_empty() || all.iter().any(|(name, _)| *name == field.name) {
+            continue;
+        }
+        all.push((
+            field.name.clone(),
+            ReflectValue::AssetRef {
+                guid: None,
+                asset_type: field.asset_type.clone(),
+            },
+        ));
+    }
+    all
 }
 
 fn short_name(type_name: &str) -> &str {
@@ -316,3 +359,6 @@ fn format_name(format: ImageFormat) -> &'static str {
         ImageFormat::Rgba8Unorm => "RGBA8 linear",
     }
 }
+
+#[cfg(test)]
+mod tests;
