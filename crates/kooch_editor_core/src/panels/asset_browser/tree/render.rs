@@ -16,7 +16,7 @@ use super::menus::{folder_menu, leaf_menu};
 use super::model::{FileLeaf, FolderNode};
 use super::naming::{create_edit, rename_edit};
 use super::nav::AssetRow;
-use super::visuals::{draw_drag_preview, file_icon, type_icon};
+use super::visuals::draw_drag_preview;
 
 pub(super) fn render_children(
     ui: &mut egui::Ui,
@@ -139,12 +139,18 @@ pub(super) fn render_leaf(
         return;
     }
 
-    // 🔴 The main scene gets its own icon rather than a colour.
+    // One table answers both: what a row is drawn with and what it is drawn in, so the icon and the
+    // colour can never disagree. A state beats a family — the scene the game starts in is the
+    // play icon, in green, wherever it sits.
     let is_main_scene = ctx.main_scene.is_some_and(|main| main == leaf.path);
-    let icon = match (&leaf.asset, is_main_scene) {
+    let family = crate::palette::of_asset(
+        &leaf.name,
+        leaf.asset.as_ref().map(|(_, type_name)| type_name.as_str()),
+    );
+    let icon = match (family, is_main_scene) {
         (_, true) => icons::PLAY,
-        (Some((_, type_name)), _) => type_icon(type_name),
-        (None, _) => file_icon(&leaf.name),
+        (Some(family), _) => family.icon(),
+        (None, _) => icons::LIST_BULLETS,
     };
     let is_cursor = ctx.nav.is_cursor(&leaf.path);
     ctx.nav.rows.push(AssetRow {
@@ -162,13 +168,9 @@ pub(super) fn render_leaf(
     };
     // The icon says which one; the colour is what makes it readable without hunting for the icon.
     // Both, because a row is scanned by shape at a glance and read by name when you stop on it.
-    // A state beats a family: the scene the game starts in is green wherever it sits.
     let colour = match is_main_scene {
         true => Some(crate::palette::state::MAIN_SCENE),
-        false => crate::palette::of_asset(
-            &leaf.name,
-            leaf.asset.as_ref().map(|(_, type_name)| type_name.as_str()),
-        ),
+        false => family.and_then(crate::palette::Family::colour),
     };
     let label = match colour {
         Some(colour) => egui::RichText::new(format!("{icon} {}", leaf.name)).color(colour),

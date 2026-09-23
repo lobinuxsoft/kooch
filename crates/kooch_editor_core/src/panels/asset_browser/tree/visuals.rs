@@ -1,7 +1,5 @@
 //! Icons and the drag preview — presentation with no state behind it.
 
-use crate::icons;
-
 pub(super) fn draw_drag_preview(ui: &egui::Ui, icon: &str, name: &str) {
     let Some(pos) = ui.ctx().pointer_interact_pos() else {
         return;
@@ -20,31 +18,4 @@ pub(super) fn draw_drag_preview(ui: &egui::Ui, icon: &str, name: &str) {
     let bg = egui::Rect::from_min_size(text_pos, galley.size()).expand(4.0);
     painter.rect_filled(bg, 3.0, ui.visuals().panel_fill);
     painter.galley(text_pos, galley, color);
-}
-
-/// Icon for a typed asset by its canonical type name.
-pub(super) fn type_icon(type_name: &str) -> &'static str {
-    match type_name {
-        "kooch_render::meshlet::asset::MeshletMesh" => icons::CUBE,
-        "kooch_render::material::asset::Material" => icons::FADERS,
-        "kooch_input::actions::action::ActionMap" => icons::GAME_CONTROLLER,
-        _ => icons::STACK,
-    }
-}
-
-/// Icon for a plain (non-asset) file by extension.
-pub(super) fn file_icon(name: &str) -> &'static str {
-    match name.rsplit('.').next().unwrap_or("") {
-        "rs" => icons::TERMINAL,
-        "toml" | "lock" => icons::GEAR,
-        "scene" => icons::TREE_STRUCTURE,
-        "prefab" => icons::PACKAGE,
-        // Also by extension: a file only counts as a typed asset once it
-        // has a `.meta` beside it, and it is browsable before that.
-        "inputaction" | "inputmap" => icons::GAME_CONTROLLER,
-        "material" => icons::FADERS,
-        "shader" | "wgsl" => icons::POLYGON,
-        "block" => icons::CUBE,
-        _ => icons::LIST_BULLETS,
-    }
 }
