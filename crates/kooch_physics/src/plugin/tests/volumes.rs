@@ -115,6 +115,78 @@ fn a_volume_reports_without_being_configured() {
     assert!((depth - 5.0).abs() < 0.1, "it measured {depth}");
 }
 
+/// 🔴 #1298: the gate above only reached volumes with NO body of their own. Give one a
+/// `PhysicsBody` — which the Inspector does the moment an author touches physics on it — and its
+/// collider was taken exactly as authored: a solid box the solver never reports. Every volume in a
+/// built game was dead, while the editor, which measures without a solver, showed it working.
+#[test]
+fn a_volume_with_its_own_body_still_reports() {
+    let mut resources = volume_world();
+    let region = volume(&mut resources);
+    // What the Inspector leaves behind: a static body, and the two boxes nobody ticked.
+    insert(
+        &mut resources,
+        region,
+        PhysicsBody {
+            kind: crate::components::KIND_STATIC,
+            ..Default::default()
+        },
+    );
+    let body = spawn_body(
+        &mut resources,
+        Transform::default(),
+        PhysicsBody {
+            kind: KIND_KINEMATIC,
+            ..Default::default()
+        },
+        Collider {
+            shape: SHAPE_CUBOID,
+            half_extents: Vec3::splat(0.5),
+            ..Default::default()
+        },
+    );
+    insert(
+        &mut resources,
+        body,
+        kooch_ecs::hierarchy::GlobalTransform::default(),
+    );
+    Playing::set(&mut resources, true);
+    for _ in 0..4 {
+        frame(&mut resources);
+    }
+
+    assert!(
+        resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.get_cpu::<PhysicsBody>())
+            .and_then(|s| s.get(region))
+            .is_some(),
+        "the harness did not give the volume a body, so this proves nothing",
+    );
+
+    // The solver's own answer first: this is what used to be a solid box, and the occupancy below
+    // only follows from it.
+    let slot = slot_of(&resources, region).expect("the volume is in the solver");
+    assert!(
+        resources
+            .get::<PhysicsWorld>()
+            .and_then(|world| world.spec(slot))
+            .expect("the slot has a spec")
+            .is_sensor(),
+        "a volume with a body of its own was authored as a solid collider",
+    );
+
+    let inside = resources
+        .get::<SensorOccupancy>()
+        .expect("the plugin keeps one");
+    assert!(
+        inside.iter().any(|occupant| occupant.body == body),
+        "a volume with a body of its own never reported what walked into it",
+    );
+    let depth = inside.depth_in(region).expect("the body is inside");
+    assert!((depth - 5.0).abs() < 0.1, "it measured {depth}");
+}
+
 /// A volume must not push what walks into it: a region that shoved the character out of itself
 /// would be a wall with a colour grade.
 #[test]
