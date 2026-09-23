@@ -102,7 +102,13 @@ pub(super) fn draw_entity_row(
 
     // Click and drag on one response: two widgets would let the drag
     // overlay steal the click that selects the row.
-    let resp = SelectableRow::new(indented_label.as_str())
+    // A prefab instance reads as one at a glance, as it does in Unity and Godot: the blue says the
+    // entity follows a file, and that editing it here is an override.
+    let text = match info.is_prefab_instance {
+        true => egui::RichText::new(indented_label.as_str()).color(PREFAB_BLUE),
+        false => egui::RichText::new(indented_label.as_str()),
+    };
+    let resp = SelectableRow::new(text)
         .selected(is_selected)
         .sense(egui::Sense::click_and_drag())
         .dimmed(being_dragged)
@@ -172,6 +178,9 @@ pub(crate) fn display_name_for(info: &EntityDisplayInfo) -> Option<String> {
             })
         })
 }
+
+/// What a prefab instance's name is drawn in.
+pub(crate) const PREFAB_BLUE: egui::Color32 = egui::Color32::from_rgb(120, 180, 255);
 
 fn build_label(info: &EntityDisplayInfo, display_name: Option<&str>) -> String {
     let has_children = !info.children.is_empty();

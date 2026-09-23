@@ -167,21 +167,15 @@ pub(super) fn rebuild(
 ) -> Result<Vec<EntityId>, String> {
     let mut created: Vec<EntityId> = Vec::with_capacity(reborn.len());
     for entry in reborn {
-        let id = super::remote_edit::build(client, mirror, &entry.state, None)?;
-        created.push(id);
+        // Named at spawn: parenting afterwards preserves the world pose by rewriting the local
+        // one, and an entity coming back from a despawn keeps the transform it was captured with.
         let parent = match entry.parent {
             Some(Ancestor::Existing(id)) => Some(id),
             Some(Ancestor::Batch(index)) => created.get(index).copied(),
             None => None,
         };
-        if parent.is_some()
-            && let Err(e) = client.set_parent(id, parent)
-        {
-            tracing::warn!(
-                target: "kooch_editor_core::remote_undo",
-                "the entity came back unparented: {e}",
-            );
-        }
+        let id = super::remote_edit::build(client, mirror, &entry.state, parent, None)?;
+        created.push(id);
     }
     Ok(created)
 }

@@ -372,6 +372,13 @@ pub(crate) fn paste_tree_local(
         .collect();
 
     for (index, captured) in tree.iter().enumerate() {
+        // 🔴 Parented BEFORE its values are written. `reparent` preserves the world pose by
+        // rewriting the local one, which is right for a drag in the World panel and wrong here: the
+        // captured transform IS the local one, and rewriting it divided every child by its parent's
+        // scale. An entity with no `Transform` yet has nothing to preserve.
+        let parent = captured.parent.map(|parent| fresh[parent]).or(into);
+        kooch_ecs::hierarchy::reparent(resources, fresh[index], parent);
+
         // Only the root is renamed: "Player Copy" with a child called "Head Copy" is not what any
         // editor does, and the name is what an author reads the tree by.
         let state = match captured.parent {
@@ -387,8 +394,6 @@ pub(crate) fn paste_tree_local(
         {
             rename_local(resources, fresh[index], name);
         }
-        let parent = captured.parent.map(|parent| fresh[parent]).or(into);
-        kooch_ecs::hierarchy::reparent(resources, fresh[index], parent);
     }
     reroot_prefabs(resources, &copies);
     fresh

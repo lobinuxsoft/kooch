@@ -170,13 +170,16 @@ pub(super) fn build(
     client: &kooch_remote::RemoteClient,
     mirror: &crate::remote_mirror::RemoteMirror,
     state: &crate::actions::entity_state::EntityState,
+    // 🔴 Named at spawn, not set afterwards: parenting preserves the world pose by rewriting the
+    // local one, so a `Transform` written first would be divided by the parent's scale.
+    parent: Option<kooch_remote::protocol::EntityId>,
     // Which scene to author it into, or `None` to let the captured state
     // restore its own — an undone despawn belongs where it was, a paste
     // belongs where it was asked for.
     scene: Option<kooch_core::Guid>,
 ) -> Result<kooch_remote::protocol::EntityId, String> {
     let id = client
-        .spawn(state.name.as_deref(), scene, None)
+        .spawn(state.name.as_deref(), scene, parent)
         .map_err(|e| e.to_string())?;
     for component in &state.components {
         if let Err(e) = client.add_component(id, &component.name) {
@@ -233,19 +236,11 @@ pub(super) fn build_tree(
             None => entity_state::as_copy(&captured.state),
             Some(_) => entity_state::without_identity(&captured.state),
         };
-        ids.push(build(client, mirror, &state, scene)?);
+        let parent = captured.parent.map(|parent| ids[parent]).or(into);
+        ids.push(build(client, mirror, &state, parent, scene)?);
     }
 
     for (index, captured) in tree.iter().enumerate() {
-        if let Some(parent) = captured.parent.map(|parent| ids[parent]).or(into)
-            && let Err(e) = client.set_parent(ids[index], Some(parent))
-        {
-            tracing::warn!(
-                target: "kooch_editor_core::remote_edit::build_tree",
-                "a copy did not land under its parent: {e}",
-            );
-        }
-
         // A reference into the subtree names the copy; one out of it is left alone.
         let inside = |entity: kooch_ecs::entity::Entity| {
             tree.iter()
