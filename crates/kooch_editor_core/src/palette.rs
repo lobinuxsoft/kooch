@@ -1,0 +1,72 @@
+//! The editor's colour code, in one place.
+//!
+//! 🔴 Two rules, and everything here follows from them: **the icon says what a thing is, the colour
+//! says which family it belongs to, and a STATE beats its family.** A row is scanned by shape at a
+//! glance and read by colour when you stop on it, so a colour that means two things means nothing.
+
+use egui::Color32;
+
+/// What a thing is in — read when nothing is happening to it.
+pub(crate) mod family {
+    use super::Color32;
+
+    /// Follows a prefab: the asset, and every entity of an instance.
+    pub(crate) const PREFAB: Color32 = Color32::from_rgb(120, 180, 255);
+    /// A scene file.
+    pub(crate) const SCENE: Color32 = Color32::from_rgb(90, 200, 200);
+    /// A mesh or a model.
+    pub(crate) const MESH: Color32 = Color32::from_rgb(200, 164, 110);
+    /// A material.
+    pub(crate) const MATERIAL: Color32 = Color32::from_rgb(200, 155, 240);
+    /// A shader, graph or WGSL.
+    pub(crate) const SHADER: Color32 = Color32::from_rgb(240, 139, 192);
+    /// A texture or any image.
+    pub(crate) const TEXTURE: Color32 = Color32::from_rgb(224, 195, 90);
+    /// A sound.
+    pub(crate) const AUDIO: Color32 = Color32::from_rgb(154, 209, 106);
+    /// An input map.
+    pub(crate) const INPUT: Color32 = Color32::from_rgb(150, 235, 245);
+    /// A block mesh.
+    pub(crate) const BLOCK: Color32 = Color32::from_rgb(160, 190, 200);
+}
+
+/// What is happening to a thing — always wins over its family.
+pub(crate) mod state {
+    use super::Color32;
+
+    /// The scene the game starts in.
+    pub(crate) const MAIN_SCENE: Color32 = Color32::from_rgb(94, 207, 122);
+    /// Edits that are not on disk.
+    pub(crate) const DIRTY: Color32 = Color32::from_rgb(210, 150, 60);
+}
+
+/// The family colour for a typed asset, by the type the loader gives it.
+pub(crate) fn of_type(type_name: &str) -> Option<Color32> {
+    let colour = match type_name {
+        "kooch_render::meshlet::asset::MeshletMesh" => family::MESH,
+        "kooch_render::material::asset::Material" => family::MATERIAL,
+        "kooch_input::actions::action::ActionMap" => family::INPUT,
+        _ => return of_extension(type_name.rsplit("::").next().unwrap_or("")),
+    };
+    Some(colour)
+}
+
+/// The family colour for a file, by extension — what a browsable file has before it is typed.
+pub(crate) fn of_extension(name: &str) -> Option<Color32> {
+    let colour = match name.rsplit('.').next().unwrap_or("") {
+        "scene" => family::SCENE,
+        "prefab" => family::PREFAB,
+        "material" => family::MATERIAL,
+        "shader" | "wgsl" => family::SHADER,
+        "png" | "jpg" | "jpeg" | "ktx2" | "dds" | "hdr" => family::TEXTURE,
+        "wav" | "ogg" | "mp3" | "flac" => family::AUDIO,
+        "inputmap" => family::INPUT,
+        "block" => family::BLOCK,
+        "glb" | "gltf" | "obj" => family::MESH,
+        _ => return None,
+    };
+    Some(colour)
+}
+
+#[cfg(test)]
+mod tests;

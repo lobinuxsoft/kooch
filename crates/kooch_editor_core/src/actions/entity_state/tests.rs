@@ -418,3 +418,49 @@ fn a_selected_child_is_not_copied_twice() {
     assert_eq!(roots_of(&resources, &[root, child, grandchild]), vec![root]);
     assert_eq!(roots_of(&resources, &[child, grandchild]), vec![child]);
 }
+
+/// 🔴 A copied child came out scaled by 1/parent: `reparent` preserves the WORLD pose by rewriting
+/// the local transform, so writing the captured one first and parenting after divided it.
+#[test]
+fn a_copied_child_keeps_its_transform() {
+    let mut resources = world();
+    let (root, child, _) = family(&mut resources);
+    set(
+        &mut resources,
+        root,
+        std::any::TypeId::of::<Transform>(),
+        "scale",
+        ReflectValue::Vec3(glam::Vec3::splat(14.0)),
+    );
+    set(
+        &mut resources,
+        child,
+        std::any::TypeId::of::<Transform>(),
+        "scale",
+        ReflectValue::Vec3(glam::Vec3::splat(2.5)),
+    );
+    let tree = capture_tree(&resources, root);
+
+    let copies = paste_tree_local(&mut resources, &tree, None);
+
+    let scale_of = |resources: &Resources, entity: Entity| {
+        resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.reflect_get_fields(&std::any::TypeId::of::<Transform>(), entity))
+            .and_then(|fields| {
+                fields
+                    .into_iter()
+                    .find_map(|(name, value)| match (name.as_str(), value) {
+                        ("scale", ReflectValue::Vec3(scale)) => Some(scale),
+                        _ => None,
+                    })
+            })
+            .expect("the copy has a transform")
+    };
+    assert_eq!(scale_of(&resources, copies[0]), glam::Vec3::splat(14.0));
+    assert_eq!(
+        scale_of(&resources, copies[1]),
+        glam::Vec3::splat(2.5),
+        "the child was rescaled by its parent",
+    );
+}
