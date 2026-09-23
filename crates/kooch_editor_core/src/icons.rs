@@ -116,3 +116,24 @@ pub const POLYGON: &str = "\u{e6d0}";
 
 /// Arrow-square-out — a panel opened in a window of its own.
 pub const ARROW_SQUARE_OUT: &str = "\u{e5de}";
+
+/// Sphere — a material, as every DCC previews one.
+pub const SPHERE: &str = "\u{ee66}";
+
+/// Sparkle — a shader: what a surface is made to look like.
+pub const SPARKLE: &str = "\u{e6a2}";
+
+/// Image — a texture or any picture.
+pub const IMAGE: &str = "\u{e2ca}";
+
+/// Speaker-high — a sound.
+pub const SPEAKER_HIGH: &str = "\u{e44a}";
+
+/// Shapes — a block: level geometry built from parametric shapes.
+pub const SHAPES: &str = "\u{ec5e}";
+
+/// File-code — a source file.
+pub const FILE_CODE: &str = "\u{e914}";
+
+/// File-text — notes and anything read rather than run.
+pub const FILE_TEXT: &str = "\u{e23a}";

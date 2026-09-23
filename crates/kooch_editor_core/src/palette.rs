@@ -40,44 +40,104 @@ pub(crate) mod state {
     pub(crate) const DIRTY: Color32 = Color32::from_rgb(210, 150, 60);
 }
 
-/// The family colour for a typed asset, by the type the loader gives it. Only for a file whose
-/// extension says nothing — every asset on disk has one, and the type is the fallback rather than
-/// the rule.
-pub(crate) fn of_type(type_name: &str) -> Option<Color32> {
-    let colour = match type_name {
-        "kooch_render::meshlet::asset::MeshletMesh" => family::MESH,
-        "kooch_render::material::asset::Material" => family::MATERIAL,
-        "kooch_input::actions::action::ActionMap" => family::INPUT,
-        _ => return None,
-    };
-    Some(colour)
+/// What a thing is, for the two ways a row says it: its icon and its colour. One table, so the two
+/// can never disagree — which is the whole point of a code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Family {
+    Prefab,
+    Scene,
+    Mesh,
+    Material,
+    Shader,
+    Texture,
+    Audio,
+    Input,
+    Block,
+    Settings,
+    Code,
+    Notes,
 }
 
-/// The family colour for a file, by extension.
+impl Family {
+    /// The colour a row of this family is drawn in, or `None` for the ones that keep the plain text
+    /// colour: settings, code and notes are not assets, and a colour for every file is a rainbow
+    /// nobody reads.
+    pub(crate) fn colour(self) -> Option<Color32> {
+        let colour = match self {
+            Self::Prefab => family::PREFAB,
+            Self::Scene => family::SCENE,
+            Self::Mesh => family::MESH,
+            Self::Material => family::MATERIAL,
+            Self::Shader => family::SHADER,
+            Self::Texture => family::TEXTURE,
+            Self::Audio => family::AUDIO,
+            Self::Input => family::INPUT,
+            Self::Block => family::BLOCK,
+            Self::Settings | Self::Code | Self::Notes => return None,
+        };
+        Some(colour)
+    }
+
+    /// The icon that says the same thing the colour does.
+    pub(crate) fn icon(self) -> &'static str {
+        use crate::icons;
+
+        match self {
+            Self::Prefab => icons::PACKAGE,
+            Self::Scene => icons::TREE_STRUCTURE,
+            Self::Mesh => icons::CUBE,
+            Self::Material => icons::SPHERE,
+            Self::Shader => icons::SPARKLE,
+            Self::Texture => icons::IMAGE,
+            Self::Audio => icons::SPEAKER_HIGH,
+            Self::Input => icons::GAME_CONTROLLER,
+            Self::Block => icons::SHAPES,
+            Self::Settings => icons::GEAR,
+            Self::Code => icons::FILE_CODE,
+            Self::Notes => icons::FILE_TEXT,
+        }
+    }
+}
+
+/// The family a file belongs to, by extension.
 ///
-/// 🔴 Read before the type: an asset the editor has a loader for arrives here already typed, and a
-/// type this list does not name would otherwise lose the colour its extension knows — which is how
-/// every prefab, block and texture came out plain.
-pub(crate) fn of_extension(name: &str) -> Option<Color32> {
-    let colour = match name.rsplit('.').next().unwrap_or("") {
-        "scene" => family::SCENE,
-        "prefab" => family::PREFAB,
-        "material" => family::MATERIAL,
-        "shader" | "wgsl" => family::SHADER,
-        "png" | "jpg" | "jpeg" | "ktx2" | "dds" | "hdr" | "exr" | "tga" | "bmp" => family::TEXTURE,
-        "wav" | "ogg" | "mp3" | "flac" => family::AUDIO,
-        "inputaction" | "inputmap" => family::INPUT,
-        "block" | "blockmesh" => family::BLOCK,
-        "glb" | "gltf" | "obj" | "fbx" => family::MESH,
-        // Project settings, code and notes keep the plain text colour on purpose: they are not
-        // assets, and a colour for every file is a rainbow nobody reads.
+/// 🔴 Read before the type: an asset the editor has a loader for arrives already typed, and a type
+/// the table below does not name would otherwise lose what its extension knows — which is how every
+/// prefab, block and texture came out plain.
+pub(crate) fn of_extension(name: &str) -> Option<Family> {
+    let family = match name.rsplit('.').next().unwrap_or("") {
+        "scene" => Family::Scene,
+        "prefab" => Family::Prefab,
+        "material" => Family::Material,
+        "shader" | "wgsl" => Family::Shader,
+        "png" | "jpg" | "jpeg" | "ktx2" | "dds" | "hdr" | "exr" | "tga" | "bmp" => Family::Texture,
+        "wav" | "ogg" | "mp3" | "flac" => Family::Audio,
+        "inputaction" | "inputmap" => Family::Input,
+        "block" | "blockmesh" => Family::Block,
+        "glb" | "gltf" | "obj" | "fbx" => Family::Mesh,
+        "kooch" | "layers" | "rendersettings" | "buildpreset" | "toml" | "lock" | "ron" => {
+            Family::Settings
+        }
+        "rs" => Family::Code,
+        "md" | "txt" => Family::Notes,
         _ => return None,
     };
-    Some(colour)
+    Some(family)
 }
 
-/// What a row is drawn in: its extension, then its type, then nothing.
-pub(crate) fn of_asset(name: &str, type_name: Option<&str>) -> Option<Color32> {
+/// The family of a typed asset, for a file whose extension says nothing.
+pub(crate) fn of_type(type_name: &str) -> Option<Family> {
+    let family = match type_name {
+        "kooch_render::meshlet::asset::MeshletMesh" => Family::Mesh,
+        "kooch_render::material::asset::Material" => Family::Material,
+        "kooch_input::actions::action::ActionMap" => Family::Input,
+        _ => return None,
+    };
+    Some(family)
+}
+
+/// What a row is: its extension, then its type, then nothing.
+pub(crate) fn of_asset(name: &str, type_name: Option<&str>) -> Option<Family> {
     of_extension(name).or_else(|| type_name.and_then(of_type))
 }
 
