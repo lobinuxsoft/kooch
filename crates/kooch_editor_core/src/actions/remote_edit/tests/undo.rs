@@ -294,7 +294,9 @@ fn a_paste_is_built_and_undone() {
 
     // What Ctrl+C leaves behind, without going through the panel that fills it.
     let mut clipboard = crate::clipboard::EntityClipboard::default();
-    clipboard.set(vec![crate::actions::entity_state::capture(&editor, source)]);
+    clipboard.set(vec![crate::actions::entity_state::capture_tree(
+        &editor, source,
+    )]);
     editor.insert(clipboard);
 
     assert!(dispatch(

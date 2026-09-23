@@ -178,7 +178,6 @@ pub(super) fn build(
     let id = client
         .spawn(state.name.as_deref(), scene, None)
         .map_err(|e| e.to_string())?;
-    let member_ty = std::any::type_name::<kooch_ecs::prefab_instance::PrefabMember>();
     for component in &state.components {
         if let Err(e) = client.add_component(id, &component.name) {
             tracing::warn!(
@@ -211,20 +210,69 @@ pub(super) fn build(
             }
         }
     }
-    // A copy belongs to its own instance: the captured `root` is a handle to the original's, and a
-    // copy left pointing at it takes that instance's prefab edits (#1293).
-    if state.components.iter().any(|c| c.name == member_ty) {
-        let own = kooch_ecs::reflect::ReflectValue::EntityRef(Some(
-            kooch_ecs::reflect::EntityRef::live(id.into()),
-        ));
-        if let Err(e) = client.set_field(id, member_ty, "root", own) {
+    Ok(id)
+}
+
+/// Builds a captured subtree on the project: every entity, then the tree, then the references into
+/// it and the prefab membership — all of which name entities that did not exist during the first
+/// pass.
+pub(super) fn build_tree(
+    client: &kooch_remote::RemoteClient,
+    mirror: &crate::remote_mirror::RemoteMirror,
+    tree: &crate::actions::entity_state::CapturedTree,
+    scene: Option<kooch_core::Guid>,
+    into: Option<kooch_remote::protocol::EntityId>,
+) -> Result<Vec<kooch_remote::protocol::EntityId>, String> {
+    use crate::actions::entity_state;
+    use kooch_ecs::reflect::{EntityRef, ReflectValue};
+
+    let mut ids = Vec::with_capacity(tree.len());
+    for captured in tree {
+        // Only the root is renamed: an author reads a tree by its names.
+        let state = match captured.parent {
+            None => entity_state::as_copy(&captured.state),
+            Some(_) => entity_state::without_identity(&captured.state),
+        };
+        ids.push(build(client, mirror, &state, scene)?);
+    }
+
+    for (index, captured) in tree.iter().enumerate() {
+        if let Some(parent) = captured.parent.map(|parent| ids[parent]).or(into)
+            && let Err(e) = client.set_parent(ids[index], Some(parent))
+        {
             tracing::warn!(
-                target: "kooch_editor_core::remote_edit::build",
-                "the copy still belongs to the instance it came from: {e}",
+                target: "kooch_editor_core::remote_edit::build_tree",
+                "a copy did not land under its parent: {e}",
             );
         }
+
+        // A reference into the subtree names the copy; one out of it is left alone.
+        let inside = |entity: kooch_ecs::entity::Entity| {
+            tree.iter()
+                .position(|captured| captured.source == entity)
+                .map(|at| ids[at])
+        };
+        for component in &captured.state.components {
+            for (field, value) in &component.fields {
+                let ReflectValue::EntityRef(Some(reference)) = value else {
+                    continue;
+                };
+                let Some(copy) = reference.entity().and_then(inside) else {
+                    continue;
+                };
+                let value = ReflectValue::EntityRef(Some(EntityRef::live(copy.into())));
+                if let Err(e) = client.set_field(ids[index], &component.name, field, value) {
+                    tracing::debug!(
+                        target: "kooch_editor_core::remote_edit::build_tree",
+                        component = %component.name,
+                        %field,
+                        "a reference into the copy did not travel: {e}",
+                    );
+                }
+            }
+        }
     }
-    Ok(id)
+    Ok(ids)
 }
 
 /// An ECS edit reduced to the fields the remote protocol needs.
@@ -257,7 +305,7 @@ enum Edit<'a> {
         /// [`Edit::Spawn`]'s is: a paste into a scene somebody
         /// right-clicked must not arrive in the active one.
         into: crate::actions::SpawnTarget,
-        states: Vec<crate::actions::entity_state::EntityState>,
+        states: Vec<crate::actions::entity_state::CapturedTree>,
     },
     /// Re-home an entity: the membership is a component, so this is an
     /// add plus a set rather than a call of its own.
