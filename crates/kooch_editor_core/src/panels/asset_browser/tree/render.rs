@@ -165,10 +165,10 @@ pub(super) fn render_leaf(
     // A state beats a family: the scene the game starts in is green wherever it sits.
     let colour = match is_main_scene {
         true => Some(crate::palette::state::MAIN_SCENE),
-        false => match &leaf.asset {
-            Some((_, type_name)) => crate::palette::of_type(type_name),
-            None => crate::palette::of_extension(&leaf.name),
-        },
+        false => crate::palette::of_asset(
+            &leaf.name,
+            leaf.asset.as_ref().map(|(_, type_name)| type_name.as_str()),
+        ),
     };
     let label = match colour {
         Some(colour) => egui::RichText::new(format!("{icon} {}", leaf.name)).color(colour),

@@ -40,32 +40,45 @@ pub(crate) mod state {
     pub(crate) const DIRTY: Color32 = Color32::from_rgb(210, 150, 60);
 }
 
-/// The family colour for a typed asset, by the type the loader gives it.
+/// The family colour for a typed asset, by the type the loader gives it. Only for a file whose
+/// extension says nothing — every asset on disk has one, and the type is the fallback rather than
+/// the rule.
 pub(crate) fn of_type(type_name: &str) -> Option<Color32> {
     let colour = match type_name {
         "kooch_render::meshlet::asset::MeshletMesh" => family::MESH,
         "kooch_render::material::asset::Material" => family::MATERIAL,
         "kooch_input::actions::action::ActionMap" => family::INPUT,
-        _ => return of_extension(type_name.rsplit("::").next().unwrap_or("")),
+        _ => return None,
     };
     Some(colour)
 }
 
-/// The family colour for a file, by extension — what a browsable file has before it is typed.
+/// The family colour for a file, by extension.
+///
+/// 🔴 Read before the type: an asset the editor has a loader for arrives here already typed, and a
+/// type this list does not name would otherwise lose the colour its extension knows — which is how
+/// every prefab, block and texture came out plain.
 pub(crate) fn of_extension(name: &str) -> Option<Color32> {
     let colour = match name.rsplit('.').next().unwrap_or("") {
         "scene" => family::SCENE,
         "prefab" => family::PREFAB,
         "material" => family::MATERIAL,
         "shader" | "wgsl" => family::SHADER,
-        "png" | "jpg" | "jpeg" | "ktx2" | "dds" | "hdr" => family::TEXTURE,
+        "png" | "jpg" | "jpeg" | "ktx2" | "dds" | "hdr" | "exr" | "tga" | "bmp" => family::TEXTURE,
         "wav" | "ogg" | "mp3" | "flac" => family::AUDIO,
-        "inputmap" => family::INPUT,
-        "block" => family::BLOCK,
-        "glb" | "gltf" | "obj" => family::MESH,
+        "inputaction" | "inputmap" => family::INPUT,
+        "block" | "blockmesh" => family::BLOCK,
+        "glb" | "gltf" | "obj" | "fbx" => family::MESH,
+        // Project settings, code and notes keep the plain text colour on purpose: they are not
+        // assets, and a colour for every file is a rainbow nobody reads.
         _ => return None,
     };
     Some(colour)
+}
+
+/// What a row is drawn in: its extension, then its type, then nothing.
+pub(crate) fn of_asset(name: &str, type_name: Option<&str>) -> Option<Color32> {
+    of_extension(name).or_else(|| type_name.and_then(of_type))
 }
 
 #[cfg(test)]

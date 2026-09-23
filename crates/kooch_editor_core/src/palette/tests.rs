@@ -52,6 +52,28 @@ fn a_file_takes_its_family_from_its_extension() {
     );
 }
 
+/// 🔴 The bug: a typed asset fell into `of_type`, and a type this list does not name lost the
+/// colour its extension knew — prefabs, blocks and textures all came out plain.
+#[test]
+fn a_typed_asset_still_reads_its_extension() {
+    let typed = Some("kooch_ecs::prefab::asset::Prefab");
+    assert_eq!(of_asset("Player.prefab", typed), Some(family::PREFAB));
+    assert_eq!(
+        of_asset("Arch.block", Some("kooch_blockmesh::asset::BlockMesh")),
+        Some(family::BLOCK)
+    );
+    assert_eq!(
+        of_asset("dark_texture_01.png", Some("kooch_render::image::Image")),
+        Some(family::TEXTURE)
+    );
+    assert_eq!(of_asset("Jump.inputaction", None), Some(family::INPUT));
+    assert_eq!(
+        of_asset("project.kooch", None),
+        None,
+        "settings are not assets"
+    );
+}
+
 #[test]
 fn a_typed_asset_takes_its_family_from_its_type() {
     assert_eq!(

@@ -41,7 +41,10 @@ pub(super) fn file_icon(name: &str) -> &'static str {
         "prefab" => icons::PACKAGE,
         // Also by extension: a file only counts as a typed asset once it
         // has a `.meta` beside it, and it is browsable before that.
-        "inputmap" => icons::GAME_CONTROLLER,
+        "inputaction" | "inputmap" => icons::GAME_CONTROLLER,
+        "material" => icons::FADERS,
+        "shader" | "wgsl" => icons::POLYGON,
+        "block" => icons::CUBE,
         _ => icons::LIST_BULLETS,
     }
 }
