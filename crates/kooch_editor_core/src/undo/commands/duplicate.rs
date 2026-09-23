@@ -36,8 +36,15 @@ impl DuplicateCommand {
             }
         }
 
-        // A duplicate is a new entity: it earns its own id when something references it.
-        component_types.remove(&TypeId::of::<kooch_ecs::PersistentId>());
+        // A duplicate is a new entity: its identity is its own (#1287) and the tree is derived from
+        // `Parent` by a system. The prefab it came from stays — the copy keeps following it, and
+        // `reroot_prefab` points its membership at itself rather than the original's root.
+        for borrowed in [
+            TypeId::of::<kooch_ecs::PersistentId>(),
+            TypeId::of::<kooch_ecs::hierarchy::Children>(),
+        ] {
+            component_types.remove(&borrowed);
+        }
 
         if let Some(registry) = resources.get::<ComponentRegistry>() {
             for &type_id in &component_types {
@@ -106,6 +113,8 @@ impl DuplicateCommand {
                 }
             }
         }
+
+        crate::actions::entity_state::reroot_prefab(resources, entity);
     }
 
     fn allocate_fresh(&self, resources: &mut Resources) -> Entity {

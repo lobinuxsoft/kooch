@@ -51,7 +51,10 @@ impl EditorCommand for PasteCommand {
             commands.apply(resources);
             resources.insert(commands);
 
-            entity_state::restore_local(resources, entity, state);
+            // A paste is a new entity, never a second copy of the original's identity (#1287) —
+            // and it keeps following the prefab it came from, as its own instance (#1293).
+            entity_state::restore_local(resources, entity, &entity_state::as_copy(state));
+            entity_state::reroot_prefab(resources, entity);
             // The name is part of the copy, so the paste is not a second
             // entity called the same thing.
             if let Some(name) = entity_state::copy_name(state) {

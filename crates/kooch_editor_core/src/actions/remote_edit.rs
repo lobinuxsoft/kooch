@@ -178,6 +178,7 @@ pub(super) fn build(
     let id = client
         .spawn(state.name.as_deref(), scene, None)
         .map_err(|e| e.to_string())?;
+    let member_ty = std::any::type_name::<kooch_ecs::prefab_instance::PrefabMember>();
     for component in &state.components {
         if let Err(e) = client.add_component(id, &component.name) {
             tracing::warn!(
@@ -208,6 +209,19 @@ pub(super) fn build(
                     "field did not travel: {e}",
                 );
             }
+        }
+    }
+    // A copy belongs to its own instance: the captured `root` is a handle to the original's, and a
+    // copy left pointing at it takes that instance's prefab edits (#1293).
+    if state.components.iter().any(|c| c.name == member_ty) {
+        let own = kooch_ecs::reflect::ReflectValue::EntityRef(Some(
+            kooch_ecs::reflect::EntityRef::live(id.into()),
+        ));
+        if let Err(e) = client.set_field(id, member_ty, "root", own) {
+            tracing::warn!(
+                target: "kooch_editor_core::remote_edit::build",
+                "the copy still belongs to the instance it came from: {e}",
+            );
         }
     }
     Ok(id)
