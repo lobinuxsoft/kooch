@@ -459,10 +459,10 @@ mod vendoring_tests;
 
 mod templates;
 
+pub(crate) use templates::{generate_editor_rs, generate_lib_rs, generate_main_rs};
 #[cfg(test)]
 pub(crate) use templates::generate_cargo_toml_for_test;
 use templates::*;
-pub(crate) use templates::{generate_editor_rs, generate_lib_rs, generate_main_rs};
 
 #[cfg(test)]
 mod tests;

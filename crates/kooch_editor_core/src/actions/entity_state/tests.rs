@@ -187,9 +187,12 @@ fn a_copy_does_not_carry_its_scene() {
     assert_eq!(names, vec![std::any::type_name::<Transform>()]);
 }
 
-/// 🔴 The copy of a prefab instance used to VANISH on save.
+/// 🔴 The copy of a prefab instance used to VANISH on save, and the answer then was to strip the
+/// link — which left the author rebuilding the instance by hand (#1293). The link travels; what
+/// made the copy vanish was that it kept the ORIGINAL's membership, so the save wrote it as neither
+/// a whole entity nor a whole instance. `reroot_prefab` is what closes that.
 #[test]
-fn a_copy_carries_no_prefab_bookkeeping() {
+fn a_copy_keeps_the_prefab_and_its_own_membership() {
     use kooch_ecs::prefab_instance::{PrefabInstance, PrefabMember};
 
     let state = EntityState {
@@ -213,7 +216,21 @@ fn a_copy_carries_no_prefab_bookkeeping() {
     let copy = as_copy(&state);
 
     let names: Vec<&str> = copy.components.iter().map(|c| c.name.as_str()).collect();
-    assert_eq!(names, vec![std::any::type_name::<Transform>()]);
+    assert_eq!(
+        names,
+        vec![
+            std::any::type_name::<PrefabMember>(),
+            std::any::type_name::<PrefabInstance>(),
+            std::any::type_name::<Transform>(),
+        ],
+    );
+}
+
+fn component(name: &str) -> super::ComponentState {
+    super::ComponentState {
+        name: name.to_owned(),
+        fields: Vec::new(),
+    }
 }
 
 /// 🔴 #1287: a paste restored the original's identity onto a second entity, and every reference to
@@ -234,4 +251,69 @@ fn a_copy_leaves_the_identity_behind() {
             "a copy kept the original's id",
         );
     }
+}
+
+/// 🔴 #1293: a duplicate that stops following its prefab is an instance the author has to rebuild
+/// by hand. The link travels; only the membership is re-pointed, by `reroot_prefab`.
+#[test]
+fn a_copy_keeps_the_prefab_it_came_from() {
+    let instance = std::any::type_name::<kooch_ecs::prefab_instance::PrefabInstance>();
+    let member = std::any::type_name::<kooch_ecs::prefab_instance::PrefabMember>();
+    let root = EntityState {
+        name: Some("Player".into()),
+        components: vec![component(instance), component(member)],
+    };
+    let copy = as_copy(&root);
+    assert!(
+        copy.components.iter().any(|c| c.name == instance),
+        "the link was dropped"
+    );
+    assert!(copy.components.iter().any(|c| c.name == member));
+
+    // A member copied on its own belongs to no instance: kept, it would join the original's.
+    let alone = EntityState {
+        name: Some("Head".into()),
+        components: vec![component(member)],
+    };
+    assert!(as_copy(&alone).components.iter().all(|c| c.name != member));
+}
+
+/// The copy's membership points at itself, so a prefab edit reaches both instances and an override
+/// on one leaves the other alone.
+#[test]
+fn a_duplicate_belongs_to_itself() {
+    use kooch_ecs::prefab_instance::{PrefabInstance, PrefabMember};
+
+    let mut resources = world();
+    let original = spawn(&mut resources);
+    let copy = spawn(&mut resources);
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.register_cpu_reflected::<PrefabInstance>();
+        registry.register_cpu_reflected::<PrefabMember>();
+        let source = kooch_core::Guid::new_v4();
+        registry
+            .get_cpu_mut::<PrefabInstance>()
+            .unwrap()
+            .insert(copy, PrefabInstance::new(source));
+        registry.get_cpu_mut::<PrefabMember>().unwrap().insert(
+            copy,
+            PrefabMember {
+                root: original,
+                index: 0,
+            },
+        );
+    }
+
+    super::reroot_prefab(&mut resources, copy);
+
+    let member = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<PrefabMember>())
+        .and_then(|s| s.get(copy))
+        .map(|member| member.root)
+        .expect("the copy is still a member");
+    assert_eq!(
+        member, copy,
+        "the copy still belongs to the original's instance"
+    );
 }

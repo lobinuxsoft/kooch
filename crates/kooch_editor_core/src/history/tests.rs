@@ -75,10 +75,7 @@ fn the_shader_graph_needs_a_graph() {
         resolve(Some(EditorTab::ShaderGraph), None, None, Some(&path)),
         Some(Document::ShaderGraph(path.clone())),
     );
-    assert_eq!(
-        resolve(Some(EditorTab::ShaderGraph), None, None, None),
-        None
-    );
+    assert_eq!(resolve(Some(EditorTab::ShaderGraph), None, None, None), None);
 }
 
 /// The panels whose edits are files, or aren't edits. Deliberately `None` rather than falling back

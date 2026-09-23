@@ -115,14 +115,17 @@ pub(crate) fn copy_name(state: &EntityState) -> Option<String> {
 /// The same entity, named as a copy — in its `Name` component too.
 pub(crate) fn as_copy(state: &EntityState) -> EntityState {
     let name = copy_name(state);
-    // 🔴 A copy carries what the entity IS, never who it BELONGS TO — nor who it IS.
+    // 🔴 A copy carries what the entity IS, never who it IS nor which scene it belongs to. It DOES
+    // keep the prefab it came from: a duplicate that stops following its prefab is an instance the
+    // author has to rebuild by hand (#1293).
     let mut copy = without_identity(state);
-    for bookkeeping in [
-        std::any::type_name::<kooch_ecs::SceneMember>(),
-        std::any::type_name::<kooch_ecs::prefab_instance::PrefabMember>(),
-        std::any::type_name::<kooch_ecs::prefab_instance::PrefabInstance>(),
-    ] {
-        copy.components.retain(|c| c.name != bookkeeping);
+    copy.components
+        .retain(|c| c.name != std::any::type_name::<kooch_ecs::SceneMember>());
+    // A member copied without its root belongs to no instance: kept, it would join the original's.
+    if !is_instance_root(&copy) {
+        copy.components.retain(|c| {
+            c.name != std::any::type_name::<kooch_ecs::prefab_instance::PrefabMember>()
+        });
     }
     copy.name = name.clone();
     let Some(name) = name else {
@@ -139,6 +142,40 @@ pub(crate) fn as_copy(state: &EntityState) -> EntityState {
         }
     }
     copy
+}
+
+/// Whether this state is a prefab instance's root, which is what a `PrefabMember` may point at.
+pub(crate) fn is_instance_root(state: &EntityState) -> bool {
+    let instance = std::any::type_name::<kooch_ecs::prefab_instance::PrefabInstance>();
+    state.components.iter().any(|c| c.name == instance)
+}
+
+/// Points `entity`'s `PrefabMember` at itself: a copy belongs to its own instance, never to the one
+/// it was copied from, whose root the captured handle names.
+pub(crate) fn reroot_prefab(resources: &mut Resources, entity: Entity) {
+    use kooch_ecs::prefab_instance::{PrefabInstance, PrefabMember};
+
+    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
+        return;
+    };
+    let root = registry
+        .get_cpu::<PrefabInstance>()
+        .is_some_and(|instances| instances.get(entity).is_some());
+    match root {
+        true => {
+            if let Some(members) = registry.get_cpu_mut::<PrefabMember>()
+                && let Some(member) = members.get_mut(entity)
+            {
+                member.root = entity;
+            }
+        }
+        // Not a root, so it is a member of nothing until its instance is copied whole (#1292).
+        false => {
+            if let Some(members) = registry.get_cpu_mut::<PrefabMember>() {
+                members.remove(entity);
+            }
+        }
+    }
 }
 
 /// The same state with the entity's identity left out: a second entity carrying the first's
