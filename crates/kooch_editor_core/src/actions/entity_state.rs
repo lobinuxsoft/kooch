@@ -111,12 +111,9 @@ pub(crate) fn copy_name(state: &EntityState) -> Option<String> {
 /// The same entity, named as a copy — in its `Name` component too.
 pub(crate) fn as_copy(state: &EntityState) -> EntityState {
     let name = copy_name(state);
-    let mut copy = state.clone();
-    // 🔴 A copy carries what the entity IS, never who it BELONGS TO.
+    // 🔴 A copy carries what the entity IS, never who it BELONGS TO — nor who it IS.
+    let mut copy = without_identity(state);
     for bookkeeping in [
-        // 🔴 Identity above all: a copy carrying the original's id IS the original to every
-        // reference in the project, and the child of one lands under whichever the loader yields.
-        std::any::type_name::<kooch_ecs::PersistentId>(),
         std::any::type_name::<kooch_ecs::SceneMember>(),
         std::any::type_name::<kooch_ecs::prefab_instance::PrefabMember>(),
         std::any::type_name::<kooch_ecs::prefab_instance::PrefabInstance>(),
@@ -138,6 +135,16 @@ pub(crate) fn as_copy(state: &EntityState) -> EntityState {
         }
     }
     copy
+}
+
+/// The same state with the entity's identity left out: a second entity carrying the first's
+/// [`PersistentId`](kooch_ecs::PersistentId) IS the first to every reference in the project, and a
+/// child of one lands under whichever the loader yields (#1287).
+pub(crate) fn without_identity(state: &EntityState) -> EntityState {
+    let mut fresh = state.clone();
+    let identity = std::any::type_name::<kooch_ecs::PersistentId>();
+    fresh.components.retain(|c| c.name != identity);
+    fresh
 }
 
 /// Writes `state` onto an entity that already exists, in the local world.

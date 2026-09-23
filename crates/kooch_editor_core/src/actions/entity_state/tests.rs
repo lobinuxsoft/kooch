@@ -215,3 +215,23 @@ fn a_copy_carries_no_prefab_bookkeeping() {
     let names: Vec<&str> = copy.components.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names, vec![std::any::type_name::<Transform>()]);
 }
+
+/// 🔴 #1287: a paste restored the original's identity onto a second entity, and every reference to
+/// it then pointed at whichever the loader yielded.
+#[test]
+fn a_copy_leaves_the_identity_behind() {
+    let identity = std::any::type_name::<kooch_ecs::PersistentId>();
+    let state = EntityState {
+        name: Some("Planet".into()),
+        components: vec![super::ComponentState {
+            name: identity.to_owned(),
+            fields: vec![("id".to_owned(), ReflectValue::U64(1))],
+        }],
+    };
+    for copy in [as_copy(&state), without_identity(&state)] {
+        assert!(
+            copy.components.iter().all(|c| c.name != identity),
+            "a copy kept the original's id",
+        );
+    }
+}
