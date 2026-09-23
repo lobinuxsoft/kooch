@@ -98,7 +98,8 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
                     // A half-authored entity gets defaults rather than a
                     // panic: a unit sphere at the origin still falls, and
                     // falling is a better bug report than a crash.
-                    let collider = collider_or_default(colliders, entity);
+                    let collider =
+                        as_region(registry, entity, collider_or_default(colliders, entity));
                     let transform = transforms
                         .and_then(|s| s.get(entity))
                         .copied()
@@ -136,6 +137,29 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
     Some(authored)
 }
 
+/// A collider on a [`PostProcessVolume`] overlaps and reports, whatever the author ticked.
+///
+/// 🔴 The three boxes a region needs — a body to exist in the solver, `sensor` to overlap instead
+/// of push, `collision_events` to be heard — are implied by the component being there, and each
+/// fails SILENTLY when it is missing. `regions` gives them to a volume with no body of its own;
+/// this gives them to one that has a body, which used to keep its collider exactly as authored: a
+/// solid box the solver never reported, so every volume in a built game was dead while the editor,
+/// which measures without a solver, showed it working (#1298).
+fn as_region(registry: &ComponentRegistry, entity: Entity, collider: Collider) -> Collider {
+    let volume = registry
+        .get_cpu::<kooch_ecs::post_process_volume::PostProcessVolume>()
+        .and_then(|volumes| volumes.get(entity))
+        .filter(|volume| volume.enabled && !volume.global);
+    match volume {
+        Some(_) => Collider {
+            sensor: true,
+            collision_events: true,
+            ..collider
+        },
+        None => collider,
+    }
+}
+
 /// The regions that author themselves (#1222): a [`PostProcessVolume`] with a collider is a fixed
 /// sensor that reports, whatever its collider says and whether or not anyone added a body.
 ///
@@ -164,7 +188,8 @@ fn regions(
         .filter(|(entity, volume)| {
             !volume.global
                 && volume.enabled
-                // Whoever has a body of their own is authored above, with what they asked for.
+                // Whoever has a body of their own is authored above — with `as_region` applied to
+                // its collider, so it reports there too.
                 && !authored.iter().any(|already| already.entity == **entity)
         })
         .filter_map(|(&entity, _)| {
