@@ -33,6 +33,7 @@ pub mod launch_screen;
 pub(crate) mod layout;
 pub(crate) mod menu_bar;
 pub(crate) mod numeric;
+pub(crate) mod palette;
 pub(crate) mod panels;
 /// Re-exported for `capture_remote`, which is a client of the same
 /// `puffin_http::Client` the panel drives and needs the same guard

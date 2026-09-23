@@ -239,7 +239,7 @@ fn unowned_entries(
 }
 
 /// The colour of a scene that has edits not on disk.
-const DIRTY_SCENE: egui::Color32 = egui::Color32::from_rgb(210, 150, 60);
+const DIRTY_SCENE: egui::Color32 = crate::palette::state::DIRTY;
 
 /// The right-click menu on a scene's row.
 fn scene_context_menu(

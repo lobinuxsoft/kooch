@@ -162,10 +162,17 @@ pub(super) fn render_leaf(
     };
     // The icon says which one; the colour is what makes it readable without hunting for the icon.
     // Both, because a row is scanned by shape at a glance and read by name when you stop on it.
-    let label = match is_main_scene {
-        true => egui::RichText::new(format!("{icon} {}", leaf.name))
-            .color(ui.visuals().selection.bg_fill),
-        false => egui::RichText::new(format!("{icon} {}", leaf.name)),
+    // A state beats a family: the scene the game starts in is green wherever it sits.
+    let colour = match is_main_scene {
+        true => Some(crate::palette::state::MAIN_SCENE),
+        false => match &leaf.asset {
+            Some((_, type_name)) => crate::palette::of_type(type_name),
+            None => crate::palette::of_extension(&leaf.name),
+        },
+    };
+    let label = match colour {
+        Some(colour) => egui::RichText::new(format!("{icon} {}", leaf.name)).color(colour),
+        None => egui::RichText::new(format!("{icon} {}", leaf.name)),
     };
     let resp = SelectableRow::new(label)
         .selected(is_cursor)
