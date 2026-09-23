@@ -151,5 +151,8 @@ fn a_creeping_goal_is_followed() {
         value = chase.step(value, goal, 1.0 / 60.0, 0.2);
     }
     // Trailing a moving goal by at most its speed times the duration: 3e-4 m/s over 0.2 s.
-    assert!((goal - value).abs() < 6e-5, "left behind: {value} vs {goal}");
+    assert!(
+        (goal - value).abs() < 6e-5,
+        "left behind: {value} vs {goal}"
+    );
 }
