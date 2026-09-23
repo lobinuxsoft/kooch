@@ -106,6 +106,6 @@ fn run_on(dir: &Path, preset: &BuildPreset, platform: Platform) -> Result<Packag
     )
 }
 
-mod closure;
 mod layout;
 mod shipping;
+mod closure;

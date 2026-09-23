@@ -24,10 +24,7 @@ fn an_unlimited_point_source_draws_only_arrows() {
         ..Default::default()
     };
     let reach = reach(&draw(&PointGravityVisualizer, &field, Mat4::IDENTITY));
-    assert!(
-        (reach - ARROW).abs() < 1e-3,
-        "reached {reach}, wanted {ARROW}"
-    );
+    assert!((reach - ARROW).abs() < 1e-3, "reached {reach}, wanted {ARROW}");
 }
 
 /// A planet pulls inward. If the arrows pointed out it would read as a
