@@ -14,7 +14,7 @@ use kooch_ecs::perspective_camera::PerspectiveCamera;
 use kooch_ecs::transform::Transform;
 
 use crate::brain::CameraBrain;
-use crate::framing::{CameraFraming, Lens, Tracked};
+use crate::framing::{CameraFraming, Framed, Lens, Tracked};
 use crate::lookahead::{CameraLookahead, Lead, Leads};
 use crate::occlusion::Arms;
 use crate::target::CameraTarget;
@@ -22,7 +22,6 @@ use crate::virtual_camera::{
     Damping, INACTIVE_ALWAYS, LOOK_AT_SIMPLE, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera,
     seed_reference, transported,
 };
-use kooch_ecs::tween::Chase;
 
 /// Which way is up for a virtual camera, from its `up_mode`. Not the target's rotation: a rolling
 /// ball's up points wherever the last bounce left it.
@@ -412,14 +411,11 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
         // framing puts it. A first framed step starts on the target: centred when it goes live.
         let (followed, aim) = match framing {
             Some(framing) => {
-                let (from, mut chase) = carried_tracked
-                    .of(entity)
-                    .unwrap_or((framed, Chase::at(framed)));
-                let depth = (from - current.position).dot(current.rotation * -Vec3::Z);
+                let mut state = carried_tracked.of(entity).unwrap_or(Framed::at(framed));
+                let depth = (state.point() - current.position).dot(current.rotation * -Vec3::Z);
                 let depth = if depth > 0.01 { depth } else { vcam.distance };
-                let point =
-                    framing.follow(&mut chase, from, framed, current.rotation, depth, lens, dt);
-                tracked.set(entity, point, chase);
+                let point = framing.follow(&mut state, framed, current.rotation, depth, lens, dt);
+                tracked.set(entity, state);
                 (
                     point,
                     Some(framing.aim(point, current.rotation, depth, lens)),

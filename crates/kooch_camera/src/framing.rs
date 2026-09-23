@@ -95,14 +95,15 @@ impl Lens {
 }
 
 impl CameraFraming {
-    /// Where the rig follows this step: `tracked` tweened towards the point that puts `target` on
-    /// the dead zone's edge, then dragged so the target never leaves the soft zone. Measured on the
-    /// screen of a camera turned `rotation` at `depth`. Depth has no zone and is followed at once.
-    #[allow(clippy::too_many_arguments)]
+    /// Where the rig follows this step. Two terms, both continuous: the target's own motion, taken
+    /// on as the target crosses the soft zone, and a tween closing what is left of the excess.
+    ///
+    /// 🔴 Without the first term the camera never reaches the target's speed, hits the soft zone's
+    /// wall and doubles its speed in one step — the stutter of #1288. Weighted by how deep into the
+    /// soft zone the target is, it arrives at the wall already travelling alongside it.
     pub fn follow(
         &self,
-        chase: &mut Chase<Vec3>,
-        tracked: Vec3,
+        state: &mut Framed,
         target: Vec3,
         rotation: Quat,
         depth: f32,
@@ -111,19 +112,54 @@ impl CameraFraming {
     ) -> Vec3 {
         let (right, up, forward) = (rotation * Vec3::X, rotation * Vec3::Y, rotation * -Vec3::Z);
         let span = lens.span(depth);
-        // How far past a zone of `size` the target sits from `point`, in metres on screen.
-        let past = |point: Vec3, size: Vec2| {
+        let tracked = state.point;
+        let soft = self.soft_zone.max(self.dead_zone);
+
+        // Where the target sits, as a fraction of the screen from the tracked point.
+        let on_screen = |point: Vec3| {
             let offset = target - point;
-            let on_screen = Vec2::new(offset.dot(right) / span.x, offset.dot(up) / span.y);
+            Vec2::new(offset.dot(right) / span.x, offset.dot(up) / span.y)
+        };
+        // How far past a zone of `size` it sits, in metres on screen.
+        let past = |point: Vec3, size: Vec2| {
+            let at = on_screen(point);
             let beyond =
                 |at: f32, size: f32| at.signum() * (at.abs() - size.max(0.0) * 0.5).max(0.0);
-            let excess = Vec2::new(beyond(on_screen.x, size.x), beyond(on_screen.y, size.y)) * span;
+            let excess = Vec2::new(beyond(at.x, size.x), beyond(at.y, size.y)) * span;
             right * excess.x + up * excess.y
         };
-        let goal = tracked + past(tracked, self.dead_zone);
-        let point = chase.step(tracked, goal, dt, self.soft_duration);
-        let point = point + past(point, self.soft_zone.max(self.dead_zone));
-        point + forward * (target - point).dot(forward)
+        // 0 on the dead zone's edge, 1 on the soft zone's: how much of the target's motion the
+        // camera takes on, per screen axis.
+        let carried = |at: f32, dead: f32, soft: f32| {
+            let band = (soft - dead).max(0.0) * 0.5;
+            match band > 0.0 {
+                true => ((at.abs() - dead.max(0.0) * 0.5) / band).clamp(0.0, 1.0),
+                false => 1.0,
+            }
+        };
+
+        let at = on_screen(tracked);
+        let share = Vec2::new(
+            carried(at.x, self.dead_zone.x, soft.x),
+            carried(at.y, self.dead_zone.y, soft.y),
+        );
+        let moved = target - state.last;
+        state.last = target;
+        // A step wider than the soft band is a teleport, not a speed: the wall below places the
+        // point for it rather than the camera flying there.
+        let band = ((soft - self.dead_zone) * 0.5 * span).max(Vec2::ZERO);
+        let carry = |along: Vec3, share: f32, band: f32| {
+            along * moved.dot(along).clamp(-band, band) * share
+        };
+        let led = tracked + carry(right, share.x, band.x) + carry(up, share.y, band.y);
+
+        // The wall, if the first term was not enough: it moves where the tween STARTS, never what
+        // it returned — a point shoved afterwards is one the tween pulls back next step.
+        let from = led + past(led, soft);
+        let goal = from + past(from, self.dead_zone);
+        let point = chase_step(&mut state.chase, from, goal, dt, self.soft_duration);
+        state.point = point + forward * (target - point).dot(forward);
+        state.point
     }
 
     /// The point to look at so `tracked` lands on [`screen`](Self::screen).
@@ -133,21 +169,51 @@ impl CameraFraming {
     }
 }
 
+/// One vcam's framing in flight: where its rig follows, the tween closing the excess, and where the
+/// target was last step.
+#[derive(Debug, Clone, Copy)]
+pub struct Framed {
+    point: Vec3,
+    chase: Chase<Vec3>,
+    last: Vec3,
+}
+
+impl Framed {
+    /// Where the rig is following.
+    pub fn point(&self) -> Vec3 {
+        self.point
+    }
+
+    /// Framed on a target that has not moved yet.
+    pub fn at(target: Vec3) -> Self {
+        Self {
+            point: target,
+            chase: Chase::at(target),
+            last: target,
+        }
+    }
+}
+
+/// `Chase::step`, named so the framing reads as one expression.
+fn chase_step(chase: &mut Chase<Vec3>, from: Vec3, goal: Vec3, dt: f32, duration: f32) -> Vec3 {
+    chase.step(from, goal, dt, duration)
+}
+
 /// Every framed vcam's tracked point, carried between steps. Rebuilt from the vcams seen each step,
 /// so a despawned one leaves nothing behind.
 #[derive(Debug, Clone, Default)]
 pub struct Tracked {
-    points: HashMap<Entity, (Vec3, Chase<Vec3>)>,
+    points: HashMap<Entity, Framed>,
 }
 
 impl Tracked {
-    /// Where this vcam's rig was following and its tween, or `None` on its first framed step.
-    pub fn of(&self, entity: Entity) -> Option<(Vec3, Chase<Vec3>)> {
+    /// This vcam's framing, or `None` on its first framed step.
+    pub fn of(&self, entity: Entity) -> Option<Framed> {
         self.points.get(&entity).copied()
     }
 
-    pub fn set(&mut self, entity: Entity, point: Vec3, chase: Chase<Vec3>) {
-        self.points.insert(entity, (point, chase));
+    pub fn set(&mut self, entity: Entity, framed: Framed) {
+        self.points.insert(entity, framed);
     }
 }
 

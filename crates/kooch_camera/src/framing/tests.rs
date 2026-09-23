@@ -18,8 +18,7 @@ fn framing() -> CameraFraming {
 /// Steps the tracked point once, the camera looking down -Z from 1 m away.
 fn step(framing: &CameraFraming, tracked: Vec3, target: Vec3) -> Vec3 {
     framing.follow(
-        &mut Chase::at(tracked),
-        tracked,
+        &mut Framed::at(tracked),
         target,
         Quat::IDENTITY,
         1.0,
@@ -105,19 +104,19 @@ fn the_soft_zone_arrives_on_time() {
     };
     let target = Vec3::new(0.4, 0.0, 0.0);
     for fps in [30.0_f32, 60.0, 144.0] {
+        // Walked there rather than teleported: a target that appears somewhere is not a speed, and
+        // the arrival is measured from the moment it stops.
         let run = |seconds: f32| {
-            let mut chase = Chase::at(Vec3::ZERO);
+            let mut state = Framed::at(Vec3::ZERO);
             let mut tracked = Vec3::ZERO;
+            let walk = (0.25 * fps).round() as usize;
+            for step in 0..walk {
+                let at = target * (step as f32 + 1.0) / walk as f32;
+                tracked = framing.follow(&mut state, at, Quat::IDENTITY, 1.0, lens(), 1.0 / fps);
+            }
             for _ in 0..(seconds * fps).round() as usize {
-                tracked = framing.follow(
-                    &mut chase,
-                    tracked,
-                    target,
-                    Quat::IDENTITY,
-                    1.0,
-                    lens(),
-                    1.0 / fps,
-                );
+                tracked =
+                    framing.follow(&mut state, target, Quat::IDENTITY, 1.0, lens(), 1.0 / fps);
             }
             tracked.x
         };

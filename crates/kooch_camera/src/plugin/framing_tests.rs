@@ -137,3 +137,45 @@ fn a_running_target_is_led() {
         "{position} for a target at {x}"
     );
 }
+
+/// 🔴 #1288: crossing the soft zone's edge doubled the camera's speed in one step, because the
+/// tween never reached the target's and hit the wall. Every step's motion is now within a factor of
+/// the one before it, at a speed that reaches the wall and one that does not.
+#[test]
+fn the_camera_never_steps() {
+    for speed in [6.0_f32, 40.0] {
+        let (mut resources, vcam, target) = world();
+        {
+            let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+            let cam = registry
+                .get_cpu_mut::<VirtualCamera>()
+                .unwrap()
+                .get_mut(vcam)
+                .unwrap();
+            cam.follow = crate::FOLLOW_THIRD_PERSON;
+            cam.distance = 8.0;
+            cam.pitch = 18.0;
+        }
+        let (dt, radius) = (1.0 / 60.0, 8.0);
+        let (mut last, mut previous) = (Vec3::ZERO, 0.0_f32);
+        for step in 0..240 {
+            let angle = speed * dt * step as f32 / radius;
+            place(
+                &mut resources,
+                target,
+                Vec3::new(radius * angle.cos(), 0.0, radius * angle.sin()),
+            );
+            drive_virtual_cameras(&mut resources);
+            let (position, _) = pose(&resources, vcam);
+            let delta = (position - last).length();
+            if step > 10 {
+                assert!(
+                    delta < previous * 1.6 + 1e-3 && delta > previous * 0.6 - 1e-3,
+                    "step {step} at {speed} m/s moved {delta:.4} after {previous:.4}",
+                );
+            }
+            previous = delta;
+            last = position;
+        }
+    }
+}
