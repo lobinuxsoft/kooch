@@ -25,7 +25,11 @@ pub(crate) struct EntityState {
 
 /// The type names never captured, whatever the entity is carrying.
 fn is_editor_only(type_name: &str) -> bool {
+    // `Children` is derived from `Parent` by a system, so a captured one names the ORIGINAL's
+    // children: a copy claiming them until the next sync, and a scene saved before it holds a tree
+    // with two parents for one child.
     type_name == std::any::type_name::<Parent>()
+        || type_name == std::any::type_name::<kooch_ecs::hierarchy::Children>()
         || type_name == std::any::type_name::<crate::remote_mirror::MirrorEntity>()
 }
 
