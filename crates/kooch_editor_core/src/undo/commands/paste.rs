@@ -3,16 +3,15 @@
 use kooch_core::resource::Resources;
 use kooch_ecs::allocator::EntityAllocator;
 use kooch_ecs::archetype_registry::ArchetypeRegistry;
-use kooch_ecs::commands::Commands;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 
-use crate::actions::entity_state::{self, EntityState};
+use crate::actions::entity_state::{self, CapturedTree};
 use crate::undo::EditorCommand;
 
 pub(crate) struct PasteCommand {
     /// What to build, captured at copy time.
-    states: Vec<EntityState>,
+    states: Vec<CapturedTree>,
     /// What the last execute built, so undo knows what to take away.
     pasted: Vec<Entity>,
     /// Which scene the copies land in.
@@ -45,28 +44,16 @@ impl EditorCommand for PasteCommand {
         // scene every time it is asked, so resolving it inside the loop would give a clipboard of
         // five entities five scenes holding one each.
         let scene = super::place::resolve_scene(resources, self.into);
-        for state in &self.states {
-            let mut commands = resources.remove::<Commands>().expect("Commands not found");
-            let entity = commands.spawn(resources).id();
-            commands.apply(resources);
-            resources.insert(commands);
-
-            // A paste is a new entity, never a second copy of the original's identity (#1287) —
-            // and it keeps following the prefab it came from, as its own instance (#1293).
-            entity_state::restore_local(resources, entity, &entity_state::as_copy(state));
-            entity_state::reroot_prefab(resources, entity);
-            // The name is part of the copy, so the paste is not a second
-            // entity called the same thing.
-            if let Some(name) = entity_state::copy_name(state) {
-                rename(resources, entity, &name);
+        for tree in &self.states {
+            let built = entity_state::paste_tree_local(resources, tree, None);
+            for &entity in &built {
+                // Without this the copy carries no `SceneMember`, lands under "Unsaved", and is
+                // adopted by whichever scene happens to be active at the next save.
+                if let Some(scene) = scene {
+                    super::place::adopt(resources, entity, scene);
+                }
             }
-            // Without this the copy carries no `SceneMember`, lands under "Unsaved", and is adopted
-            // by whichever scene happens to be active at the next save — which is why pasting into
-            // a scene used to look like it created a new one.
-            if let Some(scene) = scene {
-                super::place::adopt(resources, entity, scene);
-            }
-            self.pasted.push(entity);
+            self.pasted.extend(built);
         }
     }
 
@@ -86,20 +73,5 @@ impl EditorCommand for PasteCommand {
 
     fn description(&self) -> &str {
         "Paste"
-    }
-}
-
-/// Writes the `Name` component the copy was given.
-fn rename(resources: &mut Resources, entity: Entity, name: &str) {
-    let type_id = std::any::TypeId::of::<kooch_ecs::name::Name>();
-    if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Err(e) = registry.reflect_set_field(
-            &type_id,
-            entity,
-            "value",
-            kooch_ecs::reflect::ReflectValue::String(name.to_owned()),
-        )
-    {
-        tracing::debug!("the pasted entity kept its source's name: {e}");
     }
 }

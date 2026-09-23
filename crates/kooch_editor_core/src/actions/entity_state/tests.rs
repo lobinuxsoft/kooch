@@ -304,7 +304,8 @@ fn a_duplicate_belongs_to_itself() {
         );
     }
 
-    super::reroot_prefab(&mut resources, copy);
+    let copies = std::collections::HashMap::from([(original, copy)]);
+    super::reroot_prefabs(&mut resources, &copies);
 
     let member = resources
         .get::<ComponentRegistry>()
@@ -316,4 +317,104 @@ fn a_duplicate_belongs_to_itself() {
         member, copy,
         "the copy still belongs to the original's instance"
     );
+}
+
+// ---- copying a subtree (#1292) ------------------------------------
+
+/// A world with `Children` registered and a parent → child → grandchild chain.
+fn family(resources: &mut Resources) -> (Entity, Entity, Entity) {
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.register_cpu_reflected::<kooch_ecs::hierarchy::Children>();
+    }
+    let (root, child, grandchild) = (spawn(resources), spawn(resources), spawn(resources));
+    for entity in [root, child, grandchild] {
+        add::<Name>(resources, entity);
+        add::<Transform>(resources, entity);
+    }
+    kooch_ecs::hierarchy::reparent(resources, child, Some(root));
+    kooch_ecs::hierarchy::reparent(resources, grandchild, Some(child));
+    (root, child, grandchild)
+}
+
+#[test]
+fn a_capture_carries_the_whole_tree() {
+    let mut resources = world();
+    let (root, child, grandchild) = family(&mut resources);
+    let tree = capture_tree(&resources, root);
+
+    let sources: Vec<Entity> = tree.iter().map(|captured| captured.source).collect();
+    assert_eq!(sources, vec![root, child, grandchild]);
+    assert_eq!(tree[1].parent, Some(0), "the child hangs from the root");
+    assert_eq!(tree[2].parent, Some(1), "and the grandchild from the child");
+}
+
+/// 🔴 #1292: duplicating an entity used to copy it alone, so a character arrived without its
+/// camera and nothing said so.
+#[test]
+fn a_pasted_tree_has_the_same_shape() {
+    let mut resources = world();
+    let (root, _, _) = family(&mut resources);
+    let tree = capture_tree(&resources, root);
+
+    let copies = paste_tree_local(&mut resources, &tree, None);
+    assert_eq!(copies.len(), 3, "every entity of the subtree was built");
+    assert_eq!(parent_of(&resources, copies[1]), Some(copies[0]));
+    assert_eq!(parent_of(&resources, copies[2]), Some(copies[1]));
+    assert!(
+        copies
+            .iter()
+            .all(|copy| !tree.iter().any(|c| c.source == *copy)),
+        "the copies are new entities",
+    );
+}
+
+/// A reference inside the subtree points at the copy; one out of it is left where it was.
+#[test]
+fn references_follow_the_copy() {
+    use kooch_ecs::reflect::EntityRef;
+
+    let mut resources = world();
+    let (root, child, _) = family(&mut resources);
+    let outside = spawn(&mut resources);
+    let tree = capture_tree(&resources, root);
+    let copies = std::collections::HashMap::from([(child, Entity::new(99, 0))]);
+
+    let inward = EntityState {
+        name: None,
+        components: vec![ComponentState {
+            name: "Link".to_owned(),
+            fields: vec![
+                (
+                    "near".to_owned(),
+                    ReflectValue::EntityRef(Some(EntityRef::live(child))),
+                ),
+                (
+                    "far".to_owned(),
+                    ReflectValue::EntityRef(Some(EntityRef::live(outside))),
+                ),
+            ],
+        }],
+    };
+    let moved = remapped(&inward, &copies);
+    let fields = &moved.components[0].fields;
+    assert_eq!(
+        fields[0].1,
+        ReflectValue::EntityRef(Some(EntityRef::live(Entity::new(99, 0)))),
+        "a reference into the subtree stayed on the original",
+    );
+    assert_eq!(
+        fields[1].1,
+        ReflectValue::EntityRef(Some(EntityRef::live(outside))),
+        "a reference out of it was re-pointed",
+    );
+    assert_eq!(tree.len(), 3);
+}
+
+/// Copying a parent and its child selects one tree, not two: the child travels with the parent.
+#[test]
+fn a_selected_child_is_not_copied_twice() {
+    let mut resources = world();
+    let (root, child, grandchild) = family(&mut resources);
+    assert_eq!(roots_of(&resources, &[root, child, grandchild]), vec![root]);
+    assert_eq!(roots_of(&resources, &[child, grandchild]), vec![child]);
 }

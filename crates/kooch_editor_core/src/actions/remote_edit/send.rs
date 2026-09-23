@@ -95,13 +95,8 @@ pub(super) fn send(
                 crate::actions::SpawnTarget::ChildOf(_) => None,
                 crate::actions::SpawnTarget::NewScene => Some(client.new_scene().map_err(map_err)?),
             };
-            for state in &states {
-                created.push(build(
-                    &client,
-                    mirror,
-                    &crate::actions::entity_state::as_copy(state),
-                    scene,
-                )?);
+            for tree in &states {
+                created.extend(build_tree(&client, mirror, tree, scene, None)?);
             }
             Ok(())
         }

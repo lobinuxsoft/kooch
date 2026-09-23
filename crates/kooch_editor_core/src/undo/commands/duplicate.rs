@@ -1,8 +1,4 @@
-//! [`DuplicateCommand`] — clones a source entity's component set into a fresh entity, preserving
-//! every reflected field value.
-
-use std::any::TypeId;
-use std::collections::BTreeSet;
+//! [`DuplicateCommand`] — copies an entity and everything under it, beside the original.
 
 use kooch_core::resource::Resources;
 use kooch_ecs::allocator::EntityAllocator;
@@ -10,137 +6,56 @@ use kooch_ecs::archetype_registry::ArchetypeRegistry;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 
-use crate::undo::{ComponentSnapshot, EditorCommand};
+use crate::actions::entity_state::{self, CapturedTree};
+use crate::undo::EditorCommand;
 
 pub(crate) struct DuplicateCommand {
-    /// Source entity to copy from. Resolved to a list of components +
-    /// snapshots at construction time so the undo history is stable
-    /// even if the source changes later.
-    component_types: BTreeSet<TypeId>,
-    snapshots: Vec<ComponentSnapshot>,
-    /// Destination entity, populated on the first execute. Reused on
-    /// redo to keep undo history coherent.
-    duplicate: Option<Entity>,
+    /// The subtree to build, read at construction time so the history is stable even if the source
+    /// changes later.
+    tree: CapturedTree,
+    /// Where the source sat, so the copy is its sibling rather than a root.
+    parent: Option<Entity>,
+    /// What the last execute built, so undo knows what to take away.
+    copies: Vec<Entity>,
 }
 
 impl DuplicateCommand {
     pub fn new(resources: &Resources, source: Entity) -> Self {
-        let mut component_types = BTreeSet::new();
-        let mut snapshots = Vec::new();
-
-        if let Some(archetypes) = resources.get::<ArchetypeRegistry>() {
-            if let Some(arch_id) = archetypes.entity_archetype(source) {
-                if let Some(arch) = archetypes.get(arch_id) {
-                    component_types = arch.components().clone();
-                }
-            }
-        }
-
-        // A duplicate is a new entity: its identity is its own (#1287) and the tree is derived from
-        // `Parent` by a system. The prefab it came from stays — the copy keeps following it, and
-        // `reroot_prefab` points its membership at itself rather than the original's root.
-        for borrowed in [
-            TypeId::of::<kooch_ecs::PersistentId>(),
-            TypeId::of::<kooch_ecs::hierarchy::Children>(),
-        ] {
-            component_types.remove(&borrowed);
-        }
-
-        if let Some(registry) = resources.get::<ComponentRegistry>() {
-            for &type_id in &component_types {
-                if let Some(fields) = registry.reflect_get_fields(&type_id, source) {
-                    snapshots.push(ComponentSnapshot { type_id, fields });
-                }
-            }
-        }
-
         Self {
-            component_types,
-            snapshots,
-            duplicate: None,
+            tree: entity_state::capture_tree(resources, source),
+            parent: entity_state::parent_of(resources, source),
+            copies: Vec::new(),
         }
-    }
-
-    fn do_duplicate(&mut self, resources: &mut Resources) {
-        let entity = if let Some(existing) = self.duplicate {
-            // Redo path: revive the same handle so the undo history
-            // remains stable across undo/redo cycles.
-            let revived = resources
-                .get_mut::<EntityAllocator>()
-                .is_some_and(|alloc| alloc.revive(existing));
-            if !revived {
-                tracing::warn!(
-                    "redo Duplicate: failed to revive entity {existing}; allocating fresh",
-                );
-                self.allocate_fresh(resources)
-            } else {
-                if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                    archetypes.register_entity(existing, kooch_ecs::archetype::ArchetypeId::EMPTY);
-                }
-                existing
-            }
-        } else {
-            self.allocate_fresh(resources)
-        };
-        self.duplicate = Some(entity);
-
-        // Add each component type. insert_default_reflected covers reflected types; non-reflected
-        // types are silently skipped (matches SpawnCommand's contract). Archetype is advanced after
-        // each successful insertion.
-        for type_id in &self.component_types {
-            let inserted = resources
-                .get_mut::<ComponentRegistry>()
-                .is_some_and(|registry| registry.insert_default_reflected(type_id, entity));
-            if inserted {
-                if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                    if let Some(current) = archetypes.entity_archetype(entity) {
-                        let new_arch = archetypes.archetype_after_add_dynamic(current, *type_id);
-                        archetypes.register_entity(entity, new_arch);
-                    }
-                }
-            }
-        }
-
-        // Restore field values from the source snapshots.
-        for snapshot in &self.snapshots {
-            if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-                for (field, value) in &snapshot.fields {
-                    if let Err(e) =
-                        registry.reflect_set_field(&snapshot.type_id, entity, field, value.clone())
-                    {
-                        tracing::warn!("duplicate: failed to restore field '{field}': {e}",);
-                    }
-                }
-            }
-        }
-
-        crate::actions::entity_state::reroot_prefab(resources, entity);
-    }
-
-    fn allocate_fresh(&self, resources: &mut Resources) -> Entity {
-        use kooch_ecs::commands::Commands;
-        let mut commands = resources.remove::<Commands>().expect("Commands not found");
-        let entity = commands.spawn(resources).id();
-        resources.insert(commands);
-        entity
     }
 }
 
 impl EditorCommand for DuplicateCommand {
     fn execute(&mut self, resources: &mut Resources) {
-        self.do_duplicate(resources);
+        self.copies.clear();
+        self.copies = entity_state::paste_tree_local(resources, &self.tree, self.parent);
+        // The copy belongs where the original does, or it lands under "Unsaved".
+        if let Some(scene) = self
+            .tree
+            .first()
+            .and_then(|captured| entity_state::scene_of(resources, captured.source))
+        {
+            for &entity in &self.copies {
+                super::place::adopt(resources, entity, scene);
+            }
+        }
     }
 
     fn undo(&mut self, resources: &mut Resources) {
-        let Some(entity) = self.duplicate else { return };
-        if let Some(alloc) = resources.get_mut::<EntityAllocator>() {
-            alloc.despawn(entity);
-        }
-        if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-            archetypes.unregister_entity(entity);
-        }
-        if let Some(components) = resources.get_mut::<ComponentRegistry>() {
-            components.remove_entity(entity);
+        for entity in self.copies.drain(..) {
+            if let Some(alloc) = resources.get_mut::<EntityAllocator>() {
+                alloc.despawn(entity);
+            }
+            if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
+                archetypes.unregister_entity(entity);
+            }
+            if let Some(components) = resources.get_mut::<ComponentRegistry>() {
+                components.remove_entity(entity);
+            }
         }
     }
 

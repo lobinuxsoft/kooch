@@ -225,14 +225,18 @@ pub(super) fn duplicate(
         .remote_of(entity)
         .ok_or_else(|| "entity not in mirror".to_owned())?;
 
-    let state = crate::actions::entity_state::as_copy(&crate::actions::entity_state::capture(
-        resources, entity,
-    ));
-    let copy = build(client, mirror, &state, None)?;
+    // The whole subtree: an entity with children is one thing to an author (#1292).
+    let tree = crate::actions::entity_state::capture_tree(resources, entity);
+    let parent = crate::actions::entity_state::parent_of(resources, entity)
+        .and_then(|parent| mirror.remote_of(parent));
+    let copies = build_tree(client, mirror, &tree, None, parent)?;
     tracing::info!(
         target: "kooch_editor_core::remote_edit::duplicate",
-        components = state.components.len(),
-        "duplicated an entity on the project",
+        entities = copies.len(),
+        "duplicated a subtree on the project",
     );
-    Ok(copy)
+    copies
+        .first()
+        .copied()
+        .ok_or_else(|| "the copy built nothing".to_owned())
 }

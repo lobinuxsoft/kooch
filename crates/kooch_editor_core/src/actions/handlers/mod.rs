@@ -177,9 +177,11 @@ fn handle_copy(resources: &mut Resources, entities: &[kooch_ecs::entity::Entity]
     if entities.is_empty() {
         return;
     }
-    let states: Vec<_> = entities
+    // A descendant of another copied entity travels with it; copying it twice would paste it twice.
+    let roots = crate::actions::entity_state::roots_of(resources, entities);
+    let states: Vec<_> = roots
         .iter()
-        .map(|entity| crate::actions::entity_state::capture(resources, *entity))
+        .map(|entity| crate::actions::entity_state::capture_tree(resources, *entity))
         .collect();
     if resources
         .get::<crate::clipboard::EntityClipboard>()
