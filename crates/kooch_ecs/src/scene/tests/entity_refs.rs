@@ -319,3 +319,109 @@ fn saving_a_document_holding_a_live_handle_is_refused() {
     }
     assert!(!path.exists(), "nothing should have been written");
 }
+
+// ---- clashing identities (#1287) ----------------------------------
+
+/// The id every entity in `document` carries, by entity name.
+fn ids_in(document: &SceneDocument) -> Vec<(String, u64)> {
+    document
+        .entities
+        .iter()
+        .flat_map(|entity| {
+            entity
+                .components
+                .iter()
+                .filter(|c| c.type_name.ends_with("PersistentId"))
+                .filter_map(|c| c.fields.iter().find(|(name, _)| name == "id"))
+                .filter_map(move |(_, value)| match value {
+                    ReflectValue::U64(id) => Some((entity.name.clone(), *id)),
+                    _ => None,
+                })
+        })
+        .collect()
+}
+
+/// Gives every entity in `document` the same id, as a scene saved by a session that reissued one.
+fn clash_every_id(document: &mut SceneDocument, id: u64) {
+    let field = vec![("id".to_owned(), ReflectValue::U64(id))];
+    for entity in &mut document.entities {
+        match entity
+            .components
+            .iter_mut()
+            .find(|c| c.type_name.ends_with("PersistentId"))
+        {
+            Some(component) => component.fields = field.clone(),
+            None => entity.components.push(crate::scene::ComponentDescription {
+                type_name: std::any::type_name::<PersistentId>().to_owned(),
+                fields: field.clone(),
+            }),
+        }
+    }
+}
+
+fn loaded(document: &SceneDocument) -> Resources {
+    let mut resources = setup_resources();
+    resources
+        .get_mut::<ComponentRegistry>()
+        .unwrap()
+        .register_cpu_reflected::<Link>();
+    sync_scene_to_ecs(document, &mut resources).expect("loads");
+    resources
+}
+
+fn live_ids(resources: &Resources) -> Vec<u64> {
+    let mut ids: Vec<u64> = resources
+        .get::<ComponentRegistry>()
+        .and_then(|r| r.get_cpu::<PersistentId>())
+        .map(|s| s.iter().map(|(_, p)| p.id.get()).collect())
+        .unwrap_or_default();
+    ids.sort_unstable();
+    ids
+}
+
+/// 🔴 The bug: two entities claiming one id made every reference to it resolve by hash order — a
+/// different answer per machine. The clash is repaired on load, and the same one wins every time.
+#[test]
+fn a_clashing_id_is_repaired() {
+    let (mut resources, _, _) = world_with_a_link(3);
+    let mut document = SceneDocument::from_ecs(&mut resources);
+    clash_every_id(&mut document, 1);
+
+    let first = loaded(&document);
+    let ids = live_ids(&first);
+    assert_eq!(
+        ids.len(),
+        ids.iter().collect::<std::collections::HashSet<_>>().len(),
+        "ids still clash: {ids:?}"
+    );
+
+    // And the reference lands on the same entity twice, which hash order never promised.
+    let target_of = |resources: &Resources| {
+        let holder = resources
+            .get::<ComponentRegistry>()
+            .and_then(|r| r.get_cpu::<Link>())
+            .map(|s| s.iter().map(|(&e, _)| e).next().expect("one link"))
+            .expect("registered");
+        link_of(resources, holder).target.index()
+    };
+    assert_eq!(target_of(&first), target_of(&loaded(&document)));
+}
+
+/// An id that arrived in a file is the allocator's too: saving again must not hand it out a second
+/// time, which is how two entities came to claim one.
+#[test]
+fn a_loaded_id_is_never_reissued() {
+    let (mut resources, _, _) = world_with_a_link(3);
+    let mut document = SceneDocument::from_ecs(&mut resources);
+    clash_every_id(&mut document, 40);
+
+    let mut reloaded = loaded(&document);
+    let saved = SceneDocument::from_ecs(&mut reloaded);
+    let ids: Vec<u64> = ids_in(&saved).into_iter().map(|(_, id)| id).collect();
+    assert_eq!(
+        ids.len(),
+        ids.iter().collect::<std::collections::HashSet<_>>().len(),
+        "a saved scene must not name one id twice: {ids:?}",
+    );
+    assert!(ids.contains(&40), "the id that arrived is kept: {ids:?}");
+}

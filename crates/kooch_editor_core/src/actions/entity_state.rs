@@ -114,6 +114,9 @@ pub(crate) fn as_copy(state: &EntityState) -> EntityState {
     let mut copy = state.clone();
     // 🔴 A copy carries what the entity IS, never who it BELONGS TO.
     for bookkeeping in [
+        // 🔴 Identity above all: a copy carrying the original's id IS the original to every
+        // reference in the project, and the child of one lands under whichever the loader yields.
+        std::any::type_name::<kooch_ecs::PersistentId>(),
         std::any::type_name::<kooch_ecs::SceneMember>(),
         std::any::type_name::<kooch_ecs::prefab_instance::PrefabMember>(),
         std::any::type_name::<kooch_ecs::prefab_instance::PrefabInstance>(),

@@ -89,8 +89,15 @@ pub(super) fn assign_ids_to_referenced(resources: &mut Resources) -> HashMap<Ent
         }
     }
 
+    // Every id alive, not only the referenced ones: an entity nobody points at still owns its id,
+    // and an allocator that never heard of it hands the same one out again next session.
+    let alive: Vec<EntityGuid> = resources
+        .get::<ComponentRegistry>()
+        .and_then(|components| components.get_cpu::<PersistentId>())
+        .map(|storage| storage.iter().map(|(_, p)| p.id).collect())
+        .unwrap_or_default();
     if let Some(allocator) = resources.get_mut::<PersistentIdAllocator>() {
-        for &id in ids.values() {
+        for id in alive {
             allocator.observe(id);
         }
     }
@@ -132,6 +139,82 @@ pub(super) fn assign_ids_to_referenced(resources: &mut Resources) -> HashMap<Ent
     ids
 }
 
+/// Takes the ids a load brought in: the allocator learns every one of them, and an id two entities
+/// in the same scene claim is repaired here, deterministically.
+///
+/// 🔴 A duplicate id is not cosmetic: every reference to it resolves by id, so a child whose
+/// `Parent` names one lands under whichever entity a `HashMap` happened to yield — a different
+/// parent per machine and per run.
+pub(super) fn adopt_ids(resources: &mut Resources) {
+    let claims: Vec<(Guid, EntityGuid, Entity)> = {
+        let Some(components) = resources.get::<ComponentRegistry>() else {
+            return;
+        };
+        let (Some(ids), Some(members)) = (
+            components.get_cpu::<PersistentId>(),
+            components.get_cpu::<SceneMember>(),
+        ) else {
+            return;
+        };
+        let mut claims: Vec<(Guid, EntityGuid, Entity)> = ids
+            .iter()
+            .filter_map(|(&entity, persistent)| {
+                Some((members.get(entity)?.scene, persistent.id, entity))
+            })
+            .collect();
+        // The winner of a clash is the lowest entity index, not the first the storage yields:
+        // storage order is a hash, and a repair that varies by run is the bug again.
+        claims.sort_by_key(|&(scene, id, entity)| (scene.to_string(), id.get(), entity.index()));
+        claims
+    };
+
+    if resources.get::<PersistentIdAllocator>().is_none() {
+        resources.insert(PersistentIdAllocator::new());
+    }
+    if let Some(allocator) = resources.get_mut::<PersistentIdAllocator>() {
+        for &(_, id, _) in &claims {
+            allocator.observe(id);
+        }
+    }
+
+    let clashing: Vec<(Entity, EntityGuid)> = claims
+        .windows(2)
+        .filter(|pair| pair[0].0 == pair[1].0 && pair[0].1 == pair[1].1)
+        .map(|pair| (pair[1].2, pair[1].1))
+        .collect();
+    if clashing.is_empty() {
+        return;
+    }
+
+    let Some(allocator) = resources.get_mut::<PersistentIdAllocator>() else {
+        return;
+    };
+    let repaired: Vec<(Entity, EntityGuid)> = clashing
+        .iter()
+        .map(|&(entity, _)| (entity, allocator.allocate()))
+        .collect();
+
+    for (&(entity, was), &(_, now)) in clashing.iter().zip(repaired.iter()) {
+        tracing::error!(
+            target: "kooch_ecs::scene",
+            %entity,
+            %was,
+            %now,
+            "two entities in one scene claimed the same identity; the later one was given a new \
+             id. Every reference to it pointed at the other entity — save the scene to keep the \
+             repair",
+        );
+    }
+
+    if let Some(components) = resources.get_mut::<ComponentRegistry>()
+        && let Some(storage) = components.get_cpu_mut::<PersistentId>()
+    {
+        for &(entity, id) in &repaired {
+            storage.insert(entity, PersistentId::new(id));
+        }
+    }
+}
+
 /// A reference the spawn pass could not write yet, kept until the
 /// entities it points at exist.
 pub(super) struct DeferredRef {
@@ -156,13 +239,24 @@ pub(super) fn resolve_deferred(resources: &mut Resources, deferred: Vec<Deferred
             components
                 .get_cpu::<PersistentId>()
                 .map(|storage| {
-                    storage
-                        .iter()
-                        .filter_map(|(&entity, persistent)| {
-                            let scene = members?.get(entity)?.scene;
-                            Some(((scene, persistent.id), entity))
-                        })
-                        .collect()
+                    let mut by_id: HashMap<(Guid, EntityGuid), Entity> = HashMap::new();
+                    for (&entity, persistent) in storage.iter() {
+                        let Some(scene) = members.and_then(|m| m.get(entity)).map(|m| m.scene)
+                        else {
+                            continue;
+                        };
+                        // Lowest index wins, as `adopt_ids` repairs: a clash that slipped through
+                        // must still resolve the same way twice.
+                        by_id
+                            .entry((scene, persistent.id))
+                            .and_modify(|held| {
+                                if entity.index() < held.index() {
+                                    *held = entity;
+                                }
+                            })
+                            .or_insert(entity);
+                    }
+                    by_id
                 })
                 .unwrap_or_default()
         })

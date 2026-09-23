@@ -36,6 +36,9 @@ impl DuplicateCommand {
             }
         }
 
+        // A duplicate is a new entity: it earns its own id when something references it.
+        component_types.remove(&TypeId::of::<kooch_ecs::PersistentId>());
+
         if let Some(registry) = resources.get::<ComponentRegistry>() {
             for &type_id in &component_types {
                 if let Some(fields) = registry.reflect_get_fields(&type_id, source) {

@@ -6,7 +6,7 @@ use crate::dynamic_components::DynamicComponents;
 use kooch_core::resource::Resources;
 
 use super::document::SceneDocument;
-use super::entity_refs::{DeferredRef, resolve_deferred};
+use super::entity_refs::{DeferredRef, adopt_ids, resolve_deferred};
 use super::error::SceneError;
 
 /// Clears the live ECS and rebuilds it from a [`SceneDocument`].
@@ -258,6 +258,10 @@ fn spawn_returning_as(
             }
         }
     }
+
+    // Before anything resolves against them: the ids this load brought in are the allocator's to
+    // know, and a clash has to be repaired while it is still one file's problem.
+    adopt_ids(resources);
 
     // Resolve entity references now that every entity exists.
     resolve_deferred(resources, deferred);
