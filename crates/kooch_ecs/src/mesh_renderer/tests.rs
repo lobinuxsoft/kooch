@@ -42,6 +42,7 @@ fn reflect_fields() {
             "visible",
             "cast_shadows",
             "receive_shadows",
+            "layer",
             "layers"
         ],
     );
@@ -121,14 +122,23 @@ fn mesh_field_round_trips_a_guid() {
 /// 🔴 The Inspector draws a named checklist only for a field the metadata marks, and the names come
 /// from the project's own table (#1218). Unmarked, the mask would be a number nobody can read.
 #[test]
-fn the_layer_mask_is_marked() {
+fn the_layer_is_one_of_the_project_s() {
     use crate::reflect::Reflect;
-    let meta = MeshRenderer::default()
-        .reflect_fields()
+    let fields = MeshRenderer::default().reflect_fields();
+    let named = fields
+        .iter()
+        .find(|meta| meta.name == "layer")
+        .expect("the renderer names a layer");
+    assert!(
+        named.layer,
+        "the layer is not marked as one of the project's"
+    );
+
+    // 🔴 #1307: the mask stays in reflection so a scene still loads, and out of the Inspector, or
+    // an author has two places to say which layer a mesh is in.
+    let legacy = fields
         .iter()
         .find(|meta| meta.name == "layers")
-        .copied()
-        .expect("the renderer has a layers field");
-    assert!(meta.layers, "the mask is not marked as layers");
-    assert!(meta.bits.is_empty(), "a layer mask names its own bits");
+        .expect("the legacy mask still loads");
+    assert!(legacy.hidden, "the legacy mask is still drawn");
 }

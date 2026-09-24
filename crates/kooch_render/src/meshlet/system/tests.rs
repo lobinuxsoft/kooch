@@ -179,6 +179,7 @@ fn an_instance_carries_its_layers() {
         .insert(MeshRenderer {
             mesh: Some(guid),
             visible: true,
+            // A scene from before #1307: a mask, whose lowest layer is the one it meant.
             layers: 0b1010,
             ..Default::default()
         })
@@ -189,14 +190,35 @@ fn an_instance_carries_its_layers() {
 
     let instances = pipeline.collect_scene_instances(&resources);
     assert_eq!(instances.len(), 1);
-    assert_eq!(instances[0].layers, 0b1010);
+    assert_eq!(
+        instances[0].layers, 0b10,
+        "the mask's lowest layer is the one it named"
+    );
 }
 
 /// A renderer nobody touched is in the Default layer, so a mask that keeps Default keeps it.
 #[test]
 fn a_new_renderer_is_in_default() {
-    assert_eq!(
-        kooch_ecs::mesh_renderer::MeshRenderer::default().layers,
-        kooch_core::layers::DEFAULT_LAYER,
-    );
+    let renderer = kooch_ecs::mesh_renderer::MeshRenderer::default();
+    assert_eq!(renderer.layer(), 0);
+    assert_eq!(renderer.layer_mask(), kooch_core::layers::DEFAULT_LAYER);
+}
+
+/// 🔴 #1307: a renderer names ONE layer, as a collider does. A scene that carried a mask keeps the
+/// lowest layer it claimed — a mesh cannot be in two layers at once in any engine that has this
+/// model, so there is nothing else the mask could have meant.
+#[test]
+fn a_mask_becomes_the_layer_it_named() {
+    let legacy = kooch_ecs::mesh_renderer::MeshRenderer {
+        layers: 0b1010,
+        ..Default::default()
+    };
+    assert_eq!(legacy.layer(), 1);
+    assert_eq!(legacy.layer_mask(), 0b10);
+
+    let named = kooch_ecs::mesh_renderer::MeshRenderer {
+        layer: 3,
+        ..Default::default()
+    };
+    assert_eq!(named.layer_mask(), 0b1000, "the field an author sets wins");
 }

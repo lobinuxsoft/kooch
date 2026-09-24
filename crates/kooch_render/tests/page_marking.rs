@@ -270,15 +270,15 @@ fn read_words(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer)
     words
 }
 
+#[path = "page_marking/claims.rs"]
+mod claims;
+#[path = "page_marking/clusters.rs"]
+mod clusters;
 #[path = "page_marking/marking.rs"]
 mod marking;
 #[path = "page_marking/paint.rs"]
 mod paint;
-#[path = "page_marking/claims.rs"]
-mod claims;
-#[path = "page_marking/residency.rs"]
-mod residency;
 #[path = "page_marking/ranking.rs"]
 mod ranking;
-#[path = "page_marking/clusters.rs"]
-mod clusters;
+#[path = "page_marking/residency.rs"]
+mod residency;

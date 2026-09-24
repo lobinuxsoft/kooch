@@ -27,10 +27,32 @@ pub struct MeshRenderer {
     pub cast_shadows: bool,
     /// Whether this renderer receives shadows.
     pub receive_shadows: bool,
-    /// Which layers this renderer is in, as a bitmask (#1218). A camera, a light or a shadow view
-    /// keeps only what its own mask meets. Bit 0 — "Default" — is where everything starts.
-    #[reflect(layers)]
+    /// The layer this renderer is in (#1307). A camera, a light or a shadow view keeps only what
+    /// its own mask meets — the mask belongs to whoever is choosing, and the object answers what
+    /// it is. "Default" is where everything starts.
+    #[reflect(layer)]
+    pub layer: u32,
+    /// The mask this renderer carried before it named one layer, kept so a scene still loads it and
+    /// never drawn: a mesh is in one layer, and a second place to say so is a second place for it
+    /// to disagree (#1307).
+    #[reflect(hidden)]
     pub layers: u32,
+}
+
+impl MeshRenderer {
+    /// Which layer this renderer is in, reading a pre-#1307 mask when that is all it has: the
+    /// lowest bit it claimed, which is the layer an author picked in every project that used one.
+    pub fn layer(&self) -> u32 {
+        if self.layer != 0 || self.layers == kooch_core::layers::DEFAULT_LAYER {
+            return self.layer.min(31);
+        }
+        self.layers.trailing_zeros().min(31)
+    }
+
+    /// What a camera's mask is tested against: the one bit this renderer is in.
+    pub fn layer_mask(&self) -> u32 {
+        1 << self.layer()
+    }
 }
 
 impl Default for MeshRenderer {
@@ -41,6 +63,7 @@ impl Default for MeshRenderer {
             visible: true,
             cast_shadows: true,
             receive_shadows: true,
+            layer: 0,
             layers: kooch_core::layers::DEFAULT_LAYER,
         }
     }

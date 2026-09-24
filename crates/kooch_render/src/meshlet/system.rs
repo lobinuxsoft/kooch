@@ -182,7 +182,7 @@ impl MeshletPipeline {
             if !renderer.cast_shadows {
                 instance.flags |= crate::meshlet::scene::INSTANCE_CASTS_NO_SHADOW;
             }
-            instance.layers = renderer.layers;
+            instance.layers = renderer.layer_mask();
 
             let see_through = material_pipeline
                 .as_deref()
