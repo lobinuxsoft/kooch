@@ -221,3 +221,108 @@ fn a_volume_pushes_nothing() {
         "the volume moved the body to {moved}",
     );
 }
+
+/// 🔴 #1302: a volume that listens to one layer heard the floor, because every collider was born on
+/// **all** layers and "all" includes that one. A collider now names its layer and the project's
+/// matrix decides the pairs.
+#[test]
+fn the_matrix_decides_who_meets_whom() {
+    use kooch_core::layers::LayerNames;
+
+    let mut resources = volume_world();
+    // Player on layer 1, scenery on layer 0, and the two do not meet.
+    let mut layers = LayerNames::default();
+    layers.set(1, "Player");
+    layers.set_collide(0, 1, false);
+    resources.insert(layers);
+
+    let region = volume(&mut resources);
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+        && let Some(colliders) = registry.get_cpu_mut::<Collider>()
+        && let Some(collider) = colliders.get_mut(region)
+    {
+        collider.layer = 1;
+    }
+    let scenery = spawn_body(
+        &mut resources,
+        Transform::default(),
+        PhysicsBody {
+            kind: KIND_KINEMATIC,
+            ..Default::default()
+        },
+        Collider {
+            shape: SHAPE_CUBOID,
+            half_extents: Vec3::splat(0.5),
+            layer: 0,
+            ..Default::default()
+        },
+    );
+    insert(
+        &mut resources,
+        scenery,
+        kooch_ecs::hierarchy::GlobalTransform::default(),
+    );
+    Playing::set(&mut resources, true);
+    for _ in 0..4 {
+        frame(&mut resources);
+    }
+
+    assert!(
+        resources
+            .get::<SensorOccupancy>()
+            .expect("the plugin keeps one")
+            .is_empty(),
+        "the volume heard a layer the matrix says it never meets",
+    );
+}
+
+/// The same volume hears what its layer does meet.
+#[test]
+fn the_matrix_lets_its_own_layer_through() {
+    use kooch_core::layers::LayerNames;
+
+    let mut resources = volume_world();
+    let mut layers = LayerNames::default();
+    layers.set(1, "Player");
+    layers.set_collide(0, 1, false);
+    resources.insert(layers);
+
+    let region = volume(&mut resources);
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+        && let Some(colliders) = registry.get_cpu_mut::<Collider>()
+        && let Some(collider) = colliders.get_mut(region)
+    {
+        collider.layer = 1;
+    }
+    let player = spawn_body(
+        &mut resources,
+        Transform::default(),
+        PhysicsBody {
+            kind: KIND_KINEMATIC,
+            ..Default::default()
+        },
+        Collider {
+            shape: SHAPE_CUBOID,
+            half_extents: Vec3::splat(0.5),
+            layer: 1,
+            ..Default::default()
+        },
+    );
+    insert(
+        &mut resources,
+        player,
+        kooch_ecs::hierarchy::GlobalTransform::default(),
+    );
+    Playing::set(&mut resources, true);
+    for _ in 0..4 {
+        frame(&mut resources);
+    }
+
+    let inside = resources
+        .get::<SensorOccupancy>()
+        .expect("the plugin keeps one");
+    assert!(
+        inside.iter().any(|occupant| occupant.body == player),
+        "the volume did not hear its own layer",
+    );
+}

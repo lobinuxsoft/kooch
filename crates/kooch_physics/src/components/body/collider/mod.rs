@@ -104,11 +104,16 @@ pub struct Collider {
     /// The force, in newtons, above which a contact is worth reporting.
     #[reflect(shown_when = CONTACT_FORCE_WHEN)]
     pub contact_force_threshold: f32,
-    /// Groups this collider belongs to; a pair needs **both** sides' memberships to meet the
-    /// other's filter.
+    /// The layer this collider is on. Which layers meet which is the project's collision matrix,
+    /// not a field here: a relationship is between two layers, and authoring it on each collider is
+    /// the same fact written twice (#1302).
+    pub layer: u32,
+    /// Groups this collider belongs to — **derived** from `layer` and the matrix, and kept only so
+    /// a scene authored before the matrix loads with what it had. Editing it directly is for the
+    /// case the matrix cannot express.
     #[reflect(layers)]
     pub collision_memberships: u32,
-    /// Which groups this collider will collide with.
+    /// Which groups this collider will collide with. Derived, as above.
     #[reflect(layers)]
     pub collision_filter: u32,
     /// Groups it is solved against, of those it collides with — detect a wall without being stopped
@@ -146,6 +151,7 @@ impl Default for Collider {
             collision_events: false,
             contact_force_events: false,
             contact_force_threshold: 0.0,
+            layer: 0,
             collision_memberships: u32::MAX,
             collision_filter: u32::MAX,
             solver_memberships: u32::MAX,
@@ -176,8 +182,25 @@ impl Collider {
         .sanitised()
     }
 
+    /// This collider with its masks derived from `layer` and the project's matrix.
+    ///
+    /// 🔴 Derived, not read: a collider says which layer it is on and the matrix says the rest. One
+    /// authored before the matrix carries masks that are not all ones — those are kept, because
+    /// rewriting them would change a shipped game without a word (#1302).
+    pub fn in_layers(&self, layers: &kooch_core::layers::LayerNames) -> Self {
+        if self.collision_memberships != u32::MAX || self.collision_filter != u32::MAX {
+            return *self;
+        }
+        let layer = self.layer.min(31);
+        Self {
+            collision_memberships: 1 << layer,
+            collision_filter: layers.meets(layer as usize),
+            ..*self
+        }
+    }
+
     /// How this collider participates: what it notices and what it
-    /// reports.
+    /// reports. The masks as authored, with no matrix applied.
     pub fn interaction(&self) -> ColliderInteraction {
         ColliderInteraction {
             collision_groups: InteractionMask {

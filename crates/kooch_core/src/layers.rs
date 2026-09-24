@@ -18,12 +18,20 @@ pub const DEFAULT_LAYER: u32 = 1;
 /// Static type name [`AssetEntry`](crate::asset_database::AssetEntry)s carry for a layers file.
 pub const LAYERS_TYPE_NAME: &str = "kooch_core::layers::LayerNames";
 
-/// The project's layer names, in bit order.
+/// The project's layer names and which of them collide, in bit order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayerNames {
     /// Up to [`LAYER_COUNT`]; a missing or empty entry reads as `Layer n`.
     #[serde(default)]
     pub names: Vec<String>,
+    /// Which layers each layer collides with: one mask per layer, symmetric.
+    ///
+    /// 🔴 One table for the whole project, as Unity does it, rather than four masks on every
+    /// collider: a relationship is between two layers, so authoring it on each side is the same
+    /// fact written twice and a chance to write it differently (#1302). A file with no table
+    /// collides everything with everything, which is what every project did before there was one.
+    #[serde(default)]
+    pub matrix: Option<Vec<u32>>,
 }
 
 impl Default for LayerNames {
@@ -32,6 +40,7 @@ impl Default for LayerNames {
         // which is what Unity's own table does with everything past Default.
         Self {
             names: vec!["Default".to_owned()],
+            matrix: None,
         }
     }
 }
@@ -55,6 +64,46 @@ impl LayerNames {
             self.names.resize(index + 1, String::new());
         }
         self.names[index] = name.into();
+    }
+
+    /// Whether a body on layer `a` meets one on layer `b`. Without a table, everything meets
+    /// everything: a project that never opened the matrix keeps the behaviour it had.
+    pub fn collide(&self, a: usize, b: usize) -> bool {
+        let Some(matrix) = self.matrix.as_ref() else {
+            return true;
+        };
+        match matrix.get(a) {
+            Some(row) => row & (1 << b.min(LAYER_COUNT - 1)) != 0,
+            None => true,
+        }
+    }
+
+    /// Everything layer `index` meets, as the mask a collider's filter is built from.
+    pub fn meets(&self, index: usize) -> u32 {
+        let Some(matrix) = self.matrix.as_ref() else {
+            return u32::MAX;
+        };
+        matrix.get(index).copied().unwrap_or(u32::MAX)
+    }
+
+    /// Sets a pair both ways: the table is symmetric, and half of it is a table that disagrees with
+    /// itself.
+    pub fn set_collide(&mut self, a: usize, b: usize, collide: bool) {
+        if a >= LAYER_COUNT || b >= LAYER_COUNT {
+            return;
+        }
+        let matrix = self
+            .matrix
+            .get_or_insert_with(|| vec![u32::MAX; LAYER_COUNT]);
+        if matrix.len() < LAYER_COUNT {
+            matrix.resize(LAYER_COUNT, u32::MAX);
+        }
+        for (from, to) in [(a, b), (b, a)] {
+            match collide {
+                true => matrix[from] |= 1 << to,
+                false => matrix[from] &= !(1 << to),
+            }
+        }
     }
 
     /// Every bit's name, in order: what a checklist draws.

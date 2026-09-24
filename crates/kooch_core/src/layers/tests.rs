@@ -33,3 +33,36 @@ fn a_file_round_trips() {
     let text = ron::to_string(&names).unwrap();
     assert_eq!(ron::from_str::<LayerNames>(&text).unwrap(), names);
 }
+
+/// A project that never opened the matrix keeps what it had: everything meets everything.
+#[test]
+fn no_table_collides_with_everything() {
+    let names = LayerNames::default();
+    assert!(names.collide(0, 0) && names.collide(3, 7));
+    assert_eq!(names.meets(2), u32::MAX);
+}
+
+/// A relationship is between two layers, so it is written both ways or it disagrees with itself.
+#[test]
+fn a_pair_is_symmetric() {
+    let mut names = LayerNames::default();
+    names.set_collide(1, 2, false);
+    assert!(!names.collide(1, 2), "1 still meets 2");
+    assert!(
+        !names.collide(2, 1),
+        "the other half of the table was left alone"
+    );
+    assert!(
+        names.collide(1, 1) && names.collide(0, 2),
+        "it turned off more than the pair"
+    );
+    assert_eq!(names.meets(1) & (1 << 2), 0);
+}
+
+#[test]
+fn a_pair_turned_off_can_come_back() {
+    let mut names = LayerNames::default();
+    names.set_collide(0, 5, false);
+    names.set_collide(0, 5, true);
+    assert!(names.collide(0, 5) && names.collide(5, 0));
+}

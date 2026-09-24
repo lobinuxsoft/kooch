@@ -106,7 +106,9 @@ fn changing_the_authored_shape_rebuilds_the_body() {
         resources.get::<PhysicsWorld>().unwrap().spec(slot).unwrap(),
         BodySpec::new(
             &PhysicsBody::default(),
-            &edited,
+            // Through the matrix, as the sync builds it: a collider on `Default` carries that bit
+            // rather than every one (#1302).
+            &edited.in_layers(&kooch_core::layers::LayerNames::default()),
             kooch_ecs::Entity::new(0, 0),
             Vec3::ONE,
             None,
