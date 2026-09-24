@@ -586,10 +586,12 @@ pub(super) fn draw_collision_matrix(
             egui::FontId::proportional(12.0),
             text_colour,
         );
-        // Anchored at the bottom of the header and drawn upwards, so every name ends just above
-        // its own column however long it is.
+        // 🔴 Rotating by a quarter turn sends the text's own HEIGHT to the right of the anchor and
+        // its length upwards, so an anchor on the column's centre draws the name half a line to the
+        // right of it. Half the height back, and it stands over its own column.
+        let line_height = galley.size().y;
         let mut standing = egui::epaint::TextShape::new(
-            egui::pos2(x + 6.0, rect.top() + header - 4.0),
+            egui::pos2(x - line_height * 0.5, rect.top() + header - 4.0),
             galley,
             text_colour,
         );
