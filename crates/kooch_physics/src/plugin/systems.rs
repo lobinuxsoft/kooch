@@ -82,6 +82,16 @@ pub fn physics_sync_system(resources: &mut Resources) {
 ///
 /// Returns `None` when there is no component registry to read.
 fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
+    // The project's table, or the default one where a project has none: everything meets
+    // everything, which is what every collider did before the matrix existed.
+    let owned_layers;
+    let layers = match resources.get::<kooch_core::layers::LayerNames>() {
+        Some(layers) => layers,
+        None => {
+            owned_layers = kooch_core::layers::LayerNames::default();
+            &owned_layers
+        }
+    };
     let registry = resources.get::<ComponentRegistry>()?;
     let meshes = resources.get::<ColliderMeshCache>();
     let slots = registry.get_cpu::<SolverBody>();
@@ -99,7 +109,8 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
                     // panic: a unit sphere at the origin still falls, and
                     // falling is a better bug report than a crash.
                     let collider =
-                        as_region(registry, entity, collider_or_default(colliders, entity));
+                        as_region(registry, entity, collider_or_default(colliders, entity))
+                            .in_layers(layers);
                     let transform = transforms
                         .and_then(|s| s.get(entity))
                         .copied()
@@ -127,7 +138,7 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
         .unwrap_or_default();
 
     authored.extend(regions(
-        registry, colliders, transforms, slots, meshes, &authored,
+        registry, colliders, transforms, slots, meshes, layers, &authored,
     ));
 
     // Entity order, not hash order: creation order is observable in the solver, and runs would
@@ -167,12 +178,14 @@ fn as_region(registry: &ComponentRegistry, entity: Entity, collider: Collider) -
 /// the three boxes it needs ticked — a body to exist in the solver, `sensor` to overlap instead of
 /// push, `collision_events` to be heard — are all of them implied by the component being there, and
 /// every one of them fails **silently** when it is missing.
+#[allow(clippy::too_many_arguments)]
 fn regions(
     registry: &ComponentRegistry,
     colliders: Option<&kooch_ecs::component::ComponentStorage<Collider>>,
     transforms: Option<&kooch_ecs::component::ComponentStorage<Transform>>,
     slots: Option<&kooch_ecs::component::ComponentStorage<SolverBody>>,
     meshes: Option<&ColliderMeshCache>,
+    layers: &kooch_core::layers::LayerNames,
     authored: &[Authored],
 ) -> Vec<Authored> {
     let Some(volumes) = registry.get_cpu::<kooch_ecs::post_process_volume::PostProcessVolume>()
@@ -197,7 +210,8 @@ fn regions(
                 sensor: true,
                 collision_events: true,
                 ..*colliders?.get(entity)?
-            };
+            }
+            .in_layers(layers);
             let transform = transforms
                 .and_then(|storage| storage.get(entity))
                 .copied()

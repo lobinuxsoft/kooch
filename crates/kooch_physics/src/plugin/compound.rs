@@ -50,6 +50,15 @@ pub(super) fn attachments_for(resources: &Resources, root: Entity) -> Vec<Attach
         return Vec::new();
     };
     let colliders = registry.get_cpu::<Collider>();
+    // The project's table, or the one every collider had before it existed.
+    let owned_layers;
+    let layers = match resources.get::<kooch_core::layers::LayerNames>() {
+        Some(layers) => layers,
+        None => {
+            owned_layers = kooch_core::layers::LayerNames::default();
+            &owned_layers
+        }
+    };
     let bodies = registry.get_cpu::<PhysicsBody>();
 
     // The root's world pose, inverted once: every descendant's local pose
@@ -87,7 +96,7 @@ pub(super) fn attachments_for(resources: &Resources, root: Entity) -> Vec<Attach
                 offset: translation + collider.center,
                 rotation,
                 material: collider.material(),
-                interaction: collider.interaction(),
+                interaction: collider.in_layers(layers).interaction(),
             });
         }
 

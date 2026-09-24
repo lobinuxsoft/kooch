@@ -119,6 +119,15 @@ pub(super) fn sensor_occupancy_preview_system(resources: &mut Resources) {
         return;
     };
     let meshes = resources.get::<ColliderMeshCache>();
+    // The project's table, or the one every collider had before it existed.
+    let owned_layers;
+    let layers = match resources.get::<kooch_core::layers::LayerNames>() {
+        Some(layers) => layers,
+        None => {
+            owned_layers = kooch_core::layers::LayerNames::default();
+            &owned_layers
+        }
+    };
     let (Some(volumes), Some(colliders)) = (
         registry.get_cpu::<kooch_ecs::post_process_volume::PostProcessVolume>(),
         registry.get_cpu::<Collider>(),
@@ -143,9 +152,10 @@ pub(super) fn sensor_occupancy_preview_system(resources: &mut Resources) {
             // question the build answers differently: a volume that only listens to one layer
             // caught everything here and only its layer there (#1301).
             if !shape
+                .in_layers(layers)
                 .interaction()
                 .collision_groups
-                .interacts_with(collider.interaction().collision_groups)
+                .interacts_with(collider.in_layers(layers).interaction().collision_groups)
             {
                 continue;
             }
