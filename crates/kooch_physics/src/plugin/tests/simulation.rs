@@ -259,3 +259,53 @@ fn a_moved_static_moves_its_collision() {
         "the ball fell through a floor that had been moved under it: y = {y}",
     );
 }
+
+/// 🔴 A body the author never moved must not be pushed back, even when the solver has it somewhere
+/// else. That is the parented case — the authored transform is local and the solver's is world
+/// (#1316) — and comparing against the solver's pose snapped such a body to its local offset every
+/// frame, republishing AABBs and resetting every sensor overlap with it.
+#[test]
+fn an_unmoved_static_is_left_alone() {
+    let mut resources = world();
+    let floor = spawn_body(
+        &mut resources,
+        Transform::from_position(Vec3::ZERO),
+        PhysicsBody {
+            kind: KIND_STATIC,
+            mass: 0.0,
+            ..Default::default()
+        },
+        Collider {
+            shape: SHAPE_CUBOID,
+            half_extents: Vec3::new(10.0, 0.5, 10.0),
+            ..Default::default()
+        },
+    );
+    Playing::set(&mut resources, true);
+    simulate(&mut resources, 1);
+
+    // Somebody other than the author puts it elsewhere — what propagation does for a parented body.
+    let elsewhere = Vec3::new(7.0, 0.0, 0.0);
+    let slot = slot_of(&resources, floor).expect("the floor is in the solver");
+    if let Some(mut world) = resources.remove::<PhysicsWorld>() {
+        let handle = world.handle(slot).expect("the slot has a handle");
+        world
+            .backend_mut()
+            .set_transform(handle, elsewhere, glam::Quat::IDENTITY);
+        resources.insert(world);
+    }
+    simulate(&mut resources, 60);
+
+    let pose = resources
+        .get::<PhysicsWorld>()
+        .and_then(|world| {
+            let handle = world.handle(slot)?;
+            world.backend().get_transform(handle)
+        })
+        .expect("the floor has a pose");
+    assert!(
+        pose.0.abs_diff_eq(elsewhere, 1e-4),
+        "the floor nobody moved was pushed back to {}",
+        pose.0,
+    );
+}

@@ -165,6 +165,11 @@ struct Slot {
     entity: Entity,
     handle: BodyHandle,
     spec: BodySpec,
+    /// The pose the ECS last handed this slot. Compared against the authored pose to tell an
+    /// author moving a body from the solver having moved it — the two differ for any body whose
+    /// authored transform is not its world one, and comparing against the solver instead pushed
+    /// such a body back every frame (#1316).
+    authored: (Vec3, Quat),
 }
 
 /// The backend plus the body ↔ entity mapping. Slots never compact; freed ones are reused, so
@@ -236,6 +241,7 @@ impl PhysicsWorld {
             entity,
             handle,
             spec,
+            authored: (position, rotation),
         };
         match self.free.pop() {
             Some(index) => {
@@ -267,6 +273,23 @@ impl PhysicsWorld {
     pub fn clear(&mut self) {
         for slot in 0..self.slots.len() as u32 {
             self.remove(slot);
+        }
+    }
+
+    /// The pose the ECS last handed a live slot.
+    pub(super) fn authored(&self, slot: u32) -> Option<(Vec3, Quat)> {
+        self.slots
+            .get(slot as usize)
+            .filter(|s| s.entity.is_valid())
+            .map(|s| s.authored)
+    }
+
+    /// Records the pose just handed to a slot, so the next frame can tell it did not move.
+    pub(super) fn set_authored(&mut self, slot: u32, position: Vec3, rotation: Quat) {
+        if let Some(entry) = self.slots.get_mut(slot as usize)
+            && entry.entity.is_valid()
+        {
+            entry.authored = (position, rotation);
         }
     }
 

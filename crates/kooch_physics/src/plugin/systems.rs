@@ -347,17 +347,35 @@ fn push_authored_poses(world: &mut PhysicsWorld, authored: &[Authored], playing:
         let Some(handle) = world.handle(slot) else {
             continue;
         };
-        // Setting a pose republishes AABBs and wakes the body, so skip it
-        // when nothing moved — which is every frame, for most bodies.
-        if let Some((position, rotation)) = world.backend().get_transform(handle)
-            && position.abs_diff_eq(entry.position, POSE_EPSILON)
-            && rotation.abs_diff_eq(entry.rotation, POSE_EPSILON)
-        {
+        // 🔴 Against what the ECS last handed this slot, not against where the solver has the body.
+        // Setting a pose republishes AABBs, wakes the body and resets a sensor's overlaps, so it
+        // has to happen only when the author moved something. The solver's pose is a different
+        // number for any body whose authored transform is not its world one — a parented collider,
+        // until #1316 — and comparing against it teleported such a body back every frame.
+        let moved = match world.authored(slot) {
+            Some((position, rotation)) => {
+                !position.abs_diff_eq(entry.position, POSE_EPSILON)
+                    || !rotation.abs_diff_eq(entry.rotation, POSE_EPSILON)
+            }
+            None => true,
+        };
+        // A body the solver drives has drifted from where it was authored by design; one the author
+        // drives has not moved unless the author moved it.
+        let drifted = !playing
+            && world
+                .backend()
+                .get_transform(handle)
+                .is_some_and(|(position, rotation)| {
+                    !position.abs_diff_eq(entry.position, POSE_EPSILON)
+                        || !rotation.abs_diff_eq(entry.rotation, POSE_EPSILON)
+                });
+        if !moved && !drifted {
             continue;
         }
         world
             .backend_mut()
             .set_transform(handle, entry.position, entry.rotation);
+        world.set_authored(slot, entry.position, entry.rotation);
     }
 }
 
