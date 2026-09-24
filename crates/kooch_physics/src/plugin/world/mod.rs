@@ -141,7 +141,7 @@ impl BodySpec {
     /// The two differ wherever the sync authors a collider the author did not: a post-process volume
     /// is a sensor whether or not anyone ticked the box (#1222).
     pub fn is_sensor(&self) -> bool {
-        self.interaction.sensor
+        self.interaction.is_trigger
     }
 
     pub fn is_dynamic(&self) -> bool {

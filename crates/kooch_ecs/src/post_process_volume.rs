@@ -9,7 +9,7 @@ use crate::Reflect;
 
 /// Effects that join the frame's stack while a body is inside this volume's sensor.
 ///
-/// The **shape is the collider** on the same entity, which must be a sensor: what is already the
+/// The **shape is the collider** on the same entity, which must be a trigger: what is already the
 /// engine's way of saying "this region", with its own groups to say who counts. A `global` volume
 /// needs none and is always on.
 ///
@@ -22,7 +22,7 @@ pub struct PostProcessVolume {
     /// The effects this volume contributes, first to last.
     #[reflect(bare = "material")]
     pub effects: Vec<PostEffect>,
-    /// On everywhere, with no shape and no sensor: the scene's base look.
+    /// On everywhere, with no shape and no trigger: the scene's base look.
     pub global: bool,
     /// Higher wins where volumes overlap — it is applied later, over what the lower ones left.
     pub priority: i32,

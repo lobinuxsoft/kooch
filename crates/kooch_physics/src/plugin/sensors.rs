@@ -145,7 +145,7 @@ pub(super) fn sensor_occupancy_preview_system(resources: &mut Resources) {
         for (&body, collider) in colliders.iter() {
             // A region does not contain itself, and one sensor inside another says nothing about
             // where the game is.
-            if body == region || collider.sensor {
+            if body == region || collider.is_trigger {
                 continue;
             }
             // 🔴 The same pairs the solver would consider. Without this the editor answered a

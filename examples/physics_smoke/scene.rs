@@ -156,7 +156,7 @@ pub(super) fn build_scene(resources: &mut Resources) {
         Collider {
             shape: SHAPE_CUBOID,
             half_extents: Vec3::new(3.0, 0.5, 3.0),
-            sensor: true,
+            is_trigger: true,
             collision_events: true,
             ..Default::default()
         },
@@ -212,8 +212,9 @@ pub(super) fn build_scene(resources: &mut Resources) {
         Collider {
             shape: SHAPE_CUBOID,
             half_extents: Vec3::new(4.0, 0.5, 4.0),
-            solver_memberships: 0b0001,
-            solver_filter: 0b0001,
+            // Detected, never solid: a trigger is how a pair reports without pushing now that the
+            // solver masks are gone (#1309).
+            is_trigger: true,
             collision_events: true,
             ..Default::default()
         },
@@ -228,8 +229,6 @@ pub(super) fn build_scene(resources: &mut Resources) {
         Collider {
             shape: SHAPE_CUBOID,
             half_extents: Vec3::splat(0.5),
-            solver_memberships: 0b0010,
-            solver_filter: 0b0010,
             collision_events: true,
             ..Default::default()
         },

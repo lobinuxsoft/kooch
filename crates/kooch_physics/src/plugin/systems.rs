@@ -163,7 +163,7 @@ fn as_region(registry: &ComponentRegistry, entity: Entity, collider: Collider) -
         .filter(|volume| volume.enabled && !volume.global);
     match volume {
         Some(_) => Collider {
-            sensor: true,
+            is_trigger: true,
             collision_events: true,
             ..collider
         },
@@ -207,7 +207,7 @@ fn regions(
         })
         .filter_map(|(&entity, _)| {
             let collider = Collider {
-                sensor: true,
+                is_trigger: true,
                 collision_events: true,
                 ..*colliders?.get(entity)?
             }

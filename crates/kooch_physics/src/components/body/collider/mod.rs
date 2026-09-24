@@ -94,7 +94,8 @@ pub struct Collider {
     #[reflect(choices = COMBINE_CHOICES)]
     pub restitution_rule: u32,
     /// Report overlap, never push — checkpoints, damage zones. No manifold, so no contact data.
-    pub sensor: bool,
+    #[reflect(alias = "sensor")]
+    pub is_trigger: bool,
     /// Event on touch start and stop; off, since rapier's events are opt-in and a scene pays for
     /// what it hears.
     pub collision_events: bool,
@@ -117,14 +118,6 @@ pub struct Collider {
     /// Derived, as above.
     #[reflect(hidden)]
     pub collision_filter: u32,
-    /// Which of the pairs the matrix allows actually **push**: a projectile that is detected by a
-    /// wall without being stopped by it. Authored, because it is the one thing a layer pair cannot
-    /// say — and left at everything, it changes nothing.
-    #[reflect(layers)]
-    pub solver_memberships: u32,
-    /// Which groups this collider will be pushed by.
-    #[reflect(layers)]
-    pub solver_filter: u32,
     /// Shape centre in local space, moving geometry without the body — a feet-pivoted character's
     /// capsule sits half a body up.
     pub center: Vec3,
@@ -149,15 +142,13 @@ impl Default for Collider {
             friction_rule: COMBINE_AVERAGE,
             restitution: 0.0,
             restitution_rule: COMBINE_AVERAGE,
-            sensor: false,
+            is_trigger: false,
             collision_events: false,
             contact_force_events: false,
             contact_force_threshold: 0.0,
             layer: 0,
             collision_memberships: u32::MAX,
             collision_filter: u32::MAX,
-            solver_memberships: u32::MAX,
-            solver_filter: u32::MAX,
             center: Vec3::ZERO,
         }
     }
@@ -216,11 +207,7 @@ impl Collider {
                 memberships: self.collision_memberships,
                 filter: self.collision_filter,
             },
-            solver_groups: InteractionMask {
-                memberships: self.solver_memberships,
-                filter: self.solver_filter,
-            },
-            sensor: self.sensor,
+            is_trigger: self.is_trigger,
             collision_events: self.collision_events,
             contact_force_events: self.contact_force_events,
             contact_force_threshold: self.contact_force_threshold.max(0.0),
