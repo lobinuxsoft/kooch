@@ -142,17 +142,17 @@ fn lamp_face_page(view: u32, face: u32, level: u32, cell: (u32, u32), lights: u3
     local_page(view, level, cell, lights) + face * PageConfig::default().local_face_pages()
 }
 
+#[path = "page_raster/sizing.rs"]
+mod sizing;
 #[path = "page_raster/compaction.rs"]
 mod compaction;
-#[path = "page_raster/frame.rs"]
-mod frame;
-#[path = "page_raster/geometry.rs"]
-mod geometry;
 #[path = "page_raster/lamp_pages.rs"]
 mod lamp_pages;
+#[path = "page_raster/geometry.rs"]
+mod geometry;
+#[path = "page_raster/frame.rs"]
+mod frame;
 #[path = "page_raster/page_table.rs"]
 mod page_table;
 #[path = "page_raster/reader.rs"]
 mod reader;
-#[path = "page_raster/sizing.rs"]
-mod sizing;
