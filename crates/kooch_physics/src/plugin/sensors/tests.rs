@@ -152,6 +152,54 @@ fn a_preview_fills_without_a_solver() {
     assert!((depth - 3.0).abs() < 0.01, "it measured {depth}");
 }
 
+/// 🔴 The editor answered a question the build answers differently: the preview caught every body,
+/// the solver only the layers the volume names. A volume that listens to one layer has to mean the
+/// same thing in both (#1301).
+#[test]
+fn a_preview_obeys_the_collision_groups() {
+    use kooch_core::resource::Resources;
+    use kooch_ecs::post_process_volume::PostProcessVolume;
+    use kooch_ecs::sensor_occupancy::SensorOccupancy;
+
+    // The region listens to layer 2 only, as the Inspector writes it.
+    let collider = Collider {
+        half_extents: Vec3::splat(4.0),
+        collision_memberships: 0b10,
+        collision_filter: 0b10,
+        ..Default::default()
+    };
+    let (mut registry, region, body) = world(SHAPE_CUBOID, collider, Vec3::ZERO);
+    registry.register_cpu_reflected::<PostProcessVolume>();
+    registry
+        .get_cpu_mut::<PostProcessVolume>()
+        .expect("registered")
+        .insert(region, PostProcessVolume::default());
+    // The body is on layer 1 and hears layer 1: nothing to do with the region.
+    registry
+        .get_cpu_mut::<Collider>()
+        .expect("registered")
+        .insert(
+            body,
+            Collider {
+                collision_memberships: 0b01,
+                collision_filter: 0b01,
+                ..Default::default()
+            },
+        );
+
+    let mut resources = Resources::new();
+    resources.insert(registry);
+    resources.insert(SensorOccupancy::default());
+    super::sensor_occupancy_preview_system(&mut resources);
+    assert!(
+        resources
+            .get::<SensorOccupancy>()
+            .expect("still there")
+            .is_empty(),
+        "the preview caught a body the solver would never have paired",
+    );
+}
+
 /// A region is not inside itself, and one region inside another says nothing about where the game
 /// is: both would leave a volume permanently on.
 #[test]

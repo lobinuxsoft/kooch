@@ -139,6 +139,9 @@ pub(super) fn sensor_occupancy_preview_system(resources: &mut Resources) {
             if body == region || collider.sensor {
                 continue;
             }
+            // 🔴 The same pairs the solver would consider. Without this the editor answered a
+            // question the build answers differently: a volume that only listens to one layer
+            // caught everything here and only its layer there (#1301).
             if !shape
                 .interaction()
                 .collision_groups
