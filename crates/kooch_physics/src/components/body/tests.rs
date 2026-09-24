@@ -160,9 +160,21 @@ fn an_older_field_becomes_the_mask() {
     };
     assert_eq!(named.layer_mask(), 0b100, "the layer it named, as a bit");
 
+    // 🔴 The lowest bit, not the mask: a pre-matrix project authored "every group except that one",
+    // and reading 0xFFFFFFFD literally puts a planet in every layer a volume listens to.
     let pre_matrix = Collider {
         collision_memberships: 0b1010,
         ..Default::default()
     };
-    assert_eq!(pre_matrix.layer_mask(), 0b1010, "the mask it carried");
+    assert_eq!(pre_matrix.layer_mask(), 0b10, "the lowest layer it claimed");
+
+    let everything_but_one = Collider {
+        collision_memberships: 0xFFFF_FFFD,
+        ..Default::default()
+    };
+    assert_eq!(
+        everything_but_one.layer_mask(),
+        kooch_core::layers::DEFAULT_LAYER,
+        "a planet ended up in every layer",
+    );
 }
