@@ -108,72 +108,32 @@ fn typing_alone_writes_nothing() {
     );
 }
 
-/// The matrix is one table for the project: ticking a pair writes BOTH halves, so an author cannot
-/// leave it disagreeing with itself (#1302).
+/// One pair, one box: the staircase draws the upper triangle and nothing twice, which is what
+/// keeps an author from ticking a pair on one side and off on the other (#1302).
 #[test]
-fn a_matrix_click_writes_the_pair() {
-    use kooch_core::layers::LayerNames;
+fn every_pair_gets_exactly_one_box() {
+    use std::collections::HashSet;
 
-    let _guard = crate::panels::id_stability_probe::PROBE_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let ctx = egui::Context::default();
-    let guid = Guid::new_v4();
-    let mut names = LayerNames::default();
-    names.set(1, "Player");
-    let mut actions = Vec::new();
-    // Two frames: the first lays the grid out, the second can be clicked at a known place.
-    for frame in 0..2 {
-        let mut input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(600.0, 800.0),
-            )),
-            ..Default::default()
-        };
-        if frame == 1 {
-            // The first checkbox of the grid: Default × Default.
-            let at = egui::pos2(60.0, 46.0);
-            input.events.push(egui::Event::PointerMoved(at));
-            input.events.push(egui::Event::PointerButton {
-                pos: at,
-                button: egui::PointerButton::Primary,
-                pressed: true,
-                modifiers: egui::Modifiers::NONE,
-            });
-            input.events.push(egui::Event::PointerButton {
-                pos: at,
-                button: egui::PointerButton::Primary,
-                pressed: false,
-                modifiers: egui::Modifiers::NONE,
-            });
-        }
-        ctx.run_ui(input, |ui| {
-            egui::CentralPanel::default().show(ui, |ui| {
-                super::asset_view::draw_collision_matrix(ui, guid, &names, &mut actions);
-            });
-        });
-    }
+    let used = [0usize, 1, 2, 5];
+    let cells = super::asset_view::matrix_cells(egui::Pos2::ZERO, &used, 50.0, 20.0, 110.0);
 
-    // Whatever cell was hit, the action is a PAIR, and the handler writes both halves.
-    let pairs: Vec<&EditorAction> = actions
+    let pairs: HashSet<(usize, usize)> = cells
         .iter()
-        .filter(|action| matches!(action, EditorAction::SetLayerPair { .. }))
+        .map(|&(row, column, _)| (row.min(column), row.max(column)))
         .collect();
+    assert_eq!(pairs.len(), cells.len(), "a pair was drawn twice");
     assert_eq!(
         pairs.len(),
-        1,
-        "one click has to write one pair, got {}",
-        pairs.len()
+        used.len() * (used.len() + 1) / 2,
+        "a pair has no box: {pairs:?}",
     );
-
-    let mut table = names.clone();
-    if let EditorAction::SetLayerPair { a, b, collide, .. } = pairs[0] {
-        table.set_collide(*a, *b, *collide);
-        assert_eq!(
-            table.collide(*a, *b),
-            table.collide(*b, *a),
-            "the table disagrees with itself",
-        );
+    // And no two boxes overlap, or a click would answer for whichever was drawn last.
+    for (at, &(_, _, cell)) in cells.iter().enumerate() {
+        for &(_, _, other) in &cells[at + 1..] {
+            assert!(
+                !cell.shrink(0.5).intersects(other.shrink(0.5)),
+                "two boxes sit on top of each other: {cell:?} and {other:?}",
+            );
+        }
     }
 }

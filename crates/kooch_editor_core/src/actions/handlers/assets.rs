@@ -318,8 +318,11 @@ pub(super) fn handle_set_layer_pair(
         tracing::error!(path = %path.display(), error = %e, "failed to write the collision matrix");
         return;
     }
-    // Published now rather than next frame, so the grid under the cursor answers with it.
+    // Published now rather than next frame, so the grid under the cursor answers with it — and
+    // reloaded, because the Inspector reads the ASSET, not this resource: without it the file said
+    // one thing and the ticks said another (#1302).
     resources.insert(names);
+    super::asset_saved(resources, &path);
 }
 
 /// Renames one of the project's layers and writes the table back (#1218). The names are not

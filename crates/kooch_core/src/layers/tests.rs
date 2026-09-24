@@ -66,3 +66,17 @@ fn a_pair_turned_off_can_come_back() {
     names.set_collide(0, 5, true);
     assert!(names.collide(0, 5) && names.collide(5, 0));
 }
+
+/// 🔴 The table has to survive the file: a matrix that writes and reads back as nothing leaves the
+/// editor showing ticks the project no longer has.
+#[test]
+fn a_matrix_survives_the_file() {
+    let mut names = LayerNames::default();
+    names.set(1, "Player");
+    names.set_collide(1, 2, false);
+    let text = ron::ser::to_string_pretty(&names, ron::ser::PrettyConfig::default())
+        .expect("it serialises");
+    let read: LayerNames = ron::from_str(&text).expect("it parses");
+    assert_eq!(read, names);
+    assert!(!read.collide(1, 2), "the pair came back on");
+}
