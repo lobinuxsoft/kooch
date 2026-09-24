@@ -541,8 +541,9 @@ pub(super) fn draw_collision_matrix(
 ) {
     /// Side of one box, and the pitch of the staircase.
     const CELL: f32 = 20.0;
-    /// Room the standing column names get.
-    const HEADER: f32 = 110.0;
+    /// Room per character of a standing name, and the floor under it: the header is as tall as the
+    /// longest name needs, or a name is drawn into the grid and cut off.
+    const PER_CHAR: f32 = 7.5;
 
     let used: Vec<usize> = (0..kooch_core::layers::LAYER_COUNT)
         .filter(|&index| {
@@ -561,17 +562,17 @@ pub(super) fn draw_collision_matrix(
     ui.add_space(4.0);
 
     let columns: Vec<usize> = used.iter().rev().copied().collect();
-    // Measured by character rather than laid out: the width only reserves a column, and a layout
-    // wants the font lock this frame already holds.
-    let names_width = used
+    // Measured by character rather than laid out: the size only reserves room, and a layout wants
+    // the font lock this frame already holds.
+    let longest = used
         .iter()
-        .map(|&index| names.label(index).chars().count() as f32 * 7.0)
-        .fold(0.0_f32, f32::max)
-        .min(160.0)
-        + 8.0;
+        .map(|&index| names.label(index).chars().count() as f32 * PER_CHAR)
+        .fold(0.0_f32, f32::max);
+    let names_width = longest + 10.0;
+    let header = longest + 8.0;
     let size = egui::vec2(
         names_width + CELL * columns.len() as f32,
-        HEADER + CELL * used.len() as f32,
+        header + CELL * used.len() as f32,
     );
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let painter = ui.painter_at(rect);
@@ -585,8 +586,10 @@ pub(super) fn draw_collision_matrix(
             egui::FontId::proportional(12.0),
             text_colour,
         );
+        // Anchored at the bottom of the header and drawn upwards, so every name ends just above
+        // its own column however long it is.
         let mut standing = egui::epaint::TextShape::new(
-            egui::pos2(x + 5.0, rect.top() + HEADER - 4.0),
+            egui::pos2(x + 6.0, rect.top() + header - 4.0),
             galley,
             text_colour,
         );
@@ -595,7 +598,7 @@ pub(super) fn draw_collision_matrix(
     }
 
     for (row_at, &row) in used.iter().enumerate() {
-        let y = rect.top() + HEADER + CELL * row_at as f32;
+        let y = rect.top() + header + CELL * row_at as f32;
         painter.text(
             egui::pos2(rect.left() + names_width - 6.0, y + CELL * 0.5),
             egui::Align2::RIGHT_CENTER,
@@ -616,7 +619,7 @@ pub(super) fn draw_collision_matrix(
         );
     }
 
-    for (row, column, cell) in matrix_cells(rect.min, &used, names_width, CELL, HEADER) {
+    for (row, column, cell) in matrix_cells(rect.min, &used, names_width, CELL, header) {
         painter.line_segment(
             [
                 egui::pos2(cell.left(), cell.top()),

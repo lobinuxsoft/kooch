@@ -72,6 +72,7 @@ every reference in the project is concerned.",
             fields: &[],
             layers: false,
             layer: false,
+            hidden: false,
         }];
         FIELDS
     }

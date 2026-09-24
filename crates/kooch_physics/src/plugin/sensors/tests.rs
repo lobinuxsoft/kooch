@@ -161,11 +161,10 @@ fn a_preview_obeys_the_collision_groups() {
     use kooch_ecs::post_process_volume::PostProcessVolume;
     use kooch_ecs::sensor_occupancy::SensorOccupancy;
 
-    // The region listens to layer 2 only, as the Inspector writes it.
+    // The region is on layer 1, and the project's matrix says layer 1 never meets layer 0.
     let collider = Collider {
         half_extents: Vec3::splat(4.0),
-        collision_memberships: 0b10,
-        collision_filter: 0b10,
+        layer: 1,
         ..Default::default()
     };
     let (mut registry, region, body) = world(SHAPE_CUBOID, collider, Vec3::ZERO);
@@ -174,21 +173,18 @@ fn a_preview_obeys_the_collision_groups() {
         .get_cpu_mut::<PostProcessVolume>()
         .expect("registered")
         .insert(region, PostProcessVolume::default());
-    // The body is on layer 1 and hears layer 1: nothing to do with the region.
+    // The body is on layer 0: nothing to do with the region.
     registry
         .get_cpu_mut::<Collider>()
         .expect("registered")
-        .insert(
-            body,
-            Collider {
-                collision_memberships: 0b01,
-                collision_filter: 0b01,
-                ..Default::default()
-            },
-        );
+        .insert(body, Collider::default());
 
     let mut resources = Resources::new();
     resources.insert(registry);
+    let mut layers = kooch_core::layers::LayerNames::default();
+    layers.set(1, "Player");
+    layers.set_collide(0, 1, false);
+    resources.insert(layers);
     resources.insert(SensorOccupancy::default());
     super::sensor_occupancy_preview_system(&mut resources);
     assert!(

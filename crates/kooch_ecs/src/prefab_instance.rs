@@ -186,6 +186,7 @@ changes here, except where an override says otherwise.",
                 fields: &[],
                 layers: false,
                 layer: false,
+                hidden: false,
             },
             FieldMeta {
                 name: "overrides",
@@ -204,6 +205,7 @@ being saved — that is what makes it an override.",
                 fields: &[],
                 layers: false,
                 layer: false,
+                hidden: false,
             },
         ];
         FIELDS

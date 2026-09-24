@@ -42,6 +42,9 @@ pub struct FieldMeta {
     /// One of the project's layers, from `#[reflect(layer)]`: the inspector draws a dropdown of the
     /// `.layers` names rather than a number (#1302).
     pub layer: bool,
+    /// Kept by reflection so a scene still loads it, and never drawn: a value the engine derives
+    /// and an author has no business typing (#1302).
+    pub hidden: bool,
 }
 
 /// Bounds and granularity for a numeric field — see [`FieldMeta::range`].

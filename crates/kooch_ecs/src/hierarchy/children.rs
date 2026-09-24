@@ -33,6 +33,7 @@ editing this list.",
             fields: &[],
             layers: false,
             layer: false,
+            hidden: false,
         }];
         FIELDS
     }
