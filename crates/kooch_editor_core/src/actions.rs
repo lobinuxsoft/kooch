@@ -401,6 +401,14 @@ pub(crate) enum EditorAction {
         index: usize,
         name: String,
     },
+    /// Turns one pair of the project's collision matrix on or off (#1302). Both halves, since the
+    /// table is symmetric.
+    SetLayerPair {
+        guid: Option<kooch_core::Guid>,
+        a: usize,
+        b: usize,
+        collide: bool,
+    },
 }
 
 /// The kind of file created by [`EditorAction::CreateFile`]. The Rust

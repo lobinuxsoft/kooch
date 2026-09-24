@@ -107,3 +107,73 @@ fn typing_alone_writes_nothing() {
         "a keystroke wrote the file",
     );
 }
+
+/// The matrix is one table for the project: ticking a pair writes BOTH halves, so an author cannot
+/// leave it disagreeing with itself (#1302).
+#[test]
+fn a_matrix_click_writes_the_pair() {
+    use kooch_core::layers::LayerNames;
+
+    let _guard = crate::panels::id_stability_probe::PROBE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let ctx = egui::Context::default();
+    let guid = Guid::new_v4();
+    let mut names = LayerNames::default();
+    names.set(1, "Player");
+    let mut actions = Vec::new();
+    // Two frames: the first lays the grid out, the second can be clicked at a known place.
+    for frame in 0..2 {
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(600.0, 800.0),
+            )),
+            ..Default::default()
+        };
+        if frame == 1 {
+            // The first checkbox of the grid: Default × Default.
+            let at = egui::pos2(60.0, 46.0);
+            input.events.push(egui::Event::PointerMoved(at));
+            input.events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            });
+            input.events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        ctx.run_ui(input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                super::asset_view::draw_collision_matrix(ui, guid, &names, &mut actions);
+            });
+        });
+    }
+
+    // Whatever cell was hit, the action is a PAIR, and the handler writes both halves.
+    let pairs: Vec<&EditorAction> = actions
+        .iter()
+        .filter(|action| matches!(action, EditorAction::SetLayerPair { .. }))
+        .collect();
+    assert_eq!(
+        pairs.len(),
+        1,
+        "one click has to write one pair, got {}",
+        pairs.len()
+    );
+
+    let mut table = names.clone();
+    if let EditorAction::SetLayerPair { a, b, collide, .. } = pairs[0] {
+        table.set_collide(*a, *b, *collide);
+        assert_eq!(
+            table.collide(*a, *b),
+            table.collide(*b, *a),
+            "the table disagrees with itself",
+        );
+    }
+}

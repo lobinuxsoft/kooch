@@ -32,6 +32,7 @@ editing this list.",
             requires: "",
             fields: &[],
             layers: false,
+            layer: false,
         }];
         FIELDS
     }

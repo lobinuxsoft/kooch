@@ -74,6 +74,7 @@ propagation pass. Edit Transform instead.",
             requires: "",
             fields: &[],
             layers: false,
+            layer: false,
         }];
         FIELDS
     }

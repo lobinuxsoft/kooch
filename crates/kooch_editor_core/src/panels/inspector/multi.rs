@@ -13,7 +13,7 @@ use crate::state::{EntityDisplayInfo, ReflectedTypeInfo};
 
 use super::widgets::{
     AssetCatalogEntry, FieldContext, bits_for, choices_for, draw_readonly_value, draw_value_widget,
-    fields_for, layers_for, range_for, requires_for,
+    fields_for, layer_for, layers_for, range_for, requires_for,
 };
 
 /// A field value across multiple selected entities.
@@ -316,6 +316,7 @@ fn draw_multi_reflected_fields(
                     choices,
                     bits,
                     layers: layers_for(field_metas, name),
+                    layer: layer_for(field_metas, name),
                     layer_labels,
                     assets: asset_catalog,
                     entities,

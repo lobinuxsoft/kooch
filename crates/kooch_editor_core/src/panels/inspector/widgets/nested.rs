@@ -48,6 +48,7 @@ fn member_context<'a>(
         choices: meta.map_or(&[], |meta| meta.choices),
         bits: meta.map_or(&[], |meta| meta.bits),
         layers: meta.is_some_and(|meta| meta.layers),
+        layer: meta.is_some_and(|meta| meta.layer),
         layer_labels: field.layer_labels,
         assets: field.assets,
         entities: field.entities,

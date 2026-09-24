@@ -125,6 +125,13 @@ pub(super) fn draw_choice_dropdown(
 }
 
 /// Looks up the `bits` slice for a field by name.
+/// Whether the field is ONE of the project's layers (#1302).
+pub(crate) fn layer_for(field_metas: Option<&'static [FieldMeta]>, name: &str) -> bool {
+    field_metas
+        .and_then(|metas| metas.iter().find(|m| m.name == name))
+        .is_some_and(|m| m.layer)
+}
+
 /// Whether the field is a mask over the project's layer names (#1218).
 pub(crate) fn layers_for(field_metas: Option<&'static [FieldMeta]>, name: &str) -> bool {
     field_metas
@@ -151,6 +158,31 @@ pub(crate) fn draw_bitmask(
 ) -> Option<ReflectValue> {
     let cells: Vec<(&str, i64)> = bits.iter().map(|bit| (bit.label, bit.value)).collect();
     draw_cells(ui, value, &cells, field_name)
+}
+
+/// One of the project's layers (#1302): which layer a collider is on. Not a mask — the pairs it
+/// meets are the project's matrix, in one place, rather than a second mask here.
+pub(crate) fn draw_layer_pick(
+    ui: &mut egui::Ui,
+    value: &ReflectValue,
+    labels: &[String],
+    field_name: &str,
+) -> Option<ReflectValue> {
+    let current = reflect_value_as_i64(value)?;
+    let mut next = current;
+    egui::ComboBox::from_id_salt(("layer", field_name))
+        .selected_text(
+            labels
+                .get(current.max(0) as usize)
+                .cloned()
+                .unwrap_or_else(|| format!("Layer {current}")),
+        )
+        .show_ui(ui, |ui| {
+            for (index, label) in labels.iter().enumerate() {
+                ui.selectable_value(&mut next, index as i64, label);
+            }
+        });
+    (next != current).then(|| reflect_value_from_i64(value, next))?
 }
 
 /// A layer mask (#1218): a summary of what is ticked, and a list of the project's names behind it.

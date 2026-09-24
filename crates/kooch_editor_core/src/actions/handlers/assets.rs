@@ -285,6 +285,43 @@ mod write_guard_tests;
 #[cfg(test)]
 mod material_path_tests;
 
+/// Turns one pair of the project's collision matrix on or off and writes the table back (#1302).
+/// Both halves, since a relationship between two layers is one fact.
+pub(super) fn handle_set_layer_pair(
+    resources: &mut Resources,
+    guid: Option<Guid>,
+    a: usize,
+    b: usize,
+    collide: bool,
+) {
+    let Some(guid) = guid else {
+        tracing::warn!("SetLayerPair: the project has no .layers file to write");
+        return;
+    };
+    let Some(path) = resources
+        .get::<AssetDatabase>()
+        .and_then(|db| Some(db.entry(guid)?.path.clone()))
+    else {
+        tracing::warn!(guid = %guid, "SetLayerPair: no path in AssetDatabase");
+        return;
+    };
+    let mut names = resources
+        .get::<kooch_core::layers::LayerNames>()
+        .cloned()
+        .unwrap_or_default();
+    names.set_collide(a, b, collide);
+    let Ok(text) = ron::ser::to_string_pretty(&names, ron::ser::PrettyConfig::default()) else {
+        tracing::error!("SetLayerPair: the table did not serialise");
+        return;
+    };
+    if let Err(e) = std::fs::write(&path, text) {
+        tracing::error!(path = %path.display(), error = %e, "failed to write the collision matrix");
+        return;
+    }
+    // Published now rather than next frame, so the grid under the cursor answers with it.
+    resources.insert(names);
+}
+
 /// Renames one of the project's layers and writes the table back (#1218). The names are not
 /// reflected — a list of strings is not a field grid — so this walks the file itself.
 pub(super) fn handle_rename_layer(

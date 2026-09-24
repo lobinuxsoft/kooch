@@ -39,6 +39,9 @@ pub struct FieldMeta {
     /// A mask over the project's own layer names (#1218), from `#[reflect(layers)]`. The inspector
     /// draws a box per layer, named by the `.layers` table rather than by anything in the code.
     pub layers: bool,
+    /// One of the project's layers, from `#[reflect(layer)]`: the inspector draws a dropdown of the
+    /// `.layers` names rather than a number (#1302).
+    pub layer: bool,
 }
 
 /// Bounds and granularity for a numeric field — see [`FieldMeta::range`].

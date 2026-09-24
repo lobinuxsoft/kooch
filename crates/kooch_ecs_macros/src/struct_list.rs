@@ -23,6 +23,7 @@ pub(crate) fn struct_list(
             choices: &[],
             bits: &[],
             layers: false,
+            layer: false,
             range: None,
             shown_when: ::core::option::Option::None,
             asset_type: "",

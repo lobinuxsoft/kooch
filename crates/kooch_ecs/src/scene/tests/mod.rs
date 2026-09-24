@@ -39,6 +39,7 @@ impl Reflect for Health {
                 group: "",
                 fields: &[],
                 layers: false,
+                layer: false,
             },
             FieldMeta {
                 name: "max_hp",
@@ -54,6 +55,7 @@ impl Reflect for Health {
                 group: "",
                 fields: &[],
                 layers: false,
+                layer: false,
             },
         ];
         FIELDS
