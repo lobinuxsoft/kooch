@@ -40,7 +40,6 @@ pub static COMBINE_CHOICES: &[FieldChoice] = &[
     },
 ];
 
-
 /// The backend rule for a discriminant, defaulting to the average for one
 /// outside the known set — a scene from a newer editor stays loadable.
 pub(super) fn combine_rule(discriminant: u32) -> CombineRule {

@@ -91,10 +91,13 @@ pub(super) fn field_is_shown(
     name: &str,
     fields: &[(String, ReflectValue)],
 ) -> bool {
-    let Some(condition) = field_metas
-        .and_then(|metas| metas.iter().find(|m| m.name == name))
-        .and_then(|meta| meta.shown_when)
-    else {
+    let meta = field_metas.and_then(|metas| metas.iter().find(|m| m.name == name));
+    // Hidden is hidden whatever else it says: the engine derives it, and a box an author can type
+    // into is a second source of truth (#1302).
+    if meta.is_some_and(|meta| meta.hidden) {
+        return false;
+    }
+    let Some(condition) = meta.and_then(|meta| meta.shown_when) else {
         return true;
     };
     let discriminant = fields

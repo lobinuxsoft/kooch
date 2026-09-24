@@ -313,12 +313,19 @@ fn a_force_event_carries_a_sane_total_and_peak() {
 // Groups
 // ---------------------------------------------------------------------------
 
-/// Acceptance: "two bodies in non-overlapping collision groups pass through
-/// each other."
+/// Acceptance: "two bodies the matrix says never meet pass through each other." Written in layers
+/// now, not masks: a collider names its layer and the project's table decides the pairs (#1302).
 #[test]
 fn disjoint_collision_groups_pass_through() {
-    fn fell_through(groups: (u32, u32)) -> bool {
+    fn fell_through(layers: (u32, u32)) -> bool {
         let mut resources = listening_world();
+        {
+            // Layer 0 and layer 1 never meet; everything else is left alone.
+            let mut table = kooch_core::layers::LayerNames::default();
+            table.set(1, "Other");
+            table.set_collide(0, 1, false);
+            resources.insert(table);
+        }
         spawn_body(
             &mut resources,
             Transform::from_position(Vec3::new(0.0, 0.0, 0.0)),
@@ -330,8 +337,7 @@ fn disjoint_collision_groups_pass_through() {
             Collider {
                 shape: SHAPE_CUBOID,
                 half_extents: Vec3::new(50.0, 0.5, 50.0),
-                collision_memberships: groups.0,
-                collision_filter: groups.0,
+                layer: layers.0,
                 ..Default::default()
             },
         );
@@ -340,8 +346,7 @@ fn disjoint_collision_groups_pass_through() {
             Transform::from_position(Vec3::new(0.0, 4.0, 0.0)),
             PhysicsBody::default(),
             Collider {
-                collision_memberships: groups.1,
-                collision_filter: groups.1,
+                layer: layers.1,
                 ..Default::default()
             },
         );
@@ -353,12 +358,12 @@ fn disjoint_collision_groups_pass_through() {
     }
 
     assert!(
-        !fell_through((0b0001, 0b0001)), // same group: the floor holds
-        "a body in the floor's own group fell through it",
+        !fell_through((0, 0)),
+        "a body on the floor's own layer fell through it",
     );
     assert!(
-        fell_through((0b0001, 0b0010)), // disjoint: no pair considered
-        "disjoint collision groups still collided",
+        fell_through((0, 1)),
+        "two layers the matrix says never meet still collided",
     );
 }
 

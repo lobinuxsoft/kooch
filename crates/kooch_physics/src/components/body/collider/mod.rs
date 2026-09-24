@@ -109,16 +109,17 @@ pub struct Collider {
     /// the same fact written twice (#1302).
     #[reflect(layer)]
     pub layer: u32,
-    /// Groups this collider belongs to — **derived** from `layer` and the matrix, and kept only so
-    /// a scene authored before the matrix loads with what it had. Editing it directly is for the
-    /// case the matrix cannot express.
-    #[reflect(layers)]
+    /// Derived from `layer` and the project's matrix, kept only so a scene authored before the
+    /// matrix still loads: `layer` is what an author sets, and a second place to say the same thing
+    /// is a second place for it to disagree (#1302).
+    #[reflect(hidden)]
     pub collision_memberships: u32,
-    /// Which groups this collider will collide with. Derived, as above.
-    #[reflect(layers)]
+    /// Derived, as above.
+    #[reflect(hidden)]
     pub collision_filter: u32,
-    /// Groups it is solved against, of those it collides with — detect a wall without being stopped
-    /// by it.
+    /// Which of the pairs the matrix allows actually **push**: a projectile that is detected by a
+    /// wall without being stopped by it. Authored, because it is the one thing a layer pair cannot
+    /// say — and left at everything, it changes nothing.
     #[reflect(layers)]
     pub solver_memberships: u32,
     /// Which groups this collider will be pushed by.
@@ -189,15 +190,22 @@ impl Collider {
     /// authored before the matrix carries masks that are not all ones — those are kept, because
     /// rewriting them would change a shipped game without a word (#1302).
     pub fn in_layers(&self, layers: &kooch_core::layers::LayerNames) -> Self {
-        if self.collision_memberships != u32::MAX || self.collision_filter != u32::MAX {
-            return *self;
-        }
-        let layer = self.layer.min(31);
+        let layer = self.layer_now();
         Self {
+            layer,
             collision_memberships: 1 << layer,
             collision_filter: layers.meets(layer as usize),
             ..*self
         }
+    }
+
+    /// Which layer this collider is on, reading a pre-matrix mask when that is all it has: the
+    /// lowest bit it claimed, which is the layer an author picked in every project that used one.
+    fn layer_now(&self) -> u32 {
+        if self.layer != 0 || self.collision_memberships == u32::MAX {
+            return self.layer.min(31);
+        }
+        self.collision_memberships.trailing_zeros().min(31)
     }
 
     /// How this collider participates: what it notices and what it

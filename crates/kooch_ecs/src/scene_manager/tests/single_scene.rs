@@ -34,6 +34,7 @@ impl Reflect for Health {
             fields: &[],
             layers: false,
             layer: false,
+            hidden: false,
         }];
         FIELDS
     }

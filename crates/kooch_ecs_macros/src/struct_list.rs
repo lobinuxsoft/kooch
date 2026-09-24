@@ -24,6 +24,7 @@ pub(crate) fn struct_list(
             bits: &[],
             layers: false,
             layer: false,
+            hidden: false,
             range: None,
             shown_when: ::core::option::Option::None,
             asset_type: "",

@@ -28,6 +28,7 @@ impl Reflect for Health {
                 fields: &[],
                 layers: false,
                 layer: false,
+                hidden: false,
             },
             FieldMeta {
                 name: "max_hp",
@@ -44,6 +45,7 @@ impl Reflect for Health {
                 fields: &[],
                 layers: false,
                 layer: false,
+                hidden: false,
             },
         ];
         FIELDS
@@ -124,6 +126,7 @@ impl Reflect for Position {
                 fields: &[],
                 layers: false,
                 layer: false,
+                hidden: false,
             },
             FieldMeta {
                 name: "y",
@@ -140,6 +143,7 @@ impl Reflect for Position {
                 fields: &[],
                 layers: false,
                 layer: false,
+                hidden: false,
             },
             FieldMeta {
                 name: "z",
@@ -156,6 +160,7 @@ impl Reflect for Position {
                 fields: &[],
                 layers: false,
                 layer: false,
+                hidden: false,
             },
         ];
         FIELDS

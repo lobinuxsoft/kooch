@@ -159,6 +159,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     bits: &[],
                     layers: false,
                     layer: false,
+                    hidden: false,
                     range: None,
                     // An asset picker has no variant to depend on yet.
                     shown_when: ::core::option::Option::None,
@@ -223,6 +224,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     bits: &[],
                     layers: false,
                     layer: false,
+                    hidden: false,
                     range: None,
                     shown_when: #shown_when_expr,
                     asset_type: "",
@@ -279,6 +281,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     bits: &[],
                     layers: false,
                     layer: false,
+                    hidden: false,
                     range: None,
                     shown_when: #shown_when_expr,
                     asset_type: "",
@@ -411,6 +414,10 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             Ok(None) => quote! { &[] },
             Err(e) => return e,
         };
+        let hidden_flag = match crate::attrs::parse_field_hidden(field) {
+            Ok(flag) => flag,
+            Err(e) => return e,
+        };
         let layer_flag = match crate::attrs::parse_field_layer(field) {
             Ok(flag) => flag,
             Err(e) => return e,
@@ -440,6 +447,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 bits: #bits_expr,
                 layers: #layers_flag,
                 layer: #layer_flag,
+                hidden: #hidden_flag,
                 range: #range_expr,
                 shown_when: #shown_when_expr,
                 asset_type: "",
