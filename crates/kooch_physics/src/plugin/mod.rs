@@ -3,6 +3,7 @@
 mod compound;
 pub(super) mod events;
 mod joints;
+mod pose;
 pub(super) mod sensors;
 mod systems;
 #[cfg(test)]
