@@ -488,6 +488,67 @@ pub(super) fn draw_layers(
                 ui.end_row();
             }
         });
+
+    ui.separator();
+    draw_collision_matrix(ui, guid, names, actions);
+}
+
+/// The project's collision matrix: which layers meet which, in one place.
+///
+/// 🔴 Only the named layers are drawn. Thirty-two rows of `Layer 17` is a wall nobody reads, and a
+/// project names the layers it uses — the rest keep colliding with everything, which is what they
+/// did before the table existed (#1302).
+pub(super) fn draw_collision_matrix(
+    ui: &mut egui::Ui,
+    guid: Guid,
+    names: &kooch_core::layers::LayerNames,
+    actions: &mut Vec<EditorAction>,
+) {
+    let used: Vec<usize> = (0..kooch_core::layers::LAYER_COUNT)
+        .filter(|&index| {
+            index == 0
+                || names
+                    .names
+                    .get(index)
+                    .is_some_and(|name| !name.trim().is_empty())
+        })
+        .collect();
+
+    ui.label("Which layers collide. Untick a pair and nothing on those two meets, anywhere.");
+    egui::Grid::new("collision_matrix")
+        .num_columns(used.len() + 1)
+        .spacing([6.0, 4.0])
+        .show(ui, |ui| {
+            ui.label("");
+            for &column in &used {
+                ui.label(egui::RichText::new(names.label(column)).small());
+            }
+            ui.end_row();
+            for &row in &used {
+                ui.label(names.label(row));
+                for &column in &used {
+                    // Half the table: the pair is symmetric, so drawing both halves gives an author
+                    // two boxes for one fact and a way to make them disagree.
+                    match column >= row {
+                        true => {
+                            let mut collide = names.collide(row, column);
+                            if ui.checkbox(&mut collide, "").changed() {
+                                actions.push(EditorAction::SetLayerPair {
+                                    guid: Some(guid),
+                                    a: row,
+                                    b: column,
+                                    collide,
+                                });
+                            }
+                        }
+                        false => {
+                            ui.label("");
+                        }
+                    }
+                }
+                ui.end_row();
+            }
+        });
 }
 
 /// Generation no live entity carries, and distinct from the prefab

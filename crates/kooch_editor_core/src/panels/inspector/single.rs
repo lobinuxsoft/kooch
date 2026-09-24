@@ -16,7 +16,7 @@ use super::RotationContext;
 use super::rotation::{draw_quat_with_cache, is_transform_rotation};
 use super::widgets::{
     AssetCatalogEntry, FieldContext, bits_for, choices_for, draw_readonly_value, draw_value_widget,
-    fields_for, layers_for, range_for, requires_for,
+    fields_for, layer_for, layers_for, range_for, requires_for,
 };
 
 /// Draws an editable name field for the Name component (shown above the component list).
@@ -198,6 +198,7 @@ pub(super) fn draw_reflected_fields(
                             choices: choices_for(field_metas, name),
                             bits: bits_for(field_metas, name),
                             layers: layers_for(field_metas, name),
+                            layer: layer_for(field_metas, name),
                             layer_labels,
                             assets: asset_catalog,
                             entities,

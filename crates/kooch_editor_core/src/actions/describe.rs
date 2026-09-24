@@ -105,6 +105,7 @@ impl EditorAction {
             | Self::SetImageImport { .. }
             | Self::EditAssetField { .. }
             | Self::RenameLayer { .. }
+            | Self::SetLayerPair { .. }
             | Self::ImportAssets { .. }
             | Self::CreateFolder { .. }
             | Self::CreateMaterial { .. }
@@ -203,6 +204,7 @@ impl EditorAction {
             | Self::SetImageImport { .. }
             | Self::EditAssetField { .. }
             | Self::RenameLayer { .. }
+            | Self::SetLayerPair { .. }
             | Self::ImportAssets { .. }
             | Self::CreateFolder { .. }
             | Self::CreateMaterial { .. }

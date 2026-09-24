@@ -20,6 +20,8 @@ pub(in crate::panels::inspector) struct FieldContext<'a> {
     pub bits: &'static [FieldChoice],
     /// The field is a mask over the project's layer names (#1218), which `layer_labels` holds.
     pub layers: bool,
+    /// The field is ONE of the project's layers (#1302): a dropdown of names, not a number.
+    pub layer: bool,
     /// The project's layer names, gathered once a frame.
     pub layer_labels: &'a [String],
     /// Per-frame snapshot of `AssetDatabase`, filtered by the `AssetRef`
@@ -51,6 +53,7 @@ pub(in crate::panels::inspector) fn draw_value_widget(
         choices,
         bits,
         layers,
+        layer,
         layer_labels,
         assets: asset_catalog,
         range,
@@ -63,6 +66,9 @@ pub(in crate::panels::inspector) fn draw_value_widget(
     }
     if layers && !layer_labels.is_empty() {
         return super::choices::draw_layer_mask(ui, value, layer_labels, field_name);
+    }
+    if layer && !layer_labels.is_empty() {
+        return super::choices::draw_layer_pick(ui, value, layer_labels, field_name);
     }
     if !bits.is_empty() {
         return draw_bitmask(ui, value, bits, field_name);

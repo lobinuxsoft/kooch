@@ -33,6 +33,7 @@ impl Reflect for Health {
             group: "",
             fields: &[],
             layers: false,
+            layer: false,
         }];
         FIELDS
     }

@@ -39,6 +39,7 @@ static FIELDS: &[FieldMeta] = &[FieldMeta {
     group: "",
     fields: &[],
     layers: false,
+    layer: false,
 }];
 
 /// Reflected so a generic pass that rebuilds a world — `WorldSnapshot`, which stop restores from

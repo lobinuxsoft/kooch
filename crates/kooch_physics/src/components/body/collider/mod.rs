@@ -107,6 +107,7 @@ pub struct Collider {
     /// The layer this collider is on. Which layers meet which is the project's collision matrix,
     /// not a field here: a relationship is between two layers, and authoring it on each collider is
     /// the same fact written twice (#1302).
+    #[reflect(layer)]
     pub layer: u32,
     /// Groups this collider belongs to — **derived** from `layer` and the matrix, and kept only so
     /// a scene authored before the matrix loads with what it had. Editing it directly is for the

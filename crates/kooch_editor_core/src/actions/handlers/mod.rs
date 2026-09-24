@@ -166,6 +166,14 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::RenameLayer { guid, index, name } => {
             assets::handle_rename_layer(resources, *guid, *index, name);
         }
+        EditorAction::SetLayerPair {
+            guid,
+            a,
+            b,
+            collide,
+        } => {
+            assets::handle_set_layer_pair(resources, *guid, *a, *b, *collide);
+        }
         EditorAction::ImportAssets { files, dest } => handle_import_assets(resources, files, dest),
         // ECS actions and Undo/Redo handled by caller.
         _ => {}
