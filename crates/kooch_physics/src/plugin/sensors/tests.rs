@@ -19,7 +19,7 @@ fn world(shape: u32, collider: Collider, at: Vec3) -> (ComponentRegistry, Entity
             sensor,
             Collider {
                 shape,
-                sensor: true,
+                is_trigger: true,
                 ..collider
             },
         );
@@ -220,7 +220,7 @@ fn a_preview_ignores_other_regions() {
         .insert(
             other,
             Collider {
-                sensor: true,
+                is_trigger: true,
                 ..Default::default()
             },
         );

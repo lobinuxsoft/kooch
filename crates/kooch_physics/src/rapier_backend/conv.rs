@@ -50,17 +50,19 @@ fn with_interaction(builder: ColliderBuilder, interaction: ColliderInteraction) 
     // KINEMATIC_FIXED, so a fixed trigger never hears a kinematic character controller walk
     // through it — a checkpoint that works for crates and not for the player. Solid contacts keep
     // rapier's pairs: their events feed gameplay that is about being pushed.
-    let pairs = match interaction.sensor {
+    let pairs = match interaction.is_trigger {
         true => ActiveCollisionTypes::all(),
         false => ActiveCollisionTypes::default(),
     };
     builder
-        .sensor(interaction.sensor)
+        .sensor(interaction.is_trigger)
         .active_collision_types(pairs)
         .active_events(events)
         .contact_force_event_threshold(interaction.contact_force_threshold.max(0.0))
+        // Solver groups stay at rapier's default: a pair reaches the solver only when the
+        // collision groups already let it through, so restating the filter there can only disagree
+        // with the matrix.
         .collision_groups(groups(interaction.collision_groups))
-        .solver_groups(groups(interaction.solver_groups))
 }
 
 /// Our mask as rapier's, in `And` mode (0.34): both sides must agree, as

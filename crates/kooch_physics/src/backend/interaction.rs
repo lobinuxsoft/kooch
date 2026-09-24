@@ -40,16 +40,17 @@ impl InteractionMask {
 
 /// How a collider participates beyond geometry and surface. Default is rapier's: solid, silent, all
 /// groups — events are opt-in per collider, so cost follows what the game listens for.
+///
+/// 🔴 No solver groups: under rapier's `And` rule a pair pushes only if both sides agree, so a
+/// solver mask says what the project's matrix already says and can contradict it. A collider is
+/// solid to everything the matrix lets it meet, or a trigger for all of them (#1309).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ColliderInteraction {
     /// Which pairs are considered at all.
     pub collision_groups: InteractionMask,
-    /// Which considered pairs push: a projectile that detects a wall without stopping shares its
-    /// collision groups, not its solver groups.
-    pub solver_groups: InteractionMask,
-    /// Report overlap, never solve — a trigger. Rapier computes no manifold for it, so its events
-    /// carry no contact data.
-    pub sensor: bool,
+    /// Report overlap, never solve. Rapier computes no manifold for it, so its events carry no
+    /// contact data.
+    pub is_trigger: bool,
     /// Raise an event when this collider starts or stops touching
     /// something.
     pub collision_events: bool,
@@ -64,8 +65,7 @@ impl Default for ColliderInteraction {
     fn default() -> Self {
         Self {
             collision_groups: InteractionMask::ALL,
-            solver_groups: InteractionMask::ALL,
-            sensor: false,
+            is_trigger: false,
             collision_events: false,
             contact_force_events: false,
             contact_force_threshold: 0.0,

@@ -103,7 +103,7 @@ fn a_sensor_reports_the_right_entities() {
         Collider {
             shape: SHAPE_CUBOID,
             half_extents: Vec3::new(2.0, 0.5, 2.0),
-            sensor: true,
+            is_trigger: true,
             collision_events: true,
             ..Default::default()
         },
@@ -143,7 +143,7 @@ fn falling_through_a_sensor_reports_both_halves() {
         Collider {
             shape: SHAPE_CUBOID,
             half_extents: Vec3::new(4.0, 0.5, 4.0),
-            sensor: true,
+            is_trigger: true,
             collision_events: true,
             ..Default::default()
         },
@@ -179,7 +179,7 @@ fn a_sensor_does_not_stop_anything() {
         Collider {
             shape: SHAPE_CUBOID,
             half_extents: Vec3::new(4.0, 0.5, 4.0),
-            sensor: true,
+            is_trigger: true,
             collision_events: true,
             ..Default::default()
         },
@@ -367,9 +367,10 @@ fn disjoint_collision_groups_pass_through() {
     );
 }
 
-/// Matching collision groups with disjoint solver groups detect a wall without stopping.
+/// A trigger reports the pair the matrix allows and never stops it: the one thing the removed
+/// solver masks were there for (#1309).
 #[test]
-fn matching_collision_groups_with_disjoint_solver_groups_detect_without_stopping() {
+fn a_trigger_detects_without_stopping() {
     let mut resources = listening_world();
     spawn_body(
         &mut resources,
@@ -382,11 +383,7 @@ fn matching_collision_groups_with_disjoint_solver_groups_detect_without_stopping
         Collider {
             shape: SHAPE_CUBOID,
             half_extents: Vec3::new(50.0, 0.5, 50.0),
-            // Considered by everything, solved against nothing.
-            collision_memberships: u32::MAX,
-            collision_filter: u32::MAX,
-            solver_memberships: 0b0001,
-            solver_filter: 0b0001,
+            is_trigger: true,
             collision_events: true,
             ..Default::default()
         },
@@ -396,10 +393,6 @@ fn matching_collision_groups_with_disjoint_solver_groups_detect_without_stopping
         Transform::from_position(Vec3::new(0.0, 4.0, 0.0)),
         PhysicsBody::default(),
         Collider {
-            collision_memberships: u32::MAX,
-            collision_filter: u32::MAX,
-            solver_memberships: 0b0010,
-            solver_filter: 0b0010,
             collision_events: true,
             ..Default::default()
         },
@@ -412,10 +405,10 @@ fn matching_collision_groups_with_disjoint_solver_groups_detect_without_stopping
         detected += collected::<CollisionStarted>(&resources).len();
     }
 
-    assert!(detected > 0, "the wall was never detected");
+    assert!(detected > 0, "the trigger was never detected");
     assert!(
         position(&resources, projectile).y < -2.0,
-        "the projectile was stopped at {} despite disjoint solver groups",
+        "the projectile was stopped at {} by a trigger",
         position(&resources, projectile).y,
     );
 }

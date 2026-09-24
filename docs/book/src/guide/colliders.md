@@ -172,34 +172,33 @@ rules, so a surface set to Average meeting one set to Max gets Max. A
 rule is less "how my surface behaves" than "how I insist on being
 combined".
 
-Four masks decide what meets what:
+A collider names **one layer**, and which layers meet which lives in the
+project's collision matrix — one table, not a mask on each side. A
+relationship is between two layers, so authoring it on both colliders is
+the same fact written twice, and two places to write a fact are two
+places for it to disagree.
 
-- `collision_memberships` / `collision_filter` — whether the pair is
-  considered at all.
-- `solver_memberships` / `solver_filter` — whether, having been
-  considered, it is pushed apart.
-
-A pair is live only when **each** side's memberships intersect the
-other's filter. Being in a group the other side looks for is not enough
-on its own.
-
-Each mask is a dropdown that says what it holds — a layer's own name while
-it is the only one, *Everything*, *Nothing*, or *Mixed (n)* — and opens the
-full list of names to tick. They are named by the **project's layer table** — the same 32 names a
-renderer, a camera or a light masks over. Make one from the Assets panel
-(*New Layers*, saved as `project.layers`) and type into it: every checklist
-in the Inspector renames with it, and a project without one shows
+The layer is a dropdown over the **project's layer table** — the same 32
+names a renderer, a camera or a light uses. Make one from the Assets panel
+(*New Layers*, saved as `project.layers`) and type into it: every layer
+dropdown in the Inspector renames with it, and a project without one shows
 **Default** and *Layer 1…31*. One table per project; a second file is read
 by nothing and says so in the log.
 
-The two pairs existing separately is the point: a projectile that should
-*detect* a wall without being *stopped* by it shares the wall's
-collision groups and not its solver groups.
+Open that asset to get the matrix: layers down the left, the same layers
+standing up along the top, one tick per pair. A tick is symmetric by
+construction — there is no cell for "A hits B but B does not hit A",
+because rapier requires both sides to agree and a one-sided claim would
+simply be ignored.
 
-`sensor` is the other half of that idea — it reports overlaps and never
-pushes. A sensor is not a collider that gets ignored: rapier computes no
-contact manifold for it at all, so its events carry no contact
-information.
+`is_trigger` is the per-collider half of the idea: it reports overlaps and
+never pushes, whatever the matrix allows — Unity's `isTrigger`. A trigger
+is not a collider that gets ignored: rapier computes no contact manifold
+for it at all, so its events carry no contact information.
+
+`collision_events` is separate and off by default: whether this collider
+**reports** what it touches. A scene pays for what it listens to, so the
+opt-in stays per collider.
 
 ## Several shapes, one body
 

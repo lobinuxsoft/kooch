@@ -84,3 +84,27 @@ fn switching_shape_keeps_the_other_parameters() {
         })
     );
 }
+
+/// A scene authored before the rename says `sensor`, and the toggle it meant is `is_trigger`.
+#[test]
+fn an_old_sensor_is_a_trigger() {
+    use kooch_ecs::reflect::{Reflect, ReflectValue};
+
+    let mut collider = Collider::default();
+    collider
+        .reflect_set("sensor", ReflectValue::Bool(true))
+        .unwrap();
+    assert!(collider.is_trigger);
+}
+
+/// The solver masks are gone, so a scene that still carries them names a field nobody has: the
+/// scene loader reports that as a skipped field, not a failed load (#1309).
+#[test]
+fn a_dropped_solver_mask_is_refused() {
+    use kooch_ecs::reflect::{Reflect, ReflectError, ReflectValue};
+
+    let err = Collider::default()
+        .reflect_set("solver_memberships", ReflectValue::U32(2))
+        .unwrap_err();
+    assert!(matches!(err, ReflectError::FieldNotFound(_)));
+}

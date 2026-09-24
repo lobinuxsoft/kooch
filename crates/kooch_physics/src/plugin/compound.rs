@@ -152,11 +152,10 @@ pub(super) fn digest(attachments: &[Attachment]) -> u64 {
         // Filtering and event opt-ins are baked into the collider too, so
         // an edit to either has to rebuild the body.
         let i = attachment.interaction;
-        (i.sensor, i.collision_events, i.contact_force_events).hash(&mut hasher);
+        (i.is_trigger, i.collision_events, i.contact_force_events).hash(&mut hasher);
         i.contact_force_threshold.to_bits().hash(&mut hasher);
-        for mask in [i.collision_groups, i.solver_groups] {
-            (mask.memberships, mask.filter).hash(&mut hasher);
-        }
+        let mask = i.collision_groups;
+        (mask.memberships, mask.filter).hash(&mut hasher);
         hash_spec(&attachment.spec, &mut hasher);
         // A child scaled in place changes its shape while its offset and
         // rotation stay exactly where they were.

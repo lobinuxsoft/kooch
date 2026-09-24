@@ -1,6 +1,6 @@
 //! [`PostVolumeVisualizer`] — where a post-process volume reaches full strength (#1222).
 //!
-//! The shape itself is the sensor's, and the collider gizmo already draws it. What this adds is the
+//! The shape itself is the trigger's, and the collider gizmo already draws it. What this adds is the
 //! inner boundary: a blend distance in from the surface, the effect is all of it. Between the two
 //! wires is the fade.
 

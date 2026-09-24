@@ -58,7 +58,6 @@ fn nothing_interacts_with_none() {
 #[test]
 fn a_default_collider_is_solid_and_unfiltered() {
     let interaction = ColliderInteraction::default();
-    assert!(!interaction.sensor);
+    assert!(!interaction.is_trigger);
     assert_eq!(interaction.collision_groups, InteractionMask::ALL);
-    assert_eq!(interaction.solver_groups, InteractionMask::ALL);
 }
