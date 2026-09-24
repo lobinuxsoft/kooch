@@ -196,14 +196,20 @@ impl Collider {
 
     /// The layers this collider is in, migrating whichever older field holds the answer.
     ///
-    /// A single `layer` index outranks the mask: it was authored later, by the editor that only
-    /// offered one layer. A pre-matrix membership mask that is not "everything" is the mask itself.
+    /// A single `layer` index outranks everything: it was authored by the editor that offered one
+    /// layer, and it is the most recent thing anybody typed.
+    ///
+    /// 🔴 A pre-matrix membership mask is read as **the lowest bit it claimed**, not as itself. Those
+    /// masks were rapier groups, and a project authored one as "everything except that" —
+    /// `0xFFFFFFFD` on a planet meant the default group minus one, never "in thirty-one layers".
+    /// Taken literally it puts the planet in every layer there is, including the one a volume
+    /// listens to, and every region hears the whole scene (#1320).
     pub fn layer_mask(&self) -> u32 {
         if self.layer != 0 {
             return 1 << self.layer.min(31);
         }
-        if self.collision_memberships != u32::MAX && self.collision_memberships != self.layers {
-            return self.collision_memberships;
+        if self.collision_memberships != u32::MAX {
+            return 1 << self.collision_memberships.trailing_zeros().min(31);
         }
         self.layers
     }
