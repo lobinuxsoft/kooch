@@ -105,17 +105,19 @@ pub struct Collider {
     /// The force, in newtons, above which a contact is worth reporting.
     #[reflect(shown_when = CONTACT_FORCE_WHEN)]
     pub contact_force_threshold: f32,
-    /// The layer this collider is on. Which layers meet which is the project's collision matrix,
-    /// not a field here: a relationship is between two layers, and authoring it on each collider is
-    /// the same fact written twice (#1302).
-    #[reflect(layer)]
+    /// The layers this collider belongs to. Which layers meet which is the project's collision
+    /// matrix, not a field here: a relationship is between two layers, and authoring it on each
+    /// collider is the same fact written twice (#1302). Ticking none means it meets nothing.
+    #[reflect(layers)]
+    pub layers: u32,
+    /// The single layer a scene authored between #1302 and #1320 names. Migrated into `layers` on
+    /// load and cleared, so nothing reads two answers for one question.
+    #[reflect(hidden)]
     pub layer: u32,
-    /// Derived from `layer` and the project's matrix, kept only so a scene authored before the
-    /// matrix still loads: `layer` is what an author sets, and a second place to say the same thing
-    /// is a second place for it to disagree (#1302).
+    /// The membership mask a scene authored before the matrix carries. Migrated as above.
     #[reflect(hidden)]
     pub collision_memberships: u32,
-    /// Derived, as above.
+    /// Derived from `layers` and the matrix; never authored.
     #[reflect(hidden)]
     pub collision_filter: u32,
     /// Shape centre in local space, moving geometry without the body — a feet-pivoted character's
@@ -146,6 +148,7 @@ impl Default for Collider {
             collision_events: false,
             contact_force_events: false,
             contact_force_threshold: 0.0,
+            layers: kooch_core::layers::DEFAULT_LAYER,
             layer: 0,
             collision_memberships: u32::MAX,
             collision_filter: u32::MAX,
@@ -175,28 +178,34 @@ impl Collider {
         .sanitised()
     }
 
-    /// This collider with its masks derived from `layer` and the project's matrix.
+    /// This collider with its filter derived from `layers` and the project's matrix.
     ///
-    /// 🔴 Derived, not read: a collider says which layer it is on and the matrix says the rest. One
-    /// authored before the matrix carries masks that are not all ones — those are kept, because
-    /// rewriting them would change a shipped game without a word (#1302).
+    /// 🔴 Derived, not read: a collider says which layers it is in and the matrix says who those
+    /// meet. A legacy field is migrated here too, so a scene saved by an older editor behaves as it
+    /// reads rather than as it is stored.
     pub fn in_layers(&self, layers: &kooch_core::layers::LayerNames) -> Self {
-        let layer = self.layer_now();
+        let mask = self.layer_mask();
         Self {
-            layer,
-            collision_memberships: 1 << layer,
-            collision_filter: layers.meets(layer as usize),
+            layers: mask,
+            layer: 0,
+            collision_memberships: mask,
+            collision_filter: layers.met_by(mask),
             ..*self
         }
     }
 
-    /// Which layer this collider is on, reading a pre-matrix mask when that is all it has: the
-    /// lowest bit it claimed, which is the layer an author picked in every project that used one.
-    fn layer_now(&self) -> u32 {
-        if self.layer != 0 || self.collision_memberships == u32::MAX {
-            return self.layer.min(31);
+    /// The layers this collider is in, migrating whichever older field holds the answer.
+    ///
+    /// A single `layer` index outranks the mask: it was authored later, by the editor that only
+    /// offered one layer. A pre-matrix membership mask that is not "everything" is the mask itself.
+    pub fn layer_mask(&self) -> u32 {
+        if self.layer != 0 {
+            return 1 << self.layer.min(31);
         }
-        self.collision_memberships.trailing_zeros().min(31)
+        if self.collision_memberships != u32::MAX && self.collision_memberships != self.layers {
+            return self.collision_memberships;
+        }
+        self.layers
     }
 
     /// How this collider participates: what it notices and what it

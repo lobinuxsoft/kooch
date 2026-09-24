@@ -78,6 +78,26 @@ pub fn physics_sync_system(resources: &mut Resources) {
     sync_archetypes(resources, &gained, &orphans);
 }
 
+/// Folds whichever legacy field holds a collider's layers into `layers`, and clears it.
+///
+/// 🔴 Without this, an author ticking boxes in the Inspector edits a field the legacy one outranks:
+/// the edit lands in the scene, changes nothing, and says nothing (#1320).
+pub fn migrate_collider_layers(resources: &mut Resources) {
+    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
+        return;
+    };
+    let Some(storage) = registry.get_cpu_mut::<Collider>() else {
+        return;
+    };
+    for (_, collider) in storage.iter_mut() {
+        if collider.layer != 0 || collider.collision_memberships != u32::MAX {
+            collider.layers = collider.layer_mask();
+            collider.layer = 0;
+            collider.collision_memberships = u32::MAX;
+        }
+    }
+}
+
 /// Reads the authored intent, in a deterministic order.
 ///
 /// Returns `None` when there is no component registry to read.

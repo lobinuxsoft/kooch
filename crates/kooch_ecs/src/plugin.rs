@@ -84,6 +84,9 @@ impl Plugin for EcsPlugin {
         // deferred commands (spawn/despawn/insert/remove). 2. Clean up despawned entities from
         // component storages. Hierarchy sync and transform propagation run before GPU sync.
         app.add_system(Stage::Update, crate::testing::spin::spin_pivots);
+        // Before anything reads a mask: a legacy field the author cannot see must not outrank the
+        // one they can (#1320).
+        app.add_system(Stage::First, crate::mesh_renderer::migrate_renderer_layers);
         app.add_system(Stage::PostUpdate, hierarchy_sync_system);
         app.add_system(Stage::PostUpdate, transform_propagation_system);
 
