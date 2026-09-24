@@ -220,3 +220,42 @@ fn an_offset_does_not_move_the_body() {
         "the collider's offset leaked into the body's transform"
     );
 }
+
+/// 🔴 #1316: a static body's pose was only pushed while authoring, so one moved during play kept
+/// the collision it was born with. The floor arrives under the ball after the fall has started.
+#[test]
+fn a_moved_static_moves_its_collision() {
+    let mut resources = world();
+    // A floor well out of the way, and a ball dropped where the floor is not.
+    let floor = spawn_body(
+        &mut resources,
+        Transform::from_position(Vec3::new(50.0, 0.0, 0.0)),
+        PhysicsBody {
+            kind: KIND_STATIC,
+            mass: 0.0,
+            ..Default::default()
+        },
+        Collider {
+            shape: SHAPE_CUBOID,
+            half_extents: Vec3::new(10.0, 0.5, 10.0),
+            ..Default::default()
+        },
+    );
+    let ball = falling_sphere(&mut resources, 6.0);
+    Playing::set(&mut resources, true);
+    simulate(&mut resources, 20);
+
+    // Moved mid-play, the way a lift or a level-streaming step moves one.
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+        && let Some(storage) = registry.get_cpu_mut::<Transform>()
+    {
+        storage.insert(floor, Transform::from_position(Vec3::ZERO));
+    }
+    simulate(&mut resources, 240);
+
+    let y = position(&resources, ball).y;
+    assert!(
+        y > 0.0,
+        "the ball fell through a floor that had been moved under it: y = {y}",
+    );
+}

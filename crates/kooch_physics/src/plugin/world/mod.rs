@@ -144,8 +144,14 @@ impl BodySpec {
         self.interaction.is_trigger
     }
 
+    /// Whether the solver owns this body's pose and drives it. Negative, so an unknown
+    /// discriminant is dynamic here exactly as it is in
+    /// [`PhysicsBody::body_kind`](crate::components::PhysicsBody::body_kind).
     pub fn is_dynamic(&self) -> bool {
-        matches!(self.kind, crate::components::KIND_DYNAMIC)
+        !matches!(
+            self.kind,
+            crate::components::KIND_KINEMATIC | crate::components::KIND_STATIC
+        )
     }
 
     /// `true` when the author drives the pose and the solver reacts.

@@ -261,7 +261,7 @@ impl App {
     /// Sends an event.
     ///
     /// Panics if the event type hasn't been registered with `add_event`.
-    pub fn send_event<E: Send + Sync + 'static>(&mut self, event: E) {
+    pub fn send_event<E: Clone + Send + Sync + 'static>(&mut self, event: E) {
         self.resources
             .get_mut::<Events<E>>()
             .expect("Event type not registered")

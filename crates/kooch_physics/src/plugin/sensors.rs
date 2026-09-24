@@ -29,7 +29,7 @@ pub(super) fn sensor_occupancy_system(resources: &mut Resources) {
         .get::<Events<CollisionStarted>>()
         .map(|events| {
             events
-                .read()
+                .read_fixed()
                 .filter(|event| event.sensor)
                 .map(|event| (event.a, event.b))
                 .collect()
@@ -39,7 +39,7 @@ pub(super) fn sensor_occupancy_system(resources: &mut Resources) {
         .get::<Events<CollisionStopped>>()
         .map(|events| {
             events
-                .read()
+                .read_fixed()
                 .filter(|event| event.sensor)
                 .map(|event| (event.a, event.b))
                 .collect()
@@ -90,7 +90,6 @@ pub(super) fn sensor_occupancy_system(resources: &mut Resources) {
     for (sensor, body, depth) in measured {
         inside.enter(sensor, body, depth);
     }
-
     resources.insert(inside);
 }
 

@@ -133,7 +133,7 @@ fn report(a: Entity, b: Entity, started: bool, sensor: bool) {
 }
 
 /// Sends if the app registered the buffer; without `add_event`, silence, not a panic.
-fn send<E: Send + Sync + 'static>(resources: &mut Resources, event: E) {
+fn send<E: Clone + Send + Sync + 'static>(resources: &mut Resources, event: E) {
     if let Some(events) = resources.get_mut::<Events<E>>() {
         events.send(event);
     }

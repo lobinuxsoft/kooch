@@ -117,3 +117,67 @@ fn no_updaters_is_not_an_error() {
     let mut resources = Resources::new();
     update_all_events(&mut resources);
 }
+
+/// 🔴 #1312: frames run faster than the fixed step — 360 fps against 60 Hz — and a frame swap must
+/// not throw away what the fixed stages have not read. Five collisions in six used to vanish here,
+/// which is why every post-process volume in a build was dead.
+#[test]
+fn a_fixed_reader_outlives_faster_frames() {
+    let mut events = Events::<TestEvent>::new();
+    events.send(TestEvent(7));
+    for _ in 0..6 {
+        events.update();
+    }
+
+    events.update_fixed();
+    let read: Vec<_> = events.read_fixed().cloned().collect();
+    assert_eq!(read, vec![TestEvent(7)], "the fixed step lost the event");
+}
+
+/// Each cadence reads an event once: twice would be a goal counted twice, a door opened twice.
+#[test]
+fn each_cadence_reads_once() {
+    let mut events = Events::<TestEvent>::new();
+    events.send(TestEvent(1));
+
+    events.update();
+    assert_eq!(events.read().count(), 1);
+    events.update();
+    assert_eq!(events.read().count(), 0, "a frame stage read it twice");
+
+    events.update_fixed();
+    assert_eq!(events.read_fixed().count(), 1);
+    events.update_fixed();
+    assert_eq!(
+        events.read_fixed().count(),
+        0,
+        "a fixed stage read it twice"
+    );
+}
+
+/// The fixed stages swap their own buffers, and the schedule does it so no host can forget: a host
+/// that did left every fixed reader looking at a list that never moved.
+#[test]
+fn the_fixed_stages_swap_their_events() {
+    use crate::schedule::Schedule;
+
+    let mut resources = Resources::new();
+    let mut updaters = EventUpdaters::default();
+    updaters.register::<TestEvent>();
+    resources.insert(updaters);
+    resources.insert(Events::<TestEvent>::new());
+    resources
+        .get_mut::<Events<TestEvent>>()
+        .unwrap()
+        .send(TestEvent(3));
+
+    Schedule::new().run_fixed_stages(&mut resources);
+
+    let read: Vec<_> = resources
+        .get::<Events<TestEvent>>()
+        .unwrap()
+        .read_fixed()
+        .cloned()
+        .collect();
+    assert_eq!(read, vec![TestEvent(3)]);
+}

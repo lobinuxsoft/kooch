@@ -52,6 +52,8 @@ pub struct PostPass {
     effects: std::collections::HashMap<u32, Effect>,
     /// Why the last build failed, for the panel to show.
     refusal: Option<String>,
+    /// Materials already complained about, so a frame-rate loop says each thing once.
+    quiet: std::collections::HashSet<kooch_core::Guid>,
 }
 
 impl PostPass {
@@ -61,6 +63,7 @@ impl PostPass {
             parts: pipeline::Parts::new(device),
             effects: std::collections::HashMap::new(),
             refusal: None,
+            quiet: std::collections::HashSet::new(),
         }
     }
 
@@ -72,6 +75,20 @@ impl PostPass {
     /// Why the shader did not compile, if it did not.
     pub fn refusal(&self) -> Option<&str> {
         self.refusal.as_deref()
+    }
+
+    /// Says why an effect in the stack drew nothing, once per material.
+    ///
+    /// 🔴 Every way this can fail used to be a silent `return false`, which is why a post-process
+    /// dead in a build looked identical to a scene that asked for none (#1312).
+    fn refuse(&mut self, material: kooch_core::Guid, why: &str) {
+        if self.quiet.insert(material) {
+            tracing::warn!(
+                target: "kooch_render::post_process",
+                material = %material,
+                "a post-process effect drew nothing: {why}",
+            );
+        }
     }
 
     /// Runs the material's post-process over `frame.scene`. `false` when there is nothing to run —
@@ -88,20 +105,36 @@ impl PostPass {
             return false;
         }
         let Some(slot) = materials.lookup(material) else {
+            self.refuse(
+                material,
+                "the material is not registered in the MaterialPipeline",
+            );
             return false;
         };
         let Some((_, surface)) = materials.slot_surface(slot) else {
+            self.refuse(
+                material,
+                "the material names no shader, or its shader has not loaded",
+            );
             return false;
         };
         if !self.ensure_pipeline(frame.device, slot, surface) {
+            let why = self
+                .refusal
+                .clone()
+                .unwrap_or_else(|| "its shader did not compile".to_owned());
+            self.refuse(material, &why);
             return false;
         }
         let Some(effect) = self.effects.get(&slot) else {
+            self.refuse(material, "the slot has no effect after building one");
             return false;
         };
         let Some(pipeline) = effect.pipeline.as_ref() else {
+            self.refuse(material, "the effect has no pipeline");
             return false;
         };
+        self.quiet.remove(&material);
 
         // Same size and format as what it reads, so the copy back is a plain texture copy.
         let desc = TargetDesc::attachment(frame.size, self.format).with_usage(
@@ -211,6 +244,10 @@ impl PostPass {
     ) -> Option<wgpu::RenderPipeline> {
         if surface.kind != ShaderKind::PostProcess {
             // Not a post-process shader: an ordinary material put in the stack by mistake.
+            self.refusal = Some(format!(
+                "its shader is {:?}, not post_process",
+                surface.kind
+            ));
             return None;
         }
         // 🔴 Checked before a pipeline is built from it: a broken edit has to read as a message in

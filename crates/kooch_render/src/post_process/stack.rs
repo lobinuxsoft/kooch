@@ -24,10 +24,17 @@ pub struct StackTarget<'a> {
 pub fn active_stack(resources: &Resources) -> Vec<(Guid, f32)> {
     let base = scene_stack(resources);
     let reached = super::volumes::reached(resources);
-    match reached.is_empty() {
+    let stack = match reached.is_empty() {
         true => base,
         false => super::volumes::folded(&base, &reached),
-    }
+    };
+    tracing::debug!(
+        target: "kooch_render::post_process",
+        reached = reached.len(),
+        effects = stack.len(),
+        "the frame's post-process stack",
+    );
+    stack
 }
 
 /// The layer underneath every volume: the look with nobody anywhere.

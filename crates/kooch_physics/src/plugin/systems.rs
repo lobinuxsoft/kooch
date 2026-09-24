@@ -337,7 +337,10 @@ fn create_missing_bodies(
 /// ones while playing.
 fn push_authored_poses(world: &mut PhysicsWorld, authored: &[Authored], playing: bool) {
     for entry in authored {
-        if playing && !entry.spec.is_kinematic() {
+        // 🔴 Only a dynamic body's pose belongs to the solver. A static one used to be skipped
+        // here too, so an author who moved it while playing left its collision behind at the pose
+        // it was born with — silently, since nothing reads back what a static body claims (#1316).
+        if playing && entry.spec.is_dynamic() {
             continue;
         }
         let Some(slot) = entry.claimed else { continue };
