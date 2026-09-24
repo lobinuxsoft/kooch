@@ -86,6 +86,23 @@ impl LayerNames {
         matrix.get(index).copied().unwrap_or(u32::MAX)
     }
 
+    /// Everything a collider on `mask`'s layers meets: the union of their rows.
+    ///
+    /// A collider belongs to as many layers as it is ticked into, so it meets whatever any of them
+    /// meets. An empty mask meets nothing, which is what unticking every box says.
+    pub fn met_by(&self, mask: u32) -> u32 {
+        if mask == 0 {
+            return 0;
+        }
+        let Some(matrix) = self.matrix.as_ref() else {
+            return u32::MAX;
+        };
+        (0..LAYER_COUNT)
+            .filter(|index| mask & (1 << index) != 0)
+            .map(|index| matrix.get(index).copied().unwrap_or(u32::MAX))
+            .fold(0, |met, row| met | row)
+    }
+
     /// Sets a pair both ways: the table is symmetric, and half of it is a table that disagrees with
     /// itself.
     pub fn set_collide(&mut self, a: usize, b: usize, collide: bool) {

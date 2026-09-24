@@ -108,3 +108,61 @@ fn a_dropped_solver_mask_is_refused() {
         .unwrap_err();
     assert!(matches!(err, ReflectError::FieldNotFound(_)));
 }
+
+/// 🔴 #1320: a collider is in as many layers as it is ticked into, and it meets whatever any of
+/// them meets — the union of their rows, not one row.
+#[test]
+fn a_collider_meets_every_row_it_is_in() {
+    use kooch_core::layers::LayerNames;
+
+    let mut layers = LayerNames::default();
+    layers.set(1, "Player");
+    layers.set(2, "Scenery");
+    // Player meets nothing but itself; Scenery meets Default.
+    layers.set_collide(0, 1, false);
+    layers.set_collide(1, 2, false);
+
+    let both = Collider {
+        layers: 0b110,
+        ..Default::default()
+    }
+    .in_layers(&layers);
+    assert_eq!(both.collision_memberships, 0b110, "it is in both layers");
+    assert!(
+        both.collision_filter & 1 != 0,
+        "Scenery meets Default, so a collider in Scenery does too",
+    );
+}
+
+/// Ticking no layer means meeting nothing, which is a thing an author can want and a thing the
+/// default must not quietly become.
+#[test]
+fn no_layer_meets_nothing() {
+    use kooch_core::layers::LayerNames;
+
+    let mut layers = LayerNames::default();
+    layers.set_collide(0, 0, true);
+    let empty = Collider {
+        layers: 0,
+        ..Default::default()
+    }
+    .in_layers(&layers);
+    assert_eq!(empty.collision_filter, 0, "an empty mask met something");
+}
+
+/// A scene the #1302 editor saved names one layer; a scene older than the matrix carries a
+/// membership mask. Both are read as the mask they meant.
+#[test]
+fn an_older_field_becomes_the_mask() {
+    let named = Collider {
+        layer: 2,
+        ..Default::default()
+    };
+    assert_eq!(named.layer_mask(), 0b100, "the layer it named, as a bit");
+
+    let pre_matrix = Collider {
+        collision_memberships: 0b1010,
+        ..Default::default()
+    };
+    assert_eq!(pre_matrix.layer_mask(), 0b1010, "the mask it carried");
+}

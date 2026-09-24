@@ -27,31 +27,43 @@ pub struct MeshRenderer {
     pub cast_shadows: bool,
     /// Whether this renderer receives shadows.
     pub receive_shadows: bool,
-    /// The layer this renderer is in (#1307). A camera, a light or a shadow view keeps only what
-    /// its own mask meets — the mask belongs to whoever is choosing, and the object answers what
-    /// it is. "Default" is where everything starts.
-    #[reflect(layer)]
-    pub layer: u32,
-    /// The mask this renderer carried before it named one layer, kept so a scene still loads it and
-    /// never drawn: a mesh is in one layer, and a second place to say so is a second place for it
-    /// to disagree (#1307).
-    #[reflect(hidden)]
+    /// The layers this renderer is in. A camera, a light or a shadow view keeps whatever its own
+    /// mask meets, so being in several is how one mesh answers to more than one of them. "Default"
+    /// is where everything starts; ticking none hides it from every view.
+    #[reflect(layers)]
     pub layers: u32,
+    /// The single layer a scene authored by the #1307 editor names. Migrated into `layers` on load
+    /// and cleared, so nothing reads two answers for one question (#1320).
+    #[reflect(hidden)]
+    pub layer: u32,
 }
 
 impl MeshRenderer {
-    /// Which layer this renderer is in, reading a pre-#1307 mask when that is all it has: the
-    /// lowest bit it claimed, which is the layer an author picked in every project that used one.
-    pub fn layer(&self) -> u32 {
-        if self.layer != 0 || self.layers == kooch_core::layers::DEFAULT_LAYER {
-            return self.layer.min(31);
-        }
-        self.layers.trailing_zeros().min(31)
-    }
-
-    /// What a camera's mask is tested against: the one bit this renderer is in.
+    /// What a camera's mask is tested against, migrating the single layer a #1307 scene names.
     pub fn layer_mask(&self) -> u32 {
-        1 << self.layer()
+        match self.layer {
+            0 => self.layers,
+            named => 1 << named.min(31),
+        }
+    }
+}
+
+/// Folds the single `layer` a #1307 scene names into `layers`, and clears it.
+///
+/// 🔴 Without this, an author ticking boxes in the Inspector edits a field the legacy one outranks:
+/// the edit lands in the scene, changes nothing, and says nothing (#1320).
+pub fn migrate_renderer_layers(resources: &mut kooch_core::resource::Resources) {
+    let Some(registry) = resources.get_mut::<crate::component::ComponentRegistry>() else {
+        return;
+    };
+    let Some(storage) = registry.get_cpu_mut::<MeshRenderer>() else {
+        return;
+    };
+    for (_, renderer) in storage.iter_mut() {
+        if renderer.layer != 0 {
+            renderer.layers = renderer.layer_mask();
+            renderer.layer = 0;
+        }
     }
 }
 

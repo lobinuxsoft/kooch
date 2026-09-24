@@ -109,6 +109,9 @@ impl Plugin for PhysicsComponentsPlugin {
         // an absent cache and an unfilled one have to behave the same.
         app.insert_resource(ColliderMeshCache::new());
         app.add_system(Stage::Startup, register_components);
+        // Before the sync reads them, and before an author can edit a field something else outranks
+        // (#1320).
+        app.add_system(Stage::First, systems::migrate_collider_layers);
         // Who is inside which region, measured rather than solved: this plugin is what a host
         // without a solver adds, and a post-process volume has to preview there too (#1222).
         app.insert_resource(kooch_ecs::sensor_occupancy::SensorOccupancy::default());

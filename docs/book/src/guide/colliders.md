@@ -172,18 +172,23 @@ rules, so a surface set to Average meeting one set to Max gets Max. A
 rule is less "how my surface behaves" than "how I insist on being
 combined".
 
-A collider names **one layer**, and which layers meet which lives in the
-project's collision matrix — one table, not a mask on each side. A
-relationship is between two layers, so authoring it on both colliders is
-the same fact written twice, and two places to write a fact are two
-places for it to disagree.
+A collider says **which layers it is in**, and which layers meet which
+lives in the project's collision matrix — one table, not a mask on each
+side. A relationship is between two layers, so authoring it on both
+colliders is the same fact written twice, and two places to write a fact
+are two places for it to disagree.
 
-The layer is a dropdown over the **project's layer table** — the same 32
-names a renderer, a camera or a light uses. Make one from the Assets panel
-(*New Layers*, saved as `project.layers`) and type into it: every layer
-dropdown in the Inspector renames with it, and a project without one shows
-**Default** and *Layer 1…31*. One table per project; a second file is read
-by nothing and says so in the log.
+`layers` is a checklist over the **project's layer table** — the same 32
+names a renderer, a camera or a light uses. Tick as many as apply: a
+collider in several layers meets whatever **any** of them meets, the union
+of their rows. Tick none and it meets nothing, which is a thing you can
+want.
+
+Make the table from the Assets panel (*New Layers*, saved as
+`project.layers`) and type into it: every layer checklist in the Inspector
+renames with it, and a project without one shows **Default** and
+*Layer 1…31*. One table per project; a second file is read by nothing and
+says so in the log.
 
 Open that asset to get the matrix: layers down the left, the same layers
 standing up along the top, one tick per pair. A tick is symmetric by
