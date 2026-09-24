@@ -186,6 +186,9 @@ impl Schedule {
     ///
     /// Physics → PostPhysics
     pub fn run_fixed_stages(&mut self, resources: &mut Resources) {
+        // 🔴 Here, not in a host's loop: the fixed stages read their own event buffers, and a host
+        // that forgot this swap left them reading a list that never moved (#1312).
+        crate::event::update_all_fixed_events(resources);
         run_staged!(self, resources, Physics, PostPhysics);
     }
 

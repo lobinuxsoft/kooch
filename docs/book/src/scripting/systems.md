@@ -82,17 +82,22 @@ A system is registered into a stage, and stages run in a fixed order every frame
 | `Input` | Reading devices into intent. |
 | `PreUpdate` | Preparing what `Update` will need. |
 | **`Update`** | **Your game logic — the default choice** |
-| `PostUpdate` | After gameplay, and where `Transform` becomes `GlobalTransform`. |
-| `GpuSync` | Handing this frame's data to the GPU. |
-| `Gpu` | Compute submitted with the frame's encoder. |
 | `Physics` | Fixed timestep. May run several times a frame, or none. |
 | `PostPhysics` | Same timestep, after the solver. |
+| `PostUpdate` | After gameplay *and* after the solver, and where `Transform` becomes `GlobalTransform`. |
+| `GpuSync` | Handing this frame's data to the GPU. |
+| `Gpu` | Compute submitted with the frame's encoder. |
 | `PreRender` | Last chance before drawing. |
 | `Render` | Drawing. |
 | `PostRender` | After drawing. |
 | `Last` | The very end of the frame. |
 
 If you do not have a reason, `Update` is the reason.
+
+The fixed loop sits **between `Update` and `PostUpdate`** on purpose: the solver writes its poses
+back into `Transform`, and the propagation that follows turns them into the `GlobalTransform` that
+meshes, lights and cameras read. Physics first, transforms after — so nothing renders a frame
+behind the simulation.
 
 🔴 **`PostUpdate` is the one that bites.** It is where a local `Transform` is resolved into the
 `GlobalTransform` that meshes, lights and cameras actually read. Write a transform *before* it
@@ -105,6 +110,26 @@ Physics runs on a **fixed** timestep, so a system in `Physics` or `PostPhysics` 
 `Time::fixed_delta_secs()` rather than `delta_secs()`. Using the wrong one is a bug that only
 shows up when the frame rate changes. It may also run **several times in one frame, or none at
 all**, so nothing that must happen once per frame belongs there.
+
+### Events across the two cadences
+
+Reading events in a fixed stage takes a different call. `Events::read()` is the frame list, swapped
+once a frame; `Events::read_fixed()` is the fixed list, swapped once a step. Both carry the same
+events, and each is delivered exactly once, so a system reads whichever matches the stage it is in
+and never sees anything twice.
+
+The engine keeps them apart because a frame is not a step: at 360 fps with a 60 Hz step a frame
+list is thrown away six times between steps, and a fixed reader on the frame list loses five
+events in six — silently. That is what killed every post-process volume in a build (#1312).
+
+### Publish before you are read
+
+A system that publishes settings or a lookup table must be registered **before the first stage that
+reads it**, not merely early-looking. The layer table was published in `Update` while the physics
+sync read it in `PreUpdate`, so the first frame of a build authored every collider against the
+default table — and a collider is only re-authored when its shape or filters move, so frame 0's
+answer stuck (#1313). A consumer that runs earlier in the frame than its producer is a race
+whatever the values are.
 
 ## The `Playing` gate
 

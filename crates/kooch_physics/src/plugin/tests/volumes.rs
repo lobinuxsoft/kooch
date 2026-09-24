@@ -24,11 +24,18 @@ fn volume_world() -> Resources {
     resources
 }
 
-/// One frame, scheduled the way the plugin schedules it.
+/// One frame, scheduled the way the plugin schedules it — including the two cadences: the fixed
+/// buffers swap as the fixed stages begin, the frame ones at the end of the frame (#1312).
 fn frame(resources: &mut Resources) {
     crate::plugin::events::physics_lifecycle_system(resources);
     physics_sync_system(resources);
     if Playing::is_playing(resources) {
+        if let Some(events) = resources.get_mut::<Events<CollisionStarted>>() {
+            events.update_fixed();
+        }
+        if let Some(events) = resources.get_mut::<Events<CollisionStopped>>() {
+            events.update_fixed();
+        }
         physics_step_system(resources);
         physics_writeback_system(resources);
         crate::plugin::events::drain_physics_events(resources);

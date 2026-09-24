@@ -142,7 +142,8 @@ impl Plugin for PhysicsPlugin {
             Stage::PostPhysics,
             run_if_playing(events::drain_physics_events),
         );
-        // After the drain, in the same stage: the arrivals it just published are this frame's.
+        // After the drain, in the same stage and the same cadence: the arrivals it just published
+        // are this step's, read from the fixed buffers (#1312).
         app.insert_resource(kooch_ecs::sensor_occupancy::SensorOccupancy::default());
         app.add_system(
             Stage::PostPhysics,

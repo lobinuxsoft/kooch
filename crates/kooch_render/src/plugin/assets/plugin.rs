@@ -253,10 +253,12 @@ impl Plugin for AssetPlugin {
         // The project's layer names, for every mask that reads them (#1218). Same shape and same
         // reason as the settings above: the file is reloaded in place, and this returns early
         // unless the table actually moved.
-        app.add_system(
-            Stage::Update,
-            kooch_core::layers::publish_layer_names_system,
-        );
+        //
+        // 🔴 First, not Update: the physics sync reads the table in PreUpdate and bakes it into
+        // every collider, and a collider is only rebuilt when its spec moves. Published later, the
+        // first frame authored every body with the default table — everything meeting everything —
+        // and that stuck for the rest of the session (#1313).
+        app.add_system(Stage::First, kooch_core::layers::publish_layer_names_system);
 
         let roots = self.roots.clone();
 
