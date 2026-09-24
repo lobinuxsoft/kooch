@@ -12,6 +12,7 @@ mod lifetime;
 mod mass;
 mod material;
 mod play_lifecycle;
+mod pose;
 mod shapes;
 mod simulation;
 mod volumes;

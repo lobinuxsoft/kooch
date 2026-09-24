@@ -98,7 +98,6 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
 
     let bodies = registry.get_cpu::<PhysicsBody>();
     let colliders = registry.get_cpu::<Collider>();
-    let transforms = registry.get_cpu::<Transform>();
 
     let mut authored: Vec<Authored> = bodies
         .map(|storage| {
@@ -111,16 +110,17 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
                     let collider =
                         as_region(registry, entity, collider_or_default(colliders, entity))
                             .in_layers(layers);
-                    let transform = transforms
-                        .and_then(|s| s.get(entity))
-                        .copied()
-                        .unwrap_or_default();
+                    // 🔴 The world pose, composed here rather than read from the published
+                    // `GlobalTransform`: propagation runs after the fixed stages, so a parented
+                    // body used to be authored at its LOCAL offset — a volume 19 m from where it
+                    // is drawn, and a sensor nobody could walk into (#1316).
+                    let (position, rotation, scale) = super::pose::world_pose(registry, entity);
                     let attachments = super::compound::attachments_for(resources, entity);
                     let spec = BodySpec::with_attachments(
                         body,
                         &collider,
                         entity,
-                        transform.scale,
+                        scale,
                         super::compound::digest(&attachments),
                         meshes,
                     );
@@ -128,8 +128,8 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
                         entity,
                         claimed: slots.and_then(|s| s.get(entity)).map(SolverBody::slot),
                         spec,
-                        position: transform.position,
-                        rotation: transform.rotation,
+                        position,
+                        rotation,
                         attachments,
                     }
                 })
@@ -138,7 +138,7 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
         .unwrap_or_default();
 
     authored.extend(regions(
-        registry, colliders, transforms, slots, meshes, layers, &authored,
+        registry, colliders, slots, meshes, layers, &authored,
     ));
 
     // Entity order, not hash order: creation order is observable in the solver, and runs would
@@ -182,7 +182,6 @@ fn as_region(registry: &ComponentRegistry, entity: Entity, collider: Collider) -
 fn regions(
     registry: &ComponentRegistry,
     colliders: Option<&kooch_ecs::component::ComponentStorage<Collider>>,
-    transforms: Option<&kooch_ecs::component::ComponentStorage<Transform>>,
     slots: Option<&kooch_ecs::component::ComponentStorage<SolverBody>>,
     meshes: Option<&ColliderMeshCache>,
     layers: &kooch_core::layers::LayerNames,
@@ -212,19 +211,17 @@ fn regions(
                 ..*colliders?.get(entity)?
             }
             .in_layers(layers);
-            let transform = transforms
-                .and_then(|storage| storage.get(entity))
-                .copied()
-                .unwrap_or_default();
-            let spec = BodySpec::new(&body, &collider, entity, transform.scale, meshes);
+            // The world pose, as above: a volume is as often a child as anything else.
+            let (position, rotation, scale) = super::pose::world_pose(registry, entity);
+            let spec = BodySpec::new(&body, &collider, entity, scale, meshes);
             Some(Authored {
                 entity,
                 claimed: slots
                     .and_then(|storage| storage.get(entity))
                     .map(SolverBody::slot),
                 spec,
-                position: transform.position,
-                rotation: transform.rotation,
+                position,
+                rotation,
                 attachments: Vec::new(),
             })
         })
@@ -441,10 +438,24 @@ pub fn physics_writeback_system(resources: &mut Resources) {
         })
         .collect();
 
+    // 🔴 World in, local out: the solver answers in world space and a `Transform` is relative to
+    // its parent. Writing the world pose straight back applied the parent twice (#1316).
+    let local: Vec<(Entity, Vec3, Quat)> = match resources.get::<ComponentRegistry>() {
+        Some(registry) => poses
+            .into_iter()
+            .map(|(entity, position, rotation)| {
+                let (position, rotation) =
+                    super::pose::under_parent(registry, entity, position, rotation);
+                (entity, position, rotation)
+            })
+            .collect(),
+        None => poses,
+    };
+
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
         && let Some(storage) = registry.get_cpu_mut::<Transform>()
     {
-        for (entity, position, rotation) in poses {
+        for (entity, position, rotation) in local {
             if let Some(transform) = storage.get_mut(entity) {
                 transform.position = position;
                 transform.rotation = rotation;
