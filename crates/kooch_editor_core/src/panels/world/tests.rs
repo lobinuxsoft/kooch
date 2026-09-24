@@ -47,6 +47,6 @@ fn with_ui<R>(body: impl FnOnce(&mut egui::Ui) -> R) -> R {
     out.expect("central panel did not run")
 }
 
-mod scrolling;
-mod hierarchy;
 mod filter;
+mod hierarchy;
+mod scrolling;

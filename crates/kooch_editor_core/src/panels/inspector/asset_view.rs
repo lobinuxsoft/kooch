@@ -493,17 +493,57 @@ pub(super) fn draw_layers(
     draw_collision_matrix(ui, guid, names, actions);
 }
 
+/// Where each pair's box sits: one per pair, upper triangle only, in the staircase's own order.
+///
+/// 🔴 Geometry apart from drawing: a layout only an eye can check is a layout nothing can test, and
+/// the rule that matters — one box per pair — is arithmetic.
+pub(super) fn matrix_cells(
+    origin: egui::Pos2,
+    used: &[usize],
+    names_width: f32,
+    cell: f32,
+    header: f32,
+) -> Vec<(usize, usize, egui::Rect)> {
+    let columns: Vec<usize> = used.iter().rev().copied().collect();
+    let mut cells = Vec::new();
+    for (row_at, &row) in used.iter().enumerate() {
+        for (column_at, &column) in columns.iter().enumerate() {
+            if column < row {
+                continue;
+            }
+            let at = egui::pos2(
+                origin.x + names_width + cell * column_at as f32,
+                origin.y + header + cell * row_at as f32,
+            );
+            cells.push((
+                row,
+                column,
+                egui::Rect::from_min_size(at, egui::vec2(cell, cell)),
+            ));
+        }
+    }
+    cells
+}
+
 /// The project's collision matrix: which layers meet which, in one place.
 ///
 /// 🔴 Only the named layers are drawn. Thirty-two rows of `Layer 17` is a wall nobody reads, and a
 /// project names the layers it uses — the rest keep colliding with everything, which is what they
 /// did before the table existed (#1302).
+///
+/// Laid out as Unity's: the column names stand on end above a staircase, so one pair is one box and
+/// a row is followed across to where its column comes down.
 pub(super) fn draw_collision_matrix(
     ui: &mut egui::Ui,
     guid: Guid,
     names: &kooch_core::layers::LayerNames,
     actions: &mut Vec<EditorAction>,
 ) {
+    /// Side of one box, and the pitch of the staircase.
+    const CELL: f32 = 20.0;
+    /// Room the standing column names get.
+    const HEADER: f32 = 110.0;
+
     let used: Vec<usize> = (0..kooch_core::layers::LAYER_COUNT)
         .filter(|&index| {
             index == 0
@@ -513,42 +553,109 @@ pub(super) fn draw_collision_matrix(
                     .is_some_and(|name| !name.trim().is_empty())
         })
         .collect();
+    if used.is_empty() {
+        return;
+    }
 
     ui.label("Which layers collide. Untick a pair and nothing on those two meets, anywhere.");
-    egui::Grid::new("collision_matrix")
-        .num_columns(used.len() + 1)
-        .spacing([6.0, 4.0])
-        .show(ui, |ui| {
-            ui.label("");
-            for &column in &used {
-                ui.label(egui::RichText::new(names.label(column)).small());
-            }
-            ui.end_row();
-            for &row in &used {
-                ui.label(names.label(row));
-                for &column in &used {
-                    // Half the table: the pair is symmetric, so drawing both halves gives an author
-                    // two boxes for one fact and a way to make them disagree.
-                    match column >= row {
-                        true => {
-                            let mut collide = names.collide(row, column);
-                            if ui.checkbox(&mut collide, "").changed() {
-                                actions.push(EditorAction::SetLayerPair {
-                                    guid: Some(guid),
-                                    a: row,
-                                    b: column,
-                                    collide,
-                                });
-                            }
-                        }
-                        false => {
-                            ui.label("");
+    ui.add_space(4.0);
+
+    let columns: Vec<usize> = used.iter().rev().copied().collect();
+    // Measured by character rather than laid out: the width only reserves a column, and a layout
+    // wants the font lock this frame already holds.
+    let names_width = used
+        .iter()
+        .map(|&index| names.label(index).chars().count() as f32 * 7.0)
+        .fold(0.0_f32, f32::max)
+        .min(160.0)
+        + 8.0;
+    let size = egui::vec2(
+        names_width + CELL * columns.len() as f32,
+        HEADER + CELL * used.len() as f32,
+    );
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    let text_colour = ui.visuals().text_color();
+    let line = egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color);
+
+    for (at, &column) in columns.iter().enumerate() {
+        let x = rect.left() + names_width + CELL * at as f32 + CELL * 0.5;
+        let galley = painter.layout_no_wrap(
+            names.label(column),
+            egui::FontId::proportional(12.0),
+            text_colour,
+        );
+        let mut standing = egui::epaint::TextShape::new(
+            egui::pos2(x + 5.0, rect.top() + HEADER - 4.0),
+            galley,
+            text_colour,
+        );
+        standing.angle = -std::f32::consts::FRAC_PI_2;
+        painter.add(standing);
+    }
+
+    for (row_at, &row) in used.iter().enumerate() {
+        let y = rect.top() + HEADER + CELL * row_at as f32;
+        painter.text(
+            egui::pos2(rect.left() + names_width - 6.0, y + CELL * 0.5),
+            egui::Align2::RIGHT_CENTER,
+            names.label(row),
+            egui::FontId::proportional(12.0),
+            text_colour,
+        );
+        // A rule under each row, so a row is followed across without counting boxes.
+        painter.line_segment(
+            [
+                egui::pos2(rect.left() + names_width, y + CELL),
+                egui::pos2(
+                    rect.left() + names_width + CELL * (columns.len() - row_at) as f32,
+                    y + CELL,
+                ),
+            ],
+            line,
+        );
+    }
+
+    for (row, column, cell) in matrix_cells(rect.min, &used, names_width, CELL, HEADER) {
+        painter.line_segment(
+            [
+                egui::pos2(cell.left(), cell.top()),
+                egui::pos2(cell.left(), cell.bottom()),
+            ],
+            line,
+        );
+        let mut collide = names.collide(row, column);
+        let response = ui.put(cell, egui::Checkbox::without_text(&mut collide));
+        if response.changed() {
+            actions.push(EditorAction::SetLayerPair {
+                guid: Some(guid),
+                a: row,
+                b: column,
+                collide,
+            });
+        }
+        response.on_hover_text(format!("{} × {}", names.label(row), names.label(column)));
+    }
+
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        for (label, collide) in [("Disable All", false), ("Enable All", true)] {
+            if ui.button(label).clicked() {
+                for &row in &used {
+                    for &column in &used {
+                        if column >= row {
+                            actions.push(EditorAction::SetLayerPair {
+                                guid: Some(guid),
+                                a: row,
+                                b: column,
+                                collide,
+                            });
                         }
                     }
                 }
-                ui.end_row();
             }
-        });
+        }
+    });
 }
 
 /// Generation no live entity carries, and distinct from the prefab
