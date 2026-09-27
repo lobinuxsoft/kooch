@@ -89,11 +89,22 @@ pub fn migrate_collider_layers(resources: &mut Resources) {
     let Some(storage) = registry.get_cpu_mut::<Collider>() else {
         return;
     };
-    for (_, collider) in storage.iter_mut() {
+    for (&entity, collider) in storage.iter_mut() {
         if collider.layer != 0 || collider.collision_memberships != u32::MAX {
+            let was = (collider.layer, collider.collision_memberships);
             collider.layers = collider.layer_mask();
             collider.layer = 0;
             collider.collision_memberships = u32::MAX;
+            // 🔴 Said out loud, because this writes to the author's data and a save makes it
+            // permanent: a rule that reads a legacy field wrongly is a scene quietly changed.
+            tracing::info!(
+                target: "kooch_physics",
+                entity = entity.index(),
+                layer = was.0,
+                memberships = was.1,
+                layers = collider.layers,
+                "a collider's layers were migrated from an older field",
+            );
         }
     }
 }

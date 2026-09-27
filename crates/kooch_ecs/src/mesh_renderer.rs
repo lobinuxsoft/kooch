@@ -59,10 +59,18 @@ pub fn migrate_renderer_layers(resources: &mut kooch_core::resource::Resources) 
     let Some(storage) = registry.get_cpu_mut::<MeshRenderer>() else {
         return;
     };
-    for (_, renderer) in storage.iter_mut() {
+    for (&entity, renderer) in storage.iter_mut() {
         if renderer.layer != 0 {
+            let was = renderer.layer;
             renderer.layers = renderer.layer_mask();
             renderer.layer = 0;
+            tracing::info!(
+                target: "kooch_ecs",
+                entity = entity.index(),
+                layer = was,
+                layers = renderer.layers,
+                "a renderer's layers were migrated from an older field",
+            );
         }
     }
 }
