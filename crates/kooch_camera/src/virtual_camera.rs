@@ -149,10 +149,14 @@ pub struct VirtualCamera {
     #[reflect(choices = LOOK_AT_CHOICES)]
     pub look_at: u32,
     /// Whether the camera eases towards its pose instead of snapping.
+    /// 🔴 The switch a scene wrote before a zero duration said the same thing. Off is folded into
+    /// zeroed durations on load and cleared: two ways to say "rigid" is two ways to disagree, and
+    /// it showed a slider that did nothing (#1333).
+    #[reflect(hidden)]
     pub damping: bool,
     /// Seconds the camera takes to reach its pose once the target stops, per world axis — exactly,
     /// a tween that restarts while the target keeps moving. Zero is rigid.
-    #[reflect(shown_when = DAMPING_WHEN, alias = "damping_value, damping_time")]
+    #[reflect(alias = "damping_value, damping_time")]
     pub damping_duration: Vec3,
     /// Seconds the handover **to** this vcam lasts, exactly; zero cuts. The incoming vcam owns it
     /// because how you arrive matters, not what came before.
@@ -176,15 +180,36 @@ pub struct VirtualCamera {
     pub inactive_update: u32,
     /// Seconds to turn into a new orientation, exactly, so a changing up does not snap the horizon.
     /// Rotation only; zero is rigid.
-    #[reflect(shown_when = DAMPING_WHEN, alias = "rotation_damping_value, rotation_damping_time")]
+    #[reflect(alias = "rotation_damping_value, rotation_damping_time")]
     pub rotation_damping_duration: f32,
 }
 
-/// The damping values only matter when damping is on.
-pub static DAMPING_WHEN: FieldCondition = FieldCondition {
-    field: "damping",
-    values: &[1],
-};
+/// Folds the `damping` switch a scene wrote before a zero duration said the same thing into the
+/// durations, and clears it.
+///
+/// 🔴 Off means rigid, and rigid is a duration of zero — the mapping cannot be misread. Said out
+/// loud because it writes to the author's data and a save makes it permanent (#1333).
+pub fn migrate_damping_switch(resources: &mut kooch_core::resource::Resources) {
+    let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
+        return;
+    };
+    let Some(storage) = registry.get_cpu_mut::<VirtualCamera>() else {
+        return;
+    };
+    for (&entity, vcam) in storage.iter_mut() {
+        if vcam.damping {
+            continue;
+        }
+        vcam.damping = true;
+        vcam.damping_duration = Vec3::ZERO;
+        vcam.rotation_damping_duration = 0.0;
+        tracing::info!(
+            target: "kooch_camera",
+            entity = entity.index(),
+            "a vcam's damping switch was folded into its durations",
+        );
+    }
+}
 
 impl Default for VirtualCamera {
     fn default() -> Self {
@@ -290,14 +315,6 @@ impl VirtualCamera {
 
     /// Tweens `current` towards `desired`, per axis, arriving `damping_duration` after it stops moving.
     pub fn damped(&self, damping: &mut Damping, current: Vec3, desired: Vec3, dt: f32) -> Vec3 {
-        if !self.damping {
-            damping.position = [
-                Chase::at(desired.x),
-                Chase::at(desired.y),
-                Chase::at(desired.z),
-            ];
-            return desired;
-        }
         let [x, y, z] = &mut damping.position;
         let time = self.damping_duration;
         Vec3::new(
@@ -315,11 +332,9 @@ impl VirtualCamera {
         desired: glam::Quat,
         dt: f32,
     ) -> glam::Quat {
-        let time = match self.damping {
-            true => self.rotation_damping_duration,
-            false => 0.0,
-        };
-        damping.rotation.step(current, desired, dt, time)
+        damping
+            .rotation
+            .step(current, desired, dt, self.rotation_damping_duration)
     }
 }
 

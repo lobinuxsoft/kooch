@@ -86,6 +86,8 @@ impl Plugin for CameraPlugin {
         // pose shows the same frame. `dt` is the fixed step, which keeps damping deterministic.
         app.insert_resource(CameraBlend::default());
         app.insert_resource(HorizonFrames::default());
+        // Before anything reads a duration, and before an author can edit a field a switch overrode.
+        app.add_system(Stage::First, crate::virtual_camera::migrate_damping_switch);
         app.add_system(Stage::PostPhysics, run_if_playing(drive_virtual_cameras));
     }
 
@@ -442,7 +444,7 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
         };
 
         // The pose from here on is a value, and each stage changes the one thing it owns (#1331).
-        let mut pose = CameraFrame::new(body, from, current.rotation, framed, up, reference, lens);
+        let mut pose = CameraFrame::new(body, from, current.rotation, framed, lens);
 
         // ── Stage::Frame ───────────────────────────────────────────────────────────────────
         // A lead holds the target off centre rather than moving what is framed (#1330).
