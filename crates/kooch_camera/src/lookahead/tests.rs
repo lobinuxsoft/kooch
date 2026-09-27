@@ -17,12 +17,12 @@ fn run(look: &CameraLookahead, speed: f32, steps: usize, still: usize) -> Vec3 {
     let mut led = Vec3::ZERO;
     for _ in 0..steps {
         target.x += speed * DT;
-        led = look.led(&mut lead, target, Vec3::Y, DT);
+        led = look.offset(&mut lead, target, Vec3::Y, DT);
     }
     for _ in 0..still {
-        led = look.led(&mut lead, target, Vec3::Y, DT);
+        led = look.offset(&mut lead, target, Vec3::Y, DT);
     }
-    led - target
+    led
 }
 
 #[test]
@@ -42,8 +42,8 @@ fn the_lead_is_capped() {
 fn a_jump_is_not_led() {
     let look = lookahead();
     let mut lead = Lead::at(Vec3::ZERO);
-    let led = look.led(&mut lead, Vec3::new(0.0, 0.5, 0.0), Vec3::Y, DT);
-    assert_eq!(led, Vec3::new(0.0, 0.5, 0.0));
+    let led = look.offset(&mut lead, Vec3::new(0.0, 0.5, 0.0), Vec3::Y, DT);
+    assert_eq!(led, Vec3::ZERO);
 }
 
 /// Stopping brings the framing back in exactly `smoothing_duration`, and not before: no snap.

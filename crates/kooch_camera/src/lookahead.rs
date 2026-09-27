@@ -87,7 +87,7 @@ impl Lead {
 impl CameraLookahead {
     /// The point to frame this step: `target` plus the lead its motion since the last step asks
     /// for, tweened and capped.
-    pub fn led(&self, lead: &mut Lead, target: Vec3, up: Vec3, dt: f32) -> Vec3 {
+    pub fn offset(&self, lead: &mut Lead, target: Vec3, up: Vec3, dt: f32) -> Vec3 {
         let velocity = match dt > 0.0 {
             true => (target - lead.last) / dt,
             false => Vec3::ZERO,
@@ -102,7 +102,7 @@ impl CameraLookahead {
         lead.offset = lead
             .chase
             .step(lead.offset, goal, dt, self.smoothing_duration);
-        target + lead.offset
+        lead.offset
     }
 }
 

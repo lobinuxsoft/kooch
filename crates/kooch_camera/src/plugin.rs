@@ -1,6 +1,6 @@
 //! [`CameraPlugin`] — registers [`VirtualCamera`] and the Host that drives it.
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use kooch_core::app::App;
 use kooch_core::plugin::Plugin;
 use kooch_core::resource::Resources;
@@ -14,13 +14,14 @@ use kooch_ecs::perspective_camera::PerspectiveCamera;
 use kooch_ecs::transform::Transform;
 
 use crate::brain::CameraBrain;
+use crate::frame::CameraFrame;
 use crate::framing::{CameraFraming, Framed, Lens, Tracked};
 use crate::lookahead::{CameraLookahead, Lead, Leads};
 use crate::occlusion::Arms;
 use crate::target::CameraTarget;
 use crate::virtual_camera::{
-    Damping, INACTIVE_ALWAYS, LOOK_AT_SIMPLE, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera,
-    seed_reference, transported,
+    Damping, INACTIVE_ALWAYS, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera, seed_reference,
+    transported,
 };
 
 /// Which way is up for a virtual camera, from its `up_mode`. Not the target's rotation: a rolling
@@ -386,9 +387,12 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
         // turn. See `seed_reference`.
         let reference = carried.carry(entity, up);
         horizons.frames.insert(entity, (up, reference));
-        // Everything below frames the led point; only the wall sweep keeps the real target, since
-        // that is what must stay visible.
-        let framed = match lookaheads
+        // 🔴 How far ahead of the target the rig looks. It is an offset, not a point: with a
+        // framing it shifts where the target is HELD on screen, and without one it moves what the
+        // rig follows — the same idea said in the only vocabulary each case has. Applying it in
+        // both places is two things deciding where the character sits in frame, which is the
+        // mistake this component kept making one stage at a time (#1330).
+        let lead_offset = match lookaheads
             .and_then(|lookaheads| lookaheads.get(entity))
             .filter(|lookahead| lookahead.enabled)
         {
@@ -398,79 +402,92 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
                     .get(&entity)
                     .copied()
                     .unwrap_or_else(|| Lead::at(target_pos));
-                let led = lookahead.led(&mut lead, target_pos, up, dt);
+                let offset = lookahead.offset(&mut lead, target_pos, up, dt);
                 leads.0.insert(entity, lead);
-                led
+                offset
             }
-            None => target_pos,
+            None => Vec3::ZERO,
         };
         let framing = framings
             .and_then(|framings| framings.get(entity))
             .filter(|framing| framing.enabled);
-        // The rig follows the tracked point, not the target, and aims so that point sits where the
-        // framing puts it. A first framed step starts on the target: centred when it goes live.
-        let (followed, aim) = match framing {
-            Some(framing) => {
-                let mut state = carried_tracked.of(entity).unwrap_or(Framed::at(framed));
-                let depth = (state.point() - current.position).dot(current.rotation * -Vec3::Z);
-                let depth = if depth > 0.01 { depth } else { vcam.distance };
-                let point = framing.follow(&mut state, framed, current.rotation, depth, lens, dt);
-                tracked.set(entity, state);
-                (
-                    point,
-                    Some(framing.aim(point, current.rotation, depth, lens)),
-                )
-            }
-            None => (framed, None),
+        // Only the wall sweep keeps the real target, since that is what must stay visible.
+        let framed = match framing {
+            Some(_) => target_pos,
+            None => target_pos + lead_offset,
         };
+        // ── Stage::Body ────────────────────────────────────────────────────────────────────
+        // Where the camera stands, and where it looks from there.
         let (desired_pos, desired_rot) = vcam.desired_with(
-            followed,
+            framed,
             target_rot,
             current.position,
             current.rotation,
             up,
             reference,
         );
-        let desired_rot = match aim {
-            Some(aim) if vcam.look_at == LOOK_AT_SIMPLE => {
-                crate::virtual_camera::look_at(desired_pos, aim, up, reference)
-            }
-            _ => desired_rot,
-        };
         // From where the rig had the camera before any wall, not from where the wall put it: the
-        // damping is the rig's, and a return is the collision's to time. A framed rig is not
-        // damped: its soft zone is the easing, and a second one would move the zones off screen.
+        // damping is the rig's, and a return is the collision's to time.
         let from = carried_arms.free_of(entity).unwrap_or(current.position);
         let mut damping = carried_dampings
             .0
             .get(&entity)
             .copied()
             .unwrap_or_else(|| Damping::at(current.position, current.rotation));
-        let position = match framing {
+        // 🔴 A framed rig is not damped twice. The frame's ease IS the rig's smoothing — two in
+        // series on one position is what made every earlier version of this fight itself (#1329).
+        let body = match framing {
             Some(_) => desired_pos,
             None => vcam.damped(&mut damping, from, desired_pos, dt),
         };
-        // After the damping, so a wall pulls the camera in at once rather than at the damping's
-        // pace (#1251).
-        let position = crate::occlusion::held(
+
+        // The pose from here on is a value, and each stage changes the one thing it owns (#1331).
+        let mut pose = CameraFrame::new(body, from, current.rotation, framed, up, reference, lens);
+
+        // ── Stage::Frame ───────────────────────────────────────────────────────────────────
+        // A lead holds the target off centre rather than moving what is framed (#1330).
+        if let Some(framing) = framing {
+            let (right, above, _) = pose.axes();
+            let span = pose.lens.span(
+                (framed - pose.position)
+                    .dot(pose.rotation * -Vec3::Z)
+                    .max(0.01),
+            );
+            pose.screen = -Vec2::new(
+                lead_offset.dot(right) / span.x,
+                lead_offset.dot(above) / span.y,
+            );
+            let mut state = carried_tracked.of(entity).unwrap_or(Framed::at(framed));
+            framing.frame(&mut state, &mut pose, dt);
+            tracked.set(entity, state);
+        }
+
+        // ── Stage::Collide ─────────────────────────────────────────────────────────────────
+        // The last word on where the camera stands: a wall pulls it in at once rather than at the
+        // damping's pace (#1251).
+        pose.displace(crate::occlusion::held(
             resources,
             entity,
             target_pos,
             Some(target_entity),
-            position,
+            pose.position,
             (&carried_arms, &mut arms),
             dt,
-        );
+        ));
         // Damped too, because `up` is not a constant any more: crossing
         // between two gravity fields rotates the whole basis, and
         // snapping that in one frame throws the horizon over.
-        let rotation = vcam.damped_rotation(&mut damping, current.rotation, desired_rot, dt);
+        //
+        // ── Stage::Aim ─────────────────────────────────────────────────────────────────────
+        // 🔴 One owner. In a third-person rig this is the player's, and the only easing on it is
+        // this one — a frame that also turned the camera fought every input (#1329).
+        pose.rotation = vcam.damped_rotation(&mut damping, current.rotation, desired_rot, dt);
         dampings.0.insert(entity, damping);
 
         plan.push(Pose {
             entity,
-            position,
-            rotation,
+            position: pose.position,
+            rotation: pose.rotation,
             priority: vcam.priority,
             blend_duration: vcam.blend_duration,
             blend_curve: vcam.blend_curve,
