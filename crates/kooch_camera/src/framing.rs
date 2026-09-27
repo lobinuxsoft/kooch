@@ -107,7 +107,7 @@ impl Lens {
     }
 
     /// The screen's size in metres at `depth`.
-    fn span(&self, depth: f32) -> Vec2 {
+    pub(crate) fn span(&self, depth: f32) -> Vec2 {
         Vec2::new(self.half_width, self.half_height) * 2.0 * depth.max(0.01)
     }
 }

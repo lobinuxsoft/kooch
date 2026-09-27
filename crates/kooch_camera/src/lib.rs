@@ -4,6 +4,7 @@
 
 pub mod blend;
 pub mod brain;
+pub mod frame;
 pub mod framing;
 pub mod lookahead;
 pub mod occlusion;
