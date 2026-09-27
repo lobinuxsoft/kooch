@@ -126,6 +126,7 @@ impl CameraFraming {
         previous: Vec3,
         rotation: Quat,
         target: Vec3,
+        lead: Vec3,
         lens: Lens,
         dt: f32,
     ) -> Vec3 {
@@ -147,7 +148,12 @@ impl CameraFraming {
 
         // Where the target sits, as a fraction of the screen from where it belongs.
         let offset = target - placed(slack);
-        let at = Vec2::new(offset.dot(right) / span.x, offset.dot(above) / span.y) - self.screen;
+        // 🔴 The lead moves where the target is HELD, not what is framed. Leading a runner means
+        // showing what is ahead of them, which is the same as holding them behind centre — said on
+        // the screen, where the zones live, instead of as a second point for the frame to chase
+        // (#1330).
+        let held_at = self.screen - Vec2::new(lead.dot(right) / span.x, lead.dot(above) / span.y);
+        let at = Vec2::new(offset.dot(right) / span.x, offset.dot(above) / span.y) - held_at;
         let soft = self.soft_zone.max(self.dead_zone);
 
         // What the frame owes: nothing inside the dead zone, the excess outside it. Moving the

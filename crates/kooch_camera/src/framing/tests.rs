@@ -27,7 +27,16 @@ fn on_screen(eye: Vec3, target: Vec3) -> Vec2 {
 
 /// One step of following, the rig wanting to sit at `wanted` and the camera standing at `at`.
 fn step(framing: &CameraFraming, state: &mut Framed, wanted: Vec3, at: Vec3, target: Vec3) -> Vec3 {
-    framing.follow(state, wanted, at, Quat::IDENTITY, target, lens(), DT)
+    framing.follow(
+        state,
+        wanted,
+        at,
+        Quat::IDENTITY,
+        target,
+        Vec3::ZERO,
+        lens(),
+        DT,
+    )
 }
 
 /// Inside the dead zone the rig keeps the position it has: the camera does not chase a target that
@@ -121,6 +130,7 @@ fn the_soft_zone_arrives_on_time() {
                     eye,
                     Quat::IDENTITY,
                     point,
+                    Vec3::ZERO,
                     lens(),
                     dt,
                 )
@@ -151,4 +161,37 @@ fn a_target_behind_is_left_alone() {
     let behind = Vec3::new(0.0, 0.0, 8.0);
     let after = step(&framing(), &mut state, BACK, BACK, behind);
     assert!(after.abs_diff_eq(BACK, 1e-4), "{after}");
+}
+
+/// 🔴 #1330: a lead moves where the target is HELD, not what is framed. Leading a runner means
+/// showing what is ahead of them, which is the same as holding them behind centre — and the dead
+/// zone travels with it instead of fighting it.
+#[test]
+fn a_lead_moves_where_it_holds() {
+    let centred = CameraFraming {
+        dead_zone: Vec2::ZERO,
+        soft_zone: Vec2::ZERO,
+        soft_duration: 0.0,
+        ..Default::default()
+    };
+    let target = Vec3::ZERO;
+    let mut state = Framed::at(target);
+    // Two metres of lead along +X: the target is held that much to the LEFT of centre.
+    let led = centred.follow(
+        &mut state,
+        BACK,
+        BACK,
+        Quat::IDENTITY,
+        target,
+        Vec3::X * 2.0,
+        lens(),
+        DT,
+    );
+    let seen = on_screen(led, target).x;
+    assert!(seen < -0.1, "the lead did not move the frame: {seen}");
+
+    // And with no lead it sits in the middle.
+    let mut plain = Framed::at(target);
+    let still = step(&centred, &mut plain, BACK, BACK, target);
+    assert!(on_screen(still, target).x.abs() < 0.01);
 }

@@ -386,9 +386,12 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
         // turn. See `seed_reference`.
         let reference = carried.carry(entity, up);
         horizons.frames.insert(entity, (up, reference));
-        // Everything below frames the led point; only the wall sweep keeps the real target, since
-        // that is what must stay visible.
-        let framed = match lookaheads
+        // 🔴 How far ahead of the target the rig looks. It is an offset, not a point: with a
+        // framing it shifts where the target is HELD on screen, and without one it moves what the
+        // rig follows — the same idea said in the only vocabulary each case has. Applying it in
+        // both places is two things deciding where the character sits in frame, which is the
+        // mistake this component kept making one stage at a time (#1330).
+        let lead_offset = match lookaheads
             .and_then(|lookaheads| lookaheads.get(entity))
             .filter(|lookahead| lookahead.enabled)
         {
@@ -398,15 +401,20 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
                     .get(&entity)
                     .copied()
                     .unwrap_or_else(|| Lead::at(target_pos));
-                let led = lookahead.led(&mut lead, target_pos, up, dt);
+                let offset = lookahead.offset(&mut lead, target_pos, up, dt);
                 leads.0.insert(entity, lead);
-                led
+                offset
             }
-            None => target_pos,
+            None => Vec3::ZERO,
         };
         let framing = framings
             .and_then(|framings| framings.get(entity))
             .filter(|framing| framing.enabled);
+        // Only the wall sweep keeps the real target, since that is what must stay visible.
+        let framed = match framing {
+            Some(_) => target_pos,
+            None => target_pos + lead_offset,
+        };
         // 🔴 The rig follows the target, framed or not: framing aims, it does not move the camera
         // (#1323). Where a target lands on screen is a position AND a rotation, and easing one of
         // them here while the vcam damped the other underneath was the shake.
@@ -439,12 +447,16 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
         let position = match framing {
             Some(framing) => {
                 let mut state = carried_tracked.of(entity).unwrap_or(Framed::at(framed));
+                // 🔴 `from`, not where the camera ended up: that carries the wall's push, and the
+                // frame would read a collision as slack of its own and spend a `soft_duration`
+                // undoing it. The damping above takes the same care for the same reason (#1330).
                 let framed_at = framing.follow(
                     &mut state,
                     damped,
-                    current.position,
+                    from,
                     current.rotation,
                     framed,
+                    lead_offset,
                     lens,
                     dt,
                 );

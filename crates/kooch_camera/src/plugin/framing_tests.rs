@@ -266,3 +266,25 @@ fn framing_adds_no_jump_of_its_own() {
         );
     }
 }
+
+/// 🔴 #1330: a wall's push is not slack. The frame reads where the rig had the camera before the
+/// collision, or it spends a `soft_duration` undoing what the wall just did — two things moving
+/// one camera, one stage apart.
+#[test]
+fn a_wall_is_not_slack() {
+    let (mut resources, vcam, target) = world();
+    for _ in 0..30 {
+        drive_virtual_cameras(&mut resources);
+    }
+    let (settled, _) = pose(&resources, vcam);
+    // Nothing moved and no wall exists here: the frame must leave the camera exactly where it is,
+    // step after step, rather than drifting by whatever it thinks it is owed.
+    for _ in 0..60 {
+        drive_virtual_cameras(&mut resources);
+    }
+    let (after, _) = pose(&resources, vcam);
+    assert!(
+        after.abs_diff_eq(settled, 1e-4),
+        "the frame drifted while nothing moved: {settled} then {after}",
+    );
+}
