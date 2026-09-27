@@ -1,5 +1,19 @@
 use super::*;
 
+use glam::Quat;
+
+use crate::frame::CameraFrame;
+
+/// A frame standing at `at`, with the body wanting `wanted`, looking down −Z at `target`.
+fn frame_at(wanted: Vec3, at: Vec3, target: Vec3, lead: Vec3) -> CameraFrame {
+    let mut frame = CameraFrame::new(wanted, at, Quat::IDENTITY, target, Vec3::Y, Vec3::Y, lens());
+    // The lead holds the target off centre, as the plugin works it out.
+    let depth = (target - at).z.abs().max(0.01);
+    let span = lens().span(depth);
+    frame.screen = -Vec2::new(lead.x / span.x, lead.y / span.y);
+    frame
+}
+
 const DT: f32 = 1.0 / 60.0;
 
 /// 90° over a square screen: at 1 m depth the screen is 2 m by 2 m, so fractions read as metres/2.
@@ -25,18 +39,11 @@ fn on_screen(eye: Vec3, target: Vec3) -> Vec2 {
     Vec2::new(offset.x / span.x, offset.y / span.y)
 }
 
-/// One step of following, the rig wanting to sit at `wanted` and the camera standing at `at`.
+/// One step of framing, the rig wanting to sit at `wanted` and the camera standing at `at`.
 fn step(framing: &CameraFraming, state: &mut Framed, wanted: Vec3, at: Vec3, target: Vec3) -> Vec3 {
-    framing.follow(
-        state,
-        wanted,
-        at,
-        Quat::IDENTITY,
-        target,
-        Vec3::ZERO,
-        lens(),
-        DT,
-    )
+    let mut frame = frame_at(wanted, at, target, Vec3::ZERO);
+    framing.frame(state, &mut frame, DT);
+    frame.position
 }
 
 /// Inside the dead zone the rig keeps the position it has: the camera does not chase a target that
@@ -124,16 +131,9 @@ fn the_soft_zone_arrives_on_time() {
             let target = Vec3::new(3.0, 0.0, 0.0);
             let mut eye = BACK;
             let mut at = |state: &mut Framed, point: Vec3, eye: Vec3| {
-                framing.follow(
-                    state,
-                    BACK + Vec3::X * point.x,
-                    eye,
-                    Quat::IDENTITY,
-                    point,
-                    Vec3::ZERO,
-                    lens(),
-                    dt,
-                )
+                let mut frame = frame_at(BACK + Vec3::X * point.x, eye, point, Vec3::ZERO);
+                framing.frame(state, &mut frame, dt);
+                frame.position
             };
             for step in 0..walk {
                 let point = Vec3::new(target.x * (step as f32 + 1.0) / walk as f32, 0.0, 0.0);
@@ -177,17 +177,9 @@ fn a_lead_moves_where_it_holds() {
     let target = Vec3::ZERO;
     let mut state = Framed::at(target);
     // Two metres of lead along +X: the target is held that much to the LEFT of centre.
-    let led = centred.follow(
-        &mut state,
-        BACK,
-        BACK,
-        Quat::IDENTITY,
-        target,
-        Vec3::X * 2.0,
-        lens(),
-        DT,
-    );
-    let seen = on_screen(led, target).x;
+    let mut frame = frame_at(BACK, BACK, target, Vec3::X * 2.0);
+    centred.frame(&mut state, &mut frame, DT);
+    let seen = on_screen(frame.position, target).x;
     assert!(seen < -0.1, "the lead did not move the frame: {seen}");
 
     // And with no lead it sits in the middle.

@@ -42,6 +42,10 @@ pub struct CameraFrame {
     /// stage never has to ask "was I pushed?" — the framing had to be handed this by hand, and the
     /// next stage would have had to be told too (#1330).
     pub free: Vec3,
+    /// Where the camera stood last step, before that step's wall. A stage that measures how far it
+    /// has drifted reads this rather than remembering its own answer, which is a second opinion
+    /// about where the camera is.
+    pub previous: Vec3,
     /// The target this vcam is following, in world space.
     pub target: Vec3,
     /// Where the target is held on screen: `0` centre, `±0.5` the edges. A lead shifts this rather
@@ -56,8 +60,10 @@ pub struct CameraFrame {
 
 impl CameraFrame {
     /// A frame standing where the body put it, looking where it looked.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         position: Vec3,
+        previous: Vec3,
         rotation: Quat,
         target: Vec3,
         up: Vec3,
@@ -68,6 +74,7 @@ impl CameraFrame {
             position,
             rotation,
             free: position,
+            previous,
             target,
             screen: Vec2::ZERO,
             up,

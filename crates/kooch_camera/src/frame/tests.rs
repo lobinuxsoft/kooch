@@ -9,6 +9,7 @@ fn lens() -> Lens {
 fn a_displaced_frame_remembers_where_it_wanted() {
     let mut frame = CameraFrame::new(
         Vec3::new(0.0, 0.0, 4.0),
+        Vec3::new(0.0, 0.0, 4.0),
         Quat::IDENTITY,
         Vec3::ZERO,
         Vec3::Y,
@@ -25,6 +26,7 @@ fn a_displaced_frame_remembers_where_it_wanted() {
 fn what_it_sees_is_where_it_is() {
     let frame = CameraFrame::new(
         Vec3::new(0.0, 0.0, 4.0),
+        Vec3::new(0.0, 0.0, 4.0),
         Quat::IDENTITY,
         Vec3::ZERO,
         Vec3::Y,
@@ -40,6 +42,7 @@ fn what_it_sees_is_where_it_is() {
 #[test]
 fn nothing_behind_is_seen() {
     let frame = CameraFrame::new(
+        Vec3::new(0.0, 0.0, 4.0),
         Vec3::new(0.0, 0.0, 4.0),
         Quat::IDENTITY,
         Vec3::ZERO,

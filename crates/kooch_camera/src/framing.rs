@@ -17,12 +17,14 @@
 
 use std::collections::HashMap;
 
-use glam::{Quat, Vec2, Vec3};
+use glam::{Vec2, Vec3};
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::FieldRange;
 use kooch_ecs::tween::Chase;
+
+use crate::frame::CameraFrame;
 
 /// Frames the target of the vcam it sits on. Beside a [`VirtualCamera`]; replaces its position
 /// damping, since the soft zone is the easing.
@@ -118,42 +120,34 @@ impl CameraFraming {
     /// `wanted` is where the rig would put the camera with no framing at all. The answer is that
     /// point moved across the screen's own axes — never along its forward, since how far away the
     /// camera sits is the rig's business and not the frame's.
-    #[allow(clippy::too_many_arguments)]
-    pub fn follow(
-        &self,
-        state: &mut Framed,
-        wanted: Vec3,
-        previous: Vec3,
-        rotation: Quat,
-        target: Vec3,
-        lead: Vec3,
-        lens: Lens,
-        dt: f32,
-    ) -> Vec3 {
-        let (right, above, forward) = (rotation * Vec3::X, rotation * Vec3::Y, rotation * -Vec3::Z);
-        let placed = |slack: Vec2| wanted + right * slack.x + above * slack.y;
+    /// [`Stage::Frame`](crate::frame::Stage::Frame): moves the camera sideways so the target lands
+    /// where it is held. Never along the forward — how far away the camera sits is the body's.
+    pub fn frame(&self, state: &mut Framed, frame: &mut CameraFrame, dt: f32) {
+        let (right, above, forward) = frame.axes();
+        let placed = |slack: Vec2| frame.free + right * slack.x + above * slack.y;
 
-        // 🔴 Read off where the camera actually is, never carried in a field of its own. The rig
-        // moves every step, and a slack remembered rather than measured would be a second opinion
-        // about where the camera stands — which is the shape of every bug this component has had.
-        let behind = previous - wanted;
+        // 🔴 Read off where the camera actually is against what the body asked for, never carried
+        // in a field of its own: a slack remembered rather than measured is a second opinion about
+        // where the camera stands, which is the shape of every bug this component has had. `free`
+        // is the body's answer, so a wall that moved the camera is not read as slack (#1330).
+        let behind = frame.previous - frame.free;
         let slack = Vec2::new(behind.dot(right), behind.dot(above));
+
+        let target = frame.target;
         let depth = (target - placed(slack)).dot(forward);
         if depth <= 0.0 {
             // Behind the camera: there is no screen to frame it on.
             state.reset(target);
-            return wanted;
+            frame.displace(frame.free);
+            return;
         }
-        let span = lens.span(depth);
+        let span = frame.lens.span(depth);
 
-        // Where the target sits, as a fraction of the screen from where it belongs.
+        // Where the target sits, as a fraction of the screen from where it belongs. `frame.screen`
+        // already carries the lead, so one thing decides where the character sits (#1330).
         let offset = target - placed(slack);
-        // 🔴 The lead moves where the target is HELD, not what is framed. Leading a runner means
-        // showing what is ahead of them, which is the same as holding them behind centre — said on
-        // the screen, where the zones live, instead of as a second point for the frame to chase
-        // (#1330).
-        let held_at = self.screen - Vec2::new(lead.dot(right) / span.x, lead.dot(above) / span.y);
-        let at = Vec2::new(offset.dot(right) / span.x, offset.dot(above) / span.y) - held_at;
+        let held = self.screen + frame.screen;
+        let at = Vec2::new(offset.dot(right) / span.x, offset.dot(above) / span.y) - held;
         let soft = self.soft_zone.max(self.dead_zone);
 
         // What the frame owes: nothing inside the dead zone, the excess outside it. Moving the
@@ -170,12 +164,12 @@ impl CameraFraming {
         };
         let goal = slack + owed * share * span;
 
-        // One quantity, eased once: the slack. Never the depth — how far away the camera sits is
-        // the rig's business, and a frame that pushed along the forward would fight the arm.
+        // One quantity, eased once: the slack. The body is not damped when a frame is present —
+        // two eases in series on one position is what made this fight itself (#1329).
         let eased = state.chase.step(slack, goal, dt, self.soft_duration);
         state.slack = eased;
         state.last = target;
-        placed(eased)
+        frame.displace(placed(eased));
     }
 }
 

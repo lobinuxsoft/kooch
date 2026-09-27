@@ -1,6 +1,6 @@
 //! [`CameraPlugin`] — registers [`VirtualCamera`] and the Host that drives it.
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use kooch_core::app::App;
 use kooch_core::plugin::Plugin;
 use kooch_core::resource::Resources;
@@ -14,6 +14,7 @@ use kooch_ecs::perspective_camera::PerspectiveCamera;
 use kooch_ecs::transform::Transform;
 
 use crate::brain::CameraBrain;
+use crate::frame::CameraFrame;
 use crate::framing::{CameraFraming, Framed, Lens, Tracked};
 use crate::lookahead::{CameraLookahead, Lead, Leads};
 use crate::occlusion::Arms;
@@ -415,9 +416,8 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
             Some(_) => target_pos,
             None => target_pos + lead_offset,
         };
-        // 🔴 The rig follows the target, framed or not: framing aims, it does not move the camera
-        // (#1323). Where a target lands on screen is a position AND a rotation, and easing one of
-        // them here while the vcam damped the other underneath was the shake.
+        // ── Stage::Body ────────────────────────────────────────────────────────────────────
+        // Where the camera stands, and where it looks from there.
         let (desired_pos, desired_rot) = vcam.desired_with(
             framed,
             target_rot,
@@ -436,46 +436,45 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
             .unwrap_or_else(|| Damping::at(current.position, current.rotation));
         // 🔴 A framed rig is not damped twice. The frame's ease IS the rig's smoothing — two in
         // series on one position is what made every earlier version of this fight itself (#1329).
-        // 🔴 A framed rig is not damped twice. The frame's ease IS the rig's smoothing — two in
-        // series on one position is what made every earlier version of this fight itself (#1329).
-        let damped = match framing {
+        let body = match framing {
             Some(_) => desired_pos,
             None => vcam.damped(&mut damping, from, desired_pos, dt),
         };
-        // 🔴 Framing moves the rig, and it moves what the rig already decided — never the rotation,
-        // which in a third-person rig belongs to whoever is holding the stick (#1329).
-        let position = match framing {
-            Some(framing) => {
-                let mut state = carried_tracked.of(entity).unwrap_or(Framed::at(framed));
-                // 🔴 `from`, not where the camera ended up: that carries the wall's push, and the
-                // frame would read a collision as slack of its own and spend a `soft_duration`
-                // undoing it. The damping above takes the same care for the same reason (#1330).
-                let framed_at = framing.follow(
-                    &mut state,
-                    damped,
-                    from,
-                    current.rotation,
-                    framed,
-                    lead_offset,
-                    lens,
-                    dt,
-                );
-                tracked.set(entity, state);
-                framed_at
-            }
-            None => damped,
-        };
-        // After the damping, so a wall pulls the camera in at once rather than at the damping's
-        // pace (#1251).
-        let position = crate::occlusion::held(
+
+        // The pose from here on is a value, and each stage changes the one thing it owns (#1331).
+        let mut pose = CameraFrame::new(body, from, current.rotation, framed, up, reference, lens);
+
+        // ── Stage::Frame ───────────────────────────────────────────────────────────────────
+        // A lead holds the target off centre rather than moving what is framed (#1330).
+        if let Some(framing) = framing {
+            let (right, above, _) = pose.axes();
+            let span = pose.lens.span(
+                (framed - pose.position)
+                    .dot(pose.rotation * -Vec3::Z)
+                    .max(0.01),
+            );
+            pose.screen = -Vec2::new(
+                lead_offset.dot(right) / span.x,
+                lead_offset.dot(above) / span.y,
+            );
+            let mut state = carried_tracked.of(entity).unwrap_or(Framed::at(framed));
+            framing.frame(&mut state, &mut pose, dt);
+            tracked.set(entity, state);
+        }
+
+        // ── Stage::Collide ─────────────────────────────────────────────────────────────────
+        // The last word on where the camera stands: a wall pulls it in at once rather than at the
+        // damping's pace (#1251).
+        pose.displace(crate::occlusion::held(
             resources,
             entity,
             target_pos,
             Some(target_entity),
-            position,
+            pose.position,
             (&carried_arms, &mut arms),
             dt,
-        );
+        ));
+        let position = pose.position;
         // Damped too, because `up` is not a constant any more: crossing
         // between two gravity fields rotates the whole basis, and
         // snapping that in one frame throws the horizon over.
