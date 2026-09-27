@@ -1,8 +1,15 @@
 //! [`CameraFraming`] — where on screen a vcam holds its target, and how far the target may wander
 //! before the camera answers: Cinemachine's composer dead and soft zones (#1252).
 //!
-//! The rig follows a tracked point instead of the target. Inside the dead zone the point stays put,
-//! in the soft zone it eases after the target, and past the soft zone it is dragged along.
+//! 🔴 Framing **aims**; it does not move the camera (#1323). The rig places the camera and damps it
+//! like any other, and this turns it so the target lands where it should. Where a target sits on
+//! screen is the product of a position and a rotation, so an owner for one of them is an owner for
+//! nothing: this used to ease the position while the vcam damped the rotation underneath it, with
+//! two durations, and the two fought — the shake nobody could place.
+//!
+//! One quantity is eased here, the rotation, and the zones are limits on its **goal**. Nothing
+//! reads back or shoves the ease's own answer, which is what makes the result animatable: the rig
+//! hands out one pose, and a timeline that wants the camera can take it whole.
 
 use std::collections::HashMap;
 
@@ -20,24 +27,31 @@ use kooch_ecs::tween::Chase;
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Camera")]
 pub struct CameraFraming {
-    /// Off follows the target itself, as without this component.
+    /// Off aims at the target itself, as without this component. The rig follows it either way.
     pub enabled: bool,
     /// Where the target sits on screen: `0` is the centre, `±0.5` the edges, +Y up.
     #[reflect(range = SCREEN_RANGE)]
     pub screen: Vec2,
-    /// Width and height, as fractions of the screen, the target moves inside with the camera still.
+    /// Width and height, as fractions of the screen, the target moves inside with the camera not
+    /// turning at all.
     #[reflect(range = ZONE_RANGE)]
     pub dead_zone: Vec2,
-    /// Width and height past which the camera keeps the target at the edge. Between it and the dead
-    /// zone the camera eases back; never smaller than the dead zone.
+    /// Width and height over which the camera comes up to speed: none of the correction on the dead
+    /// zone's edge, all of it here. Never smaller than the dead zone.
+    ///
+    /// 🔴 A band, not a wall. Without it the camera goes from not turning to turning at full rate
+    /// between two frames, and that step is what reads as a shake; a wall that shoved the camera
+    /// back measured three times worse than the rig on its own.
     #[reflect(range = ZONE_RANGE)]
     pub soft_zone: Vec2,
-    /// Seconds the camera takes to bring the target back to the dead zone's edge once it stops —
-    /// exactly, a tween that restarts while the target keeps moving. Past the soft zone the camera
-    /// does not wait. Zero is rigid.
+    /// Seconds the camera takes to bring the target back to the dead zone's edge **once it stops** —
+    /// exactly, a tween that restarts while the target keeps moving. Zero is rigid.
     #[reflect(range = TIME_RANGE, alias = "soft_time")]
     pub soft_duration: f32,
 }
+
+/// How far a target or a camera may drift and still count as standing still, in metres.
+const STILL: f32 = 1e-5;
 
 const SCREEN_RANGE: FieldRange = FieldRange {
     min: -0.5,
@@ -95,108 +109,196 @@ impl Lens {
 }
 
 impl CameraFraming {
-    /// Where the rig follows this step. Two terms, both continuous: the target's own motion, taken
-    /// on as the target crosses the soft zone, and a tween closing what is left of the excess.
+    /// The rotation that frames `target` from `eye`, eased from `current`.
     ///
-    /// 🔴 Without the first term the camera never reaches the target's speed, hits the soft zone's
-    /// wall and doubles its speed in one step — the stutter of #1288. Weighted by how deep into the
-    /// soft zone the target is, it arrives at the wall already travelling alongside it.
-    pub fn follow(
+    /// Inside the dead zone nothing is owed and the camera holds still. Outside it, the goal is the
+    /// rotation that puts the target back on the dead zone's edge, and [`soft_duration`] is how
+    /// long that takes once the target stops — exactly, since the tween restarts while the goal
+    /// keeps moving.
+    ///
+    /// [`soft_duration`]: Self::soft_duration
+    pub fn aim(
         &self,
         state: &mut Framed,
+        eye: Vec3,
+        current: Quat,
         target: Vec3,
-        rotation: Quat,
-        depth: f32,
+        up: Vec3,
+        reference: Vec3,
         lens: Lens,
         dt: f32,
-    ) -> Vec3 {
-        let (right, up, forward) = (rotation * Vec3::X, rotation * Vec3::Y, rotation * -Vec3::Z);
+    ) -> Quat {
+        let Some(offset) = (target - eye).try_normalize().map(|_| target - eye) else {
+            return current;
+        };
+        let forward = current * -Vec3::Z;
+        let depth = offset.dot(forward);
+        if depth <= 0.0 {
+            // Behind the camera: there is no screen to frame it on, and the rig is about to swing
+            // round anyway.
+            return current;
+        }
+
+        let (right, above) = (current * Vec3::X, current * Vec3::Y);
         let span = lens.span(depth);
-        let tracked = state.point;
+        // Where the target is now, as a fraction of the screen from its centre.
+        let seen = Vec2::new(offset.dot(right) / span.x, offset.dot(above) / span.y);
+        // And how far that is from where it belongs.
+        let at = seen - self.screen;
         let soft = self.soft_zone.max(self.dead_zone);
 
-        // Where the target sits, as a fraction of the screen from the tracked point.
-        let on_screen = |point: Vec3| {
-            let offset = target - point;
-            Vec2::new(offset.dot(right) / span.x, offset.dot(up) / span.y)
-        };
-        // How far past a zone of `size` it sits, in metres on screen.
-        let past = |point: Vec3, size: Vec2| {
-            let at = on_screen(point);
-            let beyond =
-                |at: f32, size: f32| at.signum() * (at.abs() - size.max(0.0) * 0.5).max(0.0);
-            let excess = Vec2::new(beyond(at.x, size.x), beyond(at.y, size.y)) * span;
-            right * excess.x + up * excess.y
-        };
-        // 0 on the dead zone's edge, 1 on the soft zone's: how much of the target's motion the
-        // camera takes on, per screen axis.
-        let carried = |at: f32, dead: f32, soft: f32| {
-            let band = (soft - dead).max(0.0) * 0.5;
-            match band > 0.0 {
-                true => ((at.abs() - dead.max(0.0) * 0.5) / band).clamp(0.0, 1.0),
-                false => 1.0,
-            }
-        };
+        // What the camera owes: nothing inside the dead zone, the excess outside it. Owing nothing
+        // means holding still — the rotation it already has, not one rebuilt from a screen
+        // position, which would drift by the tangent plane's own error every step.
+        let owed = past(at, self.dead_zone);
+        let held = state.rotation.unwrap_or(current);
+        if owed == Vec2::ZERO {
+            state.chase = Chase::at(held);
+            state.goal = None;
+            state.was_still = false;
+            state.last = target;
+            state.eye = eye;
+            return held;
+        }
 
-        let at = on_screen(tracked);
-        let share = Vec2::new(
-            carried(at.x, self.dead_zone.x, soft.x),
-            carried(at.y, self.dead_zone.y, soft.y),
-        );
-        let moved = target - state.last;
+        // 🔴 The soft zone limits where the ease MAY be, and it does so by telling the ease where
+        // it stands before it steps — Phantom Camera's trick of anchoring an axis ahead of the
+        // damper rather than correcting after it, in camera space so an arbitrary up survives it.
+        // Shoving its answer afterwards is what made the camera jump at speed (#1323).
+        // 🔴 The soft zone RAMPS the correction in: none at the dead zone's edge, all of it at the
+        // soft one. Switching the ease on at the dead edge is a step in the frame's speed — the
+        // camera goes from not turning at all to turning at full rate between two frames — and a
+        // dead zone without a band around it can only do that. This is what the soft zone is for,
+        // and the old code had the idea in the wrong place: it carried the target's velocity into
+        // the point instead of scaling the goal (#1323).
+        //
+        // 🔴 Only while the target is moving. Ramped to nothing at the dead zone's edge, the camera
+        // would approach it and never arrive, and `soft_duration` promises a time. Once the target
+        // stops, the whole correction applies and the tween lands on the edge exactly when it says.
+        // The two phases are the two things being asked for, and neither can be had alone.
+        let still = state.last.abs_diff_eq(target, STILL) && state.eye.abs_diff_eq(eye, STILL);
+        let share = match still {
+            true => Vec2::ONE,
+            false => Vec2::new(
+                ramp(at.x, self.dead_zone.x, soft.x),
+                ramp(at.y, self.dead_zone.y, soft.y),
+            ),
+        };
+        let from = held;
+
+        // The goal: the target back on the dead zone's edge.
+        //
+        // 🔴 Held while nothing moves. Measured from the eased rotation it would chase itself — a
+        // goal a hair different every frame, so the tween restarts every frame and never finishes.
+        // The promise is "this long after the target stops", and a goal that never settles cannot
+        // keep it.
+        // Held only once it has been still for a step: the frame the target stops on is the frame
+        // the full correction is computed, and holding before that would freeze the ramped goal.
+        let goal = match (still && state.was_still, state.goal) {
+            (true, Some(goal)) => goal,
+            _ => self.turned(
+                eye,
+                current,
+                target,
+                seen - owed * share,
+                lens,
+                up,
+                reference,
+            ),
+        };
+        state.goal = Some(goal);
+        state.was_still = still;
+        state.eye = eye;
+        let eased = state.chase.step(from, goal, dt, self.soft_duration);
+        state.rotation = Some(eased);
         state.last = target;
-        // A step wider than the soft band is a teleport, not a speed: the wall below places the
-        // point for it rather than the camera flying there.
-        let band = ((soft - self.dead_zone) * 0.5 * span).max(Vec2::ZERO);
-        let carry = |along: Vec3, share: f32, band: f32| {
-            along * moved.dot(along).clamp(-band, band) * share
-        };
-        let led = tracked + carry(right, share.x, band.x) + carry(up, share.y, band.y);
-
-        // The wall, if the first term was not enough: it moves where the tween STARTS, never what
-        // it returned — a point shoved afterwards is one the tween pulls back next step.
-        let from = led + past(led, soft);
-        let goal = from + past(from, self.dead_zone);
-        let point = chase_step(&mut state.chase, from, goal, dt, self.soft_duration);
-        state.point = point + forward * (target - point).dot(forward);
-        state.point
+        eased
     }
 
-    /// The point to look at so `tracked` lands on [`screen`](Self::screen).
-    pub fn aim(&self, tracked: Vec3, rotation: Quat, depth: f32, lens: Lens) -> Vec3 {
-        let shift = self.screen * lens.span(depth);
-        tracked - rotation * Vec3::X * shift.x - rotation * Vec3::Y * shift.y
+    /// The rotation that lands `target` at the screen position `seen`, in fractions of the screen
+    /// from its centre. Looking straight at a point puts it in the middle, so the point to look at
+    /// is the target shifted back by where it should appear.
+    ///
+    /// 🔴 Solved rather than computed: the shift is measured in the screen's plane, and turning the
+    /// camera moves that plane. Three passes take the residual below a thousandth of the screen,
+    /// which is the difference between landing ON the dead zone's edge and near it.
+    #[allow(clippy::too_many_arguments)]
+    fn turned(
+        &self,
+        eye: Vec3,
+        current: Quat,
+        target: Vec3,
+        seen: Vec2,
+        lens: Lens,
+        up: Vec3,
+        reference: Vec3,
+    ) -> Quat {
+        let offset = target - eye;
+        let mut rotation = current;
+        for _ in 0..3 {
+            let depth = offset.dot(rotation * -Vec3::Z);
+            if depth <= 0.0 {
+                return rotation;
+            }
+            let span = lens.span(depth);
+            let (right, above) = (rotation * Vec3::X, rotation * Vec3::Y);
+            let aim = target - right * (seen.x * span.x) - above * (seen.y * span.y);
+            rotation = crate::virtual_camera::look_at(eye, aim, up, reference);
+        }
+        rotation
     }
+}
+
+/// How much of the correction applies at `at`: none on the dead zone's edge, all of it on the soft
+/// one, and all of it beyond. A band of zero width is a step, which is what a soft zone the same
+/// size as the dead one asks for.
+fn ramp(at: f32, dead: f32, soft: f32) -> f32 {
+    let band = (soft - dead).max(0.0) * 0.5;
+    match band > 0.0 {
+        true => ((at.abs() - dead.max(0.0) * 0.5) / band).clamp(0.0, 1.0),
+        false => 1.0,
+    }
+}
+
+/// How far past a zone of `size` a screen offset sits, per axis, in screen fractions.
+fn past(at: Vec2, size: Vec2) -> Vec2 {
+    let beyond = |at: f32, size: f32| at.signum() * (at.abs() - size.max(0.0) * 0.5).max(0.0);
+    Vec2::new(beyond(at.x, size.x), beyond(at.y, size.y))
 }
 
 /// One vcam's framing in flight: where its rig follows, the tween closing the excess, and where the
 /// target was last step.
 #[derive(Debug, Clone, Copy)]
 pub struct Framed {
-    point: Vec3,
-    chase: Chase<Vec3>,
+    /// The rotation the ease last answered. `None` until it has answered once.
+    rotation: Option<Quat>,
+    /// The ease closing what the dead zone does not forgive.
+    chase: Chase<Quat>,
+    /// Where the ease is heading, held while neither the target nor the camera moves.
+    goal: Option<Quat>,
+    /// Whether nothing moved last step, so the goal is held from the second still step on.
+    was_still: bool,
     last: Vec3,
+    eye: Vec3,
 }
 
 impl Framed {
-    /// Where the rig is following.
-    pub fn point(&self) -> Vec3 {
-        self.point
+    /// The rotation it last answered, before anything else touched the pose.
+    pub fn rotation(&self) -> Option<Quat> {
+        self.rotation
     }
 
     /// Framed on a target that has not moved yet.
     pub fn at(target: Vec3) -> Self {
         Self {
-            point: target,
-            chase: Chase::at(target),
+            rotation: None,
+            chase: Chase::at(Quat::IDENTITY),
+            goal: None,
+            was_still: false,
             last: target,
+            eye: Vec3::ZERO,
         }
     }
-}
-
-/// `Chase::step`, named so the framing reads as one expression.
-fn chase_step(chase: &mut Chase<Vec3>, from: Vec3, goal: Vec3, dt: f32, duration: f32) -> Vec3 {
-    chase.step(from, goal, dt, duration)
 }
 
 /// Every framed vcam's tracked point, carried between steps. Rebuilt from the vcams seen each step,

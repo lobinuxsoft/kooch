@@ -19,8 +19,8 @@ use crate::lookahead::{CameraLookahead, Lead, Leads};
 use crate::occlusion::Arms;
 use crate::target::CameraTarget;
 use crate::virtual_camera::{
-    Damping, INACTIVE_ALWAYS, LOOK_AT_SIMPLE, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera,
-    seed_reference, transported,
+    Damping, INACTIVE_ALWAYS, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera, seed_reference,
+    transported,
 };
 
 /// Which way is up for a virtual camera, from its `up_mode`. Not the target's rotation: a rolling
@@ -407,49 +407,26 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
         let framing = framings
             .and_then(|framings| framings.get(entity))
             .filter(|framing| framing.enabled);
-        // The rig follows the tracked point, not the target, and aims so that point sits where the
-        // framing puts it. A first framed step starts on the target: centred when it goes live.
-        let (followed, aim) = match framing {
-            Some(framing) => {
-                let mut state = carried_tracked.of(entity).unwrap_or(Framed::at(framed));
-                let depth = (state.point() - current.position).dot(current.rotation * -Vec3::Z);
-                let depth = if depth > 0.01 { depth } else { vcam.distance };
-                let point = framing.follow(&mut state, framed, current.rotation, depth, lens, dt);
-                tracked.set(entity, state);
-                (
-                    point,
-                    Some(framing.aim(point, current.rotation, depth, lens)),
-                )
-            }
-            None => (framed, None),
-        };
+        // 🔴 The rig follows the target, framed or not: framing aims, it does not move the camera
+        // (#1323). Where a target lands on screen is a position AND a rotation, and easing one of
+        // them here while the vcam damped the other underneath was the shake.
         let (desired_pos, desired_rot) = vcam.desired_with(
-            followed,
+            framed,
             target_rot,
             current.position,
             current.rotation,
             up,
             reference,
         );
-        let desired_rot = match aim {
-            Some(aim) if vcam.look_at == LOOK_AT_SIMPLE => {
-                crate::virtual_camera::look_at(desired_pos, aim, up, reference)
-            }
-            _ => desired_rot,
-        };
         // From where the rig had the camera before any wall, not from where the wall put it: the
-        // damping is the rig's, and a return is the collision's to time. A framed rig is not
-        // damped: its soft zone is the easing, and a second one would move the zones off screen.
+        // damping is the rig's, and a return is the collision's to time.
         let from = carried_arms.free_of(entity).unwrap_or(current.position);
         let mut damping = carried_dampings
             .0
             .get(&entity)
             .copied()
             .unwrap_or_else(|| Damping::at(current.position, current.rotation));
-        let position = match framing {
-            Some(_) => desired_pos,
-            None => vcam.damped(&mut damping, from, desired_pos, dt),
-        };
+        let position = vcam.damped(&mut damping, from, desired_pos, dt);
         // After the damping, so a wall pulls the camera in at once rather than at the damping's
         // pace (#1251).
         let position = crate::occlusion::held(
@@ -464,7 +441,27 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
         // Damped too, because `up` is not a constant any more: crossing
         // between two gravity fields rotates the whole basis, and
         // snapping that in one frame throws the horizon over.
-        let rotation = vcam.damped_rotation(&mut damping, current.rotation, desired_rot, dt);
+        //
+        // 🔴 Unless the framing owns it. Two eases on one rotation is the same mistake as two on
+        // the frame, one stage down (#1323).
+        let rotation = match framing {
+            Some(framing) => {
+                let mut state = carried_tracked.of(entity).unwrap_or(Framed::at(framed));
+                let aimed = framing.aim(
+                    &mut state,
+                    position,
+                    current.rotation,
+                    framed,
+                    up,
+                    reference,
+                    lens,
+                    dt,
+                );
+                tracked.set(entity, state);
+                aimed
+            }
+            None => vcam.damped_rotation(&mut damping, current.rotation, desired_rot, dt),
+        };
         dampings.0.insert(entity, damping);
 
         plan.push(Pose {
