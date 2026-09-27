@@ -474,18 +474,20 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
             (&carried_arms, &mut arms),
             dt,
         ));
-        let position = pose.position;
         // Damped too, because `up` is not a constant any more: crossing
         // between two gravity fields rotates the whole basis, and
         // snapping that in one frame throws the horizon over.
         //
-        let rotation = vcam.damped_rotation(&mut damping, current.rotation, desired_rot, dt);
+        // ── Stage::Aim ─────────────────────────────────────────────────────────────────────
+        // 🔴 One owner. In a third-person rig this is the player's, and the only easing on it is
+        // this one — a frame that also turned the camera fought every input (#1329).
+        pose.rotation = vcam.damped_rotation(&mut damping, current.rotation, desired_rot, dt);
         dampings.0.insert(entity, damping);
 
         plan.push(Pose {
             entity,
-            position,
-            rotation,
+            position: pose.position,
+            rotation: pose.rotation,
             priority: vcam.priority,
             blend_duration: vcam.blend_duration,
             blend_curve: vcam.blend_curve,

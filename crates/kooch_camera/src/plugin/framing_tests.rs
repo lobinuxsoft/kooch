@@ -272,7 +272,7 @@ fn framing_adds_no_jump_of_its_own() {
 /// one camera, one stage apart.
 #[test]
 fn a_wall_is_not_slack() {
-    let (mut resources, vcam, target) = world();
+    let (mut resources, vcam, _target) = world();
     for _ in 0..30 {
         drive_virtual_cameras(&mut resources);
     }

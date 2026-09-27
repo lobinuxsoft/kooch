@@ -52,3 +52,25 @@ fn nothing_behind_is_seen() {
     );
     assert_eq!(frame.seen(Vec3::new(0.0, 0.0, 9.0)), None);
 }
+
+/// 🔴 #1331: the rule the stages exist to keep. A stage that moves the camera must not touch where
+/// the body wanted it, or the next stage reads its own displacement as something to answer — which
+/// is how a wall's push became slack the frame spent a `soft_duration` undoing.
+#[test]
+fn displacing_never_moves_the_bodys_answer() {
+    let body = Vec3::new(0.0, 2.0, 8.0);
+    let mut frame = CameraFrame::new(
+        body,
+        body,
+        Quat::IDENTITY,
+        Vec3::ZERO,
+        Vec3::Y,
+        Vec3::Y,
+        lens(),
+    );
+    // A frame moves it sideways, then a wall pulls it in.
+    frame.displace(frame.position + Vec3::X * 1.5);
+    frame.displace(frame.position - Vec3::Z * 3.0);
+    assert_eq!(frame.free, body, "a stage moved the body's answer");
+    assert_eq!(frame.previous, body, "a stage moved where the camera was");
+}
