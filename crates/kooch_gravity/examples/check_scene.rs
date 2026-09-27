@@ -140,9 +140,8 @@ fn main() {
                         strength: f32_of(component, "strength"),
                         rounding: f32_of(component, "rounding"),
                         // A scene may carry either shape; the migration folds the old one.
-                        range_positive: vec3_of(component, "range_positive"),
-                        range_negative: vec3_of(component, "range_negative"),
-                        range: f32_of(component, "range"),
+                        range: vec3_of(component, "range"),
+                        legacy_range: f32_of(component, "legacy_range"),
                         falloff: f32_of(component, "falloff"),
                     },
                 ),

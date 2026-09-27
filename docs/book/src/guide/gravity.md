@@ -35,10 +35,13 @@ Same primitive, opposite job. The edges need no special case because the
 direction is the gradient of the box's distance function: gravity that
 follows a surface *is* that gradient.
 
-**Each face has its own reach.** `range_positive` is how far the field holds at full strength past
-the +X, +Y and +Z faces, `range_negative` the same for −X, −Y and −Z — read them like
-`half_extents`. One face of a planet can pull twice as far as the one opposite it, and the gizmo
-draws the shell lopsided to say so. Zero on a face is unlimited there.
+**Each axis has its own reach.** `range` is a `Vec3`: how far the field holds at full strength past
+the solid, per axis, each component covering **both** of that axis's faces and read as an absolute
+value. A planet can reach forty metres up and five sideways, and the gizmo draws the shell to match.
+
+All zero is **unlimited** — the planet with no cutoff. A zero on *one* axis is a reach of nothing
+there: the field stops at those two faces. If you want a field that differs face by face, that is an
+`AreaGravity`, not this.
 
 **Inside the solid, gravity keeps falling the way it was.** The gradient vanishes in there — the
 nearest point on the box *is* the point — so the interior is a rule rather than a formula: the pull
@@ -74,7 +77,7 @@ is what lets a `GravityPriority` take over a planet's surroundings the way it ta
 ## A transform places a field, it does not resize one
 
 Every distance a source carries — `half_extents`, `radius`, `rounding`,
-`range_positive`, `range_negative`, `falloff` — is in **metres**. Turning the entity turns the field
+`range`, `falloff` — is in **metres**. Turning the entity turns the field
 and moving it moves the field, but scaling it does neither.
 
 That is deliberate, and it was the other way round once. A field's space is

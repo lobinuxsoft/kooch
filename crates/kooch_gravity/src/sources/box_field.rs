@@ -18,16 +18,17 @@ pub struct BoxGravity {
     /// How gently gravity turns around the edges, in metres: the box shrinks by this before the
     /// nearest point is taken. Zero is a cube; the half-extents make a sphere.
     pub rounding: f32,
-    /// How far past the **+X, +Y and +Z** faces the field holds at full strength, in metres. Zero
-    /// or less on a face is unlimited there and disables `falloff` for it.
-    pub range_positive: Vec3,
-    /// The same past the **−X, −Y and −Z** faces: one face of a cube planet may reach further than
-    /// the one opposite it (#1324).
-    pub range_negative: Vec3,
-    /// The single reach a scene wrote before each face had its own. Folded into both of the above
-    /// on load and cleared.
-    #[reflect(hidden)]
-    pub range: f32,
+    /// How far past the solid the field holds at full strength, per **axis**, in metres — each
+    /// component covering both of that axis's faces. Read as an absolute value, so a negative is
+    /// the same reach the other way round.
+    ///
+    /// 🔴 All zero is unlimited, which is what a planet with no cutoff has always been. A zero on
+    /// **one** axis is a reach of nothing on that axis: the field stops at those two faces. A field
+    /// that differs face by face is an [`AreaGravity`](super::AreaGravity), not this (#1326).
+    pub range: Vec3,
+    /// The single reach a scene wrote before it was one per axis. Folded into `range` on load.
+    #[reflect(hidden, alias = "range")]
+    pub legacy_range: f32,
     /// How far past `range` the field fades to nothing, in metres, so leaving is not an instant
     /// loss. Zero for a hard cutoff.
     pub falloff: f32,
@@ -39,9 +40,8 @@ impl Default for BoxGravity {
             half_extents: Vec3::splat(5.0),
             strength: 9.81,
             rounding: 0.5,
-            range_positive: Vec3::splat(20.0),
-            range_negative: Vec3::splat(20.0),
-            range: 0.0,
+            range: Vec3::splat(20.0),
+            legacy_range: 0.0,
             falloff: 5.0,
         }
     }
@@ -103,28 +103,31 @@ impl BoxGravity {
         }
     }
 
-    /// How far the field reaches at full strength past the face `local_point` sits beyond — the
-    /// face with the largest overshoot, which is the one it is over.
+    /// How far the field reaches at full strength past the axis `local_point` sits beyond — the
+    /// axis with the largest overshoot, which is the pair of faces it is over.
     pub fn range_at_local(&self, local_point: Vec3) -> f32 {
-        let half = self.half_extents.abs();
-        let out = local_point.abs() - half;
-        let ranges = Vec3::select(
-            local_point.cmpge(Vec3::ZERO),
-            self.range_positive,
-            self.range_negative,
-        );
+        let out = local_point.abs() - self.half_extents.abs();
+        let range = self.range.abs();
         match (out.x >= out.y, out.x >= out.z, out.y >= out.z) {
-            (true, true, _) => ranges.x,
-            (false, _, true) => ranges.y,
-            _ => ranges.z,
+            (true, true, _) => range.x,
+            (false, _, true) => range.y,
+            _ => range.z,
         }
     }
 
-    /// How strongly the field applies at a point: 1 up to that face's range, fading to 0 across
+    /// Whether the field reaches everywhere: no cutoff at all, which is what all-zero says.
+    pub fn is_unlimited(&self) -> bool {
+        self.range.abs().max_element() <= 0.0
+    }
+
+    /// How strongly the field applies at a point: 1 up to that axis's range, fading to 0 across
     /// `falloff`.
     pub fn influence_at_local(&self, local_point: Vec3, distance: f32) -> f32 {
+        if self.is_unlimited() {
+            return 1.0;
+        }
         let range = self.range_at_local(local_point);
-        if range <= 0.0 || distance <= range {
+        if distance <= range {
             return 1.0;
         }
         if self.falloff <= 0.0 {
@@ -134,12 +137,11 @@ impl BoxGravity {
     }
 }
 
-/// Folds the single `range` a scene wrote before each face had its own into both per-face reaches,
-/// and clears it.
+/// Folds the single `range` a scene wrote before it was one per axis into all three, and clears it.
 ///
 /// 🔴 Said out loud: this writes to the author's data and a save makes it permanent. The mapping is
-/// one number to six of the same number, so it cannot be misread — unlike a mask, which is how the
-/// last migration wrote a planet into thirty-one layers (#1320).
+/// one number to three of the same number, so it cannot be misread — unlike a mask, which is how
+/// the last migration wrote a planet into thirty-one layers (#1320).
 pub fn migrate_box_range(resources: &mut kooch_core::resource::Resources) {
     let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
         return;
@@ -148,18 +150,17 @@ pub fn migrate_box_range(resources: &mut kooch_core::resource::Resources) {
         return;
     };
     for (&entity, field) in storage.iter_mut() {
-        if field.range == 0.0 {
+        if field.legacy_range == 0.0 {
             continue;
         }
-        let was = field.range;
-        field.range_positive = Vec3::splat(was);
-        field.range_negative = Vec3::splat(was);
-        field.range = 0.0;
+        let was = field.legacy_range;
+        field.range = Vec3::splat(was);
+        field.legacy_range = 0.0;
         tracing::info!(
             target: "kooch_gravity",
             entity = entity.index(),
             range = was,
-            "a box field's reach was migrated to one per face",
+            "a box field's reach was migrated to one per axis",
         );
     }
 }
