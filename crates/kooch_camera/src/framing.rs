@@ -120,8 +120,8 @@ impl CameraFraming {
     /// `wanted` is where the rig would put the camera with no framing at all. The answer is that
     /// point moved across the screen's own axes — never along its forward, since how far away the
     /// camera sits is the rig's business and not the frame's.
-    /// [`Stage::Frame`](crate::frame::Stage::Frame): moves the camera sideways so the target lands
-    /// where it is held. Never along the forward — how far away the camera sits is the body's.
+    /// The Frame stage: moves the camera sideways so the target lands where it is held. Never
+    /// along the forward — how far away the camera sits is the body's.
     pub fn frame(&self, state: &mut Framed, frame: &mut CameraFrame, dt: f32) {
         let (right, above, forward) = frame.axes();
         let placed = |slack: Vec2| frame.free + right * slack.x + above * slack.y;
@@ -203,11 +203,6 @@ pub struct Framed {
 }
 
 impl Framed {
-    /// How far the frame is holding the camera off the rig's own answer.
-    pub fn slack(&self) -> Vec2 {
-        self.slack
-    }
-
     /// Framed on a target that has not moved yet.
     pub fn at(target: Vec3) -> Self {
         Self {

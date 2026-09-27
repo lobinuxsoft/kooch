@@ -6,7 +6,7 @@ use crate::frame::CameraFrame;
 
 /// A frame standing at `at`, with the body wanting `wanted`, looking down −Z at `target`.
 fn frame_at(wanted: Vec3, at: Vec3, target: Vec3, lead: Vec3) -> CameraFrame {
-    let mut frame = CameraFrame::new(wanted, at, Quat::IDENTITY, target, Vec3::Y, Vec3::Y, lens());
+    let mut frame = CameraFrame::new(wanted, at, Quat::IDENTITY, target, lens());
     // The lead holds the target off centre, as the plugin works it out.
     let depth = (target - at).z.abs().max(0.01);
     let span = lens().span(depth);
