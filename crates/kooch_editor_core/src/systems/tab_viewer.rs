@@ -69,7 +69,7 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Whether the last frame found a gameplay camera to render.
     pub(crate) game_has_camera: bool,
     /// The selected vcam's framing, drawn over the image while it is authored (#1252).
-    pub(crate) game_framing: Option<kooch_camera::CameraFraming>,
+    pub(crate) game_framing: Option<crate::panels::game::FramingView>,
     /// Whether the game image was clicked this frame — what captures the cursor (#1266).
     pub(crate) game_clicked: &'a mut bool,
     /// Set while drawing when Game is the focused tab. Drives whether the project receives input —

@@ -74,6 +74,12 @@ pub struct Lead {
 }
 
 impl Lead {
+    /// How far ahead of its target the lead is holding the frame, in metres. What a gizmo draws:
+    /// the number in the Inspector is what was asked for, this is what is happening.
+    pub fn offset(&self) -> Vec3 {
+        self.offset
+    }
+
     /// Starting on a target at `at`, not moving.
     pub fn at(at: Vec3) -> Self {
         Self {
@@ -110,6 +116,13 @@ impl CameraLookahead {
 /// despawned one leaves nothing behind.
 #[derive(Debug, Clone, Default)]
 pub struct Leads(pub(crate) HashMap<Entity, Lead>);
+
+impl Leads {
+    /// The lead a vcam is carrying, for anything that draws it.
+    pub fn of(&self, vcam: Entity) -> Option<Lead> {
+        self.0.get(&vcam).copied()
+    }
+}
 
 #[cfg(test)]
 mod tests;
