@@ -5,7 +5,8 @@ fn cube() -> BoxGravity {
     BoxGravity {
         half_extents: Vec3::splat(10.0),
         rounding: 0.0,
-        range: 0.0,
+        range_positive: Vec3::ZERO,
+        range_negative: Vec3::ZERO,
         falloff: 0.0,
         ..Default::default()
     }
@@ -86,14 +87,54 @@ fn a_corner_pulls_along_its_diagonal() {
     );
 }
 
-/// Inside the solid there is no surface to fall towards. A body there
-/// is inside the rock, and inventing a direction for it would be a
-/// force that shoots it out of the planet.
+/// 🔴 #1324: inside the solid the gradient vanishes, and the old answer was nothing at all — a
+/// body that clipped in or spawned there floated, while the planet still claimed it. It keeps
+/// falling towards the face it is under, which is the direction it had a step before crossing.
 #[test]
-fn inside_the_solid_nothing_pulls() {
+fn inside_the_solid_keeps_its_face() {
     let field = cube();
+    // Just under the +Y face: still falling the way it was, which is down into the solid.
+    let under = field.acceleration_at_local(Vec3::new(0.0, 9.0, 0.0));
+    assert!(under.normalize().abs_diff_eq(Vec3::NEG_Y, 1e-4), "{under}");
+    // And under −X, the nearest face there: inwards again, so towards +X.
+    let side = field.acceleration_at_local(Vec3::new(-9.0, 1.0, 0.5));
+    assert!(side.normalize().abs_diff_eq(Vec3::X, 1e-4), "{side}");
+    // The exact centre is the one place with no face to name.
     assert_eq!(field.acceleration_at_local(Vec3::ZERO), Vec3::ZERO);
-    assert_eq!(field.acceleration_at_local(Vec3::splat(9.0)), Vec3::ZERO);
+}
+
+/// Crossing a face must not jump: just outside, gravity is that face's inward normal, and just
+/// inside it is the same vector.
+#[test]
+fn the_surface_is_continuous() {
+    let field = cube();
+    let outside = field.acceleration_at_local(Vec3::new(0.0, 10.01, 0.0));
+    let inside = field.acceleration_at_local(Vec3::new(0.0, 9.99, 0.0));
+    assert!(
+        outside.normalize().abs_diff_eq(inside.normalize(), 1e-3),
+        "{outside} outside against {inside} inside",
+    );
+}
+
+/// One face may reach further than the one opposite it.
+#[test]
+fn a_face_reaches_on_its_own() {
+    let field = BoxGravity {
+        half_extents: Vec3::splat(10.0),
+        rounding: 0.0,
+        range_positive: Vec3::new(0.0, 5.0, 0.0),
+        range_negative: Vec3::new(0.0, 30.0, 0.0),
+        falloff: 0.0,
+        ..Default::default()
+    };
+    // 8 m past the +Y face: beyond its 5 m reach, and a hard edge.
+    assert_eq!(
+        field.acceleration_at_local(Vec3::new(0.0, 18.0, 0.0)),
+        Vec3::ZERO,
+    );
+    // The same 8 m past −Y, which reaches 30.
+    let below = field.acceleration_at_local(Vec3::new(0.0, -18.0, 0.0));
+    assert!(below.length() > 0.0, "the far face stopped pulling too");
 }
 
 /// Rounding equal to the half-extents shrinks the box to its centre,
@@ -104,7 +145,8 @@ fn full_rounding_makes_a_sphere() {
     let field = BoxGravity {
         half_extents: Vec3::splat(10.0),
         rounding: 10.0,
-        range: 0.0,
+        range_positive: Vec3::ZERO,
+        range_negative: Vec3::ZERO,
         ..Default::default()
     };
     // Cube and sphere agree over the diagonal and over a face centre, so probe an oblique point
@@ -130,14 +172,16 @@ fn the_field_fades_past_its_range() {
     let field = BoxGravity {
         half_extents: Vec3::splat(10.0),
         rounding: 0.0,
-        range: 5.0,
+        range_positive: Vec3::splat(5.0),
+        range_negative: Vec3::splat(5.0),
         falloff: 10.0,
         ..Default::default()
     };
     // Distances are measured from the surface, not from the centre.
-    assert_eq!(field.influence(4.0), 1.0);
-    assert!((field.influence(10.0) - 0.5).abs() < 1e-4);
-    assert_eq!(field.influence(16.0), 0.0);
+    let above = |out: f32| Vec3::new(0.0, 10.0 + out, 0.0);
+    assert_eq!(field.influence_at_local(above(4.0), 4.0), 1.0);
+    assert!((field.influence_at_local(above(10.0), 10.0) - 0.5).abs() < 1e-4);
+    assert_eq!(field.influence_at_local(above(16.0), 16.0), 0.0);
     assert_eq!(
         field.acceleration_at_local(Vec3::new(0.0, 30.0, 0.0)),
         Vec3::ZERO,
@@ -148,5 +192,8 @@ fn the_field_fades_past_its_range() {
 /// every time it grew.
 #[test]
 fn an_unlimited_field_never_fades() {
-    assert_eq!(cube().influence(10_000.0), 1.0);
+    assert_eq!(
+        cube().influence_at_local(Vec3::new(0.0, 10_010.0, 0.0), 10_000.0),
+        1.0
+    );
 }

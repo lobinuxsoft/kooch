@@ -7,7 +7,7 @@ use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_gizmos::{Gizmos, Visualizer};
 use kooch_gravity::BoxGravity;
 
-use super::{ARROW, EDGE, FIELD, arrow};
+use super::{ARROW, EDGE, FADE, FIELD, arrow};
 
 /// The six face normals, in the source's local space.
 const FACES: [Vec3; 6] = [
@@ -41,12 +41,25 @@ impl Visualizer<BoxGravity> for BoxGravityVisualizer {
             gizmos.wire_obb(origin, basis, inner, EDGE);
         }
 
-        // How far the pull reaches, measured from the surface. An inflated box overstates the
-        // corners slightly — the true iso-surface is rounded there — but it answers "does this
-        // planet reach that platform", which is the question being asked.
-        if field.range > 0.0 {
-            let reach = half + Vec3::splat(field.range + field.falloff.max(0.0));
-            gizmos.wire_obb(origin, basis, reach, EDGE);
+        // How far the pull reaches, measured from the surface, and each face on its own. An
+        // inflated box overstates the corners slightly — the true iso-surface is rounded there —
+        // but it answers "does this planet reach that platform", which is the question being asked.
+        //
+        // 🔴 Two shells, not one. A single one drawn at `range + falloff` showed where gravity
+        // ENDS and nothing about where it starts to fade: the band between them is the whole of
+        // `falloff`, and without it an author is typing a number they cannot see (#1324).
+        let (ahead, behind) = (field.range_positive, field.range_negative);
+        if ahead.min_element() > 0.0 && behind.min_element() > 0.0 {
+            let mut shell = |out: Vec3, back: Vec3, colour: Vec3| {
+                let (max, min) = (half + out, -(half + back));
+                let centre = origin + basis * ((max + min) * 0.5);
+                gizmos.wire_obb(centre, basis, (max - min) * 0.5, colour);
+            };
+            shell(ahead, behind, EDGE);
+            let fade = field.falloff.max(0.0);
+            if fade > 0.0 {
+                shell(ahead + Vec3::splat(fade), behind + Vec3::splat(fade), FADE);
+            }
         }
 
         // One arrow per face, landing on the face centre along that face's

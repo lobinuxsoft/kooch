@@ -1,5 +1,5 @@
 use super::*;
-use crate::gizmos::harness::{draw, reach};
+use crate::gizmos::harness::{draw, drawn_arrows, reach};
 use glam::Mat4;
 
 /// Where the field reaches zero is the outer sphere — past the radius by its fade — so the gizmo
@@ -23,8 +23,16 @@ fn an_unlimited_point_source_draws_only_arrows() {
         radius: 0.0,
         ..Default::default()
     };
-    let reach = reach(&draw(&PointGravityVisualizer, &field, Mat4::IDENTITY));
-    assert!((reach - ARROW).abs() < 1e-3, "reached {reach}, wanted {ARROW}");
+    // Nothing but arrows: no cutoff shell among the lines, and the arrows reach `ARROW` out.
+    assert!(
+        draw(&PointGravityVisualizer, &field, Mat4::IDENTITY).is_empty(),
+        "an unlimited source drew a boundary it does not have",
+    );
+    let far = drawn_arrows(&PointGravityVisualizer, &field, Mat4::IDENTITY)
+        .iter()
+        .map(|(base, _)| base.length())
+        .fold(0.0, f32::max);
+    assert!((far - ARROW).abs() < 1e-3, "reached {far}, wanted {ARROW}");
 }
 
 /// A planet pulls inward. If the arrows pointed out it would read as a
@@ -35,16 +43,12 @@ fn a_point_source_points_inward() {
         radius: 0.0,
         ..Default::default()
     };
-    let segments = draw(&PointGravityVisualizer, &field, Mat4::IDENTITY);
-    let shafts: Vec<_> = segments
-        .iter()
-        .filter(|(a, b)| ((*b - *a).length() - ARROW).abs() < 1e-3)
-        .collect();
+    let shafts = drawn_arrows(&PointGravityVisualizer, &field, Mat4::IDENTITY);
     assert_eq!(shafts.len(), 6, "expected one arrow per axis");
-    for (a, b) in shafts {
+    for (base, tip) in shafts {
         assert!(
-            b.length() < a.length(),
-            "an arrow from {a} to {b} points away from the centre",
+            tip.length() < base.length(),
+            "an arrow from {base} to {tip} points away from the centre",
         );
     }
 }

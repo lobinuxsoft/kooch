@@ -1,12 +1,13 @@
 use super::*;
-use crate::gizmos::harness::{draw, reach, shafts};
+use crate::gizmos::harness::{arrows, draw, reach};
 use glam::{Mat4, Quat};
 
 fn cube() -> BoxGravity {
     BoxGravity {
         half_extents: Vec3::splat(10.0),
         rounding: 0.0,
-        range: 0.0,
+        range_positive: Vec3::ZERO,
+        range_negative: Vec3::ZERO,
         falloff: 0.0,
         ..Default::default()
     }
@@ -16,7 +17,7 @@ fn cube() -> BoxGravity {
 /// face, each pointing at the solid.
 #[test]
 fn every_face_gets_an_arrow_along_its_own_normal() {
-    let shafts = shafts(&draw(&BoxGravityVisualizer, &cube(), Mat4::IDENTITY));
+    let shafts = arrows(&BoxGravityVisualizer, &cube(), Mat4::IDENTITY);
     assert_eq!(shafts.len(), 6, "expected one arrow per face");
     for normal in FACES {
         assert!(
@@ -64,7 +65,8 @@ fn rounding_draws_the_box_it_actually_clamps_against() {
 #[test]
 fn the_reach_is_drawn_when_the_field_is_limited() {
     let limited = BoxGravity {
-        range: 20.0,
+        range_positive: Vec3::splat(20.0),
+        range_negative: Vec3::splat(20.0),
         falloff: 5.0,
         ..cube()
     };
@@ -73,12 +75,61 @@ fn the_reach_is_drawn_when_the_field_is_limited() {
     assert!(far > near + 20.0, "{near} then {far}");
 }
 
+/// 🔴 #1324: one shell showed where gravity ENDS and nothing about where it begins to fade, so
+/// `falloff` was a number with nothing on screen to check it against. Two shells, and the band
+/// between them is it.
+#[test]
+fn the_falloff_has_a_shell_of_its_own() {
+    let hard = BoxGravity {
+        range_positive: Vec3::splat(20.0),
+        range_negative: Vec3::splat(20.0),
+        falloff: 0.0,
+        ..cube()
+    };
+    let faded = BoxGravity {
+        falloff: 5.0,
+        ..hard
+    };
+    let boxes = |field: &BoxGravity| draw(&BoxGravityVisualizer, field, Mat4::IDENTITY).len();
+    assert!(
+        boxes(&faded) > boxes(&hard),
+        "the fade drew no shell of its own",
+    );
+    // And it stands where the fade ends, not where full strength does.
+    let far = reach(&draw(&BoxGravityVisualizer, &faded, Mat4::IDENTITY));
+    let full = reach(&draw(&BoxGravityVisualizer, &hard, Mat4::IDENTITY));
+    assert!(
+        (far - full - 5.0 * 3f32.sqrt()).abs() < 0.5,
+        "{full} then {far}"
+    );
+}
+
+/// One face may reach further than the one opposite it, and the shell has to show that rather than
+/// splitting the difference.
+#[test]
+fn a_face_reaches_on_its_own() {
+    let lopsided = BoxGravity {
+        range_positive: Vec3::new(5.0, 40.0, 5.0),
+        range_negative: Vec3::splat(5.0),
+        falloff: 0.0,
+        ..cube()
+    };
+    let top = draw(&BoxGravityVisualizer, &lopsided, Mat4::IDENTITY)
+        .iter()
+        .flat_map(|(a, b)| [a.y, b.y])
+        .fold(f32::MIN, f32::max);
+    assert!(
+        (top - 50.0).abs() < 0.1,
+        "the +Y shell reached {top}, wanted 50"
+    );
+}
+
 /// Turning the planet turns its faces, so the arrows have to follow —
 /// the same round trip through the entity's rotation the solver makes.
 #[test]
 fn the_faces_turn_with_the_entity() {
     let turned = Mat4::from_quat(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2));
-    let shafts = shafts(&draw(&BoxGravityVisualizer, &cube(), turned));
+    let shafts = arrows(&BoxGravityVisualizer, &cube(), turned);
 
     // Local +X turned a quarter turn about +Z points along +Y, so the
     // arrow onto that face now pulls along -Y.

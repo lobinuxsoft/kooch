@@ -67,7 +67,7 @@ fn draw_at(found: &Grounded, transform: &GlobalTransform, up: Vec3, gizmos: &mut
     // arrow the controller draws is the whole question of "why will it
     // not let me up here".
     let (a, b) = normal.any_orthonormal_pair();
-    gizmos.arrow(contact, contact + normal * NORMAL, a, b, colour);
+    gizmos.wire_arrow(contact, contact + normal * NORMAL, a, b, colour);
 }
 
 #[cfg(test)]

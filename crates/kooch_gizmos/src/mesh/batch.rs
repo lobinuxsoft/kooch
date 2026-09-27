@@ -44,11 +44,18 @@ pub struct MeshDraw {
 #[derive(Debug, Default)]
 pub struct MeshBatch {
     pub draws: Vec<MeshDraw>,
+    /// Every arrow asked for this frame, as `(base, tip)`.
+    ///
+    /// 🔴 Kept because a cone's triangles cannot be read back into the direction it was drawn for:
+    /// the apex is not even the vertex furthest from the middle. Whoever asks "where does this
+    /// field pull" — a test today, a picker the day arrows become clickable — asks here.
+    pub arrows: Vec<(Vec3, Vec3)>,
 }
 
 impl MeshBatch {
     pub fn clear(&mut self) {
         self.draws.clear();
+        self.arrows.clear();
     }
 
     /// Pushes a filled quad from four CCW corners; its edge UVs give it an opaque outline without a
@@ -274,6 +281,7 @@ impl MeshBatch {
         if length < 1e-4 {
             return;
         }
+        self.arrows.push((base, tip));
         let dir = length_vec / length;
         let head_len = (length * 0.25).clamp(0.05, length * 0.4);
         let head_radius = head_len * 0.4;

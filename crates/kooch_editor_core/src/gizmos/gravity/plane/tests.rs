@@ -1,5 +1,5 @@
 use super::*;
-use crate::gizmos::harness::{draw, reach, shafts};
+use crate::gizmos::harness::{arrows, draw, reach};
 use glam::{Mat4, Quat, Vec3};
 
 /// A floor pulls down. Pointing along the normal would read as a
@@ -7,7 +7,7 @@ use glam::{Mat4, Quat, Vec3};
 #[test]
 fn a_plane_points_away_from_its_normal() {
     let field = PlaneGravity::default();
-    let shafts = shafts(&draw(&PlaneGravityVisualizer, &field, Mat4::IDENTITY));
+    let shafts = arrows(&PlaneGravityVisualizer, &field, Mat4::IDENTITY);
     assert_eq!(shafts.len(), 4, "expected one arrow per corner");
     for shaft in shafts {
         assert!((shaft - Vec3::NEG_Y).length() < 1e-3, "{shaft}");
@@ -19,11 +19,7 @@ fn a_plane_points_away_from_its_normal() {
 #[test]
 fn a_plane_rotates_with_its_entity() {
     let matrix = Mat4::from_quat(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2));
-    let shafts = shafts(&draw(
-        &PlaneGravityVisualizer,
-        &PlaneGravity::default(),
-        matrix,
-    ));
+    let shafts = arrows(&PlaneGravityVisualizer, &PlaneGravity::default(), matrix);
     for shaft in shafts {
         assert!((shaft - Vec3::X).length() < 1e-3, "{shaft}");
     }

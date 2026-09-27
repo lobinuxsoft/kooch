@@ -62,16 +62,13 @@ fn draw_at(facing: &Facing, transform: &GlobalTransform, up: Vec3, gizmos: &mut 
     }
 }
 
-/// A shaft with two barbs, in the plane the character turns in.
+/// The engine's arrow, pointing where the character faces.
 fn arrow(gizmos: &mut Gizmos<'_>, origin: Vec3, direction: Vec3, length: f32, colour: Vec3) {
-    let tip = origin + direction * length;
-    gizmos.line(origin, tip, colour);
-    let across = direction
-        .cross(origin.normalize_or(Vec3::Y))
-        .normalize_or(direction.any_orthonormal_vector());
-    let barb = length * 0.2;
-    gizmos.line(tip, tip - direction * barb + across * barb, colour);
-    gizmos.line(tip, tip - direction * barb - across * barb, colour);
+    gizmos.arrow(
+        origin,
+        origin + direction * length,
+        glam::Vec4::new(colour.x, colour.y, colour.z, 1.0),
+    );
 }
 
 #[cfg(test)]

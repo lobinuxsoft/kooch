@@ -87,11 +87,12 @@ impl Source {
             // over all at once.
             Kind::Point(source) => source.influence(self.position.distance(point)),
             Kind::Area { settings, local } => settings.influence_at_local(local.local_point(point)),
-            // Inside the solid there is no surface to fall towards, and the
-            // body is as claimed by this planet as it can be.
+            // Inside the solid the distance is zero, so this reads full strength there without a
+            // special case — and the pull is real now, so claiming the body is honest (#1324).
             Kind::Solid { settings, local } => {
-                match settings.pull_at_local(local.local_point(point)) {
-                    Some((_, distance)) => settings.influence(distance),
+                let at = local.local_point(point);
+                match settings.pull_at_local(at) {
+                    Some((_, distance)) => settings.influence_at_local(at, distance),
                     None => 1.0,
                 }
             }

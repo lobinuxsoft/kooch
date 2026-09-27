@@ -139,6 +139,9 @@ fn main() {
                         half_extents: vec3_of(component, "half_extents"),
                         strength: f32_of(component, "strength"),
                         rounding: f32_of(component, "rounding"),
+                        // A scene may carry either shape; the migration folds the old one.
+                        range_positive: vec3_of(component, "range_positive"),
+                        range_negative: vec3_of(component, "range_negative"),
                         range: f32_of(component, "range"),
                         falloff: f32_of(component, "falloff"),
                     },
