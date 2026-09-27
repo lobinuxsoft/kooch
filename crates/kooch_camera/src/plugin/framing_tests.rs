@@ -31,7 +31,8 @@ fn world() -> (Resources, Entity, Entity) {
         VirtualCamera {
             follow: crate::FOLLOW_SIMPLE,
             offset: Vec3::Z * 5.0,
-            damping: false,
+            damping_duration: Vec3::ZERO,
+            rotation_damping_duration: 0.0,
             ..Default::default()
         },
     );
@@ -226,8 +227,8 @@ fn framing_adds_no_jump_of_its_own() {
             cam.follow = crate::FOLLOW_THIRD_PERSON;
             cam.distance = 8.0;
             cam.pitch = 18.0;
-            cam.damping = true;
             cam.damping_duration = Vec3::splat(0.3);
+            cam.rotation_damping_duration = 0.5;
             registry
                 .get_cpu_mut::<CameraFraming>()
                 .unwrap()

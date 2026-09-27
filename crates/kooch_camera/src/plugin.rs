@@ -86,6 +86,8 @@ impl Plugin for CameraPlugin {
         // pose shows the same frame. `dt` is the fixed step, which keeps damping deterministic.
         app.insert_resource(CameraBlend::default());
         app.insert_resource(HorizonFrames::default());
+        // Before anything reads a duration, and before an author can edit a field a switch overrode.
+        app.add_system(Stage::First, crate::virtual_camera::migrate_damping_switch);
         app.add_system(Stage::PostPhysics, run_if_playing(drive_virtual_cameras));
     }
 

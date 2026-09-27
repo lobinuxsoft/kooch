@@ -3,7 +3,8 @@ use super::*;
 fn vcam(follow: u32) -> VirtualCamera {
     VirtualCamera {
         follow,
-        damping: false,
+        damping_duration: Vec3::ZERO,
+        rotation_damping_duration: 0.0,
         ..Default::default()
     }
 }
@@ -173,7 +174,8 @@ fn damping_arrives_on_time() {
 #[test]
 fn damping_off_snaps_exactly() {
     let r = VirtualCamera {
-        damping: false,
+        damping_duration: Vec3::ZERO,
+        rotation_damping_duration: 0.0,
         ..Default::default()
     };
     let desired = Vec3::new(3.0, 4.0, 5.0);
@@ -432,7 +434,8 @@ fn rotation_damping_takes_the_short_way_round() {
 #[test]
 fn rotation_damping_off_snaps_exactly() {
     let r = VirtualCamera {
-        damping: false,
+        damping_duration: Vec3::ZERO,
+        rotation_damping_duration: 0.0,
         ..Default::default()
     };
     let to = glam::Quat::from_rotation_x(0.9);
@@ -489,7 +492,8 @@ fn rolling_over_the_pole_does_not_flip() {
         distance: 5.0,
         pitch: 0.0,
         yaw: 0.0,
-        damping: false,
+        damping_duration: Vec3::ZERO,
+        rotation_damping_duration: 0.0,
         ..Default::default()
     };
 
@@ -605,4 +609,41 @@ fn old_duration_names_load() {
     let mut collision = crate::CameraCollision::default();
     collision.reflect_set("return_time", F32(0.4)).unwrap();
     assert_eq!(collision.return_duration, 0.4);
+}
+
+/// 🔴 #1333: `damping: false` and a zero duration said the same thing, and the pair could
+/// disagree — the Inspector showed a slider the switch had already turned off. The switch is
+/// folded into the durations on load, which is the only reading it can have.
+#[test]
+fn the_damping_switch_becomes_zero_durations() {
+    use kooch_core::resource::Resources;
+    use kooch_ecs::component::ComponentRegistry;
+
+    let mut resources = Resources::new();
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu_reflected::<VirtualCamera>();
+    let entity = kooch_ecs::entity::Entity::new(1, 0);
+    registry.get_cpu_mut::<VirtualCamera>().unwrap().insert(
+        entity,
+        VirtualCamera {
+            damping: false,
+            damping_duration: Vec3::splat(0.5),
+            rotation_damping_duration: 0.5,
+            ..Default::default()
+        },
+    );
+    resources.insert(registry);
+
+    crate::virtual_camera::migrate_damping_switch(&mut resources);
+
+    let vcam = *resources
+        .get::<ComponentRegistry>()
+        .unwrap()
+        .get_cpu::<VirtualCamera>()
+        .unwrap()
+        .get(entity)
+        .unwrap();
+    assert_eq!(vcam.damping_duration, Vec3::ZERO, "the switch was ignored");
+    assert_eq!(vcam.rotation_damping_duration, 0.0);
+    assert!(vcam.damping, "the switch was not cleared");
 }
