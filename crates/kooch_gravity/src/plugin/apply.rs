@@ -106,7 +106,7 @@ fn digest(sources: &[Source]) -> u64 {
                 hash.vec3(settings.half_extents);
                 hash.f32(settings.strength);
                 hash.f32(settings.rounding);
-                hash.f32(settings.range);
+                hash.vec3(settings.range);
                 hash.f32(settings.falloff);
                 hash.matrix(local.to_local);
             }

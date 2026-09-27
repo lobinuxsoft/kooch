@@ -6,8 +6,7 @@ fn cube() -> BoxGravity {
     BoxGravity {
         half_extents: Vec3::splat(10.0),
         rounding: 0.0,
-        range_positive: Vec3::ZERO,
-        range_negative: Vec3::ZERO,
+        range: Vec3::ZERO,
         falloff: 0.0,
         ..Default::default()
     }
@@ -65,8 +64,7 @@ fn rounding_draws_the_box_it_actually_clamps_against() {
 #[test]
 fn the_reach_is_drawn_when_the_field_is_limited() {
     let limited = BoxGravity {
-        range_positive: Vec3::splat(20.0),
-        range_negative: Vec3::splat(20.0),
+        range: Vec3::splat(20.0),
         falloff: 5.0,
         ..cube()
     };
@@ -81,8 +79,7 @@ fn the_reach_is_drawn_when_the_field_is_limited() {
 #[test]
 fn the_falloff_has_a_shell_of_its_own() {
     let hard = BoxGravity {
-        range_positive: Vec3::splat(20.0),
-        range_negative: Vec3::splat(20.0),
+        range: Vec3::splat(20.0),
         falloff: 0.0,
         ..cube()
     };
@@ -104,23 +101,47 @@ fn the_falloff_has_a_shell_of_its_own() {
     );
 }
 
-/// One face may reach further than the one opposite it, and the shell has to show that rather than
-/// splitting the difference.
+/// One axis may reach further than another, and the shell has to show that rather than splitting
+/// the difference.
 #[test]
-fn a_face_reaches_on_its_own() {
-    let lopsided = BoxGravity {
-        range_positive: Vec3::new(5.0, 40.0, 5.0),
-        range_negative: Vec3::splat(5.0),
+fn an_axis_reaches_on_its_own() {
+    let tall = BoxGravity {
+        range: Vec3::new(5.0, 40.0, 5.0),
         falloff: 0.0,
         ..cube()
     };
-    let top = draw(&BoxGravityVisualizer, &lopsided, Mat4::IDENTITY)
+    let drawn = draw(&BoxGravityVisualizer, &tall, Mat4::IDENTITY);
+    let top = drawn
         .iter()
         .flat_map(|(a, b)| [a.y, b.y])
         .fold(f32::MIN, f32::max);
+    let side = drawn
+        .iter()
+        .flat_map(|(a, b)| [a.x, b.x])
+        .fold(f32::MIN, f32::max);
     assert!(
         (top - 50.0).abs() < 0.1,
-        "the +Y shell reached {top}, wanted 50"
+        "the Y shell reached {top}, wanted 50"
+    );
+    assert!(
+        (side - 15.0).abs() < 0.1,
+        "the X shell reached {side}, wanted 15"
+    );
+}
+
+/// 🔴 #1326: one zero used to erase both shells, so a field that stops looked like one that never
+/// does. Only a field with no cutoff at all draws none.
+#[test]
+fn a_zero_axis_still_draws_its_shells() {
+    let flat = BoxGravity {
+        range: Vec3::new(30.0, 0.0, 30.0),
+        falloff: 0.0,
+        ..cube()
+    };
+    let boxes = |field: &BoxGravity| draw(&BoxGravityVisualizer, field, Mat4::IDENTITY).len();
+    assert!(
+        boxes(&flat) > boxes(&cube()),
+        "a field with one zero axis drew no reach at all",
     );
 }
 
@@ -146,7 +167,7 @@ fn a_scaled_box_is_the_same_size() {
     let field = BoxGravity {
         half_extents: Vec3::splat(5.0),
         rounding: 0.5,
-        range: 20.0,
+        range: Vec3::splat(20.0),
         falloff: 5.0,
         ..Default::default()
     };

@@ -234,7 +234,7 @@ fn a_box_source_pulls_towards_the_nearest_face() {
         BoxGravity {
             half_extents: Vec3::splat(10.0),
             rounding: 0.0,
-            range: 0.0,
+            range: Vec3::ZERO,
             falloff: 0.0,
             ..Default::default()
         },
@@ -280,7 +280,7 @@ fn a_box_source_rotates_with_its_entity() {
         BoxGravity {
             half_extents: Vec3::new(10.0, 2.0, 10.0),
             rounding: 0.0,
-            range: 0.0,
+            range: Vec3::ZERO,
             falloff: 0.0,
             ..Default::default()
         },

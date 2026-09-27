@@ -48,17 +48,19 @@ impl Visualizer<BoxGravity> for BoxGravityVisualizer {
         // 🔴 Two shells, not one. A single one drawn at `range + falloff` showed where gravity
         // ENDS and nothing about where it starts to fade: the band between them is the whole of
         // `falloff`, and without it an author is typing a number they cannot see (#1324).
-        let (ahead, behind) = (field.range_positive, field.range_negative);
-        if ahead.min_element() > 0.0 && behind.min_element() > 0.0 {
-            let mut shell = |out: Vec3, back: Vec3, colour: Vec3| {
-                let (max, min) = (half + out, -(half + back));
-                let centre = origin + basis * ((max + min) * 0.5);
-                gizmos.wire_obb(centre, basis, (max - min) * 0.5, colour);
+        //
+        // Drawn whenever the field has any cutoff at all. Requiring every axis to be positive meant
+        // one zero erased both shells, so a field that does stop looked like one that never
+        // does (#1326).
+        if !field.is_unlimited() {
+            let reach = field.range.abs();
+            let mut shell = |out: Vec3, colour: Vec3| {
+                gizmos.wire_obb(origin, basis, half + out, colour);
             };
-            shell(ahead, behind, EDGE);
+            shell(reach, EDGE);
             let fade = field.falloff.max(0.0);
             if fade > 0.0 {
-                shell(ahead + Vec3::splat(fade), behind + Vec3::splat(fade), FADE);
+                shell(reach + Vec3::splat(fade), FADE);
             }
         }
 

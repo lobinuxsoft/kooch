@@ -5,8 +5,7 @@ fn cube() -> BoxGravity {
     BoxGravity {
         half_extents: Vec3::splat(10.0),
         rounding: 0.0,
-        range_positive: Vec3::ZERO,
-        range_negative: Vec3::ZERO,
+        range: Vec3::ZERO,
         falloff: 0.0,
         ..Default::default()
     }
@@ -116,25 +115,79 @@ fn the_surface_is_continuous() {
     );
 }
 
-/// One face may reach further than the one opposite it.
+/// One axis may reach further than another, and each covers both of its faces.
 #[test]
-fn a_face_reaches_on_its_own() {
+fn an_axis_reaches_on_its_own() {
     let field = BoxGravity {
         half_extents: Vec3::splat(10.0),
         rounding: 0.0,
-        range_positive: Vec3::new(0.0, 5.0, 0.0),
-        range_negative: Vec3::new(0.0, 30.0, 0.0),
+        range: Vec3::new(30.0, 5.0, 30.0),
         falloff: 0.0,
         ..Default::default()
     };
-    // 8 m past the +Y face: beyond its 5 m reach, and a hard edge.
+    // 8 m past +Y: beyond its 5 m reach, and a hard edge.
     assert_eq!(
         field.acceleration_at_local(Vec3::new(0.0, 18.0, 0.0)),
         Vec3::ZERO,
     );
-    // The same 8 m past −Y, which reaches 30.
-    let below = field.acceleration_at_local(Vec3::new(0.0, -18.0, 0.0));
-    assert!(below.length() > 0.0, "the far face stopped pulling too");
+    // The same 8 m past −Y: the axis covers both faces, so it stops there too.
+    assert_eq!(
+        field.acceleration_at_local(Vec3::new(0.0, -18.0, 0.0)),
+        Vec3::ZERO,
+    );
+    // And 8 m past +X, which reaches 30.
+    let side = field.acceleration_at_local(Vec3::new(18.0, 0.0, 0.0));
+    assert!(side.length() > 0.0, "the long axis stopped pulling too");
+}
+
+/// 🔴 #1326: a zero on one axis is a reach of nothing there, not "unlimited" — reading it as
+/// unlimited made a field with one zero pull for ever on that axis while the gizmo drew nothing at
+/// all. Only all-zero is the planet with no cutoff.
+#[test]
+fn one_zero_axis_is_not_unlimited() {
+    let field = BoxGravity {
+        half_extents: Vec3::splat(10.0),
+        rounding: 0.0,
+        range: Vec3::new(30.0, 0.0, 30.0),
+        falloff: 0.0,
+        ..Default::default()
+    };
+    assert!(
+        !field.is_unlimited(),
+        "one zero made the whole field endless"
+    );
+    // A metre past +Y, where the reach is nothing.
+    assert_eq!(
+        field.acceleration_at_local(Vec3::new(0.0, 11.0, 0.0)),
+        Vec3::ZERO,
+    );
+    // The other axes are untouched.
+    let side = field.acceleration_at_local(Vec3::new(18.0, 0.0, 0.0));
+    assert!(side.length() > 0.0, "a zero on Y silenced X");
+
+    let endless = BoxGravity {
+        range: Vec3::ZERO,
+        ..field
+    };
+    assert!(
+        endless.is_unlimited(),
+        "all zero is the field with no cutoff"
+    );
+}
+
+/// A negative reach is the same reach: the component is a distance, and a minus sign in the
+/// Inspector must not turn the field off.
+#[test]
+fn a_negative_reach_is_its_size() {
+    let field = BoxGravity {
+        half_extents: Vec3::splat(10.0),
+        rounding: 0.0,
+        range: Vec3::splat(-30.0),
+        falloff: 0.0,
+        ..Default::default()
+    };
+    let side = field.acceleration_at_local(Vec3::new(18.0, 0.0, 0.0));
+    assert!(side.length() > 0.0, "a negative reach read as no reach");
 }
 
 /// Rounding equal to the half-extents shrinks the box to its centre,
@@ -145,8 +198,7 @@ fn full_rounding_makes_a_sphere() {
     let field = BoxGravity {
         half_extents: Vec3::splat(10.0),
         rounding: 10.0,
-        range_positive: Vec3::ZERO,
-        range_negative: Vec3::ZERO,
+        range: Vec3::ZERO,
         ..Default::default()
     };
     // Cube and sphere agree over the diagonal and over a face centre, so probe an oblique point
@@ -172,8 +224,7 @@ fn the_field_fades_past_its_range() {
     let field = BoxGravity {
         half_extents: Vec3::splat(10.0),
         rounding: 0.0,
-        range_positive: Vec3::splat(5.0),
-        range_negative: Vec3::splat(5.0),
+        range: Vec3::splat(5.0),
         falloff: 10.0,
         ..Default::default()
     };
