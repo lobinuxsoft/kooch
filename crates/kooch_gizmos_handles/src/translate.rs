@@ -40,7 +40,7 @@ impl Handle for TranslateHandle {
         let tip = frame.origin + dir * self.length;
         // Solid mesh arrow with full alpha — translates read better as
         // opaque shapes, unlike the translucent plane handles.
-        gizmos.filled_arrow(frame.origin, tip, Vec4::new(rgb.x, rgb.y, rgb.z, 1.0));
+        gizmos.arrow(frame.origin, tip, Vec4::new(rgb.x, rgb.y, rgb.z, 1.0));
     }
 
     fn pick(&self, ray: Ray, frame: HandleFrame) -> Option<f32> {

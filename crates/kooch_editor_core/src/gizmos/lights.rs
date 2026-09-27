@@ -54,7 +54,7 @@ impl Visualizer<DirectionalLight> for DirectionalLightVisualizer {
         };
         // The same solid arrow the translate handle draws, so the editor
         // has one arrow shape rather than two that mean the same thing.
-        gizmos.filled_arrow(
+        gizmos.arrow(
             origin,
             origin + forward * DIRECTION_ARROW_LENGTH,
             Vec4::new(WHITE.x, WHITE.y, WHITE.z, 1.0),

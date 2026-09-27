@@ -27,13 +27,23 @@ planet parented to a moving ship brings its gravity along.
 `AreaGravity` is a *region*: a corridor that runs up a wall, a room that
 flips over. One direction throughout, acting on whatever is inside it.
 
-`BoxGravity` is a *solid*: a cube planet. You are outside it, and the pull
-differs at every point around it — each face along its own normal, the edges
-and corners turning continuously between them.
+`BoxGravity` is a *solid*: a cube planet. You stand on the outside of it, and the pull differs at
+every point around it — each face along its own normal, the edges and corners turning continuously
+between them.
 
 Same primitive, opposite job. The edges need no special case because the
 direction is the gradient of the box's distance function: gravity that
 follows a surface *is* that gradient.
+
+**Each face has its own reach.** `range_positive` is how far the field holds at full strength past
+the +X, +Y and +Z faces, `range_negative` the same for −X, −Y and −Z — read them like
+`half_extents`. One face of a planet can pull twice as far as the one opposite it, and the gizmo
+draws the shell lopsided to say so. Zero on a face is unlimited there.
+
+**Inside the solid, gravity keeps falling the way it was.** The gradient vanishes in there — the
+nearest point on the box *is* the point — so the interior is a rule rather than a formula: the pull
+follows the nearest face inwards, which is the same vector it had a step before crossing. Nothing
+should be inside a planet, but something that clips in or spawns in must not float.
 
 ### Authoring a planet
 
@@ -52,13 +62,19 @@ commands.spawn(&mut resources)
     });
 ```
 
+`radius` is the **reach of the field**, not a body: a point source has no inside. That is the one
+place `PointGravity` and `BoxGravity` differ in kind rather than in shape.
+
+Both draw **two** shells in the editor: full strength, and faded to nothing. The band between them
+is `falloff`, and it is the only way that number is visible at all.
+
 The same shape of reach as every other bounded source — whole inside, fading across a band — which
 is what lets a `GravityPriority` take over a planet's surroundings the way it takes over a room.
 
 ## A transform places a field, it does not resize one
 
 Every distance a source carries — `half_extents`, `radius`, `rounding`,
-`range`, `falloff` — is in **metres**. Turning the entity turns the field
+`range_positive`, `range_negative`, `falloff` — is in **metres**. Turning the entity turns the field
 and moving it moves the field, but scaling it does neither.
 
 That is deliberate, and it was the other way round once. A field's space is

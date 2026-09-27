@@ -10,7 +10,7 @@ mod point;
 mod priority;
 
 pub use area::AreaGravity;
-pub use box_field::BoxGravity;
+pub use box_field::{BoxGravity, migrate_box_range};
 pub use global::GlobalGravity;
 pub use plane::PlaneGravity;
 pub use point::PointGravity;

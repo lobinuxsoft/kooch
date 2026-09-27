@@ -54,9 +54,12 @@ impl<'a> Gizmos<'a> {
         self.line_batch.axis_arrows(origin, length);
     }
 
-    /// Pushes a single arrow: shaft + 4 arrowhead segments forming a
-    /// `+`-shaped 3D head at `tip`.
-    pub fn arrow(&mut self, base: Vec3, tip: Vec3, perp_a: Vec3, perp_b: Vec3, color: Vec3) {
+    /// Pushes a single wire arrow: shaft + 4 head segments forming a `+`-shaped head at `tip`.
+    ///
+    /// 🔴 [`arrow`](Self::arrow) is what anything an author looks at should draw. This one is for
+    /// debug draws dense enough that a solid head would cost more than it says — one per contact
+    /// point, one per sample — never for a component's own gizmo.
+    pub fn wire_arrow(&mut self, base: Vec3, tip: Vec3, perp_a: Vec3, perp_b: Vec3, color: Vec3) {
         self.line_batch.arrow(base, tip, perp_a, perp_b, color);
     }
 
@@ -83,9 +86,12 @@ impl<'a> Gizmos<'a> {
             .filled_obb(center, basis, half_extents, color);
     }
 
-    /// Pushes a filled 3D arrow from `base` to `tip` — a solid octagonal shaft and cone, used by
-    /// the translate handle.
-    pub fn filled_arrow(&mut self, base: Vec3, tip: Vec3, color: Vec4) {
+    /// Pushes an arrow from `base` to `tip`: a solid octagonal shaft and a cone at the tip.
+    ///
+    /// 🔴 **The** arrow, in the editor and in a running game alike. The translate handle draws this
+    /// one, so every other arrow drawing something else made the editor speak with two accents
+    /// about one idea (#1324).
+    pub fn arrow(&mut self, base: Vec3, tip: Vec3, color: Vec4) {
         self.mesh_batch.filled_arrow(base, tip, color);
     }
 

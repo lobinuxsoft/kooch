@@ -76,6 +76,8 @@ impl Plugin for GravityPlugin {
         app.add_plugin(GravityComponentsPlugin);
         // Beside the solver, before it steps, so the impulse is for this step. Ungated, so a source
         // added while stopped applies from the first step of Play.
+        // Before anything reads a reach, and before an author can edit a field the old one outranks.
+        app.add_system(Stage::First, crate::sources::migrate_box_range);
         app.add_system(Stage::PreUpdate, apply::reconcile_world_gravity);
         app.add_system(Stage::Physics, run_if_playing(apply_gravity_sources));
     }

@@ -25,15 +25,23 @@ const FIELD: Vec3 = Vec3::new(0.62, 0.45, 0.98);
 /// field itself: a point source's cutoff, an area's falloff.
 const EDGE: Vec3 = Vec3::new(0.36, 0.26, 0.60);
 
+/// Fainter than [`EDGE`]: where the field has faded to nothing. Between the two shells is the
+/// whole of `falloff`, which is the only way that number is visible at all.
+const FADE: Vec3 = Vec3::new(0.22, 0.16, 0.38);
+
 /// Long enough to read as a direction at a glance, short enough that a
 /// handful of them do not fill the viewport.
 pub(super) const ARROW: f32 = 1.5;
 
-/// Draws an arrow of [`ARROW`] length from `base` along `direction`.
+/// Draws an arrow of [`ARROW`] length from `base` along `direction` — the same solid arrow the
+/// translate handle draws, so a field's pull reads like everything else that points somewhere.
 fn arrow(gizmos: &mut Gizmos<'_>, base: Vec3, direction: Vec3, color: Vec3) {
     let Some(direction) = direction.try_normalize() else {
         return;
     };
-    let (a, b) = direction.any_orthonormal_pair();
-    gizmos.arrow(base, base + direction * ARROW, a, b, color);
+    gizmos.arrow(
+        base,
+        base + direction * ARROW,
+        glam::Vec4::new(color.x, color.y, color.z, 1.0),
+    );
 }

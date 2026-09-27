@@ -40,12 +40,38 @@ pub(crate) fn shaft(segments: &[(Vec3, Vec3)]) -> Vec3 {
         .expect("nothing was drawn")
 }
 
-/// Only the arrow shafts, as unit directions — the heads are short
-/// segments at the tip and would drown the signal.
+/// Only the wire arrow shafts, as unit directions — the heads are short segments at the tip and
+/// would drown the signal.
 pub(crate) fn shafts(segments: &[(Vec3, Vec3)]) -> Vec<Vec3> {
     segments
         .iter()
         .filter(|(a, b)| ((*b - *a).length() - ARROW).abs() < 1e-3)
         .map(|(a, b)| (*b - *a).normalize())
         .collect()
+}
+
+/// Every arrow a visualizer drew, as a unit direction.
+pub(crate) fn arrows<C, V>(visualizer: &V, component: &C, matrix: Mat4) -> Vec<Vec3>
+where
+    V: Visualizer<C>,
+    C: kooch_ecs::component::Component,
+{
+    drawn_arrows(visualizer, component, matrix)
+        .into_iter()
+        .filter_map(|(base, tip)| (tip - base).try_normalize())
+        .collect()
+}
+
+/// The same, as `(base, tip)` — for a test that cares where an arrow stands, not only where it
+/// points.
+pub(crate) fn drawn_arrows<C, V>(visualizer: &V, component: &C, matrix: Mat4) -> Vec<(Vec3, Vec3)>
+where
+    V: Visualizer<C>,
+    C: kooch_ecs::component::Component,
+{
+    let mut lines = GizmoBatch::default();
+    let mut meshes = MeshBatch::default();
+    let mut gizmos = Gizmos::new(&mut lines, &mut meshes);
+    visualizer.draw(component, &GlobalTransform { matrix }, &mut gizmos);
+    meshes.arrows
 }

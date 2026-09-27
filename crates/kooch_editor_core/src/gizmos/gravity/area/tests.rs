@@ -1,5 +1,5 @@
 use super::*;
-use crate::gizmos::harness::{draw, reach, shafts};
+use crate::gizmos::harness::{arrows, draw, reach};
 use glam::{Mat4, Quat};
 
 #[test]
@@ -43,7 +43,7 @@ fn an_area_draws_the_reach_of_its_falloff() {
 fn an_area_turns_with_its_entity() {
     let field = AreaGravity::default();
     let turned = Mat4::from_quat(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2));
-    let shafts = shafts(&draw(&AreaGravityVisualizer, &field, turned));
+    let shafts = arrows(&AreaGravityVisualizer, &field, turned);
 
     assert!(!shafts.is_empty(), "no arrows were drawn");
     // Local -Y turned a quarter turn about +Z points along +X, the same
