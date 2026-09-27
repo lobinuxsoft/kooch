@@ -109,7 +109,9 @@ impl Lens {
     }
 
     /// The screen's size in metres at `depth`.
-    pub(crate) fn span(&self, depth: f32) -> Vec2 {
+    /// Public because a gizmo needs it: putting a point on screen is exactly this, and a second
+    /// copy of the arithmetic in the editor is a second place for it to drift.
+    pub fn span(&self, depth: f32) -> Vec2 {
         Vec2::new(self.half_width, self.half_height) * 2.0 * depth.max(0.01)
     }
 }
@@ -203,6 +205,12 @@ pub struct Framed {
 }
 
 impl Framed {
+    /// How far the frame is holding the camera off the body's answer, along the screen's axes.
+    /// What a gizmo draws: the zones say what was asked for, this says what the frame is doing.
+    pub fn slack(&self) -> Vec2 {
+        self.slack
+    }
+
     /// Framed on a target that has not moved yet.
     pub fn at(target: Vec3) -> Self {
         Self {

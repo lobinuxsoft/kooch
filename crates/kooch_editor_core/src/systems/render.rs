@@ -417,14 +417,84 @@ use helpers::*;
 fn selected_framing(
     resources: &Resources,
     selected: &[kooch_ecs::entity::Entity],
-) -> Option<kooch_camera::CameraFraming> {
+) -> Option<crate::panels::game::FramingView> {
     let [entity] = selected else {
         return None;
     };
-    resources
-        .get::<kooch_ecs::component::ComponentRegistry>()?
+    let registry = resources.get::<kooch_ecs::component::ComponentRegistry>()?;
+    let framing = *registry
         .get_cpu::<kooch_camera::CameraFraming>()?
         .get(*entity)
-        .copied()
-        .filter(|framing| framing.enabled)
+        .filter(|framing| framing.enabled)?;
+
+    // 🔴 The state beside the settings: where the lead has moved the held point, and where the
+    // target actually sits. Both are what the zones are about, and neither was drawn (#1334).
+    let lead = resources
+        .get::<kooch_camera::lookahead::Leads>()
+        .and_then(|leads| leads.of(*entity))
+        .map(|lead| lead.offset())
+        .unwrap_or(glam::Vec3::ZERO);
+
+    let pose = registry
+        .get_cpu::<kooch_ecs::hierarchy::GlobalTransform>()
+        .and_then(|globals| globals.get(*entity))
+        .map(|global| global.matrix.to_scale_rotation_translation());
+    let target = camera_target_point(resources, *entity);
+
+    let (held, seen) = match (pose, target) {
+        (Some((_, rotation, at)), Some(target)) => {
+            let (right, above, forward) = (
+                rotation * glam::Vec3::X,
+                rotation * glam::Vec3::Y,
+                rotation * -glam::Vec3::Z,
+            );
+            let offset = target - at;
+            let depth = offset.dot(forward);
+            match depth > 0.0 {
+                true => {
+                    let lens = kooch_camera::framing::Lens::new(60.0, 16.0 / 9.0);
+                    let span = lens.span(depth);
+                    let on = |v: glam::Vec3| {
+                        glam::Vec2::new(v.dot(right) / span.x, v.dot(above) / span.y)
+                    };
+                    (framing.screen - on(lead), Some(on(offset)))
+                }
+                false => (framing.screen, None),
+            }
+        }
+        _ => (framing.screen, None),
+    };
+
+    Some(crate::panels::game::FramingView {
+        framing,
+        held,
+        target: seen,
+    })
+}
+
+/// The point a vcam follows: the weighted centre of its target group.
+fn camera_target_point(
+    resources: &Resources,
+    vcam: kooch_ecs::entity::Entity,
+) -> Option<glam::Vec3> {
+    let registry = resources.get::<kooch_ecs::component::ComponentRegistry>()?;
+    let group = registry
+        .get_cpu::<kooch_camera::VirtualCamera>()?
+        .get(vcam)?
+        .group;
+    let targets = registry.get_cpu::<kooch_camera::target::CameraTarget>()?;
+    let globals = registry.get_cpu::<kooch_ecs::hierarchy::GlobalTransform>()?;
+    let members: Vec<(glam::Vec3, f32)> = targets
+        .iter()
+        .filter(|(_, target)| target.group == group)
+        .filter_map(|(entity, target)| {
+            let at = globals
+                .get(*entity)?
+                .matrix
+                .to_scale_rotation_translation()
+                .2;
+            Some((at, target.weight))
+        })
+        .collect();
+    kooch_camera::target::weighted_centre(&members)
 }

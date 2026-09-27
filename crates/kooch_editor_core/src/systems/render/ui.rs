@@ -59,7 +59,7 @@ pub(super) struct ViewportUi<'a> {
     pub(super) game_request: &'a mut Option<(u32, u32)>,
     pub(super) game_has_camera: bool,
     /// The selected vcam's framing, drawn over the Game view (#1252).
-    pub(super) game_framing: Option<kooch_camera::CameraFraming>,
+    pub(super) game_framing: Option<crate::panels::game::FramingView>,
     /// The Shader Graph preview (#1159): its texture, the shape it is on, and the shape the panel
     /// asks for next.
     pub(super) preview_texture_id: egui::TextureId,

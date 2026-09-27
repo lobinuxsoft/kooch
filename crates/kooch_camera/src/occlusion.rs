@@ -104,6 +104,14 @@ impl Arms {
     pub(crate) fn free_of(&self, vcam: Entity) -> Option<Vec3> {
         self.0.get(&vcam).map(|arm| arm.free)
     }
+
+    /// What a gizmo draws: where the rig would have the camera, how long the arm is now, and
+    /// whether a return is running. A wall's pull is invisible without it.
+    pub fn held_of(&self, vcam: Entity) -> Option<(Vec3, f32, bool)> {
+        self.0
+            .get(&vcam)
+            .map(|arm| (arm.free, arm.length, arm.returning.is_some()))
+    }
 }
 
 /// The arm this frame, and the return clock to carry. Shorter than last frame is at once: a camera

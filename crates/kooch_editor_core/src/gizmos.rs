@@ -1,6 +1,7 @@
 //! Editor gizmo system — populates [`GizmoBatch`] from selection state.
 
 mod block;
+mod camera_rig;
 mod center_of_mass;
 mod character;
 mod collider;
@@ -66,6 +67,14 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     // empty entity in a list, and which way a framing aims is the whole
     // thing you are authoring.
     registry.register::<kooch_camera::VirtualCamera, virtual_camera::VirtualCameraVisualizer>();
+    // 🔴 The rest of the rig draws STATE, not settings: how far ahead the lead actually is, how
+    // much of the arm a wall is holding, which point a group of targets resolves to. None of it
+    // was on screen, and three days of this rig's bugs were found by playing instead (#1334).
+    registry.register::<kooch_camera::CameraLookahead, camera_rig::LookaheadVisualizer>();
+    registry
+        .register::<kooch_camera::occlusion::CameraCollision, camera_rig::CameraCollisionVisualizer>(
+        );
+    registry.register::<kooch_camera::target::CameraTarget, camera_rig::CameraTargetVisualizer>();
     // Lights: where they point and how far they reach. `range` and the
     // cone angles are otherwise numbers with nothing to check them against.
     registry.register::<DirectionalLight, lights::DirectionalLightVisualizer>();
