@@ -426,7 +426,33 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
             .get(&entity)
             .copied()
             .unwrap_or_else(|| Damping::at(current.position, current.rotation));
-        let position = vcam.damped(&mut damping, from, desired_pos, dt);
+        // 🔴 A framed rig is not damped twice. The frame's ease IS the rig's smoothing — two in
+        // series on one position is what made every earlier version of this fight itself (#1329).
+        // 🔴 A framed rig is not damped twice. The frame's ease IS the rig's smoothing — two in
+        // series on one position is what made every earlier version of this fight itself (#1329).
+        let damped = match framing {
+            Some(_) => desired_pos,
+            None => vcam.damped(&mut damping, from, desired_pos, dt),
+        };
+        // 🔴 Framing moves the rig, and it moves what the rig already decided — never the rotation,
+        // which in a third-person rig belongs to whoever is holding the stick (#1329).
+        let position = match framing {
+            Some(framing) => {
+                let mut state = carried_tracked.of(entity).unwrap_or(Framed::at(framed));
+                let framed_at = framing.follow(
+                    &mut state,
+                    damped,
+                    current.position,
+                    current.rotation,
+                    framed,
+                    lens,
+                    dt,
+                );
+                tracked.set(entity, state);
+                framed_at
+            }
+            None => damped,
+        };
         // After the damping, so a wall pulls the camera in at once rather than at the damping's
         // pace (#1251).
         let position = crate::occlusion::held(
@@ -442,26 +468,7 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
         // between two gravity fields rotates the whole basis, and
         // snapping that in one frame throws the horizon over.
         //
-        // 🔴 Unless the framing owns it. Two eases on one rotation is the same mistake as two on
-        // the frame, one stage down (#1323).
-        let rotation = match framing {
-            Some(framing) => {
-                let mut state = carried_tracked.of(entity).unwrap_or(Framed::at(framed));
-                let aimed = framing.aim(
-                    &mut state,
-                    position,
-                    current.rotation,
-                    framed,
-                    up,
-                    reference,
-                    lens,
-                    dt,
-                );
-                tracked.set(entity, state);
-                aimed
-            }
-            None => vcam.damped_rotation(&mut damping, current.rotation, desired_rot, dt),
-        };
+        let rotation = vcam.damped_rotation(&mut damping, current.rotation, desired_rot, dt);
         dampings.0.insert(entity, damping);
 
         plan.push(Pose {

@@ -84,47 +84,24 @@ fn the_dead_zone_holds_the_aim() {
     );
 }
 
-/// And leaving it turns the camera. The rig needs damping for there to be anything to correct: a
-/// rig that snaps onto its target centres it by itself, and framing has nothing to say.
+/// And leaving it moves the rig, until the target sits back on the zone's edge.
 #[test]
-fn leaving_the_dead_zone_turns_it() {
+fn leaving_the_dead_zone_moves_it() {
     let (mut resources, vcam, target) = world();
-    {
-        let registry = resources.get_mut::<ComponentRegistry>().unwrap();
-        let cam = registry
-            .get_cpu_mut::<VirtualCamera>()
-            .unwrap()
-            .get_mut(vcam)
-            .unwrap();
-        cam.damping = true;
-        cam.damping_duration = Vec3::splat(0.5);
-    }
     drive_virtual_cameras(&mut resources);
-    let (_, before) = pose(&resources, vcam);
     place(&mut resources, target, Vec3::X * 4.0);
-    // While the rig is still behind: the aim is what answers first, which is the whole point of it
-    // owning the frame.
-    for _ in 0..3 {
-        drive_virtual_cameras(&mut resources);
-    }
-    let (_, turning) = pose(&resources, vcam);
-    assert!(
-        !turning.abs_diff_eq(before, 1e-3),
-        "the camera never turned for a target outside the zone",
-    );
-    let forward = turning * -Vec3::Z;
-    assert!(forward.x > 0.01, "it turned the wrong way: {forward}");
-
-    // And the rig follows, because framing does not hold it back any more.
     for _ in 0..200 {
         drive_virtual_cameras(&mut resources);
     }
     let (position, _) = pose(&resources, vcam);
-    assert!(position.x > 1.0, "the rig never followed: {position}");
+    // It stops once the target is back on the dead zone's edge, not centred on it.
+    assert!(position.x > 3.0 && position.x < 4.0, "{position}");
 }
 
+/// `screen` holds the target off centre, which moves the rig sideways rather than turning it: the
+/// rotation belongs to whoever is looking around (#1329).
 #[test]
-fn the_screen_offset_turns_it() {
+fn the_screen_offset_moves_it() {
     let (mut resources, vcam, _) = world();
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
     registry
@@ -134,11 +111,17 @@ fn the_screen_offset_turns_it() {
         .unwrap()
         .screen
         .x = 0.25;
-    drive_virtual_cameras(&mut resources);
-    let (_, rotation) = pose(&resources, vcam);
-    let forward = rotation * -Vec3::Z;
-    // Framed right of centre, so the camera looks left of the target.
-    assert!(forward.x < -0.01, "{forward}");
+    for _ in 0..200 {
+        drive_virtual_cameras(&mut resources);
+    }
+    let (position, rotation) = pose(&resources, vcam);
+    // Held right of centre, so the rig stands to the left of the target.
+    assert!(position.x < -0.1, "{position}");
+    // And it did not turn to do it.
+    assert!(
+        rotation.abs_diff_eq(glam::Quat::IDENTITY, 1e-3),
+        "the frame turned the camera: {rotation}",
+    );
 }
 
 /// With a lookahead and no framing, a running target puts the rig ahead of it (#1253).
@@ -171,11 +154,16 @@ fn a_running_target_is_led() {
     );
 }
 
-/// 🔴 #1288: crossing the soft zone's edge doubled the camera's speed in one step, because the
-/// tween never reached the target's and hit the wall. Every step's motion is now within a factor of
-/// the one before it, at a speed that reaches the wall and one that does not.
+/// The rig's own position moves smoothly at any speed: every step within a factor of the one
+/// before it.
+///
+/// 🔴 Without framing on purpose. A dead zone holds the camera still and then moves it — that is
+/// what a dead zone IS, and a framed camera's position is meant to be piecewise. What must not
+/// jump is the **frame**, which `framing_adds_no_jump_of_its_own` measures. The old design hid the
+/// difference by carrying the target's velocity into the camera, which is the mechanism #1323
+/// removed (#1329).
 #[test]
-fn the_camera_never_steps() {
+fn the_rig_never_steps() {
     for speed in [6.0_f32, 40.0] {
         let (mut resources, vcam, target) = world();
         {
@@ -188,6 +176,12 @@ fn the_camera_never_steps() {
             cam.follow = crate::FOLLOW_THIRD_PERSON;
             cam.distance = 8.0;
             cam.pitch = 18.0;
+            registry
+                .get_cpu_mut::<CameraFraming>()
+                .unwrap()
+                .get_mut(vcam)
+                .unwrap()
+                .enabled = false;
         }
         let (dt, radius) = (1.0 / 60.0, 8.0);
         let (mut last, mut previous) = (Vec3::ZERO, 0.0_f32);

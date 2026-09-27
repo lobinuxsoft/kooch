@@ -1,15 +1,19 @@
 //! [`CameraFraming`] — where on screen a vcam holds its target, and how far the target may wander
 //! before the camera answers: Cinemachine's composer dead and soft zones (#1252).
 //!
-//! 🔴 Framing **aims**; it does not move the camera (#1323). The rig places the camera and damps it
-//! like any other, and this turns it so the target lands where it should. Where a target sits on
-//! screen is the product of a position and a rotation, so an owner for one of them is an owner for
-//! nothing: this used to ease the position while the vcam damped the rotation underneath it, with
-//! two durations, and the two fought — the shake nobody could place.
+//! 🔴 Framing moves the camera; it does **not** turn it (#1329). In a third-person rig the rotation
+//! belongs to the player — it is how you look around — so a framing that owned it fought every
+//! stick input and never settled. Cinemachine's composer owns the rotation because its body is
+//! placed independently; for an orbiting rig Cinemachine uses `ThirdPersonFollow` and no composer
+//! at all. Phantom Camera's Framed mode is the right shape for ours.
 //!
-//! One quantity is eased here, the rotation, and the zones are limits on its **goal**. Nothing
-//! reads back or shoves the ease's own answer, which is what makes the result animatable: the rig
-//! hands out one pose, and a timeline that wants the camera can take it whole.
+//! One quantity is eased here — where the rig follows — and the zones are read in **camera** space
+//! and answered in camera space. Phantom tests on screen and responds along world axes, which is
+//! fine until "up" is the face of a cube planet.
+//!
+//! An axis inside the dead zone is anchored to where the rig already is, **before** the ease rather
+//! than corrected after it. That is the whole of "the camera holds still", and shoving the ease's
+//! own answer afterwards is what used to make it jump.
 
 use std::collections::HashMap;
 
@@ -109,74 +113,48 @@ impl Lens {
 }
 
 impl CameraFraming {
-    /// The rotation that frames `target` from `eye`, eased from `current`.
+    /// Where the rig should follow, so the target lands where it belongs on screen.
     ///
-    /// Inside the dead zone nothing is owed and the camera holds still. Outside it, the goal is the
-    /// rotation that puts the target back on the dead zone's edge, and [`soft_duration`] is how
-    /// long that takes once the target stops — exactly, since the tween restarts while the goal
-    /// keeps moving.
-    ///
-    /// [`soft_duration`]: Self::soft_duration
-    pub fn aim(
+    /// `wanted` is where the rig would put the camera with no framing at all. The answer is that
+    /// point moved across the screen's own axes — never along its forward, since how far away the
+    /// camera sits is the rig's business and not the frame's.
+    #[allow(clippy::too_many_arguments)]
+    pub fn follow(
         &self,
         state: &mut Framed,
-        eye: Vec3,
-        current: Quat,
+        wanted: Vec3,
+        previous: Vec3,
+        rotation: Quat,
         target: Vec3,
-        up: Vec3,
-        reference: Vec3,
         lens: Lens,
         dt: f32,
-    ) -> Quat {
-        let Some(offset) = (target - eye).try_normalize().map(|_| target - eye) else {
-            return current;
-        };
-        let forward = current * -Vec3::Z;
-        let depth = offset.dot(forward);
-        if depth <= 0.0 {
-            // Behind the camera: there is no screen to frame it on, and the rig is about to swing
-            // round anyway.
-            return current;
-        }
+    ) -> Vec3 {
+        let (right, above, forward) = (rotation * Vec3::X, rotation * Vec3::Y, rotation * -Vec3::Z);
+        let placed = |slack: Vec2| wanted + right * slack.x + above * slack.y;
 
-        let (right, above) = (current * Vec3::X, current * Vec3::Y);
+        // 🔴 Read off where the camera actually is, never carried in a field of its own. The rig
+        // moves every step, and a slack remembered rather than measured would be a second opinion
+        // about where the camera stands — which is the shape of every bug this component has had.
+        let behind = previous - wanted;
+        let slack = Vec2::new(behind.dot(right), behind.dot(above));
+        let depth = (target - placed(slack)).dot(forward);
+        if depth <= 0.0 {
+            // Behind the camera: there is no screen to frame it on.
+            state.reset(target);
+            return wanted;
+        }
         let span = lens.span(depth);
-        // Where the target is now, as a fraction of the screen from its centre.
-        let seen = Vec2::new(offset.dot(right) / span.x, offset.dot(above) / span.y);
-        // And how far that is from where it belongs.
-        let at = seen - self.screen;
+
+        // Where the target sits, as a fraction of the screen from where it belongs.
+        let offset = target - placed(slack);
+        let at = Vec2::new(offset.dot(right) / span.x, offset.dot(above) / span.y) - self.screen;
         let soft = self.soft_zone.max(self.dead_zone);
 
-        // What the camera owes: nothing inside the dead zone, the excess outside it. Owing nothing
-        // means holding still — the rotation it already has, not one rebuilt from a screen
-        // position, which would drift by the tangent plane's own error every step.
+        // What the frame owes: nothing inside the dead zone, the excess outside it. Moving the
+        // camera by `d` along an axis moves the target by `-d` on screen, so the slack owed is the
+        // excess itself, in metres.
         let owed = past(at, self.dead_zone);
-        let held = state.rotation.unwrap_or(current);
-        if owed == Vec2::ZERO {
-            state.chase = Chase::at(held);
-            state.goal = None;
-            state.was_still = false;
-            state.last = target;
-            state.eye = eye;
-            return held;
-        }
-
-        // 🔴 The soft zone limits where the ease MAY be, and it does so by telling the ease where
-        // it stands before it steps — Phantom Camera's trick of anchoring an axis ahead of the
-        // damper rather than correcting after it, in camera space so an arbitrary up survives it.
-        // Shoving its answer afterwards is what made the camera jump at speed (#1323).
-        // 🔴 The soft zone RAMPS the correction in: none at the dead zone's edge, all of it at the
-        // soft one. Switching the ease on at the dead edge is a step in the frame's speed — the
-        // camera goes from not turning at all to turning at full rate between two frames — and a
-        // dead zone without a band around it can only do that. This is what the soft zone is for,
-        // and the old code had the idea in the wrong place: it carried the target's velocity into
-        // the point instead of scaling the goal (#1323).
-        //
-        // 🔴 Only while the target is moving. Ramped to nothing at the dead zone's edge, the camera
-        // would approach it and never arrive, and `soft_duration` promises a time. Once the target
-        // stops, the whole correction applies and the tween lands on the edge exactly when it says.
-        // The two phases are the two things being asked for, and neither can be had alone.
-        let still = state.last.abs_diff_eq(target, STILL) && state.eye.abs_diff_eq(eye, STILL);
+        let still = state.last.abs_diff_eq(target, STILL);
         let share = match still {
             true => Vec2::ONE,
             false => Vec2::new(
@@ -184,68 +162,14 @@ impl CameraFraming {
                 ramp(at.y, self.dead_zone.y, soft.y),
             ),
         };
-        let from = held;
+        let goal = slack + owed * share * span;
 
-        // The goal: the target back on the dead zone's edge.
-        //
-        // 🔴 Held while nothing moves. Measured from the eased rotation it would chase itself — a
-        // goal a hair different every frame, so the tween restarts every frame and never finishes.
-        // The promise is "this long after the target stops", and a goal that never settles cannot
-        // keep it.
-        // Held only once it has been still for a step: the frame the target stops on is the frame
-        // the full correction is computed, and holding before that would freeze the ramped goal.
-        let goal = match (still && state.was_still, state.goal) {
-            (true, Some(goal)) => goal,
-            _ => self.turned(
-                eye,
-                current,
-                target,
-                seen - owed * share,
-                lens,
-                up,
-                reference,
-            ),
-        };
-        state.goal = Some(goal);
-        state.was_still = still;
-        state.eye = eye;
-        let eased = state.chase.step(from, goal, dt, self.soft_duration);
-        state.rotation = Some(eased);
+        // One quantity, eased once: the slack. Never the depth — how far away the camera sits is
+        // the rig's business, and a frame that pushed along the forward would fight the arm.
+        let eased = state.chase.step(slack, goal, dt, self.soft_duration);
+        state.slack = eased;
         state.last = target;
-        eased
-    }
-
-    /// The rotation that lands `target` at the screen position `seen`, in fractions of the screen
-    /// from its centre. Looking straight at a point puts it in the middle, so the point to look at
-    /// is the target shifted back by where it should appear.
-    ///
-    /// 🔴 Solved rather than computed: the shift is measured in the screen's plane, and turning the
-    /// camera moves that plane. Three passes take the residual below a thousandth of the screen,
-    /// which is the difference between landing ON the dead zone's edge and near it.
-    #[allow(clippy::too_many_arguments)]
-    fn turned(
-        &self,
-        eye: Vec3,
-        current: Quat,
-        target: Vec3,
-        seen: Vec2,
-        lens: Lens,
-        up: Vec3,
-        reference: Vec3,
-    ) -> Quat {
-        let offset = target - eye;
-        let mut rotation = current;
-        for _ in 0..3 {
-            let depth = offset.dot(rotation * -Vec3::Z);
-            if depth <= 0.0 {
-                return rotation;
-            }
-            let span = lens.span(depth);
-            let (right, above) = (rotation * Vec3::X, rotation * Vec3::Y);
-            let aim = target - right * (seen.x * span.x) - above * (seen.y * span.y);
-            rotation = crate::virtual_camera::look_at(eye, aim, up, reference);
-        }
-        rotation
+        placed(eased)
     }
 }
 
@@ -270,34 +194,34 @@ fn past(at: Vec2, size: Vec2) -> Vec2 {
 /// target was last step.
 #[derive(Debug, Clone, Copy)]
 pub struct Framed {
-    /// The rotation the ease last answered. `None` until it has answered once.
-    rotation: Option<Quat>,
+    /// How far the frame holds the camera off what the rig asked for, along the screen's own axes,
+    /// in metres.
+    slack: Vec2,
     /// The ease closing what the dead zone does not forgive.
-    chase: Chase<Quat>,
-    /// Where the ease is heading, held while neither the target nor the camera moves.
-    goal: Option<Quat>,
-    /// Whether nothing moved last step, so the goal is held from the second still step on.
-    was_still: bool,
+    chase: Chase<Vec2>,
     last: Vec3,
-    eye: Vec3,
 }
 
 impl Framed {
-    /// The rotation it last answered, before anything else touched the pose.
-    pub fn rotation(&self) -> Option<Quat> {
-        self.rotation
+    /// How far the frame is holding the camera off the rig's own answer.
+    pub fn slack(&self) -> Vec2 {
+        self.slack
     }
 
     /// Framed on a target that has not moved yet.
     pub fn at(target: Vec3) -> Self {
         Self {
-            rotation: None,
-            chase: Chase::at(Quat::IDENTITY),
-            goal: None,
-            was_still: false,
+            slack: Vec2::ZERO,
+            chase: Chase::at(Vec2::ZERO),
             last: target,
-            eye: Vec3::ZERO,
         }
+    }
+
+    /// Back on the rig's own answer, with nothing owed.
+    fn reset(&mut self, target: Vec3) {
+        self.slack = Vec2::ZERO;
+        self.chase = Chase::at(Vec2::ZERO);
+        self.last = target;
     }
 }
 

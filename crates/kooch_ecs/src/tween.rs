@@ -129,6 +129,15 @@ impl Tweened for glam::Vec3 {
     }
 }
 
+impl Tweened for glam::Vec2 {
+    fn mix(from: Self, to: Self, t: f32) -> Self {
+        from.lerp(to, t)
+    }
+    fn moved(a: Self, b: Self) -> bool {
+        !a.abs_diff_eq(b, STILL)
+    }
+}
+
 impl Tweened for glam::Quat {
     /// Along the shorter arc: `q` and `-q` are one rotation, and the long way is 359° of roll.
     fn mix(from: Self, to: Self, t: f32) -> Self {

@@ -15,108 +15,71 @@ fn framing() -> CameraFraming {
     }
 }
 
-/// The camera stands at the origin looking down −Z, which is where every target below is placed
-/// from.
-const EYE: Vec3 = Vec3::ZERO;
+/// The rig looks down −Z from four metres back, which is `wanted` unless a test moves it.
+const BACK: Vec3 = Vec3::new(0.0, 0.0, 4.0);
 
-/// Where `target` lands on screen under `rotation`, as a fraction of the screen from its centre.
-fn on_screen(rotation: Quat, target: Vec3) -> Vec2 {
-    let offset = target - EYE;
-    let depth = offset.dot(rotation * -Vec3::Z);
-    let span = lens().span(depth);
-    Vec2::new(
-        offset.dot(rotation * Vec3::X) / span.x,
-        offset.dot(rotation * Vec3::Y) / span.y,
-    )
+/// Where `target` lands on screen for a camera at `eye` looking down −Z.
+fn on_screen(eye: Vec3, target: Vec3) -> Vec2 {
+    let offset = target - eye;
+    let span = lens().span(offset.z.abs());
+    Vec2::new(offset.x / span.x, offset.y / span.y)
 }
 
-/// One step of aiming at `target`, from a camera looking down −Z.
-fn step(framing: &CameraFraming, target: Vec3) -> Quat {
-    let mut state = Framed::at(target);
-    framing.aim(
-        &mut state,
-        EYE,
-        Quat::IDENTITY,
-        target,
-        Vec3::Y,
-        Vec3::Y,
-        lens(),
-        DT,
-    )
+/// One step of following, the rig wanting to sit at `wanted` and the camera standing at `at`.
+fn step(framing: &CameraFraming, state: &mut Framed, wanted: Vec3, at: Vec3, target: Vec3) -> Vec3 {
+    framing.follow(state, wanted, at, Quat::IDENTITY, target, lens(), DT)
 }
 
-/// Inside the dead zone the camera holds still: the rotation it was given is the rotation it keeps.
+/// Inside the dead zone the rig keeps the position it has: the camera does not chase a target that
+/// has not gone anywhere worth answering.
 #[test]
 fn inside_the_dead_zone_holds() {
-    // 4 m down −Z, a little off centre: 0.05 of the screen, inside the 0.1 half-width.
-    let target = Vec3::new(0.35, -0.35, -4.0);
-    let aimed = step(&framing(), target);
+    let mut state = Framed::at(Vec3::ZERO);
+    // Settle first.
+    let settled = step(&framing(), &mut state, BACK, BACK, Vec3::ZERO);
+    // 0.05 of the screen: inside the 0.1 half-width.
+    let target = Vec3::new(0.4, 0.0, 0.0);
+    let after = step(
+        &framing(),
+        &mut state,
+        BACK + Vec3::X * 0.4,
+        settled,
+        target,
+    );
     assert!(
-        aimed.abs_diff_eq(Quat::IDENTITY, 1e-4),
-        "the camera turned for a target inside the dead zone: {aimed}",
+        (after.x - settled.x).abs() < 0.01,
+        "the rig moved for a target inside the dead zone: {settled} then {after}",
     );
 }
 
-/// Outside it, the camera turns towards the target — part of the way in one step, not all of it.
+/// Outside it the rig follows, part of the way in one step.
 #[test]
 fn the_soft_zone_eases_back() {
-    let target = Vec3::new(2.0, 0.0, -4.0);
-    let before = on_screen(Quat::IDENTITY, target).x;
-    let after = on_screen(step(&framing(), target), target).x;
-    assert!(
-        after < before,
-        "it did not turn at all: {before} then {after}"
+    let mut state = Framed::at(Vec3::ZERO);
+    let settled = step(&framing(), &mut state, BACK, BACK, Vec3::ZERO);
+    let target = Vec3::new(3.0, 0.0, 0.0);
+    let after = step(
+        &framing(),
+        &mut state,
+        BACK + Vec3::X * 3.0,
+        settled,
+        target,
     );
-    assert!(
-        after > 0.1,
-        "it snapped to the dead zone's edge in one step: {after}",
-    );
+    assert!(after.x > 0.0, "it did not follow at all: {after}");
+    assert!(after.x < 3.0, "it snapped all the way: {after}");
 }
 
-/// 🔴 #1323: the soft zone RAMPS the correction in — none at the dead zone's edge, all of it at the
-/// soft one. A dead zone without that band switches the camera from not turning at all to turning
-/// at full rate between two frames, which is a step in the frame's speed and the shake itself. It
-/// is not a wall: a wall shoves the ease's answer, and that measured three times worse.
+/// 🔴 #1329: only the screen's axes. How far away the camera sits is the rig's business — a frame
+/// that pushed along the forward would fight the arm and the wall alike.
 #[test]
-fn the_soft_zone_ramps_the_correction() {
-    let rigid = CameraFraming {
-        soft_duration: 0.0,
-        ..framing()
-    };
-    // Just outside the dead zone (0.1): almost nothing is owed yet.
-    let near = Vec3::new(2.2, 0.0, -10.0);
-    let moved_near = {
-        let before = on_screen(Quat::IDENTITY, near).x;
-        before - on_screen(step(&rigid, near), near).x
-    };
-    // Out at the soft zone's edge (0.3): all of it.
-    let far = Vec3::new(6.0, 0.0, -10.0);
-    let moved_far = {
-        let before = on_screen(Quat::IDENTITY, far).x;
-        before - on_screen(step(&rigid, far), far).x
-    };
+fn the_depth_belongs_to_the_rig() {
+    let mut state = Framed::at(Vec3::ZERO);
+    let target = Vec3::new(3.0, 1.0, 0.0);
+    let after = step(&framing(), &mut state, BACK, BACK, target);
     assert!(
-        moved_near < 0.02,
-        "the correction switched on at the dead edge: {moved_near}",
+        (after.z - BACK.z).abs() < 1e-4,
+        "the frame moved the camera in depth: {after}",
     );
-    assert!(
-        moved_far > 0.15,
-        "the correction never reached full at the soft edge: {moved_far}",
-    );
-}
-
-/// A rigid ease lands on the dead zone's edge in one step, which is what zero means. With no band
-/// there is nothing to ramp, so the whole correction applies at once.
-#[test]
-fn a_rigid_ease_reaches_the_dead_edge() {
-    let rigid = CameraFraming {
-        soft_duration: 0.0,
-        soft_zone: Vec2::splat(0.2),
-        ..framing()
-    };
-    let target = Vec3::new(2.0, 0.0, -4.0);
-    let after = on_screen(step(&rigid, target), target).x;
-    assert!((after - 0.1).abs() < 1e-3, "landed at {after}, wanted 0.1");
 }
 
 /// `screen` moves where the target is held, so a rig can keep it off centre.
@@ -129,50 +92,51 @@ fn the_screen_offset_is_where_it_holds() {
         soft_duration: 0.0,
         ..Default::default()
     };
-    let target = Vec3::new(0.0, 0.0, -4.0);
-    let after = on_screen(step(&right, target), target).x;
-    assert!((after - 0.25).abs() < 1e-3, "held at {after}, wanted 0.25");
+    let mut state = Framed::at(Vec3::ZERO);
+    let target = Vec3::ZERO;
+    let after = step(&right, &mut state, BACK, BACK, target);
+    let seen = on_screen(after, target).x;
+    assert!((seen - 0.25).abs() < 0.02, "held at {seen}, wanted 0.25");
 }
 
-/// 🔴 The duration is a duration: once the target stops, the camera brings it to the dead zone's
-/// edge in exactly `soft_duration`, at any frame rate.
+/// 🔴 The duration is a duration: once the target stops, the rig brings it to the dead zone's edge
+/// in exactly `soft_duration`, at any frame rate.
 #[test]
 fn the_soft_zone_arrives_on_time() {
     let framing = CameraFraming {
         soft_duration: 0.5,
         ..framing()
     };
-    let target = Vec3::new(2.0, 0.0, -4.0);
     for fps in [30.0_f32, 60.0, 144.0] {
-        // Walked there rather than teleported: a target that appears somewhere is not a speed, and
-        // the arrival is measured from the moment it stops.
         let run = |seconds: f32| {
-            let mut state = Framed::at(Vec3::new(0.0, 0.0, -4.0));
-            let mut aimed = Quat::IDENTITY;
+            let mut state = Framed::at(Vec3::ZERO);
+            let dt = 1.0 / fps;
             let walk = (0.25 * fps).round() as usize;
-            let mut at = |state: &mut Framed, point: Vec3, aimed: Quat| {
-                framing.aim(
+            let target = Vec3::new(3.0, 0.0, 0.0);
+            let mut eye = BACK;
+            let mut at = |state: &mut Framed, point: Vec3, eye: Vec3| {
+                framing.follow(
                     state,
-                    EYE,
-                    aimed,
+                    BACK + Vec3::X * point.x,
+                    eye,
+                    Quat::IDENTITY,
                     point,
-                    Vec3::Y,
-                    Vec3::Y,
                     lens(),
-                    1.0 / fps,
+                    dt,
                 )
             };
             for step in 0..walk {
-                let point = Vec3::new(target.x * (step as f32 + 1.0) / walk as f32, 0.0, target.z);
-                aimed = at(&mut state, point, aimed);
+                let point = Vec3::new(target.x * (step as f32 + 1.0) / walk as f32, 0.0, 0.0);
+                eye = at(&mut state, point, eye);
             }
             for _ in 0..(seconds * fps).round() as usize {
-                aimed = at(&mut state, target, aimed);
+                eye = at(&mut state, target, eye);
             }
-            on_screen(aimed, target).x
+            on_screen(eye, target).x
         };
+        // On the dead zone's edge: 0.1 of the screen.
         assert!(
-            (run(0.5) - 0.1).abs() < 5e-3,
+            (run(0.5) - 0.1).abs() < 0.02,
             "{fps} fps: {} rather than the dead edge",
             run(0.5),
         );
@@ -180,10 +144,11 @@ fn the_soft_zone_arrives_on_time() {
     }
 }
 
-/// A target behind the camera has no screen to be framed on, and inventing one throws the pose.
+/// A target behind the camera has no screen to be framed on, and the rig's own answer stands.
 #[test]
 fn a_target_behind_is_left_alone() {
-    let behind = Vec3::new(0.0, 0.0, 4.0);
-    let aimed = step(&framing(), behind);
-    assert!(aimed.abs_diff_eq(Quat::IDENTITY, 1e-4), "{aimed}");
+    let mut state = Framed::at(Vec3::ZERO);
+    let behind = Vec3::new(0.0, 0.0, 8.0);
+    let after = step(&framing(), &mut state, BACK, BACK, behind);
+    assert!(after.abs_diff_eq(BACK, 1e-4), "{after}");
 }
