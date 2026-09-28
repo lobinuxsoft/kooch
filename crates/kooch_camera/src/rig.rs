@@ -127,26 +127,48 @@ pub fn report_orphans(resources: &mut Resources) {
     if let Some(registry) = resources.get::<ComponentRegistry>() {
         let vcams = registry.get_cpu::<VirtualCamera>();
         let posed = |entity: Entity| vcams.is_some_and(|vcams| vcams.get(entity).is_some());
-        let mut sweep = |name: &'static str, entities: Vec<Entity>| {
-            found.extend(
-                entities
-                    .into_iter()
-                    .filter(|entity| !posed(*entity))
-                    .map(|entity| (entity, name)),
-            );
-        };
+        let mut sweep =
+            |name: &'static str, entities: Vec<Entity>, reads: &dyn Fn(Entity) -> bool| {
+                found.extend(
+                    entities
+                        .into_iter()
+                        .filter(|entity| !reads(*entity))
+                        .map(|entity| (entity, name)),
+                );
+            };
         sweep(
             "CameraLookahead",
             entities_of::<crate::CameraLookahead>(registry),
+            &posed,
         );
         sweep(
             "CameraFraming",
             entities_of::<crate::CameraFraming>(registry),
+            &posed,
         );
         sweep(
             "CameraCollision",
             entities_of::<crate::CameraCollision>(registry),
+            &posed,
         );
+        sweep(
+            "CameraOrbit",
+            entities_of::<crate::orbit::CameraOrbit>(registry),
+            &posed,
+        );
+        // A binding is read off the orbit it fills, not off the vcam: an `OrbitInput` alone names an
+        // action nothing turns.
+        #[cfg(feature = "input")]
+        {
+            let orbits = registry.get_cpu::<crate::orbit::CameraOrbit>();
+            let turning =
+                |entity: Entity| orbits.is_some_and(|orbits| orbits.get(entity).is_some());
+            sweep(
+                "OrbitInput",
+                entities_of::<crate::orbit::input::OrbitInput>(registry),
+                &turning,
+            );
+        }
     }
 
     let mut said = resources.get::<Orphans>().cloned().unwrap_or_default();
@@ -158,7 +180,7 @@ pub fn report_orphans(resources: &mut Resources) {
             target: "kooch_camera",
             entity = entity.index(),
             component = name,
-            "a camera rig component sits on an entity with no VirtualCamera, so nothing reads it",
+            "a camera rig component sits on an entity where nothing reads it",
         );
     }
     resources.insert(said);

@@ -16,6 +16,9 @@ kooch_gravity = { workspace = true, optional = true }
 # Optional too: only a `CameraCollision` casts, and a project with no solver has nothing to cast
 # against.
 kooch_physics = { workspace = true, optional = true }
+# And optional: a camera turned by a cutscene reads no device, so a project with no input map does
+# not link one to move one.
+kooch_input = { workspace = true, optional = true }
 glam.workspace = true
 tracing.workspace = true
 
@@ -26,3 +29,6 @@ gravity = ["dep:kooch_gravity"]
 # Lets a `CameraCollision` keep the camera out of walls. Without it the component is authored and
 # does nothing.
 physics = ["dep:kooch_physics"]
+# Lets an `OrbitInput` fill a `CameraOrbit` from an authored action. Without it the orbit is still
+# there and gameplay writes its `look` itself.
+input = ["dep:kooch_input"]

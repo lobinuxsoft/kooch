@@ -5,6 +5,7 @@ use kooch_core::app::App;
 use kooch_core::plugin::Plugin;
 use kooch_core::resource::Resources;
 use kooch_core::run_state::run_if_playing;
+use kooch_core::schedule::Order;
 use kooch_core::stage::Stage;
 use kooch_core::time::Time;
 use kooch_ecs::GlobalTransform;
@@ -24,7 +25,7 @@ use crate::virtual_camera::{
 
 /// Which way is up for a virtual camera, from its `up_mode`. Not the target's rotation: a rolling
 /// ball's up points wherever the last bounce left it.
-fn up_for(
+pub(crate) fn up_for(
     vcam: &VirtualCamera,
     resources: &Resources,
     target_pos: Vec3,
@@ -65,6 +66,9 @@ impl Plugin for CameraComponentsPlugin {
                 registry.register_cpu_reflected::<crate::occlusion::CameraCollision>();
                 registry.register_cpu_reflected::<crate::framing::CameraFraming>();
                 registry.register_cpu_reflected::<crate::lookahead::CameraLookahead>();
+                registry.register_cpu_reflected::<crate::orbit::CameraOrbit>();
+                #[cfg(feature = "input")]
+                registry.register_cpu_reflected::<crate::orbit::input::OrbitInput>();
             }
         });
     }
@@ -89,6 +93,19 @@ impl Plugin for CameraPlugin {
         app.add_system(Stage::First, crate::virtual_camera::migrate_damping_switch);
         app.add_system(Stage::First, crate::virtual_camera::report_moved_blends);
         app.add_system(Stage::First, crate::rig::report_orphans);
+        // Declared, not left to registration order: the orbit writes the `yaw` the rig's Body
+        // swings the arm by, so a rig that ran first would swing last frame's angle (#392).
+        #[cfg(feature = "input")]
+        app.add_ordered(
+            Stage::PostPhysics,
+            Order::before("orbit_cameras"),
+            run_if_playing(crate::orbit::input::read_orbit_input),
+        );
+        app.add_ordered(
+            Stage::PostPhysics,
+            Order::before("drive_virtual_cameras"),
+            run_if_playing(crate::orbit::orbit_cameras),
+        );
         app.add_system(Stage::PostPhysics, run_if_playing(drive_virtual_cameras));
     }
 
@@ -193,7 +210,7 @@ pub fn drive_virtual_cameras(resources: &mut Resources) {
 }
 
 /// The fixed step, or a 60 Hz stand-in when there is no clock.
-fn fixed_dt(resources: &Resources) -> f32 {
+pub(crate) fn fixed_dt(resources: &Resources) -> f32 {
     resources
         .get::<Time>()
         .map(|time| time.fixed_delta_secs())
@@ -242,7 +259,7 @@ struct Pose {
 
 /// Where a vcam's group is this step, or `None` when nothing carries its tag and there is nothing
 /// to follow.
-fn target_pose(
+pub(crate) fn target_pose(
     targets: Option<&kooch_ecs::component::ComponentStorage<CameraTarget>>,
     group: u32,
     pose_of: &impl Fn(Entity) -> Option<(Vec3, glam::Quat)>,
@@ -303,21 +320,10 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, RigMemory) {
     let lens = lens(resources, registry);
     let cameras = registry.get_cpu::<PerspectiveCamera>();
     let transforms = registry.get_cpu::<Transform>();
-    let globals = registry.get_cpu::<GlobalTransform>();
     let targets = registry.get_cpu::<CameraTarget>();
     let dt = fixed_dt(resources);
 
-    // A target's world pose. `GlobalTransform` first, so a target parented to something moving is
-    // followed where it actually is and not where its local offset says.
-    let pose_of = |entity: Entity| -> Option<(Vec3, glam::Quat)> {
-        if let Some(global) = globals.and_then(|storage| storage.get(entity)) {
-            let (_, rotation, translation) = global.matrix.to_scale_rotation_translation();
-            return Some((translation, rotation));
-        }
-        transforms
-            .and_then(|s| s.get(entity))
-            .map(|t| (t.position, t.rotation))
-    };
+    let pose_of = poses(registry);
 
     let mut plan = Vec::new();
     let mut memory = RigMemory::default();
@@ -380,6 +386,24 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, RigMemory) {
         });
     }
     (plan, memory)
+}
+
+/// A target's world pose. `GlobalTransform` first, so a target parented to something moving is
+/// followed where it actually is and not where its local offset says.
+pub(crate) fn poses(
+    registry: &ComponentRegistry,
+) -> impl Fn(Entity) -> Option<(Vec3, glam::Quat)> + '_ {
+    let transforms = registry.get_cpu::<Transform>();
+    let globals = registry.get_cpu::<GlobalTransform>();
+    move |entity| {
+        if let Some(global) = globals.and_then(|storage| storage.get(entity)) {
+            let (_, rotation, translation) = global.matrix.to_scale_rotation_translation();
+            return Some((translation, rotation));
+        }
+        transforms
+            .and_then(|storage| storage.get(entity))
+            .map(|transform| (transform.position, transform.rotation))
+    }
 }
 
 /// The lens every vcam is seen through: the driven camera's field of view over the last rendered
