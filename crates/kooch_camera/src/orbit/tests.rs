@@ -112,10 +112,14 @@ fn the_pitch_stops_at_its_limit() {
     assert!((pitch - 70.0).abs() < 1e-4, "pitch was {pitch}");
 }
 
+/// Off is off, however long nobody looks — and it is the default.
 #[test]
-fn a_still_look_never_recentres() {
+fn the_switch_off_never_recentres() {
     let (mut resources, vcam) = world();
-    orbit(&mut resources, vcam, |orbit| orbit.look = Vec2::ZERO);
+    orbit(&mut resources, vcam, |orbit| {
+        orbit.recentre = false;
+        orbit.recentre_wait = 0.1;
+    });
     set_yaw(&mut resources, vcam, 90.0);
     for _ in 0..600 {
         orbit_cameras(&mut resources);
@@ -124,10 +128,45 @@ fn a_still_look_never_recentres() {
     assert!((yaw - 90.0).abs() < 1e-4, "yaw was {yaw}");
 }
 
+/// 🔴 The switch, not a zero wait: turning it off at runtime must not cost the authored timing
+/// (#1333's shape). Flipped mid-return, the camera stops where it is.
+#[test]
+fn the_switch_stops_a_live_return() {
+    let (mut resources, vcam) = world();
+    orbit(&mut resources, vcam, |orbit| {
+        orbit.recentre = true;
+        orbit.recentre_wait = 0.1;
+        orbit.recentre_time = 2.0;
+    });
+    set_yaw(&mut resources, vcam, 90.0);
+    for _ in 0..30 {
+        orbit_cameras(&mut resources);
+    }
+    let (caught, _) = angles(&resources, vcam);
+    assert!(caught < 89.0, "the return never started: {caught}");
+
+    orbit(&mut resources, vcam, |orbit| orbit.recentre = false);
+    for _ in 0..120 {
+        orbit_cameras(&mut resources);
+    }
+    let (held, _) = angles(&resources, vcam);
+    assert!((held - caught).abs() < 1e-4, "it kept returning: {held}");
+    let wait = resources
+        .get::<ComponentRegistry>()
+        .unwrap()
+        .get_cpu::<CameraOrbit>()
+        .unwrap()
+        .get(vcam)
+        .unwrap()
+        .recentre_wait;
+    assert!((wait - 0.1).abs() < 1e-6, "the wait was lost: {wait}");
+}
+
 #[test]
 fn a_waited_yaw_returns_behind() {
     let (mut resources, vcam) = world();
     orbit(&mut resources, vcam, |orbit| {
+        orbit.recentre = true;
         orbit.recentre_wait = 0.5;
         orbit.recentre_time = 0.25;
     });
@@ -144,8 +183,9 @@ fn a_waited_yaw_returns_behind() {
 fn a_look_cancels_the_return() {
     let (mut resources, vcam) = world();
     orbit(&mut resources, vcam, |orbit| {
+        orbit.recentre = true;
         orbit.recentre_wait = 0.1;
-        orbit.recentre_time = 0.1;
+        orbit.recentre_time = 0.5;
     });
     set_yaw(&mut resources, vcam, 90.0);
     for _ in 0..30 {
@@ -169,54 +209,57 @@ fn a_look_cancels_the_return() {
     );
 }
 
-/// 🔴 The defect from the smoke test: the return arrives and STOPS. A "behind" recomputed every
-/// frame moves as the target turns, so a return that re-aimed would be a follow-behind the player
-/// cannot out-turn (#1345).
+/// 🔴 The defect from the smoke test, and the one its first fix missed: the return ends while the
+/// target is still turning. An asymptotic ease closes a fraction of the gap per step, so against a
+/// character that keeps steering the gap settles at a constant lag and an arrival test is never
+/// reached — the window has to be what ends it (#1345).
 #[test]
-fn an_arrived_return_lets_go() {
+fn a_turning_target_ends_the_return() {
     let (mut resources, vcam) = world();
     orbit(&mut resources, vcam, |orbit| {
+        orbit.recentre = true;
         orbit.recentre_wait = 0.1;
-        orbit.recentre_time = 0.1;
+        orbit.recentre_time = 0.25;
     });
     set_yaw(&mut resources, vcam, 90.0);
-    for _ in 0..120 {
-        orbit_cameras(&mut resources);
-    }
-    assert!(
-        returned(&resources, vcam),
-        "the return never declared an end"
-    );
 
-    // The target turns a quarter: a return still live would drag the camera round with it.
-    turn_target(&mut resources, 90.0);
+    // The character keeps steering: three degrees a step, which is 180 a second.
+    let mut facing = 0.0;
+    let mut steer = |resources: &mut Resources| {
+        facing += 3.0;
+        turn_target(resources, facing);
+        orbit_cameras(resources);
+    };
+    for _ in 0..120 {
+        steer(&mut resources);
+    }
     let (before, _) = angles(&resources, vcam);
     for _ in 0..120 {
-        orbit_cameras(&mut resources);
+        steer(&mut resources);
     }
     let (after, _) = angles(&resources, vcam);
     assert!(
         (after - before).abs() < 1e-3,
-        "the camera kept chasing the target's facing: {before} then {after}"
+        "the camera never stopped chasing the target's facing: {before} then {after}"
     );
 }
 
-/// And a look starts the next one: the latch is per idle period, not per scene.
+/// And a look arms the next one: the window is per idle period, not per scene.
 #[test]
 fn a_look_arms_the_next_return() {
     let (mut resources, vcam) = world();
     orbit(&mut resources, vcam, |orbit| {
+        orbit.recentre = true;
         orbit.recentre_wait = 0.1;
-        orbit.recentre_time = 0.1;
+        orbit.recentre_time = 0.25;
     });
     set_yaw(&mut resources, vcam, 90.0);
     for _ in 0..120 {
         orbit_cameras(&mut resources);
     }
+
     orbit(&mut resources, vcam, |orbit| orbit.look = Vec2::X);
     orbit_cameras(&mut resources);
-    assert!(!returned(&resources, vcam), "a look left the latch set");
-
     orbit(&mut resources, vcam, |orbit| orbit.look = Vec2::ZERO);
     set_yaw(&mut resources, vcam, 90.0);
     for _ in 0..120 {
@@ -232,6 +275,7 @@ fn a_look_arms_the_next_return() {
 fn a_return_takes_the_short_way() {
     let (mut resources, vcam) = world();
     orbit(&mut resources, vcam, |orbit| {
+        orbit.recentre = true;
         orbit.recentre_wait = 0.1;
         orbit.recentre_time = 0.5;
     });
@@ -260,17 +304,6 @@ fn the_nearest_angle_wraps() {
     assert!((nearest(350.0, 10.0) - 370.0).abs() < 1e-4);
     assert!((nearest(10.0, 350.0) + 10.0).abs() < 1e-4);
     assert!((nearest(0.0, 0.0)).abs() < 1e-4);
-}
-
-fn returned(resources: &Resources, vcam: Entity) -> bool {
-    resources
-        .get::<ComponentRegistry>()
-        .unwrap()
-        .get_cpu::<CameraOrbit>()
-        .unwrap()
-        .get(vcam)
-        .unwrap()
-        .returned
 }
 
 /// Turns the target on the spot, which is what moves "behind" it.

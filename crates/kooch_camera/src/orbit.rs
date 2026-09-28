@@ -38,21 +38,19 @@ pub struct CameraOrbit {
     /// How far down. Past about 80 the camera stands over the target and the yaw stops meaning
     /// anything.
     pub pitch_max: f32,
-    /// Seconds without a look before the yaw eases back behind the target. **Zero never recentres**,
-    /// which is what a game that never had it expects.
+    /// Whether the yaw returns behind the target on its own. Off by default, which is what a game
+    /// that never had it expects; writable at runtime, as Cinemachine's `Recentering.Enabled` is.
+    /// 🔴 The single owner of on/off. `recentre_wait > 0` used to mean it too, and a magic value
+    /// doing a switch's job is the shape of #1333 — it also cost the authored wait to turn off.
+    pub recentre: bool,
+    /// Seconds without a look before the return starts.
     pub recentre_wait: f32,
-    /// Seconds the return takes, leaving a hundredth of the turn — exponential, like every other
-    /// easing here.
+    /// Seconds the return lasts. **The window is the end of it**, arrived or not.
     pub recentre_time: f32,
-    /// Seconds since the last look. Not authored: it is the state of a thumb, and a scene that
-    /// stored it would load mid-turn.
+    /// Seconds since the last look — and the whole state a return needs. Not authored: it is the
+    /// state of a thumb, and a scene that stored it would load mid-turn.
     #[reflect(skip)]
     pub idle: f32,
-    /// Whether this idle period's return has already arrived.
-    /// 🔴 What makes a return a return: without it the yaw chases a "behind" that moves as the
-    /// target turns, and the player never gets the axis back (#1345).
-    #[reflect(skip)]
-    pub returned: bool,
 }
 
 impl Default for CameraOrbit {
@@ -64,10 +62,10 @@ impl Default for CameraOrbit {
             invert_pitch: false,
             pitch_min: -30.0,
             pitch_max: 70.0,
-            recentre_wait: 0.0,
+            recentre: false,
+            recentre_wait: 1.0,
             recentre_time: 1.0,
             idle: 0.0,
-            returned: false,
         }
     }
 }
@@ -86,12 +84,24 @@ impl CameraOrbit {
         self.look * self.speed.abs() * sign * dt
     }
 
-    /// Whether a return is live this step: waited long enough, and this idle period's has not
-    /// already arrived.
-    /// 🔴 The only place that question is answered. Asked in two, neither could be tested: taking
-    /// the latch out of one left the other holding the camera still, and the sabotage passed.
+    /// Whether a return is live this step: inside the window that opens `recentre_wait` seconds
+    /// after the last look and lasts `recentre_time`.
+    ///
+    /// 🔴 **The window IS the end.** A return chases "behind the target", which moves as the target
+    /// turns; an exponential ease closes a fraction of the gap per step, so against a turning
+    /// character the gap settles at a constant lag and an arrival test is never reached — that was
+    /// #1345 surviving its own first fix. The end is declared, not detected.
+    ///
+    /// A zero `recentre_time` gets one step, which snaps: a window of no width would be a second,
+    /// silent way to switch the whole thing off.
+    ///
+    /// 🔴 The only place the question is answered. Asked in two, neither could be tested: taking
+    /// the rule out of one left the other holding the camera still, and the sabotage passed.
     pub fn returning(&self, dt: f32) -> bool {
-        self.recentre_wait > 0.0 && self.idle + dt >= self.recentre_wait && !self.returned
+        let idle = self.idle + dt;
+        self.recentre
+            && idle >= self.recentre_wait
+            && idle < self.recentre_wait + self.recentre_time.max(dt)
     }
 
     /// This step's angles, and the state to carry into the next.
@@ -105,34 +115,21 @@ impl CameraOrbit {
                 yaw: yaw + asked.x,
                 pitch: (pitch + asked.y).clamp(self.pitch_min, self.pitch_max),
                 idle: 0.0,
-                returned: false,
             };
         }
 
         let idle = self.idle + dt;
         // Nowhere to return to, or nothing asked for one: hold the angle the player left.
         let Some(wanted) = behind else {
-            return Orbited {
-                yaw,
-                pitch,
-                idle,
-                returned: self.returned,
-            };
+            return Orbited { yaw, pitch, idle };
         };
-        let wanted = nearest(yaw, wanted);
-        let yaw = eased(yaw, wanted, self.recentre_time, dt);
         Orbited {
-            yaw,
+            yaw: eased(yaw, nearest(yaw, wanted), self.recentre_time, dt),
             pitch,
             idle,
-            returned: (wanted - yaw).abs() <= ARRIVED,
         }
     }
 }
-
-/// Degrees from behind at which a return is over. Exponential easing leaves a hundredth of the gap
-/// after `recentre_time` and never exactly none, so the end is declared rather than reached.
-const ARRIVED: f32 = 0.25;
 
 /// What one step of an orbit leaves: the angles to write on the vcam, and the state to carry.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -140,7 +137,6 @@ pub struct Orbited {
     pub yaw: f32,
     pub pitch: f32,
     pub idle: f32,
-    pub returned: bool,
 }
 
 /// The yaw that puts the camera behind `facing`, in degrees from `reference` around `up` — the same
@@ -195,7 +191,6 @@ pub fn orbit_cameras(resources: &mut Resources) {
     for turn in &turns {
         if let Some(orbit) = orbits.get_mut(turn.entity) {
             orbit.idle = turn.orbited.idle;
-            orbit.returned = turn.orbited.returned;
         }
     }
 }
