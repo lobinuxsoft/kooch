@@ -139,13 +139,8 @@ fn follow_none_leaves_the_position_alone() {
     assert!(!r.is_inert(), "look-at alone is still work to do");
 }
 
-fn rest() -> Damping {
-    Damping::at(Vec3::ZERO, glam::Quat::IDENTITY)
-}
-
 /// Steps the position damping towards a still `desired` for `seconds` at `fps`.
 fn damped_for(r: &VirtualCamera, desired: Vec3, fps: f32, seconds: f32) -> Vec3 {
-    let mut damping = rest();
     let mut at = Vec3::ZERO;
     for _ in 0..(seconds * fps).round() as usize {
         at = r.damped(at, desired, 1.0 / fps);
