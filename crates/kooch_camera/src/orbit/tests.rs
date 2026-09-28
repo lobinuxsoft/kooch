@@ -138,13 +138,11 @@ fn the_switch_off_never_recentres() {
     assert!((yaw - 90.0).abs() < 1e-4, "yaw was {yaw}");
 }
 
-/// 🔴 The switch gates the **start** of an automatic return, not the flight of one.
-///
-/// It cannot cancel: with the switch off a return is supposed to be the button's to ask for, so a
-/// switch that stopped whatever is in flight would kill the manual one too (#1348). A look is what
-/// cancels, and a look is always to hand.
+/// 🔴 The switch owns the automatic mode and nothing else: off, the tailing stops the same step —
+/// and a return asked for by hand keeps going, because with the switch off that is the only kind
+/// there is (#1350).
 #[test]
-fn the_switch_only_gates_the_start() {
+fn the_switch_owns_only_the_auto_mode() {
     let (mut resources, vcam) = world();
     orbit(&mut resources, vcam, |orbit| {
         orbit.auto_recentre = true;
@@ -156,31 +154,36 @@ fn the_switch_only_gates_the_start() {
         orbit_cameras(&mut resources);
     }
     let (caught, _) = angles(&resources, vcam);
-    assert!(caught < 89.0, "the return never started: {caught}");
+    assert!(
+        caught < 89.0,
+        "the automatic return never started: {caught}"
+    );
 
-    // Off mid-flight: this one finishes, and the authored timing survives.
     orbit(&mut resources, vcam, |orbit| orbit.auto_recentre = false);
-    for _ in 0..60 {
+    orbit_cameras(&mut resources);
+    let (stopped, _) = angles(&resources, vcam);
+    for _ in 0..600 {
         orbit_cameras(&mut resources);
     }
+    let (after, _) = angles(&resources, vcam);
+    assert!(
+        (after - stopped).abs() < 1e-4,
+        "the tailing outlived its switch: {stopped} then {after}"
+    );
     let wait = orbit_of(&resources, vcam).recentre_wait;
     assert!((wait - 0.1).abs() < 1e-6, "the wait was lost: {wait}");
 
-    // And no further one starts, however long nobody looks.
-    set_yaw(&mut resources, vcam, 90.0);
-    orbit(&mut resources, vcam, |orbit| {
-        orbit.look = Vec2::X;
-        orbit.speed = Vec2::ZERO;
-    });
+    // And the button still works, which is the whole point of the switch being off.
+    orbit(&mut resources, vcam, |orbit| orbit.recentre_now = true);
     orbit_cameras(&mut resources);
-    orbit(&mut resources, vcam, |orbit| orbit.look = Vec2::ZERO);
-    for _ in 0..600 {
+    orbit(&mut resources, vcam, |orbit| orbit.recentre_now = false);
+    for _ in 0..120 {
         orbit_cameras(&mut resources);
     }
     let (yaw, _) = angles(&resources, vcam);
     assert!(
-        (yaw - 90.0).abs() < 1e-4,
-        "a return started with the switch off: {yaw}"
+        yaw.abs() < 1.0,
+        "the press did nothing with the switch off: {yaw}"
     );
 }
 
@@ -252,36 +255,44 @@ fn a_press_returns_it_with_auto_off() {
     assert!(yaw.abs() < 1.0, "the press never returned it: {yaw}");
 }
 
-/// 🔴 A request while one is in flight is ignored, not honoured. Re-armed every step against a
-/// target that keeps turning, the ease would close the same fraction of a gap that keeps reopening —
-/// the #1345 chase, asked for by a held button instead of a timer.
+/// 🔴 A manual return **ends where it arrives, and a hold does not re-arm it**. The angle cannot say
+/// so — parked behind the target, another return changes nothing to look at — so the state is what
+/// the test reads.
 #[test]
-fn a_held_press_does_not_stall_it() {
+fn a_held_press_asks_once() {
     let (mut resources, vcam) = world();
     orbit(&mut resources, vcam, |orbit| {
-        orbit.recentre_time = 0.25;
+        orbit.recentre_time = 0.1;
+        orbit.recentre_now = true;
     });
     set_yaw(&mut resources, vcam, 90.0);
-
-    // The character keeps steering, and the button stays down.
-    let mut facing = 0.0;
-    let mut steer = |resources: &mut Resources| {
-        facing += 3.0;
-        turn_target(resources, facing);
-        orbit(resources, vcam, |orbit| orbit.recentre_now = true);
-        orbit_cameras(resources);
-    };
     for _ in 0..60 {
-        steer(&mut resources);
+        orbit_cameras(&mut resources);
+        // Still held down, every step.
+        orbit(&mut resources, vcam, |orbit| orbit.recentre_now = true);
     }
-    let (before, _) = angles(&resources, vcam);
-    for _ in 0..60 {
-        steer(&mut resources);
+    let (yaw, _) = angles(&resources, vcam);
+    assert!(yaw.abs() < 1.0, "the return never arrived: {yaw}");
+    assert!(
+        !orbit_of(&resources, vcam).returning_now,
+        "the hold asked for another return once the first arrived"
+    );
+
+    // 🔴 And the button, still held, must not tail the target the way the automatic mode does. This
+    // is the only place the press edge is observable: parked behind a still target, a return asked
+    // for again changes nothing to look at.
+    let parked = yaw;
+    let mut facing = 0.0;
+    for _ in 0..120 {
+        facing += 2.0;
+        turn_target(&mut resources, facing);
+        orbit(&mut resources, vcam, |orbit| orbit.recentre_now = true);
+        orbit_cameras(&mut resources);
     }
     let (after, _) = angles(&resources, vcam);
     assert!(
-        (after - before).abs() < 1e-3,
-        "the held button kept the chase alive: {before} then {after}"
+        (after - parked).abs() < 1e-3,
+        "the held button tailed the target: {parked} then {after}"
     );
 }
 
@@ -318,38 +329,35 @@ fn a_look_cancels_a_pressed_return() {
     );
 }
 
-/// 🔴 The defect from the smoke test, and the one its first fix missed: the return ends while the
-/// target is still turning. An asymptotic ease closes a fraction of the gap per step, so against a
-/// character that keeps steering the gap settles at a constant lag and an arrival test is never
-/// reached — the window has to be what ends it (#1345).
+/// 🔴 The automatic mode is a **mode**, not one return: it holds the camera behind a target that
+/// keeps turning, for as long as nobody looks (#1350). Cinemachine reads the same — its axis rests
+/// at `Center`, and `Center` is behind the target.
 #[test]
-fn a_turning_target_ends_the_return() {
+fn auto_holds_the_camera_behind() {
     let (mut resources, vcam) = world();
     orbit(&mut resources, vcam, |orbit| {
         orbit.auto_recentre = true;
         orbit.recentre_wait = 0.1;
-        orbit.recentre_time = 0.25;
+        orbit.recentre_time = 0.1;
     });
-    set_yaw(&mut resources, vcam, 90.0);
 
-    // The character keeps steering: three degrees a step, which is 180 a second.
+    // Settle behind a still target first, then start steering.
+    for _ in 0..120 {
+        orbit_cameras(&mut resources);
+    }
     let mut facing = 0.0;
-    let mut steer = |resources: &mut Resources| {
-        facing += 3.0;
-        turn_target(resources, facing);
-        orbit_cameras(resources);
-    };
-    for _ in 0..120 {
-        steer(&mut resources);
+    for _ in 0..240 {
+        facing += 1.0;
+        turn_target(&mut resources, facing);
+        orbit_cameras(&mut resources);
     }
-    let (before, _) = angles(&resources, vcam);
-    for _ in 0..120 {
-        steer(&mut resources);
-    }
-    let (after, _) = angles(&resources, vcam);
+    // Behind a target facing `facing` is the yaw that followed it round.
+    let (yaw, _) = angles(&resources, vcam);
+    let gap = (yaw - facing).rem_euclid(360.0);
+    let gap = gap.min(360.0 - gap);
     assert!(
-        (after - before).abs() < 1e-3,
-        "the camera never stopped chasing the target's facing: {before} then {after}"
+        gap < 10.0,
+        "the camera stopped tailing the target: {yaw} vs {facing}"
     );
 }
 
