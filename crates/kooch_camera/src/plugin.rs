@@ -67,8 +67,12 @@ impl Plugin for CameraComponentsPlugin {
                 registry.register_cpu_reflected::<crate::framing::CameraFraming>();
                 registry.register_cpu_reflected::<crate::lookahead::CameraLookahead>();
                 registry.register_cpu_reflected::<crate::orbit::CameraOrbit>();
+                registry.register_cpu_reflected::<crate::when::CameraWhen>();
                 #[cfg(feature = "input")]
-                registry.register_cpu_reflected::<crate::orbit::input::OrbitInput>();
+                {
+                    registry.register_cpu_reflected::<crate::orbit::input::OrbitInput>();
+                    registry.register_cpu_reflected::<crate::when::input::WhenInput>();
+                }
             }
         });
     }
@@ -96,10 +100,23 @@ impl Plugin for CameraPlugin {
         // Declared, not left to registration order: the orbit writes the `yaw` the rig's Body
         // swings the arm by, so a rig that ran first would swing last frame's angle (#392).
         #[cfg(feature = "input")]
+        {
+            app.add_ordered(
+                Stage::PostPhysics,
+                Order::before("orbit_cameras"),
+                run_if_playing(crate::orbit::input::read_orbit_input),
+            );
+            app.add_ordered(
+                Stage::PostPhysics,
+                Order::before("step_camera_whens"),
+                run_if_playing(crate::when::input::read_when_input),
+            );
+        }
+        // Before the plan the election reads, and after whoever wrote the condition.
         app.add_ordered(
             Stage::PostPhysics,
-            Order::before("orbit_cameras"),
-            run_if_playing(crate::orbit::input::read_orbit_input),
+            Order::before("drive_virtual_cameras"),
+            run_if_playing(crate::when::step_camera_whens),
         );
         app.add_ordered(
             Stage::PostPhysics,
@@ -232,6 +249,8 @@ mod blend_tests;
 mod brain_tests;
 #[cfg(test)]
 mod framing_tests;
+#[cfg(test)]
+mod when_tests;
 
 /// Slerp along the shorter arc: `q` and `-q` are one rotation, and without matching them a 1°
 /// handover can roll 359°.
@@ -382,7 +401,10 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, RigMemory) {
             entity,
             position: step.frame.position,
             rotation: step.frame.rotation,
-            priority: vcam.priority,
+            // 🔴 The authored number plus whatever a condition adds, never the condition's own: a
+            // component that wrote `vcam.priority` would be a second owner of it, and letting go
+            // would not give the authored value back (#1352).
+            priority: vcam.priority + crate::when::boost_of(registry, entity),
         });
     }
     (plan, memory)
