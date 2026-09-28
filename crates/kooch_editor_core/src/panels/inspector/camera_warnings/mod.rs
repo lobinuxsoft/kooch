@@ -10,8 +10,10 @@ const OF_THE_RIG: &[(&str, &str)] = &[
     ("CameraFraming", "VirtualCamera"),
     ("CameraCollision", "VirtualCamera"),
     ("CameraOrbit", "VirtualCamera"),
-    // A binding fills an orbit, so the orbit is what has to be here — not the vcam.
+    ("CameraWhen", "VirtualCamera"),
+    // A binding fills the component it is named for, so that is what has to be here — not the vcam.
     ("OrbitInput", "CameraOrbit"),
+    ("WhenInput", "CameraWhen"),
 ];
 
 /// A camera component on an entity without the one that reads it.

@@ -156,6 +156,11 @@ pub fn report_orphans(resources: &mut Resources) {
             entities_of::<crate::orbit::CameraOrbit>(registry),
             &posed,
         );
+        sweep(
+            "CameraWhen",
+            entities_of::<crate::when::CameraWhen>(registry),
+            &posed,
+        );
         // A binding is read off the orbit it fills, not off the vcam: an `OrbitInput` alone names an
         // action nothing turns.
         #[cfg(feature = "input")]
@@ -167,6 +172,13 @@ pub fn report_orphans(resources: &mut Resources) {
                 "OrbitInput",
                 entities_of::<crate::orbit::input::OrbitInput>(registry),
                 &turning,
+            );
+            let whens = registry.get_cpu::<crate::when::CameraWhen>();
+            let asked = |entity: Entity| whens.is_some_and(|whens| whens.get(entity).is_some());
+            sweep(
+                "WhenInput",
+                entities_of::<crate::when::input::WhenInput>(registry),
+                &asked,
             );
         }
     }

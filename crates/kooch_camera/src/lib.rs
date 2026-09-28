@@ -13,6 +13,7 @@ pub mod plugin;
 pub mod rig;
 pub mod target;
 pub mod virtual_camera;
+pub mod when;
 
 pub use blend::{
     BLEND_CURVE_CHOICES, BLEND_EASE_CHOICES, CURVE_CUBIC, CURVE_EXPO, CURVE_LINEAR, CURVE_QUAD,
@@ -30,3 +31,4 @@ pub use virtual_camera::{
     FOLLOW_GLUED, FOLLOW_NONE, FOLLOW_SIMPLE, FOLLOW_THIRD_PERSON, INACTIVE_ALWAYS, INACTIVE_NEVER,
     LOOK_AT_MIMIC, LOOK_AT_NONE, LOOK_AT_SIMPLE, UP_GRAVITY, UP_TARGET, UP_WORLD, VirtualCamera,
 };
+pub use when::{CameraWhen, step_camera_whens};
