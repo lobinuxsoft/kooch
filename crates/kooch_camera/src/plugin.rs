@@ -88,6 +88,7 @@ impl Plugin for CameraPlugin {
         // Before anything reads a duration, and before an author can edit a field a switch overrode.
         app.add_system(Stage::First, crate::virtual_camera::migrate_damping_switch);
         app.add_system(Stage::First, crate::virtual_camera::report_moved_blends);
+        app.add_system(Stage::First, crate::rig::report_orphans);
         app.add_system(Stage::PostPhysics, run_if_playing(drive_virtual_cameras));
     }
 

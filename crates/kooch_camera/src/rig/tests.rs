@@ -100,3 +100,34 @@ fn a_tie_keeps_its_arrival() {
         vec![RigStage::Body, RigStage::Collide, RigStage::Aim],
     );
 }
+
+/// A rig component is read off the vcam's entity, and nowhere else: on any other one it is tuned
+/// for nothing, so the rig says so (#1342).
+#[test]
+fn an_orphan_is_reported() {
+    use kooch_ecs::component::ComponentRegistry;
+
+    let mut resources = Resources::new();
+    let mut allocator = EntityAllocator::new();
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu_reflected::<VirtualCamera>();
+    registry.register_cpu_reflected::<crate::CameraLookahead>();
+    let (brain, rig) = (allocator.spawn(), allocator.spawn());
+    let lookaheads = registry.get_cpu_mut::<crate::CameraLookahead>().unwrap();
+    lookaheads.insert(brain, crate::CameraLookahead::default());
+    lookaheads.insert(rig, crate::CameraLookahead::default());
+    registry
+        .get_cpu_mut::<VirtualCamera>()
+        .unwrap()
+        .insert(rig, VirtualCamera::default());
+    resources.insert(registry);
+
+    super::report_orphans(&mut resources);
+
+    let said = resources.get::<Orphans>().expect("nothing was reported");
+    assert!(said.0.contains(&brain), "the orphan went unsaid");
+    assert!(
+        !said.0.contains(&rig),
+        "a component beside its vcam was flagged"
+    );
+}
