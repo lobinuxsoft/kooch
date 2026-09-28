@@ -17,14 +17,12 @@
 
 use std::collections::HashMap;
 
+use crate::frame::CameraFrame;
 use glam::{Vec2, Vec3};
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::FieldRange;
-use kooch_ecs::tween::Chase;
-
-use crate::frame::CameraFrame;
 
 /// Frames the target of the vcam it sits on. Beside a [`VirtualCamera`]; replaces its position
 /// damping, since the soft zone is the easing.
@@ -50,10 +48,13 @@ pub struct CameraFraming {
     /// back measured three times worse than the rig on its own.
     #[reflect(range = ZONE_RANGE)]
     pub soft_zone: Vec2,
-    /// Seconds the camera takes to bring the target back to the dead zone's edge **once it stops** —
-    /// exactly, a tween that restarts while the target keeps moving. Zero is rigid.
+    /// Seconds to close the gap to the dead zone's edge, leaving a hundredth of it behind — the
+    /// same easing the rig's damping uses. Zero is rigid.
+    ///
+    /// 🔴 Not a duration. A tween that restarts whenever its goal moves spends every frame at the
+    /// fastest part of its curve and steps whenever the target starts or stops (#1336).
     #[reflect(range = TIME_RANGE, alias = "soft_time")]
-    pub soft_duration: f32,
+    pub soft_time: f32,
 }
 
 /// How far a target or a camera may drift and still count as standing still, in metres.
@@ -84,7 +85,7 @@ impl Default for CameraFraming {
             screen: Vec2::ZERO,
             dead_zone: Vec2::new(0.1, 0.1),
             soft_zone: Vec2::new(0.6, 0.6),
-            soft_duration: 0.5,
+            soft_time: 0.5,
         }
     }
 }
@@ -156,6 +157,10 @@ impl CameraFraming {
         // camera by `d` along an axis moves the target by `-d` on screen, so the slack owed is the
         // excess itself, in metres.
         let owed = past(at, self.dead_zone);
+        // 🔴 Ramped while the target moves, whole once it stops. Not to keep a promise — the
+        // easing is exponential and promises nothing — but because a correction that ramps to
+        // nothing at the dead zone's edge approaches it and never arrives: the target parks in the
+        // soft band, a third of the way out, for ever. Measured at 0.134 against the edge's 0.1.
         let still = state.last.abs_diff_eq(target, STILL);
         let share = match still {
             true => Vec2::ONE,
@@ -168,7 +173,8 @@ impl CameraFraming {
 
         // One quantity, eased once: the slack. The body is not damped when a frame is present —
         // two eases in series on one position is what made this fight itself (#1329).
-        let eased = state.chase.step(slack, goal, dt, self.soft_duration);
+        let alpha = crate::virtual_camera::settled(dt, self.soft_time);
+        let eased = slack + (goal - slack) * alpha;
         state.slack = eased;
         state.last = target;
         frame.displace(placed(eased));
@@ -199,8 +205,6 @@ pub struct Framed {
     /// How far the frame holds the camera off what the rig asked for, along the screen's own axes,
     /// in metres.
     slack: Vec2,
-    /// The ease closing what the dead zone does not forgive.
-    chase: Chase<Vec2>,
     last: Vec3,
 }
 
@@ -215,7 +219,6 @@ impl Framed {
     pub fn at(target: Vec3) -> Self {
         Self {
             slack: Vec2::ZERO,
-            chase: Chase::at(Vec2::ZERO),
             last: target,
         }
     }
@@ -223,7 +226,6 @@ impl Framed {
     /// Back on the rig's own answer, with nothing owed.
     fn reset(&mut self, target: Vec3) {
         self.slack = Vec2::ZERO;
-        self.chase = Chase::at(Vec2::ZERO);
         self.last = target;
     }
 }

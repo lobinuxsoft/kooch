@@ -21,7 +21,7 @@ fn a_displaced_frame_remembers_where_it_wanted() {
 
 /// 🔴 #1331: the rule the stages exist to keep. A stage that moves the camera must not touch where
 /// the body wanted it, or the next stage reads its own displacement as something to answer — which
-/// is how a wall's push became slack the frame spent a `soft_duration` undoing.
+/// is how a wall's push became slack the frame spent a `soft_time` undoing.
 #[test]
 fn displacing_never_moves_the_bodys_answer() {
     let body = Vec3::new(0.0, 2.0, 8.0);
