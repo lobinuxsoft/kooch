@@ -29,7 +29,13 @@ fn world(cameras: &[(i32, bool, Option<bool>)]) -> (Resources, Vec<Entity>) {
             registry
                 .get_cpu_mut::<CameraBrain>()
                 .expect("registered")
-                .insert(entity, CameraBrain { enabled: *enabled });
+                .insert(
+                    entity,
+                    CameraBrain {
+                        enabled: *enabled,
+                        ..Default::default()
+                    },
+                );
         }
         entities.push(entity);
     }
@@ -77,4 +83,41 @@ fn a_disabled_brain_drives_nothing() {
 fn a_brain_on_an_overlay_drives() {
     let (resources, cameras) = world(&[(0, false, None), (1, true, Some(true))]);
     assert_eq!(rendering_camera(&resources, cameras[0]), Some(cameras[1]));
+}
+
+/// 🔴 #1339: the blend is the brain's. Asking a vcam how long a change between two of them takes
+/// only raises "which one?" — the answer used to be "whichever is arriving", which is a convention
+/// and not an answer. Cinemachine keeps it on the brain for the same reason.
+#[test]
+fn the_blend_comes_from_the_brain() {
+    use kooch_core::resource::Resources;
+    use kooch_ecs::component::ComponentRegistry;
+
+    let mut resources = Resources::new();
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu_reflected::<CameraBrain>();
+    let camera = kooch_ecs::entity::Entity::new(3, 0);
+    registry.get_cpu_mut::<CameraBrain>().unwrap().insert(
+        camera,
+        CameraBrain {
+            blend_duration: 2.5,
+            ..Default::default()
+        },
+    );
+    resources.insert(registry);
+
+    let (duration, _, _) = crate::plugin::blend_settings(&resources, camera);
+    assert_eq!(duration, 2.5);
+}
+
+/// A camera with no brain of its own falls back to the default rather than cutting: a scene that
+/// forgot the component should look wrong in the log, not in the cut.
+#[test]
+fn a_camera_without_a_brain_uses_the_default() {
+    use kooch_core::resource::Resources;
+
+    let resources = Resources::new();
+    let (duration, _, _) =
+        crate::plugin::blend_settings(&resources, kooch_ecs::entity::Entity::new(1, 0));
+    assert_eq!(duration, CameraBrain::default().blend_duration);
 }

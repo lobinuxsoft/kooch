@@ -35,16 +35,19 @@ pub struct CameraCollision {
     /// a hat, a sword. It is also as close as the camera ever comes.
     #[reflect(range = DISTANCE_RANGE)]
     pub min_distance: f32,
-    /// Seconds the camera takes to get back out once the way clears — exactly that, smooth at both
-    /// ends. Pulling in is immediate: a camera that eased into a wall would show the inside of it.
-    #[reflect(range = RETURN_RANGE, alias = "return_time")]
-    pub return_duration: f32,
-    /// The shape of the return — the engine's tween, the same curves a vcam's blend offers.
-    #[reflect(choices = kooch_ecs::tween::CURVE_CHOICES)]
-    pub return_curve: u32,
-    /// Which end of the return is slow.
-    #[reflect(choices = kooch_ecs::tween::EASE_CHOICES)]
-    pub return_ease: u32,
+    /// How fast the camera gets back out once the way clears, in seconds: a hundredth of what is
+    /// left after that long, the same easing everything else in the rig uses. Cinemachine's
+    /// Deoccluder `Damping`.
+    ///
+    /// 🔴 Not a duration. The way clears a little at a time and the unobstructed arm moves with the
+    /// player, so the goal moves every frame — and a tween with a duration restarts on a moving
+    /// goal and steps (#1336, #1339).
+    #[reflect(range = RETURN_RANGE, alias = "return_duration, return_time")]
+    pub damping: f32,
+    /// The same, going in. Zero is immediate, which is what a camera wants: one that eased into a
+    /// wall would show the inside of it. Cinemachine's `DampingWhenOccluded`.
+    #[reflect(range = RETURN_RANGE)]
+    pub damping_when_occluded: f32,
 }
 
 const RADIUS_RANGE: FieldRange = FieldRange {
@@ -72,9 +75,8 @@ impl Default for CameraCollision {
             groups: u32::MAX,
             radius: 0.2,
             min_distance: 0.5,
-            return_duration: 0.35,
-            return_curve: kooch_ecs::tween::CURVE_SINE,
-            return_ease: kooch_ecs::tween::EASE_IN_OUT,
+            damping: 0.35,
+            damping_when_occluded: 0.0,
         }
     }
 }
@@ -123,22 +125,22 @@ pub(crate) fn arm_length(
     collision: &CameraCollision,
     dt: f32,
 ) -> (f32, Option<(f32, f32)>) {
-    let return_duration = collision.return_duration;
-    let Some((was, returning)) = previous else {
+    let Some((was, _)) = previous else {
         return (clear, None);
     };
-    if clear <= was || return_duration <= 0.0 {
-        return (clear, None);
-    }
-    let (from, elapsed) = returning.unwrap_or((was, 0.0));
-    let elapsed = elapsed + dt;
-    let t = (elapsed / return_duration).min(1.0);
-    let eased = kooch_ecs::tween::eased(t, collision.return_curve, collision.return_ease);
-    let length = from + (clear - from) * eased;
-    match t >= 1.0 {
-        true => (clear, None),
-        false => (length, Some((from, elapsed))),
-    }
+    // Going in or coming out are different speeds: a camera that eased into a wall would show the
+    // inside of it, so `damping_when_occluded` is zero by default and the pull is immediate.
+    let time = match clear <= was {
+        true => collision.damping_when_occluded,
+        false => collision.damping,
+    };
+    let length = was + (clear - was) * crate::virtual_camera::settled(dt, time);
+    // Still carried, so a gizmo can say the arm is not where the rig would have it.
+    let returning = match (length - clear).abs() > 1e-4 {
+        true => Some((length, 0.0)),
+        false => None,
+    };
+    (length, returning)
 }
 
 /// Where the camera of `vcam` goes this frame: `free`, or nearer the target along the same line
