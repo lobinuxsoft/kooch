@@ -24,16 +24,30 @@ pub struct OrbitInput {
     /// together, read as a rate whichever answers. Unset turns nothing.
     #[reflect(asset = "kooch_input::actions::action::Action")]
     pub look: Option<Guid>,
+    /// The button that asks the camera back behind the target now — R3 on a pad. A `button` action;
+    /// unset asks for nothing, and the automatic return on [`CameraOrbit`] is unaffected either way.
+    ///
+    /// The bridge writes whether it is **held**; the press is [`CameraOrbit`]'s to derive, so a
+    /// script asking the same way gets the same one-per-press.
+    #[reflect(asset = "kooch_input::actions::action::Action")]
+    pub recentre: Option<Guid>,
 }
 
 impl Component for OrbitInput {}
 
-/// Fills every [`CameraOrbit`] that names an action with this frame's value.
+/// What one bound camera is being asked for this step.
+struct Asked {
+    entity: kooch_ecs::entity::Entity,
+    look: glam::Vec2,
+    recentre: bool,
+}
+
+/// Fills every [`CameraOrbit`] that names an action with this frame's values.
 ///
 /// Zero is written as readily as anything else: letting go is what starts a recentring, and skipping
 /// the write would leave the camera turning on its own.
 pub fn read_orbit_input(resources: &mut Resources) {
-    let asked = looks(resources);
+    let asked = asked(resources);
     if asked.is_empty() {
         return;
     }
@@ -43,15 +57,16 @@ pub fn read_orbit_input(resources: &mut Resources) {
     let Some(orbits) = registry.get_cpu_mut::<CameraOrbit>() else {
         return;
     };
-    for (entity, look) in asked {
-        if let Some(orbit) = orbits.get_mut(entity) {
-            orbit.look = look;
+    for ask in &asked {
+        if let Some(orbit) = orbits.get_mut(ask.entity) {
+            orbit.look = ask.look;
+            orbit.recentre_now = ask.recentre;
         }
     }
 }
 
 /// What each bound camera is being asked for, read before the orbits are written.
-fn looks(resources: &Resources) -> Vec<(kooch_ecs::entity::Entity, glam::Vec2)> {
+fn asked(resources: &Resources) -> Vec<Asked> {
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Vec::new();
     };
@@ -66,13 +81,19 @@ fn looks(resources: &Resources) -> Vec<(kooch_ecs::entity::Entity, glam::Vec2)> 
     };
     bindings
         .iter()
-        .filter(|(_, binding)| binding.look.is_some())
+        .filter(|(_, binding)| binding.look.is_some() || binding.recentre.is_some())
         .map(|(&entity, binding)| {
             let look = loaded
                 .evaluate(binding.look, &**backend)
                 .map(|value| value.vector2())
                 .unwrap_or_default();
-            (entity, look)
+            Asked {
+                entity,
+                look,
+                recentre: loaded
+                    .evaluate(binding.recentre, &**backend)
+                    .is_some_and(|value| value.pressed),
+            }
         })
         .collect()
 }

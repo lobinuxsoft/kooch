@@ -38,19 +38,37 @@ pub struct CameraOrbit {
     /// How far down. Past about 80 the camera stands over the target and the yaw stops meaning
     /// anything.
     pub pitch_max: f32,
-    /// Whether the yaw returns behind the target on its own. Off by default, which is what a game
-    /// that never had it expects; writable at runtime, as Cinemachine's `Recentering.Enabled` is.
-    /// 🔴 The single owner of on/off. `recentre_wait > 0` used to mean it too, and a magic value
-    /// doing a switch's job is the shape of #1333 — it also cost the authored wait to turn off.
-    pub recentre: bool,
-    /// Seconds without a look before the return starts.
+    /// Whether the yaw returns behind the target **on its own**, once nobody has looked for
+    /// `recentre_wait` seconds. Off by default, which is what a game that never had it expects;
+    /// writable at runtime, as Cinemachine's `Recentering.Enabled` is.
+    /// 🔴 The single owner of that switch. `recentre_wait > 0` used to mean it too, and a magic
+    /// value doing a switch's job is the shape of #1333 — it also cost the authored wait to say off.
+    #[reflect(alias = "recentre")]
+    pub auto_recentre: bool,
+    /// A return being asked for — by an `OrbitInput`'s button, R3 on a pad, or by a script. Written
+    /// every frame like `look`, and it starts a return whatever `recentre_wait` says and whether or
+    /// not `auto_recentre` is on, as Cinemachine's `TriggerRecentering` does.
+    ///
+    /// 🔴 **The press, not the hold**: held down it asks once. Re-armed every step against a target
+    /// that keeps turning, the ease would close the same fraction of a gap that keeps reopening —
+    /// the #1345 chase with a button in place of a timer. The edge is derived here rather than by
+    /// whoever writes the field, so it holds for every caller and not just for the input bridge.
+    pub recentre_now: bool,
+    /// Seconds without a look before the automatic return starts.
     pub recentre_wait: f32,
-    /// Seconds the return lasts. **The window is the end of it**, arrived or not.
+    /// Seconds a return lasts. **It is what ends it**, arrived or not.
     pub recentre_time: f32,
-    /// Seconds since the last look — and the whole state a return needs. Not authored: it is the
-    /// state of a thumb, and a scene that stored it would load mid-turn.
+    /// Seconds since the last look. Not authored: it is the state of a thumb, and a scene that
+    /// stored it would load mid-turn.
     #[reflect(skip)]
     pub idle: f32,
+    /// Seconds left of the return in flight; zero is none.
+    #[reflect(skip)]
+    pub return_left: f32,
+    /// Last step's `recentre_now`, so a request is heard as a press. Per entity, because two players
+    /// holding one action are not one press — the same reason `Sprint` keeps `was_wanted`.
+    #[reflect(skip)]
+    pub was_asked: bool,
 }
 
 impl Default for CameraOrbit {
@@ -62,10 +80,13 @@ impl Default for CameraOrbit {
             invert_pitch: false,
             pitch_min: -30.0,
             pitch_max: 70.0,
-            recentre: false,
+            auto_recentre: false,
+            recentre_now: false,
             recentre_wait: 1.0,
             recentre_time: 1.0,
             idle: 0.0,
+            return_left: 0.0,
+            was_asked: false,
         }
     }
 }
@@ -84,30 +105,25 @@ impl CameraOrbit {
         self.look * self.speed.abs() * sign * dt
     }
 
-    /// Whether a return is live this step: inside the window that opens `recentre_wait` seconds
-    /// after the last look and lasts `recentre_time`.
+    /// Whether a return begins this step: asked for by hand, or the automatic one crossing its wait.
     ///
-    /// 🔴 **The window IS the end.** A return chases "behind the target", which moves as the target
-    /// turns; an exponential ease closes a fraction of the gap per step, so against a turning
-    /// character the gap settles at a constant lag and an arrival test is never reached — that was
-    /// #1345 surviving its own first fix. The end is declared, not detected.
-    ///
-    /// A zero `recentre_time` gets one step, which snaps: a window of no width would be a second,
-    /// silent way to switch the whole thing off.
-    ///
-    /// 🔴 The only place the question is answered. Asked in two, neither could be tested: taking
+    /// 🔴 The only place that question is answered. Asked in two, neither could be tested: taking
     /// the rule out of one left the other holding the camera still, and the sabotage passed.
+    fn armed(&self, idle: f32) -> bool {
+        (self.recentre_now && !self.was_asked)
+            || (self.auto_recentre && self.idle <= self.recentre_wait && idle > self.recentre_wait)
+    }
+
+    /// Whether the rig has to work out where behind the target is this step. The planner's question,
+    /// answered by [`Self::armed`] so it cannot disagree with [`Self::stepped`].
     pub fn returning(&self, dt: f32) -> bool {
-        let idle = self.idle + dt;
-        self.recentre
-            && idle >= self.recentre_wait
-            && idle < self.recentre_wait + self.recentre_time.max(dt)
+        self.return_left > 0.0 || self.armed(self.idle + dt)
     }
 
     /// This step's angles, and the state to carry into the next.
     ///
     /// `behind` is the yaw that puts the camera behind the target, when there is a target to return
-    /// to. A look cancels the return and clears its latch: the player's hand outranks the timer.
+    /// to. A look cancels whatever is in flight: the hand outranks both the timer and the button.
     pub fn stepped(&self, yaw: f32, pitch: f32, behind: Option<f32>, dt: f32) -> Orbited {
         if self.look != Vec2::ZERO {
             let asked = self.asked(dt);
@@ -115,18 +131,43 @@ impl CameraOrbit {
                 yaw: yaw + asked.x,
                 pitch: (pitch + asked.y).clamp(self.pitch_min, self.pitch_max),
                 idle: 0.0,
+                return_left: 0.0,
+                was_asked: self.recentre_now,
             };
         }
 
         let idle = self.idle + dt;
-        // Nowhere to return to, or nothing asked for one: hold the angle the player left.
-        let Some(wanted) = behind else {
-            return Orbited { yaw, pitch, idle };
+        // 🔴 A return runs for `recentre_time` and is over, arrived or not. It chases "behind the
+        // target", which moves as the target turns; an exponential ease closes a fraction of the gap
+        // per step, so against a turning character the gap settles at a constant lag and an arrival
+        // test is never reached. That was #1345 surviving its own first fix: the end is declared.
+        //
+        // A request while one is in flight is ignored rather than restarting it — restarted every
+        // step, the ease would never get anywhere.
+        let live = match self.return_left > 0.0 {
+            true => self.return_left,
+            // A zero time gets one step, which snaps: a window of no width would be a second,
+            // silent way to switch the whole thing off.
+            false => match self.armed(idle) {
+                true => self.recentre_time.max(dt),
+                false => 0.0,
+            },
+        };
+        let Some(wanted) = behind.filter(|_| live > 0.0) else {
+            return Orbited {
+                yaw,
+                pitch,
+                idle,
+                return_left: 0.0,
+                was_asked: self.recentre_now,
+            };
         };
         Orbited {
             yaw: eased(yaw, nearest(yaw, wanted), self.recentre_time, dt),
             pitch,
             idle,
+            return_left: (live - dt).max(0.0),
+            was_asked: self.recentre_now,
         }
     }
 }
@@ -137,6 +178,8 @@ pub struct Orbited {
     pub yaw: f32,
     pub pitch: f32,
     pub idle: f32,
+    pub return_left: f32,
+    pub was_asked: bool,
 }
 
 /// The yaw that puts the camera behind `facing`, in degrees from `reference` around `up` — the same
@@ -191,6 +234,8 @@ pub fn orbit_cameras(resources: &mut Resources) {
     for turn in &turns {
         if let Some(orbit) = orbits.get_mut(turn.entity) {
             orbit.idle = turn.orbited.idle;
+            orbit.return_left = turn.orbited.return_left;
+            orbit.was_asked = turn.orbited.was_asked;
         }
     }
 }

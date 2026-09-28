@@ -7,10 +7,11 @@ use kooch_ecs::entity::Entity;
 use kooch_input::actions::{
     Action, Binding, Composite, ControlPath, ControlType, PartName, Role, VectorMode,
 };
-use kooch_input::{GamepadAxis, GamepadId, MockInputBackend};
+use kooch_input::{GamepadAxis, GamepadButton, GamepadId, MockInputBackend};
 
 const PAD: GamepadId = GamepadId(0);
 const LOOK: [u8; 16] = [7; 16];
+const RECENTRE: [u8; 16] = [9; 16];
 
 /// A vcam with an orbit, bound to a `vector2` action over the right stick or to nothing at all.
 fn world(bound: bool, stick: Vec2) -> (Resources, Entity) {
@@ -29,11 +30,13 @@ fn world(bound: bool, stick: Vec2) -> (Resources, Entity) {
         vcam,
         OrbitInput {
             look: bound.then_some(guid),
+            recentre: bound.then_some(Guid::from_bytes(RECENTRE)),
         },
     );
 
     let mut loaded = LoadedActions::default();
     loaded.load(guid, look());
+    loaded.load(Guid::from_bytes(RECENTRE), recentre());
     resources.insert(loaded);
     resources.insert(allocator);
     resources.insert(registry);
@@ -61,6 +64,14 @@ fn look() -> Action {
         .bind(part(PartName::Up, GamepadAxis::RightStickY))
 }
 
+/// A `button` over the right stick's click, as `Recentre.inputaction` authors it.
+fn recentre() -> Action {
+    Action::new("recentre", ControlType::Button).bind(Binding {
+        role: Role::Whole(ControlPath::Button(GamepadButton::RightThumb)),
+        processors: Vec::new(),
+    })
+}
+
 /// Replaces the backend with one holding the stick where asked — the mock is not reachable through
 /// `dyn InputBackend`, and a fresh one is what letting go looks like anyway.
 fn hold(resources: &mut Resources, stick: Vec2) {
@@ -68,6 +79,44 @@ fn hold(resources: &mut Resources, stick: Vec2) {
     backend.add_gamepad(PAD);
     backend.set_axis(PAD, GamepadAxis::RightStickX, stick.x);
     backend.set_axis(PAD, GamepadAxis::RightStickY, stick.y);
+    resources.insert(Box::new(backend) as Box<dyn InputBackend>);
+}
+
+/// The button reaches the orbit as a **hold**; turning it into one press is the orbit's job, so a
+/// script writing `recentre_now` the same way gets the same one-per-press.
+#[test]
+fn the_button_reaches_the_orbit() {
+    let (mut resources, vcam) = world(true, Vec2::ZERO);
+    click(&mut resources, true);
+    read_orbit_input(&mut resources);
+    assert!(
+        asked_of(&resources, vcam),
+        "the press never reached the orbit"
+    );
+
+    click(&mut resources, false);
+    read_orbit_input(&mut resources);
+    assert!(!asked_of(&resources, vcam), "letting go asked for a return");
+}
+
+fn asked_of(resources: &Resources, vcam: Entity) -> bool {
+    resources
+        .get::<ComponentRegistry>()
+        .unwrap()
+        .get_cpu::<CameraOrbit>()
+        .unwrap()
+        .get(vcam)
+        .unwrap()
+        .recentre_now
+}
+
+/// Holds or releases the right stick's click, keeping the sticks where they were.
+fn click(resources: &mut Resources, down: bool) {
+    let mut backend = MockInputBackend::new();
+    backend.add_gamepad(PAD);
+    if down {
+        backend.press_gamepad_button(PAD, GamepadButton::RightThumb);
+    }
     resources.insert(Box::new(backend) as Box<dyn InputBackend>);
 }
 
