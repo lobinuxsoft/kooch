@@ -9,6 +9,7 @@ mod mass_from_colliders;
 mod nav;
 mod prefab_view;
 pub(crate) use nav::InspectorNav;
+mod camera_warnings;
 mod multi;
 mod physics_warnings;
 mod rotation;
@@ -243,9 +244,9 @@ fn draw_inspector_body(
     }
     ui.separator();
 
-    // Configurations Rapier cannot honour, said where the author is
-    // looking. A log line is not a warning if nobody reads the log.
-    draw_physics_warnings(ui, entity, entities);
+    // Configurations the engine cannot honour, said where the author is looking. A log line is
+    // not a warning if nobody reads the log.
+    draw_warnings(ui, entity, entities);
 
     // Editable name field (separate from component list).
     single::draw_name_editor(ui, entity, info, actions);
@@ -446,29 +447,31 @@ fn draw_calculate_mass(
     }
 }
 
-/// Amber rather than red: the scene still runs, and the configuration is
-/// legal — it just does not do what the author probably expects. The same
-/// colour the Transform readout already uses for shear.
-fn draw_physics_warnings(ui: &mut egui::Ui, entity: Entity, entities: &[EntityDisplayInfo]) {
-    let warnings = physics_warnings::warnings_for(entity, entities);
-    if warnings.is_empty() {
+/// Everything worth telling the author about this entity.
+fn draw_warnings(ui: &mut egui::Ui, entity: Entity, entities: &[EntityDisplayInfo]) {
+    let physics = physics_warnings::warnings_for(entity, entities);
+    let camera = camera_warnings::warnings_for(entity, entities);
+    if physics.is_empty() && camera.is_empty() {
         return;
     }
-    for warning in warnings {
-        let message = warning.message();
-        // The full explanation on hover; one line in the panel, so a
-        // second warning is still visible without scrolling.
-        ui.horizontal(|ui| {
-            ui.colored_label(egui::Color32::from_rgb(240, 180, 40), "\u{26a0}");
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(warning.summary())
-                        .color(egui::Color32::from_rgb(240, 180, 40)),
-                )
-                .truncate(),
-            )
-            .on_hover_text(message);
-        });
+    for warning in physics {
+        draw_warning(ui, warning.summary(), warning.message());
+    }
+    for warning in camera {
+        draw_warning(ui, &warning.summary(), &warning.message());
     }
     ui.separator();
+}
+
+/// Amber rather than red: the scene still runs, and the configuration is legal — it just does not
+/// do what the author probably expects. The same colour the Transform readout uses for shear.
+fn draw_warning(ui: &mut egui::Ui, summary: &str, message: &str) {
+    // The full explanation on hover; one line in the panel, so a second warning is still visible
+    // without scrolling.
+    const AMBER: egui::Color32 = egui::Color32::from_rgb(240, 180, 40);
+    ui.horizontal(|ui| {
+        ui.colored_label(AMBER, "\u{26a0}");
+        ui.add(egui::Label::new(egui::RichText::new(summary).color(AMBER)).truncate())
+            .on_hover_text(message);
+    });
 }

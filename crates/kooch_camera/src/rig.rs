@@ -113,6 +113,65 @@ pub struct RigMemory {
     pub leads: Leads,
 }
 
+/// Which entities have already been told a rig component of theirs is read by nothing.
+#[derive(Debug, Clone, Default)]
+pub struct Orphans(std::collections::HashSet<Entity>);
+
+/// Says once, per entity, that a rig component sits where nothing will read it.
+///
+/// 🔴 The Inspector says the same thing where the author is looking (#1342); this is for a packaged
+/// build, which has no Inspector. A component that does nothing and says nothing is the worst of
+/// both: it is tuned for hours and never read.
+pub fn report_orphans(resources: &mut Resources) {
+    let mut found: Vec<(Entity, &'static str)> = Vec::new();
+    if let Some(registry) = resources.get::<ComponentRegistry>() {
+        let vcams = registry.get_cpu::<VirtualCamera>();
+        let posed = |entity: Entity| vcams.is_some_and(|vcams| vcams.get(entity).is_some());
+        let mut sweep = |name: &'static str, entities: Vec<Entity>| {
+            found.extend(
+                entities
+                    .into_iter()
+                    .filter(|entity| !posed(*entity))
+                    .map(|entity| (entity, name)),
+            );
+        };
+        sweep(
+            "CameraLookahead",
+            entities_of::<crate::CameraLookahead>(registry),
+        );
+        sweep(
+            "CameraFraming",
+            entities_of::<crate::CameraFraming>(registry),
+        );
+        sweep(
+            "CameraCollision",
+            entities_of::<crate::CameraCollision>(registry),
+        );
+    }
+
+    let mut said = resources.get::<Orphans>().cloned().unwrap_or_default();
+    for (entity, name) in found {
+        if !said.0.insert(entity) {
+            continue;
+        }
+        tracing::warn!(
+            target: "kooch_camera",
+            entity = entity.index(),
+            component = name,
+            "a camera rig component sits on an entity with no VirtualCamera, so nothing reads it",
+        );
+    }
+    resources.insert(said);
+}
+
+/// Every entity carrying `C`.
+fn entities_of<C: kooch_ecs::component::Component>(registry: &ComponentRegistry) -> Vec<Entity> {
+    registry
+        .get_cpu::<C>()
+        .map(|storage| storage.iter().map(|(entity, _)| *entity).collect())
+        .unwrap_or_default()
+}
+
 /// The yaw origin each vcam measures from, carried between steps.
 #[derive(Debug, Clone, Default)]
 pub struct Horizons {
