@@ -48,6 +48,11 @@ pub struct CameraOrbit {
     /// stored it would load mid-turn.
     #[reflect(skip)]
     pub idle: f32,
+    /// Whether this idle period's return has already arrived.
+    /// 🔴 What makes a return a return: without it the yaw chases a "behind" that moves as the
+    /// target turns, and the player never gets the axis back (#1345).
+    #[reflect(skip)]
+    pub returned: bool,
 }
 
 impl Default for CameraOrbit {
@@ -62,6 +67,7 @@ impl Default for CameraOrbit {
             recentre_wait: 0.0,
             recentre_time: 1.0,
             idle: 0.0,
+            returned: false,
         }
     }
 }
@@ -80,31 +86,61 @@ impl CameraOrbit {
         self.look * self.speed.abs() * sign * dt
     }
 
-    /// Whether the yaw is on its way back after `idle` seconds.
-    fn recentring(&self, idle: f32) -> bool {
-        self.recentre_wait > 0.0 && idle >= self.recentre_wait
+    /// Whether a return is live this step: waited long enough, and this idle period's has not
+    /// already arrived.
+    /// 🔴 The only place that question is answered. Asked in two, neither could be tested: taking
+    /// the latch out of one left the other holding the camera still, and the sabotage passed.
+    pub fn returning(&self, dt: f32) -> bool {
+        self.recentre_wait > 0.0 && self.idle + dt >= self.recentre_wait && !self.returned
     }
 
-    /// The `yaw` and `pitch` after this step, and the idle seconds to carry.
+    /// This step's angles, and the state to carry into the next.
     ///
     /// `behind` is the yaw that puts the camera behind the target, when there is a target to return
-    /// to. A look cancels the return: the player's hand outranks the timer.
-    pub fn stepped(&self, yaw: f32, pitch: f32, behind: Option<f32>, dt: f32) -> (f32, f32, f32) {
-        if self.look == Vec2::ZERO {
-            let idle = self.idle + dt;
-            let yaw = match behind.filter(|_| self.recentring(idle)) {
-                Some(wanted) => eased(yaw, nearest(yaw, wanted), self.recentre_time, dt),
-                None => yaw,
+    /// to. A look cancels the return and clears its latch: the player's hand outranks the timer.
+    pub fn stepped(&self, yaw: f32, pitch: f32, behind: Option<f32>, dt: f32) -> Orbited {
+        if self.look != Vec2::ZERO {
+            let asked = self.asked(dt);
+            return Orbited {
+                yaw: yaw + asked.x,
+                pitch: (pitch + asked.y).clamp(self.pitch_min, self.pitch_max),
+                idle: 0.0,
+                returned: false,
             };
-            return (yaw, pitch, idle);
         }
-        let asked = self.asked(dt);
-        (
-            yaw + asked.x,
-            (pitch + asked.y).clamp(self.pitch_min, self.pitch_max),
-            0.0,
-        )
+
+        let idle = self.idle + dt;
+        // Nowhere to return to, or nothing asked for one: hold the angle the player left.
+        let Some(wanted) = behind else {
+            return Orbited {
+                yaw,
+                pitch,
+                idle,
+                returned: self.returned,
+            };
+        };
+        let wanted = nearest(yaw, wanted);
+        let yaw = eased(yaw, wanted, self.recentre_time, dt);
+        Orbited {
+            yaw,
+            pitch,
+            idle,
+            returned: (wanted - yaw).abs() <= ARRIVED,
+        }
     }
+}
+
+/// Degrees from behind at which a return is over. Exponential easing leaves a hundredth of the gap
+/// after `recentre_time` and never exactly none, so the end is declared rather than reached.
+const ARRIVED: f32 = 0.25;
+
+/// What one step of an orbit leaves: the angles to write on the vcam, and the state to carry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Orbited {
+    pub yaw: f32,
+    pub pitch: f32,
+    pub idle: f32,
+    pub returned: bool,
 }
 
 /// The yaw that puts the camera behind `facing`, in degrees from `reference` around `up` — the same
@@ -130,9 +166,7 @@ fn nearest(yaw: f32, wanted: f32) -> f32 {
 /// One vcam's turn this step.
 struct Turn {
     entity: Entity,
-    yaw: f32,
-    pitch: f32,
-    idle: f32,
+    orbited: Orbited,
 }
 
 /// Turns every orbiting vcam by its `look`, before the rig swings the arm they set.
@@ -150,8 +184,8 @@ pub fn orbit_cameras(resources: &mut Resources) {
     if let Some(vcams) = registry.get_cpu_mut::<VirtualCamera>() {
         for turn in &turns {
             if let Some(vcam) = vcams.get_mut(turn.entity) {
-                vcam.yaw = turn.yaw;
-                vcam.pitch = turn.pitch;
+                vcam.yaw = turn.orbited.yaw;
+                vcam.pitch = turn.orbited.pitch;
             }
         }
     }
@@ -160,7 +194,8 @@ pub fn orbit_cameras(resources: &mut Resources) {
     };
     for turn in &turns {
         if let Some(orbit) = orbits.get_mut(turn.entity) {
-            orbit.idle = turn.idle;
+            orbit.idle = turn.orbited.idle;
+            orbit.returned = turn.orbited.returned;
         }
     }
 }
@@ -189,7 +224,7 @@ fn planned(resources: &Resources) -> Vec<Turn> {
             // Only a return needs to know where the target faces; turning does not, so a vcam whose
             // group carries nothing still answers the stick.
             let wanted = orbit
-                .recentring(orbit.idle + dt)
+                .returning(dt)
                 .then(|| {
                     let target = crate::plugin::target_pose(targets, vcam.group, &pose_of)?;
                     let up =
@@ -202,12 +237,9 @@ fn planned(resources: &Resources) -> Vec<Turn> {
                 })
                 .flatten();
 
-            let (yaw, pitch, idle) = orbit.stepped(vcam.yaw, vcam.pitch, wanted, dt);
             Some(Turn {
                 entity,
-                yaw,
-                pitch,
-                idle,
+                orbited: orbit.stepped(vcam.yaw, vcam.pitch, wanted, dt),
             })
         })
         .collect()

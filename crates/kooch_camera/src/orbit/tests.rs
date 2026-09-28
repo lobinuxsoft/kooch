@@ -169,6 +169,63 @@ fn a_look_cancels_the_return() {
     );
 }
 
+/// 🔴 The defect from the smoke test: the return arrives and STOPS. A "behind" recomputed every
+/// frame moves as the target turns, so a return that re-aimed would be a follow-behind the player
+/// cannot out-turn (#1345).
+#[test]
+fn an_arrived_return_lets_go() {
+    let (mut resources, vcam) = world();
+    orbit(&mut resources, vcam, |orbit| {
+        orbit.recentre_wait = 0.1;
+        orbit.recentre_time = 0.1;
+    });
+    set_yaw(&mut resources, vcam, 90.0);
+    for _ in 0..120 {
+        orbit_cameras(&mut resources);
+    }
+    assert!(
+        returned(&resources, vcam),
+        "the return never declared an end"
+    );
+
+    // The target turns a quarter: a return still live would drag the camera round with it.
+    turn_target(&mut resources, 90.0);
+    let (before, _) = angles(&resources, vcam);
+    for _ in 0..120 {
+        orbit_cameras(&mut resources);
+    }
+    let (after, _) = angles(&resources, vcam);
+    assert!(
+        (after - before).abs() < 1e-3,
+        "the camera kept chasing the target's facing: {before} then {after}"
+    );
+}
+
+/// And a look starts the next one: the latch is per idle period, not per scene.
+#[test]
+fn a_look_arms_the_next_return() {
+    let (mut resources, vcam) = world();
+    orbit(&mut resources, vcam, |orbit| {
+        orbit.recentre_wait = 0.1;
+        orbit.recentre_time = 0.1;
+    });
+    set_yaw(&mut resources, vcam, 90.0);
+    for _ in 0..120 {
+        orbit_cameras(&mut resources);
+    }
+    orbit(&mut resources, vcam, |orbit| orbit.look = Vec2::X);
+    orbit_cameras(&mut resources);
+    assert!(!returned(&resources, vcam), "a look left the latch set");
+
+    orbit(&mut resources, vcam, |orbit| orbit.look = Vec2::ZERO);
+    set_yaw(&mut resources, vcam, 90.0);
+    for _ in 0..120 {
+        orbit_cameras(&mut resources);
+    }
+    let (yaw, _) = angles(&resources, vcam);
+    assert!(yaw.abs() < 1.0, "the second return never ran: {yaw}");
+}
+
 /// 🔴 A yaw past a full turn returns the way it came, not the long way round: `nearest` is why the
 /// return crosses 360 instead of unwinding 350 degrees.
 #[test]
@@ -203,6 +260,33 @@ fn the_nearest_angle_wraps() {
     assert!((nearest(350.0, 10.0) - 370.0).abs() < 1e-4);
     assert!((nearest(10.0, 350.0) + 10.0).abs() < 1e-4);
     assert!((nearest(0.0, 0.0)).abs() < 1e-4);
+}
+
+fn returned(resources: &Resources, vcam: Entity) -> bool {
+    resources
+        .get::<ComponentRegistry>()
+        .unwrap()
+        .get_cpu::<CameraOrbit>()
+        .unwrap()
+        .get(vcam)
+        .unwrap()
+        .returned
+}
+
+/// Turns the target on the spot, which is what moves "behind" it.
+fn turn_target(resources: &mut Resources, degrees: f32) {
+    let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+    let targets: Vec<Entity> = registry
+        .get_cpu::<CameraTarget>()
+        .unwrap()
+        .iter()
+        .map(|(&entity, _)| entity)
+        .collect();
+    let transforms = registry.get_cpu_mut::<Transform>().unwrap();
+    for entity in targets {
+        let transform = transforms.get_mut(entity).unwrap();
+        transform.rotation = glam::Quat::from_rotation_y(degrees.to_radians());
+    }
 }
 
 fn set_yaw(resources: &mut Resources, vcam: Entity, yaw: f32) {
