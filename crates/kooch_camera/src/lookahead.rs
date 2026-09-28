@@ -121,6 +121,38 @@ impl Leads {
     pub fn of(&self, vcam: Entity) -> Option<Lead> {
         self.0.get(&vcam).copied()
     }
+
+    /// Remembers this vcam's lead for the next step.
+    pub fn set(&mut self, vcam: Entity, lead: Lead) {
+        self.0.insert(vcam, lead);
+    }
+}
+
+/// The Lead stage: how far ahead of the target the rig looks.
+///
+/// 🔴 An offset, not a point. With a framing it shifts where the target is HELD on screen; without
+/// one it moves what the rig follows — the same idea said in the only vocabulary each case has.
+/// Applying it in both places is two things deciding where the character sits (#1330).
+pub fn lead_stage(step: &mut crate::rig::RigStep) {
+    let Some(lookahead) = step
+        .registry
+        .get_cpu::<CameraLookahead>()
+        .and_then(|storage| storage.get(step.entity))
+        .filter(|lookahead| lookahead.enabled)
+    else {
+        return;
+    };
+    let mut lead = step
+        .carried
+        .leads
+        .of(step.entity)
+        .unwrap_or_else(|| Lead::at(step.frame.target));
+    let offset = lookahead.offset(&mut lead, step.frame.target, step.up, step.dt);
+    step.memory.leads.set(step.entity, lead);
+    match crate::framing::of(step.registry, step.entity) {
+        Some(_) => step.frame.hold(offset),
+        None => step.frame.target += offset,
+    }
 }
 
 #[cfg(test)]

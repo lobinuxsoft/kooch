@@ -1,6 +1,6 @@
 //! [`CameraPlugin`] — registers [`VirtualCamera`] and the Host that drives it.
 
-use glam::{Vec2, Vec3};
+use glam::Vec3;
 use kooch_core::app::App;
 use kooch_core::plugin::Plugin;
 use kooch_core::resource::Resources;
@@ -15,13 +15,11 @@ use kooch_ecs::transform::Transform;
 
 use crate::brain::CameraBrain;
 use crate::frame::CameraFrame;
-use crate::framing::{CameraFraming, Framed, Lens, Tracked};
-use crate::lookahead::{CameraLookahead, Lead, Leads};
-use crate::occlusion::Arms;
-use crate::target::CameraTarget;
+use crate::framing::Lens;
+use crate::rig::{CameraRig, RigMemory, RigStep};
+use crate::target::{CameraTarget, GroupPose};
 use crate::virtual_camera::{
-    INACTIVE_ALWAYS, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera, seed_reference,
-    transported,
+    INACTIVE_ALWAYS, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera,
 };
 
 /// Which way is up for a virtual camera, from its `up_mode`. Not the target's rotation: a rolling
@@ -85,7 +83,8 @@ impl Plugin for CameraPlugin {
         // `PostPhysics`: after the solver moves the target, before transforms propagate, so the
         // pose shows the same frame. `dt` is the fixed step, which keeps damping deterministic.
         app.insert_resource(CameraBlend::default());
-        app.insert_resource(HorizonFrames::default());
+        app.insert_resource(RigMemory::default());
+        app.insert_resource(CameraRig::standard());
         // Before anything reads a duration, and before an author can edit a field a switch overrode.
         app.add_system(Stage::First, crate::virtual_camera::migrate_damping_switch);
         app.add_system(Stage::First, crate::virtual_camera::report_moved_blends);
@@ -94,25 +93,6 @@ impl Plugin for CameraPlugin {
 
     fn name(&self) -> &str {
         "CameraPlugin"
-    }
-}
-
-/// The yaw origin each vcam measures from, carried between frames. Runtime state, not authored, so
-/// it lives on the Host; rebuilt from the vcams seen each frame.
-#[derive(Debug, Clone, Default)]
-pub struct HorizonFrames {
-    /// Per vcam: the up it last used, and the reference it carried.
-    frames: std::collections::HashMap<Entity, (Vec3, Vec3)>,
-}
-
-impl HorizonFrames {
-    /// This vcam's yaw origin on a new up, carried from the last; a first frame seeds it from a
-    /// world axis (see `seed_reference`).
-    fn carry(&self, entity: Entity, up: Vec3) -> Vec3 {
-        match self.frames.get(&entity) {
-            Some((last_up, reference)) => transported(*reference, *last_up, up),
-            None => seed_reference(up),
-        }
     }
 }
 
@@ -150,11 +130,8 @@ impl CameraBlend {
 /// Advances every live virtual camera, then hands the winner's pose to the camera. Keeping vcam
 /// poses separate is what lets a blend interpolate between two.
 pub fn drive_virtual_cameras(resources: &mut Resources) {
-    let (plan, horizons, arms, tracked, leads) = plan_vcam_poses(resources);
-    resources.insert(leads);
-    resources.insert(horizons);
-    resources.insert(arms);
-    resources.insert(tracked);
+    let (plan, memory) = plan_vcam_poses(resources);
+    resources.insert(memory);
     if plan.is_empty() {
         return;
     }
@@ -230,6 +207,8 @@ fn camera_pose(resources: &Resources, camera: Entity) -> Option<(Vec3, glam::Qua
 }
 
 #[cfg(test)]
+mod aim_tests;
+#[cfg(test)]
 mod blend_tests;
 #[cfg(test)]
 mod brain_tests;
@@ -260,13 +239,13 @@ struct Pose {
     priority: i32,
 }
 
-/// A group's weighted centre, and the heaviest member's rotation and entity. Averaging quaternions
-/// across members has no meaning — two characters facing each other would tilt the camera sideways.
+/// Where a vcam's group is this step, or `None` when nothing carries its tag and there is nothing
+/// to follow.
 fn target_pose(
     targets: Option<&kooch_ecs::component::ComponentStorage<CameraTarget>>,
     group: u32,
     pose_of: &impl Fn(Entity) -> Option<(Vec3, glam::Quat)>,
-) -> Option<(Vec3, glam::Quat, Entity)> {
+) -> Option<GroupPose> {
     let targets = targets?;
     let mut members: Vec<(Vec3, f32)> = Vec::new();
     let mut heaviest: Option<(f32, glam::Quat, Entity)> = None;
@@ -279,9 +258,8 @@ fn target_pose(
             continue;
         };
         members.push((position, target.weight));
-        // Ties break on the lower entity index, for the same reason vcam
-        // election does: component storage has no order to rely on, and
-        // a tie resolved differently each frame reads as jitter.
+        // Ties break on the lower entity index, for the same reason vcam election does: component
+        // storage has no order to rely on, and a tie resolved differently each frame reads as jitter.
         let better = match heaviest {
             None => true,
             Some((weight, _, held)) => {
@@ -293,58 +271,43 @@ fn target_pose(
         }
     }
 
-    let centre = crate::target::weighted_centre(&members)?;
-    let (_, rotation, entity) = heaviest?;
-    Some((centre, rotation, entity))
+    let position = crate::target::weighted_centre(&members)?;
+    let (_, rotation, heaviest) = heaviest?;
+    Some(GroupPose {
+        position,
+        rotation,
+        heaviest,
+    })
 }
 
-/// Works out every vcam's pose without holding a borrow, because writing
-/// a `Transform` needs the storage mutably and reading the target's pose
-/// needs it shared.
-type Planned = (Vec<Pose>, HorizonFrames, Arms, Tracked, Leads);
-
-fn plan_vcam_poses(resources: &Resources) -> Planned {
-    let carried = resources
-        .get::<HorizonFrames>()
-        .cloned()
-        .unwrap_or_default();
-    let carried_arms = resources.get::<Arms>().cloned().unwrap_or_default();
-    let carried_tracked = resources.get::<Tracked>().cloned().unwrap_or_default();
-    let carried_leads = resources.get::<Leads>().cloned().unwrap_or_default();
-    let mut leads = Leads::default();
-    let mut arms = Arms::default();
-    let mut tracked = Tracked::default();
+/// Runs the rig over every live vcam. Takes `&Resources` because writing a `Transform` needs the
+/// storage mutably while reading the target's pose needs it shared, so the poses are planned first
+/// and written after.
+fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, RigMemory) {
+    let carried = resources.get::<RigMemory>().cloned().unwrap_or_default();
     let Some(registry) = resources.get::<ComponentRegistry>() else {
-        return (
-            Vec::new(),
-            carried,
-            carried_arms,
-            carried_tracked,
-            carried_leads,
-        );
+        return (Vec::new(), carried);
     };
     let Some(vcams) = registry.get_cpu::<VirtualCamera>() else {
-        return (
-            Vec::new(),
-            carried,
-            carried_arms,
-            carried_tracked,
-            carried_leads,
-        );
+        return (Vec::new(), carried);
     };
-    let framings = registry.get_cpu::<CameraFraming>();
-    let lookaheads = registry.get_cpu::<CameraLookahead>();
+    let Some(rig) = resources.get::<CameraRig>() else {
+        // Once: a rig with no stages moves nothing, and a rig that says so every frame buries it.
+        static SAID: std::sync::Once = std::sync::Once::new();
+        SAID.call_once(|| {
+            tracing::warn!("no CameraRig is registered: no virtual camera can move anything");
+        });
+        return (Vec::new(), carried);
+    };
     let lens = lens(resources, registry);
     let cameras = registry.get_cpu::<PerspectiveCamera>();
     let transforms = registry.get_cpu::<Transform>();
     let globals = registry.get_cpu::<GlobalTransform>();
     let targets = registry.get_cpu::<CameraTarget>();
-
     let dt = fixed_dt(resources);
 
-    // A target's world pose. `GlobalTransform` first so a target parented
-    // to something moving is followed where it actually is, not where its
-    // local offset says.
+    // A target's world pose. `GlobalTransform` first, so a target parented to something moving is
+    // followed where it actually is and not where its local offset says.
     let pose_of = |entity: Entity| -> Option<(Vec3, glam::Quat)> {
         if let Some(global) = globals.and_then(|storage| storage.get(entity)) {
             let (_, rotation, translation) = global.matrix.to_scale_rotation_translation();
@@ -356,7 +319,7 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
     };
 
     let mut plan = Vec::new();
-    let mut horizons = HorizonFrames::default();
+    let mut memory = RigMemory::default();
     for (&entity, vcam) in vcams.iter() {
         if vcam.is_inert() {
             continue;
@@ -371,122 +334,51 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
             continue;
         }
 
-        // Nothing carries this vcam's tag, or every weight is zero: leave it in place rather than
+        // Nothing carries this vcam's tag, or every weight is zero: leave it where it is rather than
         // snapping to the origin.
-        let Some((target_pos, target_rot, target_entity)) =
-            target_pose(targets, vcam.group, &pose_of)
-        else {
+        let Some(target) = target_pose(targets, vcam.group, &pose_of) else {
             continue;
         };
         let Some(current) = transforms.and_then(|s| s.get(entity)) else {
             continue;
         };
 
-        let up = up_for(vcam, resources, target_pos, target_rot);
-        // Carried, not derived: a yaw origin built from `up` alone has a
-        // pole, and a target rolling over it swings the camera half a
-        // turn. See `seed_reference`.
-        let reference = carried.carry(entity, up);
-        horizons.frames.insert(entity, (up, reference));
-        // 🔴 How far ahead of the target the rig looks. It is an offset, not a point: with a
-        // framing it shifts where the target is HELD on screen, and without one it moves what the
-        // rig follows — the same idea said in the only vocabulary each case has. Applying it in
-        // both places is two things deciding where the character sits in frame, which is the
-        // mistake this component kept making one stage at a time (#1330).
-        let lead_offset = match lookaheads
-            .and_then(|lookaheads| lookaheads.get(entity))
-            .filter(|lookahead| lookahead.enabled)
-        {
-            Some(lookahead) => {
-                let mut lead = carried_leads
-                    .0
-                    .get(&entity)
-                    .copied()
-                    .unwrap_or_else(|| Lead::at(target_pos));
-                let offset = lookahead.offset(&mut lead, target_pos, up, dt);
-                leads.0.insert(entity, lead);
-                offset
-            }
-            None => Vec3::ZERO,
-        };
-        let framing = framings
-            .and_then(|framings| framings.get(entity))
-            .filter(|framing| framing.enabled);
-        // Only the wall sweep keeps the real target, since that is what must stay visible.
-        let framed = match framing {
-            Some(_) => target_pos,
-            None => target_pos + lead_offset,
-        };
-        // ── Stage::Body ────────────────────────────────────────────────────────────────────
-        // Where the camera stands, and where it looks from there.
-        let (desired_pos, desired_rot) = vcam.desired_with(
-            framed,
-            target_rot,
-            current.position,
-            current.rotation,
+        let up = up_for(vcam, resources, target.position, target.rotation);
+        let reference = carried.horizons.carry(entity, up);
+        memory.horizons.set(entity, up, reference);
+        // Where the rig had the camera before any wall, not where the wall put it: the damping is the
+        // body's, and a return is the collision's to time.
+        let previous = carried.arms.free_of(entity).unwrap_or(current.position);
+
+        let mut step = RigStep {
+            frame: CameraFrame::new(
+                current.position,
+                previous,
+                current.rotation,
+                target.position,
+                lens,
+            ),
+            entity,
+            vcam,
+            target,
             up,
             reference,
-        );
-        // From where the rig had the camera before any wall, not from where the wall put it: the
-        // damping is the rig's, and a return is the collision's to time.
-        let from = carried_arms.free_of(entity).unwrap_or(current.position);
-        // 🔴 A framed rig is not damped twice. The frame's ease IS the rig's smoothing — two in
-        // series on one position is what made every earlier version of this fight itself (#1329).
-        let body = match framing {
-            Some(_) => desired_pos,
-            None => vcam.damped(from, desired_pos, dt),
-        };
-
-        // The pose from here on is a value, and each stage changes the one thing it owns (#1331).
-        let mut pose = CameraFrame::new(body, from, current.rotation, framed, lens);
-
-        // ── Stage::Frame ───────────────────────────────────────────────────────────────────
-        // A lead holds the target off centre rather than moving what is framed (#1330).
-        if let Some(framing) = framing {
-            let (right, above, _) = pose.axes();
-            let span = pose.lens.span(
-                (framed - pose.position)
-                    .dot(pose.rotation * -Vec3::Z)
-                    .max(0.01),
-            );
-            pose.screen = -Vec2::new(
-                lead_offset.dot(right) / span.x,
-                lead_offset.dot(above) / span.y,
-            );
-            let mut state = carried_tracked.of(entity).unwrap_or(Framed::at(framed));
-            framing.frame(&mut state, &mut pose, dt);
-            tracked.set(entity, state);
-        }
-
-        // ── Stage::Collide ─────────────────────────────────────────────────────────────────
-        // The last word on where the camera stands: a wall pulls it in at once rather than at the
-        // damping's pace (#1251).
-        pose.displace(crate::occlusion::held(
-            resources,
-            entity,
-            target_pos,
-            Some(target_entity),
-            pose.position,
-            (&carried_arms, &mut arms),
             dt,
-        ));
-        // Damped too, because `up` is not a constant any more: crossing
-        // between two gravity fields rotates the whole basis, and
-        // snapping that in one frame throws the horizon over.
-        //
-        // ── Stage::Aim ─────────────────────────────────────────────────────────────────────
-        // 🔴 One owner. In a third-person rig this is the player's, and the only easing on it is
-        // this one — a frame that also turned the camera fought every input (#1329).
-        pose.rotation = vcam.damped_rotation(current.rotation, desired_rot, dt);
+            resources,
+            registry,
+            carried: &carried,
+            memory: &mut memory,
+        };
+        rig.run(&mut step);
 
         plan.push(Pose {
             entity,
-            position: pose.position,
-            rotation: pose.rotation,
+            position: step.frame.position,
+            rotation: step.frame.rotation,
             priority: vcam.priority,
         });
     }
-    (plan, horizons, arms, tracked, leads)
+    (plan, memory)
 }
 
 /// The lens every vcam is seen through: the driven camera's field of view over the last rendered

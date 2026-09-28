@@ -6,9 +6,10 @@
 //! this rig's bugs were found by playing because none of it was on screen.
 
 use glam::{Vec3, Vec4};
-use kooch_camera::occlusion::{Arms, CameraCollision};
+use kooch_camera::CameraLookahead;
+use kooch_camera::RigMemory;
+use kooch_camera::occlusion::CameraCollision;
 use kooch_camera::target::CameraTarget;
-use kooch_camera::{CameraLookahead, lookahead::Leads};
 use kooch_core::resource::Resources;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::hierarchy::GlobalTransform;
@@ -59,8 +60,8 @@ impl Visualizer<CameraLookahead> for LookaheadVisualizer {
             return;
         };
         let offset = resources
-            .get::<Leads>()
-            .and_then(|leads| leads.of(entity))
+            .get::<RigMemory>()
+            .and_then(|memory| memory.leads.of(entity))
             .map(|lead| lead.offset())
             .unwrap_or(Vec3::ZERO);
 
@@ -119,8 +120,8 @@ impl Visualizer<CameraCollision> for CameraCollisionVisualizer {
         );
 
         let Some((free, _, returning)) = resources
-            .get::<Arms>()
-            .and_then(|arms| arms.held_of(entity))
+            .get::<RigMemory>()
+            .and_then(|memory| memory.arms.held_of(entity))
         else {
             return;
         };
