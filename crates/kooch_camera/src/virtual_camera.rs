@@ -157,7 +157,7 @@ pub struct VirtualCamera {
     /// Seconds the camera takes to reach its pose once the target stops, per world axis — exactly,
     /// a tween that restarts while the target keeps moving. Zero is rigid.
     #[reflect(alias = "damping_value, damping_time")]
-    pub damping_duration: Vec3,
+    pub damping_value: Vec3,
     /// Seconds the handover **to** this vcam lasts, exactly; zero cuts. The incoming vcam owns it
     /// because how you arrive matters, not what came before.
     #[reflect(alias = "blend_time")]
@@ -181,7 +181,24 @@ pub struct VirtualCamera {
     /// Seconds to turn into a new orientation, exactly, so a changing up does not snap the horizon.
     /// Rotation only; zero is rigid.
     #[reflect(alias = "rotation_damping_value, rotation_damping_time")]
-    pub rotation_damping_duration: f32,
+    pub rotation_damping_value: f32,
+}
+
+/// One axis of exponential easing. `time <= 0` is rigid.
+fn eased(current: f32, desired: f32, time: f32, dt: f32) -> f32 {
+    current + (desired - current) * settled(dt, time)
+}
+
+/// What is left of a gap after `time` seconds; the rest is too small to see, as in Cinemachine.
+const RESIDUAL: f32 = 0.01;
+
+/// The fraction of a gap to close this step so that after `time` seconds only [`RESIDUAL`] is
+/// left, at any frame rate. `time <= 0` closes it at once.
+pub(crate) fn settled(dt: f32, time: f32) -> f32 {
+    if time <= 0.0 || dt <= 0.0 {
+        return 1.0;
+    }
+    1.0 - RESIDUAL.powf(dt / time)
 }
 
 /// Folds the `damping` switch a scene wrote before a zero duration said the same thing into the
@@ -201,8 +218,8 @@ pub fn migrate_damping_switch(resources: &mut kooch_core::resource::Resources) {
             continue;
         }
         vcam.damping = true;
-        vcam.damping_duration = Vec3::ZERO;
-        vcam.rotation_damping_duration = 0.0;
+        vcam.damping_value = Vec3::ZERO;
+        vcam.rotation_damping_value = 0.0;
         tracing::info!(
             target: "kooch_camera",
             entity = entity.index(),
@@ -224,7 +241,7 @@ impl Default for VirtualCamera {
             pitch: 20.0,
             look_at: LOOK_AT_SIMPLE,
             damping: true,
-            damping_duration: Vec3::splat(0.5),
+            damping_value: Vec3::splat(0.5),
             up_mode: UP_WORLD,
             // Long enough to read as a transition, short enough not to
             // feel like the game took the camera away.
@@ -232,7 +249,7 @@ impl Default for VirtualCamera {
             blend_curve: crate::blend::CURVE_SINE,
             blend_ease: crate::blend::EASE_IN_OUT,
             inactive_update: INACTIVE_NEVER,
-            rotation_damping_duration: 0.5,
+            rotation_damping_value: 0.5,
         }
     }
 }
@@ -313,28 +330,31 @@ impl VirtualCamera {
         (swung * cos_pitch + up * sin_pitch) * self.distance.max(0.0)
     }
 
-    /// Tweens `current` towards `desired`, per axis, arriving `damping_duration` after it stops moving.
-    pub fn damped(&self, damping: &mut Damping, current: Vec3, desired: Vec3, dt: f32) -> Vec3 {
-        let [x, y, z] = &mut damping.position;
-        let time = self.damping_duration;
+    /// Eases `current` towards `desired`, per axis, leaving a hundredth of the gap after
+    /// `damping_value` seconds.
+    ///
+    /// 🔴 Exponential, not a tween with a duration. A tween that restarts whenever its goal moves
+    /// spends every frame at the fastest part of its curve, and steps whenever the target starts or
+    /// stops — the "saltos raros" (#1336). This has no state to restart: the same gap, the same
+    /// fraction, whatever the goal is doing.
+    pub fn damped(&self, current: Vec3, desired: Vec3, dt: f32) -> Vec3 {
         Vec3::new(
-            x.step(current.x, desired.x, dt, time.x),
-            y.step(current.y, desired.y, dt, time.y),
-            z.step(current.z, desired.z, dt, time.z),
+            eased(current.x, desired.x, self.damping_value.x, dt),
+            eased(current.y, desired.y, self.damping_value.y, dt),
+            eased(current.z, desired.z, self.damping_value.z, dt),
         )
     }
 
     /// Tweens an orientation the same way, along the shorter arc.
-    pub fn damped_rotation(
-        &self,
-        damping: &mut Damping,
-        current: glam::Quat,
-        desired: glam::Quat,
-        dt: f32,
-    ) -> glam::Quat {
-        damping
-            .rotation
-            .step(current, desired, dt, self.rotation_damping_duration)
+    pub fn damped_rotation(&self, current: glam::Quat, desired: glam::Quat, dt: f32) -> glam::Quat {
+        // Components are not axes, and the long way round is 359° of roll.
+        let desired = match current.dot(desired) < 0.0 {
+            true => -desired,
+            false => desired,
+        };
+        current
+            .slerp(desired, settled(dt, self.rotation_damping_value))
+            .normalize()
     }
 }
 

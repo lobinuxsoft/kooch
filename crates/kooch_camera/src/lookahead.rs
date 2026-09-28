@@ -11,7 +11,6 @@ use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::FieldRange;
-use kooch_ecs::tween::Chase;
 
 /// Leads the target of the vcam it sits on along its velocity. Beside a [`VirtualCamera`]; with a
 /// [`CameraFraming`] the led point is what gets framed.
@@ -30,7 +29,7 @@ pub struct CameraLookahead {
     /// Seconds the lead takes to reach a new velocity's offset once it holds — exactly, a tween, so
     /// stopping returns the framing without a snap. Zero follows every change at once.
     #[reflect(range = LEAD_RANGE)]
-    pub smoothing_duration: f32,
+    pub smoothing_time: f32,
     /// The furthest the lead goes, in metres: a teleport is a velocity too.
     #[reflect(range = DISTANCE_RANGE)]
     pub max_distance: f32,
@@ -56,7 +55,7 @@ impl Default for CameraLookahead {
         Self {
             enabled: true,
             lead_time: 0.4,
-            smoothing_duration: 0.6,
+            smoothing_time: 0.6,
             max_distance: 4.0,
             ignore_vertical: true,
         }
@@ -70,7 +69,6 @@ impl Component for CameraLookahead {}
 pub struct Lead {
     last: Vec3,
     offset: Vec3,
-    chase: Chase<Vec3>,
 }
 
 impl Lead {
@@ -85,7 +83,6 @@ impl Lead {
         Self {
             last: at,
             offset: Vec3::ZERO,
-            chase: Chase::at(Vec3::ZERO),
         }
     }
 }
@@ -105,9 +102,11 @@ impl CameraLookahead {
         };
         let goal =
             (velocity * self.lead_time.max(0.0)).clamp_length_max(self.max_distance.max(0.0));
-        lead.offset = lead
-            .chase
-            .step(lead.offset, goal, dt, self.smoothing_duration);
+        // Exponential, like the rig's damping: the goal moves with the target's speed every step,
+        // and a tween that restarts on a moving goal steps whenever the running starts or stops
+        // (#1336).
+        let alpha = crate::virtual_camera::settled(dt, self.smoothing_time);
+        lead.offset += (goal - lead.offset) * alpha;
         lead.offset
     }
 }

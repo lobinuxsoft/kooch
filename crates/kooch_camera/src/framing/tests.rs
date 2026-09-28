@@ -105,7 +105,7 @@ fn the_screen_offset_is_where_it_holds() {
         screen: Vec2::new(0.25, 0.0),
         dead_zone: Vec2::ZERO,
         soft_zone: Vec2::ZERO,
-        soft_duration: 0.0,
+        soft_time: 0.0,
         ..Default::default()
     };
     let mut state = Framed::at(Vec3::ZERO);
@@ -116,11 +116,11 @@ fn the_screen_offset_is_where_it_holds() {
 }
 
 /// 🔴 The duration is a duration: once the target stops, the rig brings it to the dead zone's edge
-/// in exactly `soft_duration`, at any frame rate.
+/// in exactly `soft_time`, at any frame rate.
 #[test]
 fn the_soft_zone_arrives_on_time() {
     let framing = CameraFraming {
-        soft_duration: 0.5,
+        soft_time: 0.5,
         ..framing()
     };
     for fps in [30.0_f32, 60.0, 144.0] {
@@ -171,7 +171,7 @@ fn a_lead_moves_where_it_holds() {
     let centred = CameraFraming {
         dead_zone: Vec2::ZERO,
         soft_zone: Vec2::ZERO,
-        soft_duration: 0.0,
+        soft_time: 0.0,
         ..Default::default()
     };
     let target = Vec3::ZERO;

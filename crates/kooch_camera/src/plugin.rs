@@ -20,7 +20,7 @@ use crate::lookahead::{CameraLookahead, Lead, Leads};
 use crate::occlusion::Arms;
 use crate::target::CameraTarget;
 use crate::virtual_camera::{
-    Damping, INACTIVE_ALWAYS, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera, seed_reference,
+    INACTIVE_ALWAYS, SETTLE_EPSILON, UP_GRAVITY, UP_TARGET, VirtualCamera, seed_reference,
     transported,
 };
 
@@ -149,12 +149,11 @@ impl CameraBlend {
 /// Advances every live virtual camera, then hands the winner's pose to the camera. Keeping vcam
 /// poses separate is what lets a blend interpolate between two.
 pub fn drive_virtual_cameras(resources: &mut Resources) {
-    let (plan, horizons, arms, tracked, dampings, leads) = plan_vcam_poses(resources);
+    let (plan, horizons, arms, tracked, leads) = plan_vcam_poses(resources);
     resources.insert(leads);
     resources.insert(horizons);
     resources.insert(arms);
     resources.insert(tracked);
-    resources.insert(dampings);
     if plan.is_empty() {
         return;
     }
@@ -298,7 +297,7 @@ fn target_pose(
 /// Works out every vcam's pose without holding a borrow, because writing
 /// a `Transform` needs the storage mutably and reading the target's pose
 /// needs it shared.
-type Planned = (Vec<Pose>, HorizonFrames, Arms, Tracked, Dampings, Leads);
+type Planned = (Vec<Pose>, HorizonFrames, Arms, Tracked, Leads);
 
 fn plan_vcam_poses(resources: &Resources) -> Planned {
     let carried = resources
@@ -307,8 +306,6 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
         .unwrap_or_default();
     let carried_arms = resources.get::<Arms>().cloned().unwrap_or_default();
     let carried_tracked = resources.get::<Tracked>().cloned().unwrap_or_default();
-    let carried_dampings = resources.get::<Dampings>().cloned().unwrap_or_default();
-    let mut dampings = Dampings::default();
     let carried_leads = resources.get::<Leads>().cloned().unwrap_or_default();
     let mut leads = Leads::default();
     let mut arms = Arms::default();
@@ -319,7 +316,6 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
             carried,
             carried_arms,
             carried_tracked,
-            carried_dampings,
             carried_leads,
         );
     };
@@ -329,7 +325,6 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
             carried,
             carried_arms,
             carried_tracked,
-            carried_dampings,
             carried_leads,
         );
     };
@@ -431,16 +426,11 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
         // From where the rig had the camera before any wall, not from where the wall put it: the
         // damping is the rig's, and a return is the collision's to time.
         let from = carried_arms.free_of(entity).unwrap_or(current.position);
-        let mut damping = carried_dampings
-            .0
-            .get(&entity)
-            .copied()
-            .unwrap_or_else(|| Damping::at(current.position, current.rotation));
         // 🔴 A framed rig is not damped twice. The frame's ease IS the rig's smoothing — two in
         // series on one position is what made every earlier version of this fight itself (#1329).
         let body = match framing {
             Some(_) => desired_pos,
-            None => vcam.damped(&mut damping, from, desired_pos, dt),
+            None => vcam.damped(from, desired_pos, dt),
         };
 
         // The pose from here on is a value, and each stage changes the one thing it owns (#1331).
@@ -483,8 +473,7 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
         // ── Stage::Aim ─────────────────────────────────────────────────────────────────────
         // 🔴 One owner. In a third-person rig this is the player's, and the only easing on it is
         // this one — a frame that also turned the camera fought every input (#1329).
-        pose.rotation = vcam.damped_rotation(&mut damping, current.rotation, desired_rot, dt);
-        dampings.0.insert(entity, damping);
+        pose.rotation = vcam.damped_rotation(current.rotation, desired_rot, dt);
 
         plan.push(Pose {
             entity,
@@ -496,13 +485,8 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
             blend_ease: vcam.blend_ease,
         });
     }
-    (plan, horizons, arms, tracked, dampings, leads)
+    (plan, horizons, arms, tracked, leads)
 }
-
-/// Every vcam's damping tweens, carried between steps and rebuilt from the vcams seen, so a
-/// despawned one leaves nothing behind.
-#[derive(Debug, Clone, Default)]
-pub struct Dampings(std::collections::HashMap<Entity, Damping>);
 
 /// The lens every vcam is seen through: the driven camera's field of view over the last rendered
 /// aspect. A vcam frames one screen, and that is the one.

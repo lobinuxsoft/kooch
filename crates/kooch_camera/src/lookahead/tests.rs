@@ -4,7 +4,7 @@ const DT: f32 = 1.0 / 60.0;
 
 fn lookahead() -> CameraLookahead {
     CameraLookahead {
-        smoothing_duration: 0.0,
+        smoothing_time: 0.0,
         ..Default::default()
     }
 }
@@ -46,16 +46,23 @@ fn a_jump_is_not_led() {
     assert_eq!(led, Vec3::ZERO);
 }
 
-/// Stopping brings the framing back in exactly `smoothing_duration`, and not before: no snap.
+/// Stopping brings the framing back in exactly `smoothing_time`, and not before: no snap.
 #[test]
-fn stopping_returns_on_time() {
+fn stopping_eases_the_lead_out() {
     let look = CameraLookahead {
-        smoothing_duration: 0.5,
+        smoothing_time: 0.5,
         ..Default::default()
     };
-    assert_eq!(run(&look, 6.0, 120, 30), Vec3::ZERO);
-    assert!(run(&look, 6.0, 120, 29).x > 0.0, "back before its time");
-    // One step after stopping it has barely moved: the lead eases out, it does not jump.
+    // 🔴 A hundredth of the lead after its seconds, not nothing: the easing is exponential, and a
+    // tween that arrives exactly is one that restarts on a moving goal — which steps whenever the
+    // running starts or stops (#1336).
+    let led = run(&look, 6.0, 120, 0).x;
+    let left = run(&look, 6.0, 120, 30).x / led;
+    assert!(
+        (left - 0.01).abs() < 5e-3,
+        "left {left} of the lead, wanted a hundredth",
+    );
+    // And one step after stopping it has barely moved: it eases out, it does not jump.
     let first = run(&look, 6.0, 120, 1).x;
     assert!(first > 2.0, "snapped back to {first}");
 }
