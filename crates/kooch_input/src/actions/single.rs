@@ -168,6 +168,13 @@ impl LoadedActions {
         Some(super::state::evaluate(action, backend))
     }
 
+    /// Puts an action in the cache under `guid`, as the loader does. For anything that produces an
+    /// action without the asset server: a plugin, a binding built at runtime, a test in another
+    /// crate. Read now, so only a file saved later is stale.
+    pub fn load(&mut self, guid: kooch_core::Guid, action: Action) {
+        self.set(guid, action, std::time::SystemTime::now());
+    }
+
     fn set(&mut self, guid: kooch_core::Guid, action: Action, modified: std::time::SystemTime) {
         match self.by_guid.iter_mut().find(|(g, _)| *g == guid) {
             Some(slot) => slot.1 = action,

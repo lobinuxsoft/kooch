@@ -4,42 +4,70 @@ use kooch_ecs::entity::Entity;
 
 use crate::state::EntityDisplayInfo;
 
-/// The components the rig reads off the entity carrying the `VirtualCamera`, and nowhere else.
-const OF_THE_RIG: &[&str] = &["CameraLookahead", "CameraFraming", "CameraCollision"];
+/// Each camera component and the one that reads it. Anywhere else it is authored and inert.
+const OF_THE_RIG: &[(&str, &str)] = &[
+    ("CameraLookahead", "VirtualCamera"),
+    ("CameraFraming", "VirtualCamera"),
+    ("CameraCollision", "VirtualCamera"),
+    ("CameraOrbit", "VirtualCamera"),
+    // A binding fills an orbit, so the orbit is what has to be here — not the vcam.
+    ("OrbitInput", "CameraOrbit"),
+];
 
-/// A rig component on an entity with no `VirtualCamera`.
+/// A camera component on an entity without the one that reads it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Orphan(&'static str);
+pub(super) struct Orphan {
+    component: &'static str,
+    reader: &'static str,
+}
 
 impl Orphan {
     /// One line for the panel; the explanation is on hover.
     pub(super) fn summary(self) -> String {
-        format!("{} does nothing on this entity", self.0)
+        format!("{} does nothing on this entity", self.component)
     }
 
     pub(super) fn message(self) -> String {
-        format!(
-            "The rig reads {} off the entity that carries the Virtual Camera, and this entity \
-             has none — so nothing here is ever read, whatever these fields say. Move the \
-             component onto the Virtual Camera, or remove it. A Camera Brain is not a rig: it \
-             picks which virtual camera drives the camera and how it blends, nothing else.",
-            self.0,
-        )
+        let spaced = spaced(self.reader);
+        let mut message = format!(
+            "{} is read off the entity that carries the {}, and this entity has none — so \
+             nothing here is ever read, whatever these fields say. Move the component onto the \
+             {}, or remove it.",
+            self.component, spaced, spaced,
+        );
+        if self.reader == "VirtualCamera" {
+            message.push_str(
+                " A Camera Brain is not a rig: it picks which virtual camera drives the camera \
+                 and how it blends, nothing else.",
+            );
+        }
+        message
     }
 }
 
-/// Which rig components on `entity` have no virtual camera to be read by.
+/// A component's name as the Inspector titles it: `VirtualCamera` is `Virtual Camera` there.
+fn spaced(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 2);
+    for (at, letter) in name.char_indices() {
+        if at > 0 && letter.is_uppercase() {
+            out.push(' ');
+        }
+        out.push(letter);
+    }
+    out
+}
+
+/// Which camera components on `entity` have nothing here to read them.
 pub(super) fn warnings_for(entity: Entity, entities: &[EntityDisplayInfo]) -> Vec<Orphan> {
     let Some(info) = entities.iter().find(|e| e.entity == entity) else {
         return Vec::new();
     };
-    if has_component(info, "VirtualCamera") {
-        return Vec::new();
-    }
     OF_THE_RIG
         .iter()
-        .filter(|name| has_component(info, name))
-        .map(|name| Orphan(name))
+        .filter(|(component, reader)| {
+            has_component(info, component) && !has_component(info, reader)
+        })
+        .map(|(component, reader)| Orphan { component, reader })
         .collect()
 }
 

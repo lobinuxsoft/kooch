@@ -184,7 +184,7 @@ pub struct VirtualCamera {
 }
 
 /// One axis of exponential easing. `time <= 0` is rigid.
-fn eased(current: f32, desired: f32, time: f32, dt: f32) -> f32 {
+pub(crate) fn eased(current: f32, desired: f32, time: f32, dt: f32) -> f32 {
     current + (desired - current) * settled(dt, time)
 }
 

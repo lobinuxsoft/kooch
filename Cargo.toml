@@ -29,7 +29,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.93.1"
+version = "0.93.2"
 edition = "2024"
 license = "LicenseRef-Proprietary"
 repository = "https://github.com/lobinuxsoft/kooch"
@@ -240,7 +240,7 @@ default = ["window", "render", "gizmos", "world", "input"]
 window = ["dep:kooch_window"]
 render = ["dep:kooch_render", "window"]
 gizmos = ["dep:kooch_gizmos", "render"]
-input = ["dep:kooch_input", "window"]
+input = ["dep:kooch_input", "window", "kooch_camera?/input"]
 audio = ["dep:kooch_audio"]
 lighting = ["dep:kooch_lighting"]
 physics = ["dep:kooch_physics", "kooch_camera?/physics"]
