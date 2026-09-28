@@ -157,16 +157,16 @@ pub struct VirtualCamera {
     /// a tween that restarts while the target keeps moving. Zero is rigid.
     #[reflect(alias = "damping_value, damping_time")]
     pub damping_value: Vec3,
-    /// Seconds the handover **to** this vcam lasts, exactly; zero cuts. The incoming vcam owns it
-    /// because how you arrive matters, not what came before.
-    #[reflect(alias = "blend_time")]
+    /// The blend a scene wrote before blends belonged to the brain. Ignored, and said in the log
+    /// once so the number is not lost silently: a blend is between two vcams, and this is one of
+    /// them (#1339).
+    #[reflect(hidden, alias = "blend_time")]
     pub blend_duration: f32,
-    /// Shape of the blend, one of the `CURVE_*` constants. Shown even at zero duration:
-    /// `shown_when` cannot enumerate every float above zero.
-    #[reflect(choices = crate::blend::BLEND_CURVE_CHOICES)]
+    /// The same, as above.
+    #[reflect(hidden)]
     pub blend_curve: u32,
-    /// Which end of the blend is slow. One of the `EASE_*` constants.
-    #[reflect(choices = crate::blend::BLEND_EASE_CHOICES)]
+    /// The same, as above.
+    #[reflect(hidden)]
     pub blend_ease: u32,
     /// Which way is up for this vcam: one of the `UP_*` constants.
     /// `Gravity` asks the field, since a rolling body's rotation is no up; without `kooch_gravity`
@@ -198,6 +198,34 @@ pub(crate) fn settled(dt: f32, time: f32) -> f32 {
         return 1.0;
     }
     1.0 - RESIDUAL.powf(dt / time)
+}
+
+/// Says once, per vcam, that a blend written on it is not read any more, and what it said.
+///
+/// 🔴 Not migrated, because there is nowhere unambiguous to put it: several vcams each carry a
+/// number and the brain needs one. Silently dropping it would change how a scene cuts with nothing
+/// on screen to explain it, so the number is logged and the author moves it (#1339).
+pub fn report_moved_blends(resources: &mut kooch_core::resource::Resources) {
+    let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
+        return;
+    };
+    let Some(storage) = registry.get_cpu_mut::<VirtualCamera>() else {
+        return;
+    };
+    for (&entity, vcam) in storage.iter_mut() {
+        if vcam.blend_duration < 0.0 {
+            continue;
+        }
+        tracing::info!(
+            target: "kooch_camera",
+            entity = entity.index(),
+            blend_duration = vcam.blend_duration,
+            "a virtual camera's blend is the brain's now; set it on the camera that carries the \
+             CameraBrain",
+        );
+        // Negative marks it said: a blend is never negative, so nothing an author can type is lost.
+        vcam.blend_duration = -1.0;
+    }
 }
 
 /// Folds the `damping` switch a scene wrote before a zero duration said the same thing into the

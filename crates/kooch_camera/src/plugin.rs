@@ -88,6 +88,7 @@ impl Plugin for CameraPlugin {
         app.insert_resource(HorizonFrames::default());
         // Before anything reads a duration, and before an author can edit a field a switch overrode.
         app.add_system(Stage::First, crate::virtual_camera::migrate_damping_switch);
+        app.add_system(Stage::First, crate::virtual_camera::report_moved_blends);
         app.add_system(Stage::PostPhysics, run_if_playing(drive_virtual_cameras));
     }
 
@@ -166,7 +167,9 @@ pub fn drive_virtual_cameras(resources: &mut Resources) {
         return;
     };
     let (target_pos, target_rot) = (pose.position, pose.rotation);
-    let (duration, curve, ease) = (pose.blend_duration, pose.blend_curve, pose.blend_ease);
+    // 🔴 The brain's, not the incoming vcam's. A blend is between two of them, and asking one only
+    // raises "which?" — the answer used to be "whichever is arriving", a convention (#1339).
+    let (duration, curve, ease) = blend_settings(resources, camera);
 
     let dt = fixed_dt(resources);
     let mut blend = resources.get::<CameraBlend>().copied().unwrap_or_default();
@@ -207,9 +210,6 @@ pub fn drive_virtual_cameras(resources: &mut Resources) {
             position,
             rotation,
             priority: 0,
-            blend_duration: 0.0,
-            blend_curve: 0,
-            blend_ease: 0,
         }],
     );
 }
@@ -243,17 +243,21 @@ fn short_slerp(from: glam::Quat, to: glam::Quat, t: f32) -> glam::Quat {
     from.slerp(to, t).normalize()
 }
 
+/// How the brain on `camera` blends between virtual cameras.
+fn blend_settings(resources: &Resources, camera: Entity) -> (f32, u32, u32) {
+    let brain = resources
+        .get::<ComponentRegistry>()
+        .and_then(|registry| registry.get_cpu::<CameraBrain>()?.get(camera).copied())
+        .unwrap_or_default();
+    (brain.blend_duration, brain.blend_curve, brain.blend_ease)
+}
+
 /// A vcam and where it decided to be this frame.
 struct Pose {
     entity: Entity,
     position: Vec3,
     rotation: glam::Quat,
     priority: i32,
-    /// Copied off the vcam so electing one does not need a second lookup
-    /// while the component storage is borrowed elsewhere.
-    blend_duration: f32,
-    blend_curve: u32,
-    blend_ease: u32,
 }
 
 /// A group's weighted centre, and the heaviest member's rotation and entity. Averaging quaternions
@@ -480,9 +484,6 @@ fn plan_vcam_poses(resources: &Resources) -> Planned {
             position: pose.position,
             rotation: pose.rotation,
             priority: vcam.priority,
-            blend_duration: vcam.blend_duration,
-            blend_curve: vcam.blend_curve,
-            blend_ease: vcam.blend_ease,
         });
     }
     (plan, horizons, arms, tracked, leads)

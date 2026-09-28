@@ -605,7 +605,9 @@ fn old_duration_names_load() {
 
     let mut collision = crate::CameraCollision::default();
     collision.reflect_set("return_time", F32(0.4)).unwrap();
-    assert_eq!(collision.return_duration, 0.4);
+    assert_eq!(collision.damping, 0.4);
+    collision.reflect_set("return_duration", F32(0.6)).unwrap();
+    assert_eq!(collision.damping, 0.6);
 }
 
 /// 🔴 #1333: `damping: false` and a zero duration said the same thing, and the pair could
