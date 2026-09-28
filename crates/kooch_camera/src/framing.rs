@@ -57,6 +57,35 @@ pub struct CameraFraming {
     pub soft_time: f32,
 }
 
+/// The enabled framing on `vcam`, if it has one.
+///
+/// 🔴 The only place that question is asked: the body reads it to know it must not damp, and the
+/// Frame stage to know it runs at all. Two lookups would be two answers waiting to disagree.
+pub fn of(
+    registry: &kooch_ecs::component::ComponentRegistry,
+    vcam: Entity,
+) -> Option<CameraFraming> {
+    registry
+        .get_cpu::<CameraFraming>()?
+        .get(vcam)
+        .copied()
+        .filter(|framing| framing.enabled)
+}
+
+/// The Frame stage: moves the camera sideways so the target lands where it is held on screen.
+pub fn frame_stage(step: &mut crate::rig::RigStep) {
+    let Some(framing) = of(step.registry, step.entity) else {
+        return;
+    };
+    let mut state = step
+        .carried
+        .tracked
+        .of(step.entity)
+        .unwrap_or(Framed::at(step.frame.target));
+    framing.frame(&mut state, &mut step.frame, step.dt);
+    step.memory.tracked.set(step.entity, state);
+}
+
 /// How far a target or a camera may drift and still count as standing still, in metres.
 const STILL: f32 = 1e-5;
 

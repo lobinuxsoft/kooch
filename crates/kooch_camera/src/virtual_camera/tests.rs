@@ -44,13 +44,31 @@ fn the_default_is_ready_to_work_the_moment_something_is_tagged() {
     );
 }
 
+/// Both quantities at once, seeding the yaw origin as a first step does — what the rig's Body and
+/// Aim stages each do one of.
+fn desired(
+    vcam: &VirtualCamera,
+    target: Vec3,
+    target_rot: glam::Quat,
+    current: Vec3,
+    current_rot: glam::Quat,
+    up: Vec3,
+) -> (Vec3, glam::Quat) {
+    let up = super::normalised_up(up);
+    let reference = seed_reference(up);
+    let position = vcam.wanted(target, current, up, reference);
+    let rotation = vcam.aimed(position, target, target_rot, current_rot, up, reference);
+    (position, rotation)
+}
+
 #[test]
 fn the_default_frames_a_subject_correctly() {
     let v = VirtualCamera::default();
     assert!(!v.is_inert());
 
     let target = Vec3::new(0.0, 0.0, -20.0);
-    let (pos, rot) = v.desired(
+    let (pos, rot) = desired(
+        &v,
         target,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -72,7 +90,8 @@ fn the_default_frames_a_subject_correctly() {
 fn simple_follow_is_the_target_plus_the_offset() {
     let mut r = vcam(FOLLOW_SIMPLE);
     r.offset = Vec3::new(0.0, 3.0, 10.0);
-    let (pos, _) = r.desired(
+    let (pos, _) = desired(
+        &r,
         Vec3::new(5.0, 0.0, 0.0),
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -88,7 +107,8 @@ fn the_spring_arm_keeps_its_length_at_every_yaw() {
     r.distance = 7.0;
     for yaw in [0.0, 37.0, 90.0, 180.0, -145.0] {
         r.yaw = yaw;
-        let (pos, _) = r.desired(
+        let (pos, _) = desired(
+            &r,
             Vec3::ZERO,
             glam::Quat::IDENTITY,
             Vec3::ZERO,
@@ -109,7 +129,8 @@ fn the_spring_arm_keeps_its_length_at_every_yaw() {
 fn pitch_is_clamped_short_of_the_pole() {
     let mut r = vcam(FOLLOW_THIRD_PERSON);
     r.pitch = 90.0;
-    let (pos, _) = r.desired(
+    let (pos, _) = desired(
+        &r,
         Vec3::ZERO,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -128,7 +149,8 @@ fn follow_none_leaves_the_position_alone() {
     let mut r = vcam(FOLLOW_NONE);
     r.look_at = LOOK_AT_SIMPLE;
     let here = Vec3::new(1.0, 2.0, 3.0);
-    let (pos, _) = r.desired(
+    let (pos, _) = desired(
+        &r,
         Vec3::new(9.0, 0.0, 0.0),
         glam::Quat::IDENTITY,
         here,
@@ -207,7 +229,8 @@ fn look_at_points_the_camera_at_the_target() {
         (Vec3::new(3.0, 4.0, 5.0), Vec3::new(-2.0, 1.0, 8.0)),
         (Vec3::new(-7.0, 2.0, 0.0), Vec3::ZERO),
     ] {
-        let (_, rot) = r.desired(
+        let (_, rot) = desired(
+            &r,
             target,
             glam::Quat::IDENTITY,
             eye,
@@ -230,7 +253,8 @@ fn look_at_points_the_camera_at_the_target() {
 fn look_at_keeps_the_horizon_upright() {
     let mut r = vcam(FOLLOW_NONE);
     r.look_at = LOOK_AT_SIMPLE;
-    let (_, rot) = r.desired(
+    let (_, rot) = desired(
+        &r,
         Vec3::new(0.0, 0.0, -10.0),
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -250,7 +274,8 @@ fn look_at_keeps_the_horizon_upright() {
 fn the_canonical_look_at_is_the_identity() {
     let mut r = vcam(FOLLOW_NONE);
     r.look_at = LOOK_AT_SIMPLE;
-    let (_, rot) = r.desired(
+    let (_, rot) = desired(
+        &r,
         Vec3::new(0.0, 0.0, -1.0),
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -272,7 +297,14 @@ fn look_at_none_keeps_the_cameras_own_rotation() {
     r.look_at = LOOK_AT_NONE;
     let mine = glam::Quat::from_rotation_y(0.7);
     let targets = glam::Quat::from_rotation_x(1.3);
-    let (_, rot) = r.desired(Vec3::new(4.0, 0.0, 0.0), targets, Vec3::ZERO, mine, Vec3::Y);
+    let (_, rot) = desired(
+        &r,
+        Vec3::new(4.0, 0.0, 0.0),
+        targets,
+        Vec3::ZERO,
+        mine,
+        Vec3::Y,
+    );
     assert!(
         rot.abs_diff_eq(mine, 1e-6),
         "expected {mine:?}, got {rot:?}"
@@ -288,7 +320,8 @@ fn world_up_reproduces_the_old_fixed_axis_arm() {
     for (yaw, pitch) in [(0.0, 0.0), (30.0, 15.0), (-120.0, -40.0), (180.0, 60.0)] {
         r.yaw = yaw;
         r.pitch = pitch;
-        let (pos, _) = r.desired(
+        let (pos, _) = desired(
+            &r,
             Vec3::ZERO,
             glam::Quat::IDENTITY,
             Vec3::ZERO,
@@ -318,7 +351,8 @@ fn the_arm_follows_an_arbitrary_up() {
     // Gravity pulling along -X means up is +X.
     let up = Vec3::X;
     let target = Vec3::new(10.0, 0.0, 0.0);
-    let (pos, rot) = r.desired(
+    let (pos, rot) = desired(
+        &r,
         target,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -350,7 +384,8 @@ fn pitch_raises_the_arm_along_the_local_up() {
     r.distance = 3.0;
     r.pitch = 30.0;
     let up = Vec3::new(0.0, 0.0, 1.0);
-    let (pos, _) = r.desired(
+    let (pos, _) = desired(
+        &r,
         Vec3::ZERO,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -371,7 +406,8 @@ fn pitch_raises_the_arm_along_the_local_up() {
 fn a_zero_up_falls_back_to_world_instead_of_nan() {
     let mut r = vcam(FOLLOW_THIRD_PERSON);
     r.look_at = LOOK_AT_SIMPLE;
-    let (pos, rot) = r.desired(
+    let (pos, rot) = desired(
+        &r,
         Vec3::ZERO,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -454,7 +490,8 @@ fn a_disabled_rig_is_inert() {
 fn looking_at_where_you_already_are_is_not_a_nan() {
     let mut r = vcam(FOLLOW_GLUED);
     r.look_at = LOOK_AT_SIMPLE;
-    let (_, rot) = r.desired(
+    let (_, rot) = desired(
+        &r,
         Vec3::splat(2.0),
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -470,7 +507,8 @@ fn looking_at_where_you_already_are_is_not_a_nan() {
 fn looking_straight_down_stays_finite() {
     let mut r = vcam(FOLLOW_NONE);
     r.look_at = LOOK_AT_SIMPLE;
-    let (_, rot) = r.desired(
+    let (_, rot) = desired(
+        &r,
         Vec3::ZERO,
         glam::Quat::IDENTITY,
         Vec3::new(0.0, 10.0, 0.0),
@@ -506,14 +544,7 @@ fn rolling_over_the_pole_does_not_flip() {
         reference = transported(reference, up, next);
         up = next;
 
-        let (position, _) = vcam.desired_with(
-            Vec3::ZERO,
-            glam::Quat::IDENTITY,
-            Vec3::ZERO,
-            glam::Quat::IDENTITY,
-            up,
-            reference,
-        );
+        let position = vcam.wanted(Vec3::ZERO, Vec3::ZERO, up, reference);
         if let Some(previous) = previous {
             // One degree of arc at five metres is under a tenth of a
             // metre. A flip is seven.

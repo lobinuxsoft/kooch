@@ -30,6 +30,20 @@ impl Default for CameraTarget {
     }
 }
 
+/// Where a rig's group is, and which member speaks for it.
+#[derive(Debug, Clone, Copy)]
+pub struct GroupPose {
+    /// The group's weighted centre.
+    pub position: glam::Vec3,
+    /// The heaviest member's rotation.
+    ///
+    /// 🔴 One member's, never an average: averaging quaternions across a group has no meaning, and
+    /// two characters facing each other would tilt the camera sideways.
+    pub rotation: glam::Quat,
+    /// The member that rotation came from, so the collision sweep can ignore it.
+    pub heaviest: kooch_ecs::entity::Entity,
+}
+
 /// The weighted mean of a group's positions — exactly one member's position when alone. `None` when
 /// the group is empty or every weight is zero, leaving the camera in place.
 pub fn weighted_centre(members: &[(Vec3, f32)]) -> Option<Vec3> {

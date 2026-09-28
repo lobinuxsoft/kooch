@@ -1,6 +1,8 @@
 //! The rig with a [`CameraFraming`] (#1252): a target wandering inside the dead zone moves nothing.
 
 use super::*;
+use crate::{CameraFraming, CameraLookahead};
+use glam::Vec2;
 use kooch_ecs::allocator::EntityAllocator;
 
 /// A `Simple` vcam 5 m behind a target at the origin, framed with the defaults, and the target.
@@ -46,6 +48,7 @@ fn world() -> (Resources, Entity, Entity) {
         .insert(vcam, CameraFraming::default());
     resources.insert(allocator);
     resources.insert(registry);
+    resources.insert(crate::rig::CameraRig::standard());
     (resources, vcam, target)
 }
 

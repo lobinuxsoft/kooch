@@ -290,56 +290,38 @@ impl VirtualCamera {
         !self.enabled || (self.follow == FOLLOW_NONE && self.look_at == LOOK_AT_NONE)
     }
 
-    /// The pose this vcam wants before damping, as a pure function of the target's pose, its
-    /// current pose and a resolved `up`.
-    /// `current_rot` lets `LookAt::None` leave the rotation alone.
-    pub fn desired(
-        &self,
-        target_pos: Vec3,
-        target_rot: glam::Quat,
-        current_pos: Vec3,
-        current_rot: glam::Quat,
-        up: Vec3,
-    ) -> (Vec3, glam::Quat) {
+    /// Where this vcam wants to stand, before any damping: a pure function of the point it follows,
+    /// where it is now and a resolved `up`.
+    ///
+    /// `current` is what `Follow::None` keeps, which is what lets a vcam look without moving.
+    pub fn wanted(&self, target: Vec3, current: Vec3, up: Vec3, reference: Vec3) -> Vec3 {
         let up = normalised_up(up);
-        self.desired_with(
-            target_pos,
-            target_rot,
-            current_pos,
-            current_rot,
-            up,
-            seed_reference(up),
-        )
+        match self.follow {
+            FOLLOW_GLUED => target,
+            FOLLOW_SIMPLE => target + self.offset,
+            FOLLOW_THIRD_PERSON => target + self.arm(up, reference),
+            _ => current,
+        }
     }
 
-    /// The same, given the yaw origin to measure from — carried per vcam by the Host, since it
-    /// cannot come from `up` alone (see `seed_reference`).
-    pub fn desired_with(
+    /// Where this vcam wants to look from `eye`, before any damping.
+    ///
+    /// `current` is what `LookAt::None` keeps, so a rig can move without turning.
+    pub fn aimed(
         &self,
-        target_pos: Vec3,
+        eye: Vec3,
+        target: Vec3,
         target_rot: glam::Quat,
-        current_pos: Vec3,
-        current_rot: glam::Quat,
+        current: glam::Quat,
         up: Vec3,
         reference: Vec3,
-    ) -> (Vec3, glam::Quat) {
+    ) -> glam::Quat {
         let up = normalised_up(up);
-        let position = match self.follow {
-            FOLLOW_GLUED => target_pos,
-            FOLLOW_SIMPLE => target_pos + self.offset,
-            FOLLOW_THIRD_PERSON => target_pos + self.arm(up, reference),
-            // `None` keeps the camera wherever it is, which is what lets
-            // a vcam do look-at only — a turret that tracks without moving.
-            _ => current_pos,
-        };
-
-        let rotation = match self.look_at {
+        match self.look_at {
             LOOK_AT_MIMIC => target_rot,
-            LOOK_AT_SIMPLE => look_at(position, target_pos, up, reference),
-            _ => current_rot,
-        };
-
-        (position, rotation)
+            LOOK_AT_SIMPLE => look_at(eye, target, up, reference),
+            _ => current,
+        }
     }
 
     /// The spring arm's offset: around `up` by yaw, raised off the horizon by pitch — the horizon
@@ -453,6 +435,45 @@ pub(crate) fn look_at(eye: Vec3, target: Vec3, up: Vec3, reference: Vec3) -> gla
     let up = right.cross(forward);
     // The camera looks down -Z, so the basis' forward column is negated.
     glam::Quat::from_mat3(&glam::Mat3::from_cols(right, up, -forward))
+}
+
+/// The Body stage: where the camera stands.
+///
+/// 🔴 A framed rig is **not** damped twice. The frame's ease IS the body's smoothing — two eases in
+/// series on one position is what made every earlier version of this rig fight itself (#1329).
+pub fn body_stage(step: &mut crate::rig::RigStep) {
+    let wanted = step.vcam.wanted(
+        step.frame.target,
+        step.frame.position,
+        step.up,
+        step.reference,
+    );
+    let placed = match crate::framing::of(step.registry, step.entity) {
+        Some(_) => wanted,
+        None => step.vcam.damped(step.frame.previous, wanted, step.dt),
+    };
+    step.frame.place(placed);
+}
+
+/// The Aim stage: where the camera looks. One owner — in a third-person rig it is the player's, and
+/// the only easing on it is this one (#1329).
+///
+/// 🔴 Aimed from where the **body** left the camera, not from where a frame or a wall left it. A
+/// frame says "hold the target off centre" by moving the camera while the aim stays the body's, so
+/// aiming from the moved position would cancel the frame it just asked for. A wall pulls in along
+/// the same line, so for it the two are the same direction anyway.
+pub fn aim_stage(step: &mut crate::rig::RigStep) {
+    let aimed = step.vcam.aimed(
+        step.frame.free,
+        step.frame.target,
+        step.target.rotation,
+        step.frame.rotation,
+        step.up,
+        step.reference,
+    );
+    step.frame.rotation = step
+        .vcam
+        .damped_rotation(step.frame.rotation, aimed, step.dt);
 }
 
 #[cfg(test)]

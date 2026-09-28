@@ -16,11 +16,15 @@ use crate::framing::Lens;
 /// One vcam's pose in flight, and what every stage needs to answer about it.
 #[derive(Debug, Clone, Copy)]
 pub struct CameraFrame {
-    /// Where the camera stands. [`Stage::Body`] decides it, [`Stage::Frame`] offsets it sideways,
-    /// [`Stage::Collide`] has the last word.
+    /// Where the camera stands. [`Body`] decides it, [`Frame`] offsets it sideways, [`Collide`] has
+    /// the last word.
+    ///
+    /// [`Body`]: crate::rig::RigStage::Body
+    /// [`Frame`]: crate::rig::RigStage::Frame
+    /// [`Collide`]: crate::rig::RigStage::Collide
     pub position: Vec3,
-    /// Where it looks. [`Stage::Aim`]'s, and nobody else's — in a third-person rig this belongs to
-    /// whoever is holding the stick.
+    /// Where it looks. [`Aim`](crate::rig::RigStage::Aim)'s, and nobody else's — in a third-person
+    /// rig this belongs to whoever is holding the stick.
     pub rotation: Quat,
     /// 🔴 Where the body wanted to stand, before a frame or a wall moved it. Carried so a later
     /// stage never has to ask "was I pushed?" — the framing had to be handed this by hand, and the
@@ -62,10 +66,31 @@ impl CameraFrame {
         )
     }
 
-    /// Moves the camera without touching where the body wanted it — what [`Stage::Frame`] and
-    /// [`Stage::Collide`] do, and what makes `free` worth carrying.
+    /// Where the body stands the camera: the answer every later stage measures its own against.
+    pub fn place(&mut self, position: Vec3) {
+        self.position = position;
+        self.free = position;
+    }
+
+    /// Moves the camera without touching where the body wanted it — what the [`Frame`] and
+    /// [`Collide`] stages do, and what makes `free` worth carrying.
+    ///
+    /// [`Frame`]: crate::rig::RigStage::Frame
+    /// [`Collide`]: crate::rig::RigStage::Collide
     pub fn displace(&mut self, position: Vec3) {
         self.position = position;
+    }
+
+    /// Holds the target this far off centre, given as a world offset.
+    ///
+    /// 🔴 A lead moves where the character sits on screen, not what the rig follows. Said in both
+    /// vocabularies it is two things deciding the same thing (#1330).
+    pub fn hold(&mut self, offset: Vec3) {
+        let (right, above, forward) = self.axes();
+        let span = self
+            .lens
+            .span((self.target - self.position).dot(forward).max(0.01));
+        self.screen = -Vec2::new(offset.dot(right) / span.x, offset.dot(above) / span.y);
     }
 }
 

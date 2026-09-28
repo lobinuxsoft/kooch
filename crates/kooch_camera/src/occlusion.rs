@@ -116,6 +116,25 @@ impl Arms {
     }
 }
 
+/// The Collide stage: the last word on where the camera stands.
+///
+/// A wall pulls it in at once rather than at the damping's pace (#1251), and along the same line, so
+/// the framing survives — the camera still looks at the target from the same side, only closer.
+pub fn collide_stage(step: &mut crate::rig::RigStep) {
+    let carried = step.carried;
+    let (free, target) = (step.frame.position, step.target);
+    let held = held(
+        step.resources,
+        step.entity,
+        target.position,
+        Some(target.heaviest),
+        free,
+        (&carried.arms, &mut step.memory.arms),
+        step.dt,
+    );
+    step.frame.displace(held);
+}
+
 /// The arm this frame, and the return clock to carry. Shorter than last frame is at once: a camera
 /// that eased into a wall would show its inside. Longer is a tween that lasts **exactly**
 /// `return_duration`, from wherever the arm was when the way cleared.

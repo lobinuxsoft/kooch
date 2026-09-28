@@ -430,8 +430,8 @@ fn selected_framing(
     // 🔴 The state beside the settings: where the lead has moved the held point, and where the
     // target actually sits. Both are what the zones are about, and neither was drawn (#1334).
     let lead = resources
-        .get::<kooch_camera::lookahead::Leads>()
-        .and_then(|leads| leads.of(*entity))
+        .get::<kooch_camera::RigMemory>()
+        .and_then(|memory| memory.leads.of(*entity))
         .map(|lead| lead.offset())
         .unwrap_or(glam::Vec3::ZERO);
 
