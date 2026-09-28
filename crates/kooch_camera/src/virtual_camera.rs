@@ -5,7 +5,6 @@ use glam::Vec3;
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 use kooch_ecs::reflect::{FieldChoice, FieldCondition};
-use kooch_ecs::tween::Chase;
 
 /// No follow logic; the pose is whatever else wrote it.
 pub const FOLLOW_NONE: u32 = 0;
@@ -355,28 +354,6 @@ impl VirtualCamera {
         current
             .slerp(desired, settled(dt, self.rotation_damping_value))
             .normalize()
-    }
-}
-
-/// A vcam's damping in flight: one tween per world axis and one for the orientation. Carried by the
-/// Host between steps, since a tween is a clock.
-#[derive(Debug, Clone, Copy)]
-pub struct Damping {
-    position: [Chase<f32>; 3],
-    rotation: Chase<glam::Quat>,
-}
-
-impl Damping {
-    /// At rest on a pose.
-    pub fn at(position: Vec3, rotation: glam::Quat) -> Self {
-        Self {
-            position: [
-                Chase::at(position.x),
-                Chase::at(position.y),
-                Chase::at(position.z),
-            ],
-            rotation: Chase::at(rotation),
-        }
     }
 }
 

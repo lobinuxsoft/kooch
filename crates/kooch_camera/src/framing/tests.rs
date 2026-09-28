@@ -130,7 +130,7 @@ fn the_soft_zone_arrives_on_time() {
             let walk = (0.25 * fps).round() as usize;
             let target = Vec3::new(3.0, 0.0, 0.0);
             let mut eye = BACK;
-            let mut at = |state: &mut Framed, point: Vec3, eye: Vec3| {
+            let at = |state: &mut Framed, point: Vec3, eye: Vec3| {
                 let mut frame = frame_at(BACK + Vec3::X * point.x, eye, point, Vec3::ZERO);
                 framing.frame(state, &mut frame, dt);
                 frame.position
