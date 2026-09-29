@@ -321,6 +321,25 @@ pub(crate) fn parse_field_group(field: &syn::Field) -> Result<Option<String>, To
 /// Parses the struct's `#[reflect(category = ...)]`: `Ok(Some(name))`, `Ok(None)` for the default,
 /// or a compile error for a non-string.
 pub(crate) fn parse_category_attr(input: &DeriveInput) -> Result<Option<String>, TokenStream> {
+    parse_type_string(input, "category")
+}
+
+/// Parses the struct's `#[reflect(alias = "old::Name, older::Name")]`: the type names a saved scene
+/// may still call this component, so a rename does not drop it from every entity (#1368).
+pub(crate) fn parse_type_aliases(input: &DeriveInput) -> Result<Vec<String>, TokenStream> {
+    Ok(parse_type_string(input, "alias")?
+        .into_iter()
+        .flat_map(|list| {
+            list.split(',')
+                .map(|name| name.trim().to_owned())
+                .filter(|name| !name.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .collect())
+}
+
+/// The shared shape of `#[reflect(<key> = "...")]` on the struct itself.
+fn parse_type_string(input: &DeriveInput, key: &str) -> Result<Option<String>, TokenStream> {
     for attr in &input.attrs {
         if !attr.path().is_ident("reflect") {
             continue;
@@ -337,7 +356,7 @@ pub(crate) fn parse_category_attr(input: &DeriveInput) -> Result<Option<String>,
                 value: syn::Expr::Lit(expr_lit),
                 ..
             }) = meta
-                && path.is_ident("category")
+                && path.is_ident(key)
                 && let Lit::Str(lit_str) = &expr_lit.lit
             {
                 return Ok(Some(lit_str.value()));

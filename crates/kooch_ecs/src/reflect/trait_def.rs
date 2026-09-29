@@ -84,4 +84,17 @@ pub trait Reflect: Send + Sync + 'static {
     {
         None
     }
+
+    /// Type names a saved file may still call this component, from `#[reflect(alias = "...")]`.
+    ///
+    /// 🔴 A scene stores a component as its `type_name` and resolves it by string. Rename the type
+    /// without listing the old name here and the component **disappears from the entity** on load:
+    /// nothing fails, nothing logs, the fields tuned for hours are simply not there (#1368).
+    /// A reader only — saving always writes the current name, so a file rewrites itself once.
+    fn aliases() -> &'static [&'static str]
+    where
+        Self: Sized,
+    {
+        &[]
+    }
 }

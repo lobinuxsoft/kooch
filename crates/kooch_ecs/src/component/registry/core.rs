@@ -185,9 +185,42 @@ impl ComponentRegistry {
     /// Registers a CPU-only component with reflection support.
     pub fn register_cpu_reflected<T: Component + Reflect>(&mut self) {
         let id = self.register_cpu::<T>();
+        self.refuse_claimed_names::<T>(id);
         let slot = &mut self.slots[id.index()];
         if slot.reflector.is_none() {
             slot.reflector = Some(Box::new(TypedReflectAccessor::<T>::new_cpu()));
+        }
+    }
+
+    /// Panics where `T`'s name or one of its aliases is already another type's.
+    ///
+    /// 🔴 Loudly, at registration, because the alternative is a load picking one of them and the
+    /// other component vanishing from every entity with nothing said (#1368). Both directions: the
+    /// clash is the same whichever of the two registered first.
+    fn refuse_claimed_names<T: Component + Reflect>(&self, mine: StorageId) {
+        let name = std::any::type_name::<T>();
+        for alias in T::aliases() {
+            if let Some(other) = self.slots.iter().find(|slot| slot.name == *alias) {
+                assert!(
+                    other.type_id == TypeId::of::<T>(),
+                    "{name} claims the alias {alias}, which is {}'s own name",
+                    other.name,
+                );
+            }
+        }
+        for (at, slot) in self.slots.iter().enumerate() {
+            if at == mine.index() {
+                continue;
+            }
+            let taken = slot
+                .reflector
+                .as_ref()
+                .is_some_and(|reflector| reflector.aliases().contains(&name));
+            assert!(
+                !taken,
+                "{} claims the alias {name}, which is a live type",
+                slot.name
+            );
         }
     }
 
@@ -347,13 +380,25 @@ impl ComponentRegistry {
             .collect()
     }
 
-    /// Looks up a `TypeId` by its full type name string.
+    /// Looks up a `TypeId` by its full type name string, or by a name the type used to be saved
+    /// under (#1368).
     ///
     /// Linear scan of the slots. Only called at scene load time.
+    ///
+    /// 🔴 Live names first, every one of them, before any alias is considered. A type that still
+    /// exists always answers for its own name, whatever an unrelated type claims it used to be
+    /// called — otherwise registration order would decide which component a scene gets.
     pub fn type_id_by_name(&self, name: &str) -> Option<TypeId> {
         self.slots
             .iter()
             .find(|slot| slot.name == name)
+            .or_else(|| {
+                self.slots.iter().find(|slot| {
+                    slot.reflector
+                        .as_ref()
+                        .is_some_and(|reflector| reflector.aliases().contains(&name))
+                })
+            })
             .map(|slot| slot.type_id)
     }
 
