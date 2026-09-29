@@ -185,6 +185,11 @@ pub fn report_orphans(resources: &mut Resources) {
             &posed,
         );
         sweep(
+            "ThirdPersonAim",
+            entities_of::<crate::ThirdPersonAim>(registry),
+            &posed,
+        );
+        sweep(
             "CameraWhen",
             entities_of::<crate::when::CameraWhen>(registry),
             &posed,

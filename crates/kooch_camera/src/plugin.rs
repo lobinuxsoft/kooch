@@ -68,6 +68,8 @@ impl Plugin for CameraComponentsPlugin {
                 registry.register_cpu_reflected::<crate::lookahead::CameraLookahead>();
                 registry.register_cpu_reflected::<crate::orbit::CameraOrbit>();
                 registry.register_cpu_reflected::<crate::when::CameraWhen>();
+                registry.register_cpu_reflected::<crate::PositionComposer>();
+                registry.register_cpu_reflected::<crate::ThirdPersonAim>();
                 #[cfg(feature = "input")]
                 {
                     registry.register_cpu_reflected::<crate::orbit::input::OrbitInput>();
@@ -124,6 +126,12 @@ impl Plugin for CameraPlugin {
             run_if_playing(crate::orbit::orbit_cameras),
         );
         app.add_system(Stage::PostPhysics, run_if_playing(drive_virtual_cameras));
+        // After the rig: what the camera aims at is read off where the rig left it, walls included.
+        app.add_ordered(
+            Stage::PostPhysics,
+            Order::after("drive_virtual_cameras"),
+            run_if_playing(crate::third_person_aim::resolve_aims),
+        );
     }
 
     fn name(&self) -> &str {
