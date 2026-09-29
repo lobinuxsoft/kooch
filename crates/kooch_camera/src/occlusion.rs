@@ -1,4 +1,4 @@
-//! [`CameraCollision`] — keeping a vcam's camera out of walls (#1251).
+//! [`Deoccluder`] — keeping a vcam's camera out of walls (#1251).
 //!
 //! A spring arm walks through geometry: the pose is planned from the target and the framing, and
 //! nothing asks whether the way is clear. This sweeps the camera's own size from the target to where
@@ -19,8 +19,11 @@ use kooch_ecs::reflect::FieldRange;
 ///
 /// [`VirtualCamera`]: crate::VirtualCamera
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
-#[reflect(category = "Camera")]
-pub struct CameraCollision {
+#[reflect(
+    category = "Camera",
+    alias = "kooch_camera::occlusion::CameraCollision"
+)]
+pub struct Deoccluder {
     /// Off lets the arm through walls, as it was.
     pub enabled: bool,
     /// Which collision groups stop the camera. Untick what a camera should see through — glass,
@@ -68,7 +71,7 @@ const RETURN_RANGE: FieldRange = FieldRange {
     step: 0.05,
 };
 
-impl Default for CameraCollision {
+impl Default for Deoccluder {
     fn default() -> Self {
         Self {
             enabled: true,
@@ -81,7 +84,7 @@ impl Default for CameraCollision {
     }
 }
 
-impl Component for CameraCollision {}
+impl Component for Deoccluder {}
 
 /// Per vcam, what the arm carries between frames. Runtime state, rebuilt from the vcams seen each
 /// frame.
@@ -141,7 +144,7 @@ pub fn collide_stage(step: &mut crate::rig::RigStep) {
 pub(crate) fn arm_length(
     previous: Option<(f32, Option<(f32, f32)>)>,
     clear: f32,
-    collision: &CameraCollision,
+    collision: &Deoccluder,
     dt: f32,
 ) -> (f32, Option<(f32, f32)>) {
     let Some((was, _)) = previous else {
@@ -177,7 +180,7 @@ pub(crate) fn held(
     let (carried, next) = arms;
     let Some(collision) = resources
         .get::<ComponentRegistry>()
-        .and_then(|registry| registry.get_cpu::<CameraCollision>())
+        .and_then(|registry| registry.get_cpu::<Deoccluder>())
         .and_then(|storage| storage.get(vcam))
         .copied()
         .filter(|collision| collision.enabled)
@@ -216,7 +219,7 @@ pub(crate) fn held(
 #[cfg(feature = "physics")]
 fn clear_length(
     resources: &Resources,
-    collision: &CameraCollision,
+    collision: &Deoccluder,
     target: Vec3,
     target_entity: Option<Entity>,
     direction: Vec3,
@@ -263,7 +266,7 @@ fn clear_length(
 #[cfg(not(feature = "physics"))]
 fn clear_length(
     _resources: &Resources,
-    _collision: &CameraCollision,
+    _collision: &Deoccluder,
     _target: Vec3,
     _target_entity: Option<Entity>,
     _direction: Vec3,

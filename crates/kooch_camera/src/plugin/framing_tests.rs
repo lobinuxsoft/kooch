@@ -1,7 +1,7 @@
-//! The rig with a [`CameraFraming`] (#1252): a target wandering inside the dead zone moves nothing.
+//! The rig with a [`RotationComposer`] (#1252): a target wandering inside the dead zone moves nothing.
 
 use super::*;
-use crate::{CameraFraming, CameraLookahead};
+use crate::{CameraLookahead, RotationComposer};
 use glam::Vec2;
 use kooch_ecs::allocator::EntityAllocator;
 
@@ -13,7 +13,7 @@ fn world() -> (Resources, Entity, Entity) {
     registry.register_cpu_reflected::<Transform>();
     registry.register_cpu_reflected::<VirtualCamera>();
     registry.register_cpu_reflected::<CameraTarget>();
-    registry.register_cpu_reflected::<CameraFraming>();
+    registry.register_cpu_reflected::<RotationComposer>();
     registry.register_cpu_reflected::<CameraLookahead>();
     let (vcam, target) = (allocator.spawn(), allocator.spawn());
     let at = |position| Transform {
@@ -45,9 +45,9 @@ fn world() -> (Resources, Entity, Entity) {
         .unwrap()
         .insert(target, CameraTarget::default());
     registry
-        .get_cpu_mut::<CameraFraming>()
+        .get_cpu_mut::<RotationComposer>()
         .unwrap()
-        .insert(vcam, CameraFraming::default());
+        .insert(vcam, RotationComposer::default());
     resources.insert(allocator);
     resources.insert(registry);
     resources.insert(crate::rig::CameraRig::standard());
@@ -72,7 +72,7 @@ fn rigid(resources: &mut Resources, vcam: Entity) {
     let framing = resources
         .get_mut::<ComponentRegistry>()
         .unwrap()
-        .get_cpu_mut::<CameraFraming>()
+        .get_cpu_mut::<RotationComposer>()
         .unwrap()
         .get_mut(vcam)
         .unwrap();
@@ -173,7 +173,7 @@ fn the_screen_offset_turns_it() {
     rigid(&mut resources, vcam);
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
     registry
-        .get_cpu_mut::<CameraFraming>()
+        .get_cpu_mut::<RotationComposer>()
         .unwrap()
         .get_mut(vcam)
         .unwrap()
@@ -203,11 +203,11 @@ fn a_shoulder_and_a_framing_coexist() {
             .get_mut(vcam)
             .unwrap();
         cam.follow = crate::FOLLOW_THIRD_PERSON;
-        cam.distance = 3.0;
+        cam.camera_distance = 3.0;
         cam.pitch = 0.0;
-        cam.shoulder = Vec3::new(0.6, 0.0, 0.0);
+        cam.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
         registry
-            .get_cpu_mut::<CameraFraming>()
+            .get_cpu_mut::<RotationComposer>()
             .unwrap()
             .get_mut(vcam)
             .unwrap()
@@ -235,7 +235,7 @@ fn a_running_target_is_led() {
     let (mut resources, vcam, target) = world();
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
     registry
-        .get_cpu_mut::<CameraFraming>()
+        .get_cpu_mut::<RotationComposer>()
         .unwrap()
         .remove(vcam);
     registry.get_cpu_mut::<CameraLookahead>().unwrap().insert(
@@ -279,10 +279,10 @@ fn the_rig_never_steps() {
                 .get_mut(vcam)
                 .unwrap();
             cam.follow = crate::FOLLOW_THIRD_PERSON;
-            cam.distance = 8.0;
+            cam.camera_distance = 8.0;
             cam.pitch = 18.0;
             registry
-                .get_cpu_mut::<CameraFraming>()
+                .get_cpu_mut::<RotationComposer>()
                 .unwrap()
                 .get_mut(vcam)
                 .unwrap()
@@ -329,12 +329,12 @@ fn framing_adds_no_jump_of_its_own() {
                 .get_mut(vcam)
                 .unwrap();
             cam.follow = crate::FOLLOW_THIRD_PERSON;
-            cam.distance = 8.0;
+            cam.camera_distance = 8.0;
             cam.pitch = 18.0;
             cam.damping_value = Vec3::splat(0.3);
             cam.rotation_damping_value = 0.5;
             let frame = registry
-                .get_cpu_mut::<CameraFraming>()
+                .get_cpu_mut::<RotationComposer>()
                 .unwrap()
                 .get_mut(vcam)
                 .unwrap();
@@ -422,7 +422,7 @@ fn only_one_aim_runs() {
             .unwrap()
             .look_at = crate::LOOK_AT_SIMPLE;
         registry
-            .get_cpu_mut::<CameraFraming>()
+            .get_cpu_mut::<RotationComposer>()
             .unwrap()
             .get_mut(vcam)
             .unwrap()

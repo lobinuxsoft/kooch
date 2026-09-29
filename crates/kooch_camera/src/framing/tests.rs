@@ -11,8 +11,8 @@ fn lens() -> Lens {
     Lens::new(90.0, 1.0)
 }
 
-fn framing() -> CameraFraming {
-    CameraFraming {
+fn framing() -> RotationComposer {
+    RotationComposer {
         dead_zone: Vec2::splat(0.2),
         soft_zone: Vec2::splat(0.6),
         ..Default::default()
@@ -21,8 +21,8 @@ fn framing() -> CameraFraming {
 
 /// Nothing held off centre, nothing eased: what a test that wants the whole correction in one step
 /// asks for.
-fn rigid() -> CameraFraming {
-    CameraFraming {
+fn rigid() -> RotationComposer {
+    RotationComposer {
         dead_zone: Vec2::ZERO,
         soft_zone: Vec2::ZERO,
         soft_time: 0.0,
@@ -55,7 +55,7 @@ fn on_screen(rotation: Quat, eye: Vec3, target: Vec3) -> Vec2 {
 }
 
 /// One step, answering where the target ends up on screen.
-fn step(framing: &CameraFraming, state: &mut Framed, target: Vec3, dt: f32) -> Vec2 {
+fn step(framing: &RotationComposer, state: &mut Framed, target: Vec3, dt: f32) -> Vec2 {
     let mut frame = frame_at(target, Vec3::ZERO);
     framing.compose(state, &mut frame, Vec3::Y, Vec3::Z, dt);
     on_screen(frame.rotation, frame.position, target)
@@ -100,7 +100,7 @@ fn the_position_belongs_to_the_body() {
 /// `screen` moves where the target is held, so a rig can keep it off centre.
 #[test]
 fn the_screen_offset_is_where_it_holds() {
-    let right = CameraFraming {
+    let right = RotationComposer {
         screen: Vec2::new(0.25, 0.0),
         ..rigid()
     };
@@ -127,7 +127,7 @@ fn a_pan_never_rolls_the_horizon() {
 /// edge in exactly `soft_time`, at any frame rate.
 #[test]
 fn the_soft_zone_arrives_on_time() {
-    let framing = CameraFraming {
+    let framing = RotationComposer {
         soft_time: 0.5,
         ..framing()
     };

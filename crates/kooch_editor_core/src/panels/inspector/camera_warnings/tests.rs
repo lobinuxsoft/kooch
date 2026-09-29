@@ -107,7 +107,7 @@ fn a_binding_on_an_orbit_is_quiet() {
 /// calls healthy.
 #[test]
 fn a_framing_the_vcam_never_asks_for_is_flagged() {
-    let mut info = entity(&["CameraFraming"]);
+    let mut info = entity(&["RotationComposer"]);
     info[0]
         .components
         .push(aiming(kooch_camera::LOOK_AT_SIMPLE));
@@ -122,7 +122,7 @@ fn a_framing_the_vcam_never_asks_for_is_flagged() {
 
 #[test]
 fn a_framing_the_vcam_asks_for_is_quiet() {
-    let mut info = entity(&["CameraFraming"]);
+    let mut info = entity(&["RotationComposer"]);
     info[0]
         .components
         .push(aiming(kooch_camera::LOOK_AT_COMPOSED));
@@ -133,7 +133,7 @@ fn a_framing_the_vcam_asks_for_is_quiet() {
 /// nothing is worse than none: a remote client would flag every framing it ever showed.
 #[test]
 fn an_unread_mode_says_nothing() {
-    let mut info = entity(&["CameraFraming"]);
+    let mut info = entity(&["RotationComposer"]);
     info[0].components.push(ComponentDisplayInfo {
         fields: ReflectedFields::NotGathered,
         ..component("VirtualCamera")

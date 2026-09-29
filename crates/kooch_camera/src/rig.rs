@@ -153,13 +153,13 @@ pub fn report_orphans(resources: &mut Resources) {
             })
         };
         sweep(
-            "CameraFraming",
-            entities_of::<crate::CameraFraming>(registry),
+            "RotationComposer",
+            entities_of::<crate::RotationComposer>(registry),
             &composing,
         );
         sweep(
-            "CameraCollision",
-            entities_of::<crate::CameraCollision>(registry),
+            "Deoccluder",
+            entities_of::<crate::Deoccluder>(registry),
             &posed,
         );
         sweep(

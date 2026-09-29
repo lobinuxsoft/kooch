@@ -13,10 +13,10 @@ use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::FieldRange;
 
 /// Leads the target of the vcam it sits on along its velocity. Beside a [`VirtualCamera`]; with a
-/// [`CameraFraming`] the led point is what gets framed.
+/// [`RotationComposer`] the led point is what gets framed.
 ///
 /// [`VirtualCamera`]: crate::VirtualCamera
-/// [`CameraFraming`]: crate::CameraFraming
+/// [`RotationComposer`]: crate::RotationComposer
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Camera")]
 pub struct CameraLookahead {

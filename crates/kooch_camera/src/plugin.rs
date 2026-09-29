@@ -63,8 +63,8 @@ impl Plugin for CameraComponentsPlugin {
                 registry.register_cpu_reflected::<VirtualCamera>();
                 registry.register_cpu_reflected::<CameraTarget>();
                 registry.register_cpu_reflected::<CameraBrain>();
-                registry.register_cpu_reflected::<crate::occlusion::CameraCollision>();
-                registry.register_cpu_reflected::<crate::framing::CameraFraming>();
+                registry.register_cpu_reflected::<crate::occlusion::Deoccluder>();
+                registry.register_cpu_reflected::<crate::framing::RotationComposer>();
                 registry.register_cpu_reflected::<crate::lookahead::CameraLookahead>();
                 registry.register_cpu_reflected::<crate::orbit::CameraOrbit>();
                 registry.register_cpu_reflected::<crate::when::CameraWhen>();

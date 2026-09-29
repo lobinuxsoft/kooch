@@ -11,7 +11,7 @@ const OF_THE_RIG: &[(&str, &str, Option<InMode>)] = &[
     // A framing is the vcam's Rotation Control: on a vcam that aims some other way the whole
     // component does nothing, however long it was tuned for (#1361).
     (
-        "CameraFraming",
+        "RotationComposer",
         "VirtualCamera",
         Some(InMode {
             field: "look_at",
@@ -19,7 +19,7 @@ const OF_THE_RIG: &[(&str, &str, Option<InMode>)] = &[
             asked: "Composed (framing)",
         }),
     ),
-    ("CameraCollision", "VirtualCamera", None),
+    ("Deoccluder", "VirtualCamera", None),
     ("CameraOrbit", "VirtualCamera", None),
     ("CameraWhen", "VirtualCamera", None),
     // A binding fills the component it is named for, so that is what has to be here — not the vcam.

@@ -3,8 +3,8 @@ use super::*;
 const FRAME: f32 = 1.0 / 60.0;
 
 /// A collision easing back out on `seconds`.
-fn over(seconds: f32) -> CameraCollision {
-    CameraCollision {
+fn over(seconds: f32) -> Deoccluder {
+    Deoccluder {
         damping: seconds,
         ..Default::default()
     }
@@ -78,7 +78,7 @@ fn a_wall_mid_return_pulls_in() {
 /// Zero — the default — is immediate, because easing in shows the inside of the wall while it runs.
 #[test]
 fn easing_in_is_its_own_speed() {
-    let gentle = CameraCollision {
+    let gentle = Deoccluder {
         damping: 0.35,
         damping_when_occluded: 0.5,
         ..Default::default()

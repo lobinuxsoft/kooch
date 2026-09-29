@@ -1,4 +1,4 @@
-//! [`CameraFraming`] — where on screen a vcam holds its target, and how far the target may wander
+//! [`RotationComposer`] — where on screen a vcam holds its target, and how far the target may wander
 //! before the camera answers: Cinemachine's composer dead and soft zones (#1252).
 //!
 //! 🔴 Framing **turns** the camera and never moves it (#1361), as `CinemachineRotationComposer`
@@ -29,8 +29,8 @@ use kooch_ecs::reflect::FieldRange;
 ///
 /// [`VirtualCamera`]: crate::VirtualCamera
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
-#[reflect(category = "Camera")]
-pub struct CameraFraming {
+#[reflect(category = "Camera", alias = "kooch_camera::framing::CameraFraming")]
+pub struct RotationComposer {
     /// Off aims at the target itself, as without this component. The rig follows it either way.
     pub enabled: bool,
     /// Where the target sits on screen: `0` is the centre, `±0.5` the edges, +Y up.
@@ -64,9 +64,9 @@ pub struct CameraFraming {
 pub fn of(
     registry: &kooch_ecs::component::ComponentRegistry,
     vcam: Entity,
-) -> Option<CameraFraming> {
+) -> Option<RotationComposer> {
     registry
-        .get_cpu::<CameraFraming>()?
+        .get_cpu::<RotationComposer>()?
         .get(vcam)
         .copied()
         .filter(|framing| framing.enabled)
@@ -118,7 +118,7 @@ const TIME_RANGE: FieldRange = FieldRange {
     step: 0.01,
 };
 
-impl Default for CameraFraming {
+impl Default for RotationComposer {
     fn default() -> Self {
         Self {
             enabled: true,
@@ -130,7 +130,7 @@ impl Default for CameraFraming {
     }
 }
 
-impl Component for CameraFraming {}
+impl Component for RotationComposer {}
 
 /// How much of the world a view shows at one metre: half its height and half its width.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -171,7 +171,7 @@ impl Lens {
     }
 }
 
-impl CameraFraming {
+impl RotationComposer {
     /// Pans and tilts so the target lands where it is held on screen, copied from
     /// `CinemachineRotationComposer::RotateToScreenBounds`: the angular error, clamped to the dead
     /// zone, eased once.

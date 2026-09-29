@@ -24,7 +24,7 @@ pub const LOOK_AT_SIMPLE: u32 = 2;
 /// Looks along the spring arm: the orbit's own direction, so a shoulder offset stays off centre
 /// instead of being turned back into the middle.
 pub const LOOK_AT_ARM: u32 = 3;
-/// A [`CameraFraming`](crate::CameraFraming) owns the rotation: it pans and tilts to hold the target
+/// A [`RotationComposer`](crate::RotationComposer) owns the rotation: it pans and tilts to hold the target
 /// where it belongs on screen, inside a dead zone. Cinemachine's `RotationComposer` (#1361).
 pub const LOOK_AT_COMPOSED: u32 = 4;
 
@@ -63,15 +63,15 @@ pub static FOLLOW_MODE_CHOICES: &[FieldChoice] = &[
         value: FOLLOW_NONE as i64,
     },
     FieldChoice {
-        label: "Glued",
+        label: "Hard Lock To Target",
         value: FOLLOW_GLUED as i64,
     },
     FieldChoice {
-        label: "Simple (offset)",
+        label: "Follow",
         value: FOLLOW_SIMPLE as i64,
     },
     FieldChoice {
-        label: "Third person (spring arm)",
+        label: "Orbital Follow",
         value: FOLLOW_THIRD_PERSON as i64,
     },
 ];
@@ -83,19 +83,19 @@ pub static LOOK_AT_CHOICES: &[FieldChoice] = &[
         value: LOOK_AT_NONE as i64,
     },
     FieldChoice {
-        label: "Mimic target rotation",
+        label: "Rotate With Follow Target",
         value: LOOK_AT_MIMIC as i64,
     },
     FieldChoice {
-        label: "Look at target",
+        label: "Hard Look At",
         value: LOOK_AT_SIMPLE as i64,
     },
     FieldChoice {
-        label: "Along the arm",
+        label: "Pan Tilt",
         value: LOOK_AT_ARM as i64,
     },
     FieldChoice {
-        label: "Composed (framing)",
+        label: "Rotation Composer",
         value: LOOK_AT_COMPOSED as i64,
     },
 ];
@@ -157,8 +157,8 @@ pub struct VirtualCamera {
     #[reflect(shown_when = OFFSET_WHEN)]
     pub offset: Vec3,
     /// Spring arm length — how far back from the target the camera sits.
-    #[reflect(shown_when = THIRD_PERSON_WHEN)]
-    pub distance: f32,
+    #[reflect(alias = "distance", shown_when = THIRD_PERSON_WHEN)]
+    pub camera_distance: f32,
     /// Rotation around the target's up axis, in degrees.
     #[reflect(shown_when = THIRD_PERSON_WHEN)]
     pub yaw: f32,
@@ -171,20 +171,20 @@ pub struct VirtualCamera {
     /// 🔴 The arm's basis, not the target's. Cinemachine's `ThirdPersonFollow` offsets in the
     /// target's, which it can because its rotation IS the target's; here the orbit owns the yaw, so
     /// a shoulder in the character's frame would swing around it as the player looks about.
-    #[reflect(shown_when = THIRD_PERSON_WHEN)]
-    pub shoulder: Vec3,
+    #[reflect(alias = "shoulder", shown_when = THIRD_PERSON_WHEN)]
+    pub shoulder_offset: Vec3,
     /// How far the arm's pivot sits above the shoulder — Cinemachine's `VerticalArmLength`.
     ///
     /// 🔴 Not the same axis as `shoulder.y`, which #1359 assumed and was wrong about (#1365). The
     /// shoulder sits in the **levelled** basis and this along the view's own up, which pitches: look
     /// down and the pivot swings forward and down while the shoulder stays. It is what decides how
     /// the target's place on screen moves as the view turns vertically.
-    #[reflect(shown_when = THIRD_PERSON_WHEN)]
-    pub arm_rise: f32,
+    #[reflect(alias = "arm_rise", shown_when = THIRD_PERSON_WHEN)]
+    pub vertical_arm_length: f32,
     /// Which shoulder the camera is on: `0` the left, `1` the right, halfway between them centred.
     /// Cinemachine's `CameraSide`, and what a swap animates without touching the authored offset.
-    #[reflect(range = SIDE_RANGE, shown_when = THIRD_PERSON_WHEN)]
-    pub side: f32,
+    #[reflect(alias = "side", range = SIDE_RANGE, shown_when = THIRD_PERSON_WHEN)]
+    pub camera_side: f32,
     /// Where the camera looks. One of the `LOOK_AT_*` constants.
     #[reflect(choices = LOOK_AT_CHOICES)]
     pub look_at: u32,
@@ -304,15 +304,15 @@ impl Default for VirtualCamera {
             follow: FOLLOW_THIRD_PERSON,
             group: 0,
             offset: Vec3::new(0.0, 2.0, 6.0),
-            distance: 6.0,
+            camera_distance: 6.0,
             yaw: 0.0,
             pitch: 20.0,
             // Centred: an authored scene that never heard of a shoulder is
             // placed exactly where it was.
-            shoulder: Vec3::ZERO,
-            arm_rise: 0.0,
+            shoulder_offset: Vec3::ZERO,
+            vertical_arm_length: 0.0,
             // The authored `shoulder.x` as written: `2 × 1 − 1` is one.
-            side: 1.0,
+            camera_side: 1.0,
             look_at: LOOK_AT_SIMPLE,
             damping: true,
             damping_value: Vec3::splat(0.5),
@@ -386,8 +386,8 @@ impl VirtualCamera {
     fn arm(&self, up: Vec3, reference: Vec3) -> Vec3 {
         let back = self.back(up, reference);
         self.shouldered(back, up)
-            + self.risen(back, up) * self.arm_rise
-            + self.along(back, up) * self.distance.max(0.0)
+            + self.risen(back, up) * self.vertical_arm_length
+            + self.along(back, up) * self.camera_distance.max(0.0)
     }
 
     /// The view's own up, pitched with it — Cinemachine's `targetRot * Vector3.up`, and the axis the
@@ -423,8 +423,8 @@ impl VirtualCamera {
         // `forward × up`, the same hand `look_at` builds its basis with.
         let right = forward.cross(up);
         // `Lerp(-x, x, side)`, written as the multiplier it is.
-        let beside = self.shoulder.x * (self.side.clamp(0.0, 1.0) * 2.0 - 1.0);
-        right * beside + up * self.shoulder.y + forward * self.shoulder.z
+        let beside = self.shoulder_offset.x * (self.camera_side.clamp(0.0, 1.0) * 2.0 - 1.0);
+        right * beside + up * self.shoulder_offset.y + forward * self.shoulder_offset.z
     }
 
     /// Eases `current` towards `desired`, per axis, leaving a hundredth of the gap after

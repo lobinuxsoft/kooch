@@ -8,7 +8,7 @@
 use glam::{Vec3, Vec4};
 use kooch_camera::CameraLookahead;
 use kooch_camera::RigMemory;
-use kooch_camera::occlusion::CameraCollision;
+use kooch_camera::occlusion::Deoccluder;
 use kooch_camera::target::CameraTarget;
 use kooch_core::resource::Resources;
 use kooch_ecs::entity::Entity;
@@ -85,10 +85,10 @@ impl Visualizer<CameraLookahead> for LookaheadVisualizer {
 #[derive(Default)]
 pub(crate) struct CameraCollisionVisualizer;
 
-impl Visualizer<CameraCollision> for CameraCollisionVisualizer {
+impl Visualizer<Deoccluder> for CameraCollisionVisualizer {
     fn draw(
         &self,
-        _collision: &CameraCollision,
+        _collision: &Deoccluder,
         _transform: &GlobalTransform,
         _gizmos: &mut Gizmos<'_>,
     ) {
@@ -96,7 +96,7 @@ impl Visualizer<CameraCollision> for CameraCollisionVisualizer {
 
     fn draw_with(
         &self,
-        collision: &CameraCollision,
+        collision: &Deoccluder,
         transform: &GlobalTransform,
         entity: Entity,
         resources: &Resources,

@@ -69,12 +69,12 @@ fn idle_components_write_nothing() {
             idle(&kooch_camera::VirtualCamera::default()),
         ),
         (
-            "CameraCollision",
-            idle(&kooch_camera::CameraCollision::default()),
+            "Deoccluder",
+            idle(&kooch_camera::Deoccluder::default()),
         ),
         (
-            "CameraFraming",
-            idle(&kooch_camera::CameraFraming::default()),
+            "RotationComposer",
+            idle(&kooch_camera::RotationComposer::default()),
         ),
         (
             "PerspectiveCamera",

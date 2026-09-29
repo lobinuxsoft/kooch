@@ -20,9 +20,9 @@ pub use blend::{
     CURVE_SINE, EASE_IN, EASE_IN_OUT, EASE_OUT,
 };
 pub use brain::CameraBrain;
-pub use framing::CameraFraming;
+pub use framing::RotationComposer;
 pub use lookahead::CameraLookahead;
-pub use occlusion::CameraCollision;
+pub use occlusion::Deoccluder;
 pub use orbit::{CameraOrbit, orbit_cameras};
 pub use plugin::{CameraBlend, CameraComponentsPlugin, CameraPlugin, drive_virtual_cameras};
 pub use rig::{CameraRig, RigMemory, RigStage, RigStep};
