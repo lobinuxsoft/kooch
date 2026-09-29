@@ -86,7 +86,13 @@ pub fn composed(step: &mut crate::rig::RigStep) -> bool {
         .tracked
         .of(step.entity)
         .unwrap_or(Framed::at(step.frame.target));
-    framing.compose(&mut state, &mut step.frame, step.up, step.dt);
+    framing.compose(
+        &mut state,
+        &mut step.frame,
+        step.up,
+        step.reference,
+        step.dt,
+    );
     step.memory.tracked.set(step.entity, state);
     true
 }
@@ -173,7 +179,22 @@ impl CameraFraming {
     /// Read from where the camera **is**, walls included — the body and the deoccluder have both had
     /// their say by now, and aiming from where the body wanted it would point past a camera that got
     /// pushed.
-    pub fn compose(&self, state: &mut Framed, frame: &mut CameraFrame, up: Vec3, dt: f32) {
+    pub fn compose(
+        &self,
+        state: &mut Framed,
+        frame: &mut CameraFrame,
+        up: Vec3,
+        reference: Vec3,
+        dt: f32,
+    ) {
+        // 🔴 Level before measuring, as Cinemachine rebuilds its basis with
+        // `Quaternion.LookRotation(dir, ReferenceUp)` before every correction. This turns the
+        // orientation the camera already has, so a roll it picks up is kept for ever — and under an
+        // `up` that moves, a pan about the new one applied to a basis built for the old is not a
+        // pure yaw, so one is picked up every frame (#1363). A rebuilt basis has none by
+        // construction, which is why `look_at` never had this.
+        frame.rotation =
+            crate::virtual_camera::look_at(Vec3::ZERO, frame.rotation * Vec3::NEG_Z, up, reference);
         let target = frame.target;
         let at = seen_at(frame.rotation, target - frame.position, up);
         // `frame.screen` already carries the lead, so one thing decides where the character sits
