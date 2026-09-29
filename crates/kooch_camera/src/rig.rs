@@ -56,6 +56,13 @@ impl CameraRig {
         rig.add(RigStage::Body, crate::virtual_camera::body_stage);
         rig.add(RigStage::Collide, crate::occlusion::collide_stage);
         rig.add(RigStage::Aim, crate::virtual_camera::aim_stage);
+        // Last at each stage, because an extension is the hand-made word over what the stage
+        // decided — added after it, which is what `add` keeps in order.
+        rig.add(RigStage::Lead, crate::extensions::after_lead);
+        rig.add(RigStage::Body, crate::extensions::after_body);
+        rig.add(RigStage::Frame, crate::extensions::after_frame);
+        rig.add(RigStage::Collide, crate::extensions::after_collide);
+        rig.add(RigStage::Aim, crate::extensions::after_aim);
         rig
     }
 
@@ -182,6 +189,16 @@ pub fn report_orphans(resources: &mut Resources) {
         sweep(
             "CameraOrbit",
             entities_of::<crate::orbit::CameraOrbit>(registry),
+            &posed,
+        );
+        sweep(
+            "CameraOffset",
+            entities_of::<crate::CameraOffset>(registry),
+            &posed,
+        );
+        sweep(
+            "CameraRecomposer",
+            entities_of::<crate::CameraRecomposer>(registry),
             &posed,
         );
         sweep(

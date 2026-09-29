@@ -30,6 +30,8 @@ const OF_THE_RIG: &[(&str, &str, Option<InMode>)] = &[
         }),
     ),
     ("ThirdPersonAim", "VirtualCamera", None),
+    ("CameraOffset", "VirtualCamera", None),
+    ("CameraRecomposer", "VirtualCamera", None),
     ("CameraOrbit", "VirtualCamera", None),
     ("CameraWhen", "VirtualCamera", None),
     // A binding fills the component it is named for, so that is what has to be here — not the vcam.

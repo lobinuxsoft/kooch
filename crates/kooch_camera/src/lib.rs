@@ -4,6 +4,7 @@
 
 pub mod blend;
 pub mod brain;
+pub mod extensions;
 pub mod frame;
 pub mod framing;
 pub mod lookahead;
@@ -22,6 +23,7 @@ pub use blend::{
     CURVE_SINE, EASE_IN, EASE_IN_OUT, EASE_OUT,
 };
 pub use brain::CameraBrain;
+pub use extensions::{CameraOffset, CameraRecomposer};
 pub use framing::RotationComposer;
 pub use lookahead::CameraLookahead;
 pub use occlusion::Deoccluder;

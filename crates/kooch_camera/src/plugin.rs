@@ -70,6 +70,8 @@ impl Plugin for CameraComponentsPlugin {
                 registry.register_cpu_reflected::<crate::when::CameraWhen>();
                 registry.register_cpu_reflected::<crate::PositionComposer>();
                 registry.register_cpu_reflected::<crate::ThirdPersonAim>();
+                registry.register_cpu_reflected::<crate::CameraOffset>();
+                registry.register_cpu_reflected::<crate::CameraRecomposer>();
                 #[cfg(feature = "input")]
                 {
                     registry.register_cpu_reflected::<crate::orbit::input::OrbitInput>();

@@ -224,7 +224,7 @@ impl RotationComposer {
 /// Where `direction` sits off the view axis, in degrees, read in the **screen's** own axes: `+x`
 /// right, `+y` up. Cinemachine's `GetCameraRotationToTarget`, with the axes named rather than swapped
 /// into a `Vector2`.
-fn seen_at(rotation: glam::Quat, direction: Vec3, up: Vec3) -> Vec2 {
+pub(crate) fn seen_at(rotation: glam::Quat, direction: Vec3, up: Vec3) -> Vec2 {
     if direction.length_squared() < 1e-12 {
         return Vec2::ZERO;
     }
@@ -252,7 +252,7 @@ fn seen_at(rotation: glam::Quat, direction: Vec3, up: Vec3) -> Vec2 {
 /// `-right`, so a target on the right is reached by a **negative** pan while a target above is
 /// reached by a positive tilt. One axis disagrees with the screen, and this is the one line that
 /// knows it.
-fn turned(rotation: glam::Quat, at: Vec2, up: Vec3) -> glam::Quat {
+pub(crate) fn turned(rotation: glam::Quat, at: Vec2, up: Vec3) -> glam::Quat {
     let panned = glam::Quat::from_axis_angle(up, (-at.x).to_radians()) * rotation;
     panned * glam::Quat::from_rotation_x(at.y.to_radians())
 }
