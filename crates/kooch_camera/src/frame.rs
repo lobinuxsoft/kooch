@@ -1,10 +1,10 @@
 //! [`CameraFrame`] — the pose a rig is building, passed from stage to stage (#1331).
 //!
 //! 🔴 Every bug this rig has had was the same one: two things deciding one quantity. The framing
-//! eased a position the vcam was damping; it turned a camera the player was turning; the lookahead
-//! fed a point to two consumers; the wall moved a camera the framing then read as slack. None of
-//! them were visible in the code, because each stage wrote to a local the next one happened to
-//! read.
+//! eased a position the vcam was damping; it fought the `look_at` for the rotation, and was moved to
+//! the position rather than given it (#1361); the lookahead fed a point to two consumers; the wall
+//! moved a camera the framing then read as slack. None of them were visible in the code, because
+//! each stage wrote to a local the next one happened to read.
 //!
 //! So a pose is a **value** now. It arrives at a stage, the stage changes the one thing it owns,
 //! and it goes on. What a stage may touch is written down here rather than remembered.
@@ -16,15 +16,13 @@ use crate::framing::Lens;
 /// One vcam's pose in flight, and what every stage needs to answer about it.
 #[derive(Debug, Clone, Copy)]
 pub struct CameraFrame {
-    /// Where the camera stands. [`Body`] decides it, [`Frame`] offsets it sideways, [`Collide`] has
-    /// the last word.
+    /// Where the camera stands. [`Body`] decides it and [`Collide`] has the last word.
     ///
     /// [`Body`]: crate::rig::RigStage::Body
-    /// [`Frame`]: crate::rig::RigStage::Frame
     /// [`Collide`]: crate::rig::RigStage::Collide
     pub position: Vec3,
-    /// Where it looks. [`Aim`](crate::rig::RigStage::Aim)'s, and nobody else's — in a third-person
-    /// rig this belongs to whoever is holding the stick.
+    /// Where it looks. [`Aim`](crate::rig::RigStage::Aim)'s, and nobody else's — one of the vcam's
+    /// `look_at` modes, never two of them (#1361).
     pub rotation: Quat,
     /// 🔴 Where the body wanted to stand, before a frame or a wall moved it. Carried so a later
     /// stage never has to ask "was I pushed?" — the framing had to be handed this by hand, and the
@@ -72,11 +70,8 @@ impl CameraFrame {
         self.free = position;
     }
 
-    /// Moves the camera without touching where the body wanted it — what the [`Frame`] and
-    /// [`Collide`] stages do, and what makes `free` worth carrying.
-    ///
-    /// [`Frame`]: crate::rig::RigStage::Frame
-    /// [`Collide`]: crate::rig::RigStage::Collide
+    /// Moves the camera without touching where the body wanted it — what the
+    /// [`Collide`](crate::rig::RigStage::Collide) stage does, and what makes `free` worth carrying.
     pub fn displace(&mut self, position: Vec3) {
         self.position = position;
     }

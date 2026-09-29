@@ -1,19 +1,19 @@
 //! [`CameraFraming`] — where on screen a vcam holds its target, and how far the target may wander
 //! before the camera answers: Cinemachine's composer dead and soft zones (#1252).
 //!
-//! 🔴 Framing moves the camera; it does **not** turn it (#1329). In a third-person rig the rotation
-//! belongs to the player — it is how you look around — so a framing that owned it fought every
-//! stick input and never settled. Cinemachine's composer owns the rotation because its body is
-//! placed independently; for an orbiting rig Cinemachine uses `ThirdPersonFollow` and no composer
-//! at all. Phantom Camera's Framed mode is the right shape for ours.
+//! 🔴 Framing **turns** the camera and never moves it (#1361), as `CinemachineRotationComposer`
+//! does: *"The composer does not change the camera's position. It will only pan and tilt the camera
+//! where it is."* The Aim stage has exactly one owner, and a `look_at` of `Composed` is how a vcam
+//! says this is it.
 //!
-//! One quantity is eased here — where the rig follows — and the zones are read in **camera** space
-//! and answered in camera space. Phantom tests on screen and responds along world axes, which is
-//! fine until "up" is the face of a cube planet.
+//! #1329 had it the other way round, on a premise that was false: that in a third-person rig the
+//! rotation belongs to the player. It does not — the stick moves the **body**, both here and in
+//! `OrbitalFollow`. The fight was this against `look_at`, two owners of the rotation, and moving
+//! this one to the position only postponed it until a shoulder owned the position too (#1359).
 //!
-//! An axis inside the dead zone is anchored to where the rig already is, **before** the ease rather
-//! than corrected after it. That is the whole of "the camera holds still", and shoving the ease's
-//! own answer afterwards is what used to make it jump.
+//! The error is an **angle**, measured off the orientation the camera already has, so there is no
+//! slack to remember: a correction carried in a field is a second opinion about where the camera
+//! points. Pan is about the vcam's own up, so the horizon stays level under gravity.
 
 use std::collections::HashMap;
 
@@ -59,8 +59,8 @@ pub struct CameraFraming {
 
 /// The enabled framing on `vcam`, if it has one.
 ///
-/// 🔴 The only place that question is asked: the body reads it to know it must not damp, and the
-/// Frame stage to know it runs at all. Two lookups would be two answers waiting to disagree.
+/// 🔴 The only place that question is asked, and the aim is the only thing that asks it. Two
+/// lookups would be two answers waiting to disagree.
 pub fn of(
     registry: &kooch_ecs::component::ComponentRegistry,
     vcam: Entity,
@@ -72,18 +72,23 @@ pub fn of(
         .filter(|framing| framing.enabled)
 }
 
-/// The Frame stage: moves the camera sideways so the target lands where it is held on screen.
-pub fn frame_stage(step: &mut crate::rig::RigStep) {
+/// The composed aim: turns the camera so the target lands where it is held on screen. Reached from
+/// [`aim_stage`](crate::virtual_camera::aim_stage) when the vcam asks for it, never registered on
+/// its own — the Aim stage has one owner.
+///
+/// Answers whether it ran, so the caller knows not to damp a rotation that is already eased.
+pub fn composed(step: &mut crate::rig::RigStep) -> bool {
     let Some(framing) = of(step.registry, step.entity) else {
-        return;
+        return false;
     };
     let mut state = step
         .carried
         .tracked
         .of(step.entity)
         .unwrap_or(Framed::at(step.frame.target));
-    framing.frame(&mut state, &mut step.frame, step.dt);
+    framing.compose(&mut state, &mut step.frame, step.up, step.dt);
     step.memory.tracked.set(step.entity, state);
+    true
 }
 
 /// How far a target or a camera may drift and still count as standing still, in metres.
@@ -138,6 +143,20 @@ impl Lens {
         }
     }
 
+    /// The angle, in degrees, a point sits off the view axis when it is `fraction` of the screen
+    /// from its centre, per axis.
+    ///
+    /// 🔴 Exact, not the field of view times the fraction. Cinemachine takes the linear reading
+    /// (`(rect.yMin - 0.5) * fov`), and on a 90° screen it puts a `screen` of `0.25` at `0.207` —
+    /// a field whose own documentation says `±0.5` is the edge cannot be a quarter of the way and
+    /// land somewhere else.
+    pub fn angle(&self, fraction: Vec2) -> Vec2 {
+        Vec2::new(
+            (fraction.x * 2.0 * self.half_width).atan().to_degrees(),
+            (fraction.y * 2.0 * self.half_height).atan().to_degrees(),
+        )
+    }
+
     /// The screen's size in metres at `depth`.
     /// Public because a gizmo needs it: putting a point on screen is exactly this, and a second
     /// copy of the arithmetic in the editor is a second place for it to drift.
@@ -147,115 +166,112 @@ impl Lens {
 }
 
 impl CameraFraming {
-    /// Where the rig should follow, so the target lands where it belongs on screen.
+    /// Pans and tilts so the target lands where it is held on screen, copied from
+    /// `CinemachineRotationComposer::RotateToScreenBounds`: the angular error, clamped to the dead
+    /// zone, eased once.
     ///
-    /// `wanted` is where the rig would put the camera with no framing at all. The answer is that
-    /// point moved across the screen's own axes — never along its forward, since how far away the
-    /// camera sits is the rig's business and not the frame's.
-    /// The Frame stage: moves the camera sideways so the target lands where it is held. Never
-    /// along the forward — how far away the camera sits is the body's.
-    pub fn frame(&self, state: &mut Framed, frame: &mut CameraFrame, dt: f32) {
-        let (right, above, forward) = frame.axes();
-        let placed = |slack: Vec2| frame.free + right * slack.x + above * slack.y;
-
-        // 🔴 Read off where the camera actually is against what the body asked for, never carried
-        // in a field of its own: a slack remembered rather than measured is a second opinion about
-        // where the camera stands, which is the shape of every bug this component has had. `free`
-        // is the body's answer, so a wall that moved the camera is not read as slack (#1330).
-        let behind = frame.previous - frame.free;
-        let slack = Vec2::new(behind.dot(right), behind.dot(above));
-
+    /// Read from where the camera **is**, walls included — the body and the deoccluder have both had
+    /// their say by now, and aiming from where the body wanted it would point past a camera that got
+    /// pushed.
+    pub fn compose(&self, state: &mut Framed, frame: &mut CameraFrame, up: Vec3, dt: f32) {
         let target = frame.target;
-        let depth = (target - placed(slack)).dot(forward);
-        if depth <= 0.0 {
-            // Behind the camera: there is no screen to frame it on.
-            state.reset(target);
-            frame.displace(frame.free);
-            return;
-        }
-        let span = frame.lens.span(depth);
+        let at = seen_at(frame.rotation, target - frame.position, up);
+        // `frame.screen` already carries the lead, so one thing decides where the character sits
+        // (#1330). Halves, because a zone is measured from its centre out.
+        let at = at - frame.lens.angle(self.screen + frame.screen);
+        let dead = frame.lens.angle(self.dead_zone * 0.5);
+        let soft = frame.lens.angle(self.soft_zone.max(self.dead_zone) * 0.5);
 
-        // Where the target sits, as a fraction of the screen from where it belongs. `frame.screen`
-        // already carries the lead, so one thing decides where the character sits (#1330).
-        let offset = target - placed(slack);
-        let held = self.screen + frame.screen;
-        let at = Vec2::new(offset.dot(right) / span.x, offset.dot(above) / span.y) - held;
-        let soft = self.soft_zone.max(self.dead_zone);
-
-        // What the frame owes: nothing inside the dead zone, the excess outside it. Moving the
-        // camera by `d` along an axis moves the target by `-d` on screen, so the slack owed is the
-        // excess itself, in metres.
-        let owed = past(at, self.dead_zone);
+        // Nothing inside the dead zone, the excess outside it.
+        let owed = past(at, dead);
         // 🔴 Ramped while the target moves, whole once it stops. Not to keep a promise — the
         // easing is exponential and promises nothing — but because a correction that ramps to
         // nothing at the dead zone's edge approaches it and never arrives: the target parks in the
         // soft band, a third of the way out, for ever. Measured at 0.134 against the edge's 0.1.
-        let still = state.last.abs_diff_eq(target, STILL);
-        let share = match still {
+        let share = match state.last.abs_diff_eq(target, STILL) {
             true => Vec2::ONE,
-            false => Vec2::new(
-                ramp(at.x, self.dead_zone.x, soft.x),
-                ramp(at.y, self.dead_zone.y, soft.y),
-            ),
+            false => Vec2::new(ramp(at.x, dead.x, soft.x), ramp(at.y, dead.y, soft.y)),
         };
-        let goal = slack + owed * share * span;
-
-        // One quantity, eased once: the slack. The body is not damped when a frame is present —
-        // two eases in series on one position is what made this fight itself (#1329).
+        // One quantity, eased once: the residual angle. The vcam's own rotation damping does not run
+        // on top of this — two eases in series on one quantity is #1329, on the other axis.
         let alpha = crate::virtual_camera::settled(dt, self.soft_time);
-        let eased = slack + (goal - slack) * alpha;
-        state.slack = eased;
+        frame.rotation = turned(frame.rotation, owed * share * alpha, up);
         state.last = target;
-        frame.displace(placed(eased));
     }
 }
 
+/// Where `direction` sits off the view axis, in degrees, read in the **screen's** own axes: `+x`
+/// right, `+y` up. Cinemachine's `GetCameraRotationToTarget`, with the axes named rather than swapped
+/// into a `Vector2`.
+fn seen_at(rotation: glam::Quat, direction: Vec3, up: Vec3) -> Vec2 {
+    if direction.length_squared() < 1e-12 {
+        return Vec2::ZERO;
+    }
+    let direction = direction.normalize();
+    let forward = rotation * Vec3::NEG_Z;
+    let flat = direction - up * direction.dot(up);
+    // Straight along `up`: no horizon direction to pan towards, so the tilt says all of it.
+    let pan = match flat.length_squared() > 1e-12 {
+        true => signed(
+            crate::virtual_camera::flattened(forward, up),
+            flat.normalize(),
+            up,
+        ),
+        false => 0.0,
+    };
+    let panned = glam::Quat::from_axis_angle(up, pan.to_radians()) * forward;
+    Vec2::new(-pan, signed(panned, direction, panned.cross(up)))
+}
+
+/// Turns the camera towards a target sitting `at` degrees off the view axis, in the screen's axes.
+/// Pan about `up` first, then tilt about the camera's own right, so the horizon never rolls —
+/// Cinemachine's `ApplyCameraRotation`.
+///
+/// 🔴 The pan is negated here and nowhere else. A rotation about `up` carries the view towards
+/// `-right`, so a target on the right is reached by a **negative** pan while a target above is
+/// reached by a positive tilt. One axis disagrees with the screen, and this is the one line that
+/// knows it.
+fn turned(rotation: glam::Quat, at: Vec2, up: Vec3) -> glam::Quat {
+    let panned = glam::Quat::from_axis_angle(up, (-at.x).to_radians()) * rotation;
+    panned * glam::Quat::from_rotation_x(at.y.to_radians())
+}
+
+/// The angle from `from` to `to` about `axis`, in degrees, signed by which way round it goes.
+fn signed(from: Vec3, to: Vec3, axis: Vec3) -> f32 {
+    from.cross(to)
+        .dot(axis.normalize())
+        .atan2(from.dot(to))
+        .to_degrees()
+}
+
 /// How much of the correction applies at `at`: none on the dead zone's edge, all of it on the soft
-/// one, and all of it beyond. A band of zero width is a step, which is what a soft zone the same
-/// size as the dead one asks for.
+/// one, and all of it beyond. Both zones as **half**-widths. A band of zero width is a step, which is
+/// what a soft zone the same size as the dead one asks for.
 fn ramp(at: f32, dead: f32, soft: f32) -> f32 {
-    let band = (soft - dead).max(0.0) * 0.5;
+    let band = (soft - dead).max(0.0);
     match band > 0.0 {
-        true => ((at.abs() - dead.max(0.0) * 0.5) / band).clamp(0.0, 1.0),
+        true => ((at.abs() - dead.max(0.0)) / band).clamp(0.0, 1.0),
         false => 1.0,
     }
 }
 
-/// How far past a zone of `size` a screen offset sits, per axis, in screen fractions.
-fn past(at: Vec2, size: Vec2) -> Vec2 {
-    let beyond = |at: f32, size: f32| at.signum() * (at.abs() - size.max(0.0) * 0.5).max(0.0);
-    Vec2::new(beyond(at.x, size.x), beyond(at.y, size.y))
+/// How far past a zone of `half` an error sits, per axis, in whatever unit both are given in.
+fn past(at: Vec2, half: Vec2) -> Vec2 {
+    let beyond = |at: f32, half: f32| at.signum() * (at.abs() - half.max(0.0)).max(0.0);
+    Vec2::new(beyond(at.x, half.x), beyond(at.y, half.y))
 }
 
-/// One vcam's framing in flight: where its rig follows, the tween closing the excess, and where the
-/// target was last step.
+/// One vcam's framing in flight: where the target was last step, which is the whole of it — the
+/// correction itself is read off the camera's own orientation.
 #[derive(Debug, Clone, Copy)]
 pub struct Framed {
-    /// How far the frame holds the camera off what the rig asked for, along the screen's own axes,
-    /// in metres.
-    slack: Vec2,
     last: Vec3,
 }
 
 impl Framed {
-    /// How far the frame is holding the camera off the body's answer, along the screen's axes.
-    /// What a gizmo draws: the zones say what was asked for, this says what the frame is doing.
-    pub fn slack(&self) -> Vec2 {
-        self.slack
-    }
-
     /// Framed on a target that has not moved yet.
     pub fn at(target: Vec3) -> Self {
-        Self {
-            slack: Vec2::ZERO,
-            last: target,
-        }
-    }
-
-    /// Back on the rig's own answer, with nothing owed.
-    fn reset(&mut self, target: Vec3) {
-        self.slack = Vec2::ZERO;
-        self.last = target;
+        Self { last: target }
     }
 }
 
