@@ -677,3 +677,129 @@ fn the_damping_switch_becomes_zero_durations() {
     assert_eq!(vcam.rotation_damping_value, 0.0);
     assert!(vcam.damping, "the switch was not cleared");
 }
+
+/// The whole point of the offset: the camera stands beside the arm, along the axis it would call
+/// right, and not further back or higher up.
+#[test]
+fn a_shoulder_stands_beside_the_arm() {
+    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    r.look_at = LOOK_AT_ARM;
+    r.distance = 3.0;
+    r.pitch = 0.0;
+    r.yaw = 40.0;
+
+    let target = Vec3::ZERO;
+    let (centred, _) = desired(
+        &r,
+        target,
+        glam::Quat::IDENTITY,
+        Vec3::ZERO,
+        glam::Quat::IDENTITY,
+        Vec3::Y,
+    );
+    r.shoulder = Vec3::new(0.6, 0.0, 0.0);
+    let (beside, rot) = desired(
+        &r,
+        target,
+        glam::Quat::IDENTITY,
+        Vec3::ZERO,
+        glam::Quat::IDENTITY,
+        Vec3::Y,
+    );
+
+    let moved = beside - centred;
+    assert!(
+        (moved.length() - 0.6).abs() < 1e-4,
+        "an offset of 0.6 should move the camera 0.6, got {}",
+        moved.length()
+    );
+    assert!(
+        (rot * Vec3::X).dot(moved.normalize()) > 0.999,
+        "it should move along the camera's own right, got {moved:?}",
+    );
+}
+
+/// Pitch turns the reach and nothing else. A shoulder that pitched with it would swing under the
+/// character as the player looks down, which is what a single pivot did.
+#[test]
+fn pitch_leaves_the_shoulder_alone() {
+    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    r.distance = 3.0;
+    r.yaw = 25.0;
+    r.shoulder = Vec3::new(0.5, 0.3, -0.2);
+
+    let up = Vec3::Y;
+    let reference = seed_reference(up);
+    let back = r.back(up, reference);
+    let first = r.shouldered(back, up);
+    for pitch in [-60.0, 0.0, 35.0, 80.0] {
+        r.pitch = pitch;
+        let pivot =
+            r.wanted(Vec3::ZERO, Vec3::ZERO, up, reference) - r.along(back, up) * r.distance;
+        assert!(
+            (pivot - first).length() < 1e-4,
+            "pitch {pitch} moved the pivot to {pivot:?}, was {first:?}",
+        );
+    }
+}
+
+/// Without this the offset is invisible: `Simple` turns to put the target back in the middle, so
+/// only the parallax shifts and the character never leaves centre screen.
+#[test]
+fn an_arm_aim_holds_the_target_off_centre() {
+    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    r.distance = 3.0;
+    r.shoulder = Vec3::new(0.6, 0.0, 0.0);
+
+    let target = Vec3::ZERO;
+    let off_centre = |vcam: &VirtualCamera| {
+        let (pos, rot) = desired(
+            vcam,
+            target,
+            glam::Quat::IDENTITY,
+            Vec3::ZERO,
+            glam::Quat::IDENTITY,
+            Vec3::Y,
+        );
+        // How far off the view axis the target sits, in the camera's right.
+        (target - pos).normalize().dot(rot * Vec3::X)
+    };
+
+    r.look_at = LOOK_AT_SIMPLE;
+    assert!(
+        off_centre(&r).abs() < 1e-4,
+        "`Simple` aims at the target, so it is centred whatever the body did"
+    );
+    r.look_at = LOOK_AT_ARM;
+    assert!(
+        off_centre(&r) < -0.15,
+        "a right shoulder puts the character left of the view axis, got {}",
+        off_centre(&r)
+    );
+}
+
+/// The aim is a direction, not the pivot, so it says something even where there is no arm to
+/// measure — a `look_at` between two coincident points returns identity.
+#[test]
+fn a_zero_arm_still_aims() {
+    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    r.look_at = LOOK_AT_ARM;
+    r.distance = 0.0;
+    r.pitch = 0.0;
+    r.yaw = 90.0;
+
+    let (_, rot) = desired(
+        &r,
+        Vec3::ZERO,
+        glam::Quat::IDENTITY,
+        Vec3::ZERO,
+        glam::Quat::IDENTITY,
+        Vec3::Y,
+    );
+    assert_ne!(rot, glam::Quat::IDENTITY, "a yaw of 90° is not no rotation");
+    assert!(
+        (rot * Vec3::NEG_Z).dot(Vec3::X) < -0.99,
+        "yaw 90° looks along -X, got {:?}",
+        rot * Vec3::NEG_Z
+    );
+}
