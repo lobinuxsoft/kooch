@@ -20,6 +20,15 @@ const OF_THE_RIG: &[(&str, &str, Option<InMode>)] = &[
         }),
     ),
     ("Deoccluder", "VirtualCamera", None),
+    (
+        "PositionComposer",
+        "VirtualCamera",
+        Some(InMode {
+            field: "follow",
+            value: kooch_camera::FOLLOW_POSITION_COMPOSER,
+            asked: "Position Composer",
+        }),
+    ),
     ("CameraOrbit", "VirtualCamera", None),
     ("CameraWhen", "VirtualCamera", None),
     // A binding fills the component it is named for, so that is what has to be here — not the vcam.

@@ -100,19 +100,19 @@ pub fn composed(step: &mut crate::rig::RigStep) -> bool {
 /// How far a target or a camera may drift and still count as standing still, in metres.
 const STILL: f32 = 1e-5;
 
-const SCREEN_RANGE: FieldRange = FieldRange {
+pub(crate) const SCREEN_RANGE: FieldRange = FieldRange {
     min: -0.5,
     max: 0.5,
     step: 0.01,
 };
 
-const ZONE_RANGE: FieldRange = FieldRange {
+pub(crate) const ZONE_RANGE: FieldRange = FieldRange {
     min: 0.0,
     max: 2.0,
     step: 0.01,
 };
 
-const TIME_RANGE: FieldRange = FieldRange {
+pub(crate) const TIME_RANGE: FieldRange = FieldRange {
     min: 0.0,
     max: 3.0,
     step: 0.01,
@@ -268,7 +268,7 @@ fn signed(from: Vec3, to: Vec3, axis: Vec3) -> f32 {
 /// How much of the correction applies at `at`: none on the dead zone's edge, all of it on the soft
 /// one, and all of it beyond. Both zones as **half**-widths. A band of zero width is a step, which is
 /// what a soft zone the same size as the dead one asks for.
-fn ramp(at: f32, dead: f32, soft: f32) -> f32 {
+pub(crate) fn ramp(at: f32, dead: f32, soft: f32) -> f32 {
     let band = (soft - dead).max(0.0);
     match band > 0.0 {
         true => ((at.abs() - dead.max(0.0)) / band).clamp(0.0, 1.0),
@@ -277,7 +277,7 @@ fn ramp(at: f32, dead: f32, soft: f32) -> f32 {
 }
 
 /// How far past a zone of `half` an error sits, per axis, in whatever unit both are given in.
-fn past(at: Vec2, half: Vec2) -> Vec2 {
+pub(crate) fn past(at: Vec2, half: Vec2) -> Vec2 {
     let beyond = |at: f32, half: f32| at.signum() * (at.abs() - half.max(0.0)).max(0.0);
     Vec2::new(beyond(at.x, half.x), beyond(at.y, half.y))
 }

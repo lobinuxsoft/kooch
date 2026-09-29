@@ -14,6 +14,9 @@ pub const FOLLOW_GLUED: u32 = 1;
 pub const FOLLOW_SIMPLE: u32 = 2;
 /// A spring arm on the target, rotatable around it. Third person.
 pub const FOLLOW_THIRD_PERSON: u32 = 3;
+/// A [`PositionComposer`](crate::PositionComposer) moves the camera so the target lands where it
+/// belongs on screen — Cinemachine's `PositionComposer` (#1369).
+pub const FOLLOW_POSITION_COMPOSER: u32 = 4;
 
 /// No rotation logic.
 pub const LOOK_AT_NONE: u32 = 0;
@@ -73,6 +76,10 @@ pub static FOLLOW_MODE_CHOICES: &[FieldChoice] = &[
     FieldChoice {
         label: "Orbital Follow",
         value: FOLLOW_THIRD_PERSON as i64,
+    },
+    FieldChoice {
+        label: "Position Composer",
+        value: FOLLOW_POSITION_COMPOSER as i64,
     },
 ];
 
@@ -530,6 +537,12 @@ pub(crate) fn look_at(eye: Vec3, target: Vec3, up: Vec3, reference: Vec3) -> gla
 /// 🔴 A framed rig is **not** damped twice. The frame's ease IS the body's smoothing — two eases in
 /// series on one position is what made every earlier version of this rig fight itself (#1329).
 pub fn body_stage(step: &mut crate::rig::RigStep) {
+    // 🔴 The composer eases the offset itself, so it is the whole of the body: running the vcam's
+    // damping over it is two eases in series on one quantity, which is #1329.
+    if step.vcam.follow == FOLLOW_POSITION_COMPOSER {
+        crate::position_composer::body(step);
+        return;
+    }
     let wanted = step.vcam.wanted(
         step.frame.target,
         step.frame.position,
