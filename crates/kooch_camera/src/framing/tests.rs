@@ -57,7 +57,7 @@ fn on_screen(rotation: Quat, eye: Vec3, target: Vec3) -> Vec2 {
 /// One step, answering where the target ends up on screen.
 fn step(framing: &CameraFraming, state: &mut Framed, target: Vec3, dt: f32) -> Vec2 {
     let mut frame = frame_at(target, Vec3::ZERO);
-    framing.compose(state, &mut frame, Vec3::Y, dt);
+    framing.compose(state, &mut frame, Vec3::Y, Vec3::Z, dt);
     on_screen(frame.rotation, frame.position, target)
 }
 
@@ -92,7 +92,7 @@ fn the_soft_zone_eases_back() {
 fn the_position_belongs_to_the_body() {
     let mut frame = frame_at(Vec3::new(3.0, 1.0, 0.0), Vec3::ZERO);
     let mut state = Framed::at(Vec3::ZERO);
-    framing().compose(&mut state, &mut frame, Vec3::Y, DT);
+    framing().compose(&mut state, &mut frame, Vec3::Y, Vec3::Z, DT);
     assert!(frame.position.abs_diff_eq(EYE, 1e-6), "{}", frame.position);
     assert!(frame.free.abs_diff_eq(EYE, 1e-6), "{}", frame.free);
 }
@@ -115,7 +115,7 @@ fn the_screen_offset_is_where_it_holds() {
 fn a_pan_never_rolls_the_horizon() {
     let mut state = Framed::at(Vec3::ZERO);
     let mut frame = frame_at(Vec3::new(4.0, 2.0, 0.0), Vec3::ZERO);
-    rigid().compose(&mut state, &mut frame, Vec3::Y, DT);
+    rigid().compose(&mut state, &mut frame, Vec3::Y, Vec3::Z, DT);
     let right = frame.rotation * Vec3::X;
     assert!(
         right.dot(Vec3::Y).abs() < 1e-4,
@@ -140,7 +140,7 @@ fn the_soft_zone_arrives_on_time() {
             let mut rotation = Quat::IDENTITY;
             let mut at = |state: &mut Framed, point: Vec3, rotation: Quat| {
                 let mut frame = CameraFrame::new(EYE, EYE, rotation, point, lens());
-                framing.compose(state, &mut frame, Vec3::Y, dt);
+                framing.compose(state, &mut frame, Vec3::Y, Vec3::Z, dt);
                 frame.rotation
             };
             for step in 0..walk {
@@ -169,7 +169,7 @@ fn a_target_behind_is_turned_to() {
     let mut state = Framed::at(Vec3::ZERO);
     let behind = Vec3::new(0.0, 0.0, 8.0);
     let mut frame = frame_at(behind, Vec3::ZERO);
-    rigid().compose(&mut state, &mut frame, Vec3::Y, DT);
+    rigid().compose(&mut state, &mut frame, Vec3::Y, Vec3::Z, DT);
     let forward = frame.rotation * Vec3::NEG_Z;
     assert!(
         forward.dot(Vec3::Z) > 0.99,
@@ -186,7 +186,7 @@ fn a_lead_moves_where_it_holds() {
     let mut state = Framed::at(target);
     // Two metres of lead along +X: the target is held that much to the LEFT of centre.
     let mut frame = frame_at(target, Vec3::X * 2.0);
-    rigid().compose(&mut state, &mut frame, Vec3::Y, DT);
+    rigid().compose(&mut state, &mut frame, Vec3::Y, Vec3::Z, DT);
     let seen = on_screen(frame.rotation, frame.position, target).x;
     assert!(seen < -0.1, "the lead did not move the aim: {seen}");
 
@@ -194,4 +194,30 @@ fn a_lead_moves_where_it_holds() {
     let mut plain = Framed::at(target);
     let still = step(&rigid(), &mut plain, target, DT).x;
     assert!(still.abs() < 0.01, "{still}");
+}
+
+/// 🔴 #1363: a composer turns the orientation it already has, so a roll it picks up is kept. Under
+/// an `up` that moves — a ball rolling around a planet — one is picked up every frame, and the
+/// horizon ends up at 156°. `a_pan_never_rolls_the_horizon` holds `up` still and cannot see it.
+#[test]
+fn a_moving_up_never_rolls_it() {
+    let framing = framing();
+    let mut state = Framed::at(Vec3::ZERO);
+    let mut rotation = Quat::IDENTITY;
+    let mut up = Vec3::Y;
+    for step in 0..600 {
+        // The up walks a whole turn, as gravity does around a planet.
+        let angle = step as f32 * std::f32::consts::TAU / 600.0;
+        up = Vec3::new(angle.sin(), angle.cos(), 0.0);
+        let target = Vec3::new(angle.cos() * 2.0, 0.0, angle.sin());
+        let mut frame = CameraFrame::new(EYE, EYE, rotation, target, lens());
+        framing.compose(&mut state, &mut frame, up, Vec3::Z, DT);
+        rotation = frame.rotation;
+    }
+    let right = rotation * Vec3::X;
+    assert!(
+        right.dot(up).abs() < 1e-3,
+        "the horizon rolled to {} off {up}",
+        right.dot(up),
+    );
 }
