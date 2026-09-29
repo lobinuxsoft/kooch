@@ -12,7 +12,7 @@ fn composer() -> PositionComposer {
         camera_distance: 10.0,
         dead_zone: Vec2::splat(0.2),
         soft_zone: Vec2::splat(0.2),
-        damping_value: Vec3::ZERO,
+        damping: Vec3::ZERO,
         center_on_activate: false,
         ..Default::default()
     }
@@ -117,7 +117,7 @@ fn it_slides_on_the_local_horizon() {
 #[test]
 fn arriving_centres_at_once() {
     let composer = PositionComposer {
-        damping_value: Vec3::splat(0.5),
+        damping: Vec3::splat(0.5),
         center_on_activate: true,
         ..composer()
     };

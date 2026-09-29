@@ -25,7 +25,7 @@ fn rigid() -> RotationComposer {
     RotationComposer {
         dead_zone: Vec2::ZERO,
         soft_zone: Vec2::ZERO,
-        soft_time: 0.0,
+        damping: Vec2::splat(0.0),
         ..Default::default()
     }
 }
@@ -124,11 +124,11 @@ fn a_pan_never_rolls_the_horizon() {
 }
 
 /// 🔴 The duration is a duration: once the target stops, the camera brings it to the dead zone's
-/// edge in exactly `soft_time`, at any frame rate.
+/// edge in exactly `damping`, at any frame rate.
 #[test]
 fn the_soft_zone_arrives_on_time() {
     let framing = RotationComposer {
-        soft_time: 0.5,
+        damping: Vec2::splat(0.5),
         ..framing()
     };
     for fps in [30.0_f32, 60.0, 144.0] {
@@ -220,4 +220,43 @@ fn a_moving_up_never_rolls_it() {
         "the horizon rolled to {} off {up}",
         right.dot(up),
     );
+}
+
+/// 🔴 A renamed field keeps its value through `#[reflect(alias)]`; a field that also changed
+/// **shape** cannot, because the loader has an `F32` and the field wants a `Vec2`. Without the
+/// migration every authored composer would take the default and nothing would say so.
+#[test]
+fn a_scalar_soft_time_becomes_both_axes() {
+    use kooch_ecs::Reflect;
+    use kooch_ecs::component::ComponentRegistry;
+
+    let mut resources = kooch_core::resource::Resources::new();
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu_reflected::<RotationComposer>();
+    let entity = kooch_ecs::entity::Entity::new(1, 0);
+    let mut framing = RotationComposer::default();
+    framing
+        .reflect_set("soft_time", kooch_ecs::reflect::ReflectValue::F32(0.01))
+        .unwrap();
+    registry
+        .get_cpu_mut::<RotationComposer>()
+        .unwrap()
+        .insert(entity, framing);
+    resources.insert(registry);
+
+    super::migrate_soft_time(&mut resources);
+
+    let after = *resources
+        .get::<ComponentRegistry>()
+        .unwrap()
+        .get_cpu::<RotationComposer>()
+        .unwrap()
+        .get(entity)
+        .unwrap();
+    assert_eq!(
+        after.damping,
+        Vec2::splat(0.01),
+        "the authored value was lost"
+    );
+    assert_eq!(after.was_soft_time, 0.0, "the old field was not cleared");
 }

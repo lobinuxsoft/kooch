@@ -144,10 +144,9 @@ fn rig_damped(collision: bool, damping: bool) -> (Resources, Entity, Entity) {
             follow: FOLLOW_THIRD_PERSON,
             look_at: LOOK_AT_SIMPLE,
             camera_distance: ARM,
-            damping,
             // 🔴 The duration is what says rigid, not the switch: since #1333 the switch is folded
             // into it on load and a vcam built in code never goes through one.
-            damping_value: match damping {
+            damping: match damping {
                 true => Vec3::splat(0.5),
                 false => Vec3::ZERO,
             },

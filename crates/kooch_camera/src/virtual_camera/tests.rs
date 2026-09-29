@@ -3,8 +3,8 @@ use super::*;
 fn vcam(follow: u32) -> VirtualCamera {
     VirtualCamera {
         follow,
-        damping_value: Vec3::ZERO,
-        rotation_damping_value: 0.0,
+        damping: Vec3::ZERO,
+        rotation_damping: 0.0,
         ..Default::default()
     }
 }
@@ -174,11 +174,11 @@ fn damped_for(r: &VirtualCamera, desired: Vec3, fps: f32, seconds: f32) -> Vec3 
 #[test]
 fn damping_leaves_a_hundredth() {
     let r = VirtualCamera {
-        damping_value: Vec3::splat(0.5),
+        damping: Vec3::splat(0.5),
         ..Default::default()
     };
     let desired = Vec3::new(10.0, -2.0, 4.0);
-    // 🔴 A hundredth of the gap after `damping_value` seconds, at any frame rate — Cinemachine's
+    // 🔴 A hundredth of the gap after `damping` seconds, at any frame rate — Cinemachine's
     // contract, and not an exact arrival. An exact arrival needs a tween that restarts when its
     // goal moves, and that restart is what stepped whenever the target started or stopped (#1336).
     for fps in [30.0_f32, 60.0, 144.0] {
@@ -195,8 +195,8 @@ fn damping_leaves_a_hundredth() {
 #[test]
 fn damping_off_snaps_exactly() {
     let r = VirtualCamera {
-        damping_value: Vec3::ZERO,
-        rotation_damping_value: 0.0,
+        damping: Vec3::ZERO,
+        rotation_damping: 0.0,
         ..Default::default()
     };
     let desired = Vec3::new(3.0, 4.0, 5.0);
@@ -207,8 +207,7 @@ fn damping_off_snaps_exactly() {
 #[test]
 fn a_zero_time_is_rigid_on_that_axis_only() {
     let r = VirtualCamera {
-        damping: true,
-        damping_value: Vec3::new(0.0, 0.2, 0.2),
+        damping: Vec3::new(0.0, 0.2, 0.2),
         ..Default::default()
     };
     let got = r.damped(Vec3::ZERO, Vec3::splat(10.0), 1.0 / 60.0);
@@ -422,8 +421,7 @@ fn a_zero_up_falls_back_to_world_instead_of_nan() {
 #[test]
 fn rotation_damping_eases_instead_of_snapping_() {
     let r = VirtualCamera {
-        damping: true,
-        rotation_damping_value: 0.2,
+        rotation_damping: 0.2,
         ..Default::default()
     };
     let from = glam::Quat::IDENTITY;
@@ -453,8 +451,7 @@ fn rotation_damping_eases_instead_of_snapping_() {
 #[test]
 fn rotation_damping_takes_the_short_way_round() {
     let r = VirtualCamera {
-        damping: true,
-        rotation_damping_value: 0.2,
+        rotation_damping: 0.2,
         ..Default::default()
     };
     let from = glam::Quat::IDENTITY;
@@ -470,8 +467,8 @@ fn rotation_damping_takes_the_short_way_round() {
 #[test]
 fn rotation_damping_off_snaps_exactly() {
     let r = VirtualCamera {
-        damping_value: Vec3::ZERO,
-        rotation_damping_value: 0.0,
+        damping: Vec3::ZERO,
+        rotation_damping: 0.0,
         ..Default::default()
     };
     let to = glam::Quat::from_rotation_x(0.9);
@@ -527,8 +524,8 @@ fn rolling_over_the_pole_does_not_flip() {
         camera_distance: 5.0,
         pitch: 0.0,
         yaw: 0.0,
-        damping_value: Vec3::ZERO,
-        rotation_damping_value: 0.0,
+        damping: Vec3::ZERO,
+        rotation_damping: 0.0,
         ..Default::default()
     };
 
@@ -603,17 +600,17 @@ fn blend_time_still_loads() {
 fn damping_value_still_loads() {
     let mut vcam = VirtualCamera::default();
     vcam.reflect_set(
-        "damping_value",
+        "damping",
         kooch_ecs::reflect::ReflectValue::Vec3(Vec3::splat(0.3)),
     )
     .unwrap();
     vcam.reflect_set(
-        "rotation_damping_value",
+        "rotation_damping",
         kooch_ecs::reflect::ReflectValue::F32(0.2),
     )
     .unwrap();
-    assert_eq!(vcam.damping_value, Vec3::splat(0.3));
-    assert_eq!(vcam.rotation_damping_value, 0.2);
+    assert_eq!(vcam.damping, Vec3::splat(0.3));
+    assert_eq!(vcam.rotation_damping, 0.2);
 }
 
 /// Every name a camera duration was saved under still loads.
@@ -627,55 +624,20 @@ fn old_duration_names_load() {
     )
     .unwrap();
     vcam.reflect_set("rotation_damping_time", F32(0.4)).unwrap();
-    assert_eq!(vcam.damping_value, Vec3::splat(0.4));
-    assert_eq!(vcam.rotation_damping_value, 0.4);
+    assert_eq!(vcam.damping, Vec3::splat(0.4));
+    assert_eq!(vcam.rotation_damping, 0.4);
 
+    // 🔴 The framing's changed shape as well as name: a scalar cannot land in a `Vec2`, so the old
+    // field is still here and a migration empties it (#1367).
     let mut framing = crate::RotationComposer::default();
     framing.reflect_set("soft_time", F32(0.4)).unwrap();
-    assert_eq!(framing.soft_time, 0.4);
+    assert_eq!(framing.was_soft_time, 0.4);
 
     let mut collision = crate::Deoccluder::default();
     collision.reflect_set("return_time", F32(0.4)).unwrap();
     assert_eq!(collision.damping, 0.4);
     collision.reflect_set("return_duration", F32(0.6)).unwrap();
     assert_eq!(collision.damping, 0.6);
-}
-
-/// 🔴 #1333: `damping: false` and a zero duration said the same thing, and the pair could
-/// disagree — the Inspector showed a slider the switch had already turned off. The switch is
-/// folded into the durations on load, which is the only reading it can have.
-#[test]
-fn the_damping_switch_becomes_zero_durations() {
-    use kooch_core::resource::Resources;
-    use kooch_ecs::component::ComponentRegistry;
-
-    let mut resources = Resources::new();
-    let mut registry = ComponentRegistry::new();
-    registry.register_cpu_reflected::<VirtualCamera>();
-    let entity = kooch_ecs::entity::Entity::new(1, 0);
-    registry.get_cpu_mut::<VirtualCamera>().unwrap().insert(
-        entity,
-        VirtualCamera {
-            damping: false,
-            damping_value: Vec3::splat(0.5),
-            rotation_damping_value: 0.5,
-            ..Default::default()
-        },
-    );
-    resources.insert(registry);
-
-    crate::virtual_camera::migrate_damping_switch(&mut resources);
-
-    let vcam = *resources
-        .get::<ComponentRegistry>()
-        .unwrap()
-        .get_cpu::<VirtualCamera>()
-        .unwrap()
-        .get(entity)
-        .unwrap();
-    assert_eq!(vcam.damping_value, Vec3::ZERO, "the switch was ignored");
-    assert_eq!(vcam.rotation_damping_value, 0.0);
-    assert!(vcam.damping, "the switch was not cleared");
 }
 
 /// The whole point of the offset: the camera stands beside the arm, along the axis it would call

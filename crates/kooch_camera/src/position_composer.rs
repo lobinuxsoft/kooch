@@ -42,11 +42,11 @@ pub struct PositionComposer {
     pub soft_zone: Vec2,
     /// Seconds to close the gap, per **camera** axis: right, up, forward.
     ///
-    /// Not Cinemachine's `Damping`, which is a per-axis "how aggressively". This is the duration
-    /// `VirtualCamera::damping_value` already means, and borrowing the other name would promise a
-    /// number it does not deliver (#1367).
+    /// Cinemachine's `Damping`, and the same arithmetic to the digit: `StandardDamp` is
+    /// `initial * (1 - exp(ln(0.01) * dt / dampTime))`, which is our `settled(dt, time)` with the
+    /// same 1% residual.
     #[reflect(range = TIME_RANGE)]
-    pub damping_value: Vec3,
+    pub damping: Vec3,
     /// Whether taking over centres the target at once, rather than easing it in from wherever the
     /// camera was left.
     pub center_on_activate: bool,
@@ -69,7 +69,7 @@ impl Default for PositionComposer {
             screen_position: Vec2::ZERO,
             dead_zone: Vec2::splat(0.1),
             soft_zone: Vec2::splat(0.8),
-            damping_value: Vec3::splat(0.5),
+            damping: Vec3::splat(0.5),
             center_on_activate: true,
         }
     }
@@ -115,9 +115,9 @@ impl PositionComposer {
             // Taking over: land on it rather than easing in from wherever the camera was left.
             true => owed,
             false => Vec3::new(
-                owed.x * crate::virtual_camera::settled(dt, self.damping_value.x),
-                owed.y * crate::virtual_camera::settled(dt, self.damping_value.y),
-                owed.z * crate::virtual_camera::settled(dt, self.damping_value.z),
+                owed.x * crate::virtual_camera::settled(dt, self.damping.x),
+                owed.y * crate::virtual_camera::settled(dt, self.damping.y),
+                owed.z * crate::virtual_camera::settled(dt, self.damping.z),
             ),
         };
         from + right * eased.x + above * eased.y + forward * eased.z

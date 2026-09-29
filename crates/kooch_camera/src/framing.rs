@@ -48,13 +48,15 @@ pub struct RotationComposer {
     /// back measured three times worse than the rig on its own.
     #[reflect(range = ZONE_RANGE)]
     pub soft_zone: Vec2,
-    /// Seconds to close the gap to the dead zone's edge, leaving a hundredth of it behind — the
-    /// same easing the rig's damping uses. Zero is rigid.
-    ///
-    /// 🔴 Not a duration. A tween that restarts whenever its goal moves spends every frame at the
-    /// fastest part of its curve and steps whenever the target starts or stops (#1336).
-    #[reflect(range = TIME_RANGE, alias = "soft_time")]
-    pub soft_time: f32,
+    /// Seconds to close the gap to the dead zone's edge, per axis, leaving a hundredth of it
+    /// behind. Cinemachine's `Damping`, and the same arithmetic to the digit:
+    /// `initial * (1 - exp(ln(0.01) * dt / dampTime))` is our `settled(dt, time)`.
+    #[reflect(range = TIME_RANGE)]
+    pub damping: Vec2,
+    /// The single number a scene wrote before the damping was per axis. Folded into both and
+    /// cleared on load, the way the vcam's damping switch is (#1333).
+    #[reflect(hidden, alias = "soft_time")]
+    pub was_soft_time: f32,
 }
 
 /// The enabled framing on `vcam`, if it has one.
@@ -125,7 +127,8 @@ impl Default for RotationComposer {
             screen: Vec2::ZERO,
             dead_zone: Vec2::new(0.1, 0.1),
             soft_zone: Vec2::new(0.6, 0.6),
-            soft_time: 0.5,
+            damping: Vec2::splat(0.5),
+            was_soft_time: 0.0,
         }
     }
 }
@@ -215,7 +218,10 @@ impl RotationComposer {
         };
         // One quantity, eased once: the residual angle. The vcam's own rotation damping does not run
         // on top of this — two eases in series on one quantity is #1329, on the other axis.
-        let alpha = crate::virtual_camera::settled(dt, self.soft_time);
+        let alpha = Vec2::new(
+            crate::virtual_camera::settled(dt, self.damping.x),
+            crate::virtual_camera::settled(dt, self.damping.y),
+        );
         frame.rotation = turned(frame.rotation, owed * share * alpha, up);
         state.last = target;
     }
@@ -316,3 +322,30 @@ impl Tracked {
 
 #[cfg(test)]
 mod tests;
+
+/// Folds the single `soft_time` a scene wrote before the damping was per axis into both axes, once.
+///
+/// 🔴 A renamed **field** keeps its value through `#[reflect(alias)]`; a field that also changed
+/// **shape** cannot, because the loader has an `F32` and the field wants a `Vec2`. So the old one is
+/// still here, hidden, and this is what empties it — the same shape as the vcam's damping switch
+/// (#1333), and the alternative is every authored composer silently taking the default.
+pub fn migrate_soft_time(resources: &mut kooch_core::resource::Resources) {
+    let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
+        return;
+    };
+    let Some(storage) = registry.get_cpu_mut::<RotationComposer>() else {
+        return;
+    };
+    for (&entity, framing) in storage.iter_mut() {
+        if framing.was_soft_time <= 0.0 {
+            continue;
+        }
+        framing.damping = Vec2::splat(framing.was_soft_time);
+        framing.was_soft_time = 0.0;
+        tracing::info!(
+            target: "kooch_camera",
+            entity = entity.index(),
+            "a framing's soft_time became a damping on both axes",
+        );
+    }
+}

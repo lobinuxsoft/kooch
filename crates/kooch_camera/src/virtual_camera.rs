@@ -195,16 +195,10 @@ pub struct VirtualCamera {
     /// Where the camera looks. One of the `LOOK_AT_*` constants.
     #[reflect(choices = LOOK_AT_CHOICES)]
     pub look_at: u32,
-    /// Whether the camera eases towards its pose instead of snapping.
-    /// 🔴 The switch a scene wrote before a zero duration said the same thing. Off is folded into
-    /// zeroed durations on load and cleared: two ways to say "rigid" is two ways to disagree, and
-    /// it showed a slider that did nothing (#1333).
-    #[reflect(hidden)]
-    pub damping: bool,
     /// Seconds the camera takes to reach its pose once the target stops, per world axis — exactly,
     /// a tween that restarts while the target keeps moving. Zero is rigid.
     #[reflect(alias = "damping_value, damping_time")]
-    pub damping_value: Vec3,
+    pub damping: Vec3,
     /// The blend a scene wrote before blends belonged to the brain. Ignored, and said in the log
     /// once so the number is not lost silently: a blend is between two vcams, and this is one of
     /// them (#1339).
@@ -228,7 +222,7 @@ pub struct VirtualCamera {
     /// Seconds to turn into a new orientation, exactly, so a changing up does not snap the horizon.
     /// Rotation only; zero is rigid.
     #[reflect(alias = "rotation_damping_value, rotation_damping_time")]
-    pub rotation_damping_value: f32,
+    pub rotation_damping: f32,
 }
 
 /// One axis of exponential easing. `time <= 0` is rigid.
@@ -276,33 +270,6 @@ pub fn report_moved_blends(resources: &mut kooch_core::resource::Resources) {
     }
 }
 
-/// Folds the `damping` switch a scene wrote before a zero duration said the same thing into the
-/// durations, and clears it.
-///
-/// 🔴 Off means rigid, and rigid is a duration of zero — the mapping cannot be misread. Said out
-/// loud because it writes to the author's data and a save makes it permanent (#1333).
-pub fn migrate_damping_switch(resources: &mut kooch_core::resource::Resources) {
-    let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
-        return;
-    };
-    let Some(storage) = registry.get_cpu_mut::<VirtualCamera>() else {
-        return;
-    };
-    for (&entity, vcam) in storage.iter_mut() {
-        if vcam.damping {
-            continue;
-        }
-        vcam.damping = true;
-        vcam.damping_value = Vec3::ZERO;
-        vcam.rotation_damping_value = 0.0;
-        tracing::info!(
-            target: "kooch_camera",
-            entity = entity.index(),
-            "a vcam's damping switch was folded into its durations",
-        );
-    }
-}
-
 impl Default for VirtualCamera {
     fn default() -> Self {
         Self {
@@ -321,8 +288,7 @@ impl Default for VirtualCamera {
             // The authored `shoulder.x` as written: `2 × 1 − 1` is one.
             camera_side: 1.0,
             look_at: LOOK_AT_SIMPLE,
-            damping: true,
-            damping_value: Vec3::splat(0.5),
+            damping: Vec3::splat(0.5),
             up_mode: UP_WORLD,
             // Long enough to read as a transition, short enough not to
             // feel like the game took the camera away.
@@ -330,7 +296,7 @@ impl Default for VirtualCamera {
             blend_curve: crate::blend::CURVE_SINE,
             blend_ease: crate::blend::EASE_IN_OUT,
             inactive_update: INACTIVE_NEVER,
-            rotation_damping_value: 0.5,
+            rotation_damping: 0.5,
         }
     }
 }
@@ -443,9 +409,9 @@ impl VirtualCamera {
     /// fraction, whatever the goal is doing.
     pub fn damped(&self, current: Vec3, desired: Vec3, dt: f32) -> Vec3 {
         Vec3::new(
-            eased(current.x, desired.x, self.damping_value.x, dt),
-            eased(current.y, desired.y, self.damping_value.y, dt),
-            eased(current.z, desired.z, self.damping_value.z, dt),
+            eased(current.x, desired.x, self.damping.x, dt),
+            eased(current.y, desired.y, self.damping.y, dt),
+            eased(current.z, desired.z, self.damping.z, dt),
         )
     }
 
@@ -457,7 +423,7 @@ impl VirtualCamera {
             false => desired,
         };
         current
-            .slerp(desired, settled(dt, self.rotation_damping_value))
+            .slerp(desired, settled(dt, self.rotation_damping))
             .normalize()
     }
 }

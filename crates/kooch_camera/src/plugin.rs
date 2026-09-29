@@ -98,7 +98,7 @@ impl Plugin for CameraPlugin {
         app.insert_resource(RigMemory::default());
         app.insert_resource(CameraRig::standard());
         // Before anything reads a duration, and before an author can edit a field a switch overrode.
-        app.add_system(Stage::First, crate::virtual_camera::migrate_damping_switch);
+        app.add_system(Stage::First, crate::framing::migrate_soft_time);
         app.add_system(Stage::First, crate::virtual_camera::report_moved_blends);
         app.add_system(Stage::First, crate::rig::report_orphans);
         // Declared, not left to registration order: the orbit writes the `yaw` the rig's Body

@@ -27,8 +27,8 @@ fn world() -> (Resources, Entity, Entity) {
             follow: crate::FOLLOW_SIMPLE,
             offset: Vec3::Z * 5.0,
             // Slow enough that one step leaves the camera nowhere near where it is going.
-            damping_value: Vec3::splat(2.0),
-            rotation_damping_value: 0.0,
+            damping: Vec3::splat(2.0),
+            rotation_damping: 0.0,
             ..Default::default()
         },
     );

@@ -35,8 +35,8 @@ fn world() -> (Resources, Entity, Entity) {
             // The framing IS the Rotation Control: a vcam has to ask for it (#1361).
             look_at: crate::LOOK_AT_COMPOSED,
             offset: Vec3::Z * 5.0,
-            damping_value: Vec3::ZERO,
-            rotation_damping_value: 0.0,
+            damping: Vec3::ZERO,
+            rotation_damping: 0.0,
             ..Default::default()
         },
     );
@@ -241,7 +241,7 @@ fn a_running_target_is_led() {
     registry.get_cpu_mut::<CameraLookahead>().unwrap().insert(
         vcam,
         CameraLookahead {
-            smoothing_time: 0.0,
+            smoothing: 0.0,
             ..Default::default()
         },
     );
@@ -331,8 +331,8 @@ fn framing_adds_no_jump_of_its_own() {
             cam.follow = crate::FOLLOW_THIRD_PERSON;
             cam.camera_distance = 8.0;
             cam.pitch = 18.0;
-            cam.damping_value = Vec3::splat(0.3);
-            cam.rotation_damping_value = 0.5;
+            cam.damping = Vec3::splat(0.3);
+            cam.rotation_damping = 0.5;
             let frame = registry
                 .get_cpu_mut::<RotationComposer>()
                 .unwrap()
@@ -344,7 +344,7 @@ fn framing_adds_no_jump_of_its_own() {
             // cannot tell a boundary that is handled from one that is shoved (#1336).
             frame.dead_zone = Vec2::splat(0.04);
             frame.soft_zone = Vec2::splat(0.08);
-            frame.soft_time = 0.6;
+            frame.damping = Vec2::splat(0.6);
         }
         let (dt, radius) = (1.0 / 60.0, 8.0);
         let (mut last, mut previous, mut worst) = (0.0_f32, 0.0_f32, 0.0_f32);
@@ -386,7 +386,7 @@ fn framing_adds_no_jump_of_its_own() {
 }
 
 /// 🔴 #1330: a wall's push is not slack. The frame reads where the rig had the camera before the
-/// collision, or it spends a `soft_time` undoing what the wall just did — two things moving
+/// collision, or it spends a `damping` undoing what the wall just did — two things moving
 /// one camera, one stage apart.
 #[test]
 fn a_wall_is_not_slack() {

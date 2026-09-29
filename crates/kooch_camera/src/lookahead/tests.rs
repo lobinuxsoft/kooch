@@ -4,7 +4,7 @@ const DT: f32 = 1.0 / 60.0;
 
 fn lookahead() -> CameraLookahead {
     CameraLookahead {
-        smoothing_time: 0.0,
+        smoothing: 0.0,
         ..Default::default()
     }
 }
@@ -46,11 +46,11 @@ fn a_jump_is_not_led() {
     assert_eq!(led, Vec3::ZERO);
 }
 
-/// Stopping brings the framing back in exactly `smoothing_time`, and not before: no snap.
+/// Stopping brings the framing back in exactly `smoothing`, and not before: no snap.
 #[test]
 fn stopping_eases_the_lead_out() {
     let look = CameraLookahead {
-        smoothing_time: 0.5,
+        smoothing: 0.5,
         ..Default::default()
     };
     // 🔴 A hundredth of the lead after its seconds, not nothing: the easing is exponential, and a
