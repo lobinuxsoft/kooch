@@ -108,7 +108,7 @@ pub(crate) fn draw_game_content(
 /// neither was on screen.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct FramingView {
-    pub framing: kooch_camera::CameraFraming,
+    pub framing: kooch_camera::RotationComposer,
     /// Where the target is held, in screen fractions: `screen` plus whatever the lead adds.
     pub held: glam::Vec2,
     /// Where the target actually sits, when it is in front of the camera at all.

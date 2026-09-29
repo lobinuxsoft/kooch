@@ -1,4 +1,4 @@
-//! [`CameraFraming`] — where on screen a vcam holds its target, and how far the target may wander
+//! [`RotationComposer`] — where on screen a vcam holds its target, and how far the target may wander
 //! before the camera answers: Cinemachine's composer dead and soft zones (#1252).
 //!
 //! 🔴 Framing **turns** the camera and never moves it (#1361), as `CinemachineRotationComposer`
@@ -29,8 +29,8 @@ use kooch_ecs::reflect::FieldRange;
 ///
 /// [`VirtualCamera`]: crate::VirtualCamera
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
-#[reflect(category = "Camera")]
-pub struct CameraFraming {
+#[reflect(category = "Camera", alias = "kooch_camera::framing::CameraFraming")]
+pub struct RotationComposer {
     /// Off aims at the target itself, as without this component. The rig follows it either way.
     pub enabled: bool,
     /// Where the target sits on screen: `0` is the centre, `±0.5` the edges, +Y up.
@@ -48,13 +48,15 @@ pub struct CameraFraming {
     /// back measured three times worse than the rig on its own.
     #[reflect(range = ZONE_RANGE)]
     pub soft_zone: Vec2,
-    /// Seconds to close the gap to the dead zone's edge, leaving a hundredth of it behind — the
-    /// same easing the rig's damping uses. Zero is rigid.
-    ///
-    /// 🔴 Not a duration. A tween that restarts whenever its goal moves spends every frame at the
-    /// fastest part of its curve and steps whenever the target starts or stops (#1336).
-    #[reflect(range = TIME_RANGE, alias = "soft_time")]
-    pub soft_time: f32,
+    /// Seconds to close the gap to the dead zone's edge, per axis, leaving a hundredth of it
+    /// behind. Cinemachine's `Damping`, and the same arithmetic to the digit:
+    /// `initial * (1 - exp(ln(0.01) * dt / dampTime))` is our `settled(dt, time)`.
+    #[reflect(range = TIME_RANGE)]
+    pub damping: Vec2,
+    /// The single number a scene wrote before the damping was per axis. Folded into both and
+    /// cleared on load, the way the vcam's damping switch is (#1333).
+    #[reflect(hidden, alias = "soft_time")]
+    pub was_soft_time: f32,
 }
 
 /// The enabled framing on `vcam`, if it has one.
@@ -64,9 +66,9 @@ pub struct CameraFraming {
 pub fn of(
     registry: &kooch_ecs::component::ComponentRegistry,
     vcam: Entity,
-) -> Option<CameraFraming> {
+) -> Option<RotationComposer> {
     registry
-        .get_cpu::<CameraFraming>()?
+        .get_cpu::<RotationComposer>()?
         .get(vcam)
         .copied()
         .filter(|framing| framing.enabled)
@@ -100,37 +102,38 @@ pub fn composed(step: &mut crate::rig::RigStep) -> bool {
 /// How far a target or a camera may drift and still count as standing still, in metres.
 const STILL: f32 = 1e-5;
 
-const SCREEN_RANGE: FieldRange = FieldRange {
+pub(crate) const SCREEN_RANGE: FieldRange = FieldRange {
     min: -0.5,
     max: 0.5,
     step: 0.01,
 };
 
-const ZONE_RANGE: FieldRange = FieldRange {
+pub(crate) const ZONE_RANGE: FieldRange = FieldRange {
     min: 0.0,
     max: 2.0,
     step: 0.01,
 };
 
-const TIME_RANGE: FieldRange = FieldRange {
+pub(crate) const TIME_RANGE: FieldRange = FieldRange {
     min: 0.0,
     max: 3.0,
     step: 0.01,
 };
 
-impl Default for CameraFraming {
+impl Default for RotationComposer {
     fn default() -> Self {
         Self {
             enabled: true,
             screen: Vec2::ZERO,
             dead_zone: Vec2::new(0.1, 0.1),
             soft_zone: Vec2::new(0.6, 0.6),
-            soft_time: 0.5,
+            damping: Vec2::splat(0.5),
+            was_soft_time: 0.0,
         }
     }
 }
 
-impl Component for CameraFraming {}
+impl Component for RotationComposer {}
 
 /// How much of the world a view shows at one metre: half its height and half its width.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -171,7 +174,7 @@ impl Lens {
     }
 }
 
-impl CameraFraming {
+impl RotationComposer {
     /// Pans and tilts so the target lands where it is held on screen, copied from
     /// `CinemachineRotationComposer::RotateToScreenBounds`: the angular error, clamped to the dead
     /// zone, eased once.
@@ -215,7 +218,10 @@ impl CameraFraming {
         };
         // One quantity, eased once: the residual angle. The vcam's own rotation damping does not run
         // on top of this — two eases in series on one quantity is #1329, on the other axis.
-        let alpha = crate::virtual_camera::settled(dt, self.soft_time);
+        let alpha = Vec2::new(
+            crate::virtual_camera::settled(dt, self.damping.x),
+            crate::virtual_camera::settled(dt, self.damping.y),
+        );
         frame.rotation = turned(frame.rotation, owed * share * alpha, up);
         state.last = target;
     }
@@ -224,7 +230,7 @@ impl CameraFraming {
 /// Where `direction` sits off the view axis, in degrees, read in the **screen's** own axes: `+x`
 /// right, `+y` up. Cinemachine's `GetCameraRotationToTarget`, with the axes named rather than swapped
 /// into a `Vector2`.
-fn seen_at(rotation: glam::Quat, direction: Vec3, up: Vec3) -> Vec2 {
+pub(crate) fn seen_at(rotation: glam::Quat, direction: Vec3, up: Vec3) -> Vec2 {
     if direction.length_squared() < 1e-12 {
         return Vec2::ZERO;
     }
@@ -252,7 +258,7 @@ fn seen_at(rotation: glam::Quat, direction: Vec3, up: Vec3) -> Vec2 {
 /// `-right`, so a target on the right is reached by a **negative** pan while a target above is
 /// reached by a positive tilt. One axis disagrees with the screen, and this is the one line that
 /// knows it.
-fn turned(rotation: glam::Quat, at: Vec2, up: Vec3) -> glam::Quat {
+pub(crate) fn turned(rotation: glam::Quat, at: Vec2, up: Vec3) -> glam::Quat {
     let panned = glam::Quat::from_axis_angle(up, (-at.x).to_radians()) * rotation;
     panned * glam::Quat::from_rotation_x(at.y.to_radians())
 }
@@ -268,7 +274,7 @@ fn signed(from: Vec3, to: Vec3, axis: Vec3) -> f32 {
 /// How much of the correction applies at `at`: none on the dead zone's edge, all of it on the soft
 /// one, and all of it beyond. Both zones as **half**-widths. A band of zero width is a step, which is
 /// what a soft zone the same size as the dead one asks for.
-fn ramp(at: f32, dead: f32, soft: f32) -> f32 {
+pub(crate) fn ramp(at: f32, dead: f32, soft: f32) -> f32 {
     let band = (soft - dead).max(0.0);
     match band > 0.0 {
         true => ((at.abs() - dead.max(0.0)) / band).clamp(0.0, 1.0),
@@ -277,7 +283,7 @@ fn ramp(at: f32, dead: f32, soft: f32) -> f32 {
 }
 
 /// How far past a zone of `half` an error sits, per axis, in whatever unit both are given in.
-fn past(at: Vec2, half: Vec2) -> Vec2 {
+pub(crate) fn past(at: Vec2, half: Vec2) -> Vec2 {
     let beyond = |at: f32, half: f32| at.signum() * (at.abs() - half.max(0.0)).max(0.0);
     Vec2::new(beyond(at.x, half.x), beyond(at.y, half.y))
 }
@@ -316,3 +322,30 @@ impl Tracked {
 
 #[cfg(test)]
 mod tests;
+
+/// Folds the single `soft_time` a scene wrote before the damping was per axis into both axes, once.
+///
+/// 🔴 A renamed **field** keeps its value through `#[reflect(alias)]`; a field that also changed
+/// **shape** cannot, because the loader has an `F32` and the field wants a `Vec2`. So the old one is
+/// still here, hidden, and this is what empties it — the same shape as the vcam's damping switch
+/// (#1333), and the alternative is every authored composer silently taking the default.
+pub fn migrate_soft_time(resources: &mut kooch_core::resource::Resources) {
+    let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
+        return;
+    };
+    let Some(storage) = registry.get_cpu_mut::<RotationComposer>() else {
+        return;
+    };
+    for (&entity, framing) in storage.iter_mut() {
+        if framing.was_soft_time <= 0.0 {
+            continue;
+        }
+        framing.damping = Vec2::splat(framing.was_soft_time);
+        framing.was_soft_time = 0.0;
+        tracing::info!(
+            target: "kooch_camera",
+            entity = entity.index(),
+            "a framing's soft_time became a damping on both axes",
+        );
+    }
+}

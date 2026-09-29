@@ -72,7 +72,7 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     // was on screen, and three days of this rig's bugs were found by playing instead (#1334).
     registry.register::<kooch_camera::CameraLookahead, camera_rig::LookaheadVisualizer>();
     registry
-        .register::<kooch_camera::occlusion::CameraCollision, camera_rig::CameraCollisionVisualizer>(
+        .register::<kooch_camera::occlusion::Deoccluder, camera_rig::CameraCollisionVisualizer>(
         );
     registry.register::<kooch_camera::target::CameraTarget, camera_rig::CameraTargetVisualizer>();
     // Lights: where they point and how far they reach. `range` and the

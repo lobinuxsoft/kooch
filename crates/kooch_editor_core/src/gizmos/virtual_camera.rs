@@ -64,10 +64,10 @@ impl Visualizer<VirtualCamera> for VirtualCameraVisualizer {
 
         // The spring arm's orbit. `distance` and `yaw` are otherwise two numbers with nothing to
         // check them against, and this is the circle the camera will swing along when yaw changes.
-        if vcam.follow == FOLLOW_THIRD_PERSON && vcam.distance > 1e-3 {
+        if vcam.follow == FOLLOW_THIRD_PERSON && vcam.camera_distance > 1e-3 {
             let forward = (to_world(-Vec3::Z) - origin).normalize_or(-Vec3::Z);
             let up = (to_world(Vec3::Y) - origin).normalize_or(Vec3::Y);
-            let centre = origin + forward * vcam.distance;
+            let centre = origin + forward * vcam.camera_distance;
 
             // A basis on the orbit plane: perpendicular to up, through
             // the vcam. Using the vcam's own offset as the start angle

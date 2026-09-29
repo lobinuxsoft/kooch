@@ -13,10 +13,10 @@ use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::FieldRange;
 
 /// Leads the target of the vcam it sits on along its velocity. Beside a [`VirtualCamera`]; with a
-/// [`CameraFraming`] the led point is what gets framed.
+/// [`RotationComposer`] the led point is what gets framed.
 ///
 /// [`VirtualCamera`]: crate::VirtualCamera
-/// [`CameraFraming`]: crate::CameraFraming
+/// [`RotationComposer`]: crate::RotationComposer
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Camera")]
 pub struct CameraLookahead {
@@ -25,11 +25,13 @@ pub struct CameraLookahead {
     /// How far ahead to look, in seconds of the target's current velocity: at 6 m/s, 0.5 leads by
     /// 3 m.
     #[reflect(range = LEAD_RANGE)]
-    pub lead_time: f32,
+    #[reflect(alias = "lead_time")]
+    pub time: f32,
     /// Seconds the lead takes to reach a new velocity's offset once it holds — exactly, a tween, so
     /// stopping returns the framing without a snap. Zero follows every change at once.
     #[reflect(range = LEAD_RANGE)]
-    pub smoothing_time: f32,
+    #[reflect(alias = "smoothing_time")]
+    pub smoothing: f32,
     /// The furthest the lead goes, in metres: a teleport is a velocity too.
     #[reflect(range = DISTANCE_RANGE)]
     pub max_distance: f32,
@@ -54,8 +56,8 @@ impl Default for CameraLookahead {
     fn default() -> Self {
         Self {
             enabled: true,
-            lead_time: 0.4,
-            smoothing_time: 0.6,
+            time: 0.4,
+            smoothing: 0.6,
             max_distance: 4.0,
             ignore_vertical: true,
         }
@@ -100,12 +102,11 @@ impl CameraLookahead {
             true => velocity - up * velocity.dot(up),
             false => velocity,
         };
-        let goal =
-            (velocity * self.lead_time.max(0.0)).clamp_length_max(self.max_distance.max(0.0));
+        let goal = (velocity * self.time.max(0.0)).clamp_length_max(self.max_distance.max(0.0));
         // Exponential, like the rig's damping: the goal moves with the target's speed every step,
         // and a tween that restarts on a moving goal steps whenever the running starts or stops
         // (#1336).
-        let alpha = crate::virtual_camera::settled(dt, self.smoothing_time);
+        let alpha = crate::virtual_camera::settled(dt, self.smoothing);
         lead.offset += (goal - lead.offset) * alpha;
         lead.offset
     }

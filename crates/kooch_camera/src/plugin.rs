@@ -63,11 +63,15 @@ impl Plugin for CameraComponentsPlugin {
                 registry.register_cpu_reflected::<VirtualCamera>();
                 registry.register_cpu_reflected::<CameraTarget>();
                 registry.register_cpu_reflected::<CameraBrain>();
-                registry.register_cpu_reflected::<crate::occlusion::CameraCollision>();
-                registry.register_cpu_reflected::<crate::framing::CameraFraming>();
+                registry.register_cpu_reflected::<crate::occlusion::Deoccluder>();
+                registry.register_cpu_reflected::<crate::framing::RotationComposer>();
                 registry.register_cpu_reflected::<crate::lookahead::CameraLookahead>();
                 registry.register_cpu_reflected::<crate::orbit::CameraOrbit>();
                 registry.register_cpu_reflected::<crate::when::CameraWhen>();
+                registry.register_cpu_reflected::<crate::PositionComposer>();
+                registry.register_cpu_reflected::<crate::ThirdPersonAim>();
+                registry.register_cpu_reflected::<crate::CameraOffset>();
+                registry.register_cpu_reflected::<crate::CameraRecomposer>();
                 #[cfg(feature = "input")]
                 {
                     registry.register_cpu_reflected::<crate::orbit::input::OrbitInput>();
@@ -94,7 +98,7 @@ impl Plugin for CameraPlugin {
         app.insert_resource(RigMemory::default());
         app.insert_resource(CameraRig::standard());
         // Before anything reads a duration, and before an author can edit a field a switch overrode.
-        app.add_system(Stage::First, crate::virtual_camera::migrate_damping_switch);
+        app.add_system(Stage::First, crate::framing::migrate_soft_time);
         app.add_system(Stage::First, crate::virtual_camera::report_moved_blends);
         app.add_system(Stage::First, crate::rig::report_orphans);
         // Declared, not left to registration order: the orbit writes the `yaw` the rig's Body
@@ -124,6 +128,12 @@ impl Plugin for CameraPlugin {
             run_if_playing(crate::orbit::orbit_cameras),
         );
         app.add_system(Stage::PostPhysics, run_if_playing(drive_virtual_cameras));
+        // After the rig: what the camera aims at is read off where the rig left it, walls included.
+        app.add_ordered(
+            Stage::PostPhysics,
+            Order::after("drive_virtual_cameras"),
+            run_if_playing(crate::third_person_aim::resolve_aims),
+        );
     }
 
     fn name(&self) -> &str {

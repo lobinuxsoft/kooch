@@ -1,7 +1,7 @@
-//! The rig with a [`CameraFraming`] (#1252): a target wandering inside the dead zone moves nothing.
+//! The rig with a [`RotationComposer`] (#1252): a target wandering inside the dead zone moves nothing.
 
 use super::*;
-use crate::{CameraFraming, CameraLookahead};
+use crate::{CameraLookahead, RotationComposer};
 use glam::Vec2;
 use kooch_ecs::allocator::EntityAllocator;
 
@@ -13,7 +13,7 @@ fn world() -> (Resources, Entity, Entity) {
     registry.register_cpu_reflected::<Transform>();
     registry.register_cpu_reflected::<VirtualCamera>();
     registry.register_cpu_reflected::<CameraTarget>();
-    registry.register_cpu_reflected::<CameraFraming>();
+    registry.register_cpu_reflected::<RotationComposer>();
     registry.register_cpu_reflected::<CameraLookahead>();
     let (vcam, target) = (allocator.spawn(), allocator.spawn());
     let at = |position| Transform {
@@ -35,8 +35,8 @@ fn world() -> (Resources, Entity, Entity) {
             // The framing IS the Rotation Control: a vcam has to ask for it (#1361).
             look_at: crate::LOOK_AT_COMPOSED,
             offset: Vec3::Z * 5.0,
-            damping_value: Vec3::ZERO,
-            rotation_damping_value: 0.0,
+            damping: Vec3::ZERO,
+            rotation_damping: 0.0,
             ..Default::default()
         },
     );
@@ -45,9 +45,9 @@ fn world() -> (Resources, Entity, Entity) {
         .unwrap()
         .insert(target, CameraTarget::default());
     registry
-        .get_cpu_mut::<CameraFraming>()
+        .get_cpu_mut::<RotationComposer>()
         .unwrap()
-        .insert(vcam, CameraFraming::default());
+        .insert(vcam, RotationComposer::default());
     resources.insert(allocator);
     resources.insert(registry);
     resources.insert(crate::rig::CameraRig::standard());
@@ -72,7 +72,7 @@ fn rigid(resources: &mut Resources, vcam: Entity) {
     let framing = resources
         .get_mut::<ComponentRegistry>()
         .unwrap()
-        .get_cpu_mut::<CameraFraming>()
+        .get_cpu_mut::<RotationComposer>()
         .unwrap()
         .get_mut(vcam)
         .unwrap();
@@ -173,7 +173,7 @@ fn the_screen_offset_turns_it() {
     rigid(&mut resources, vcam);
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
     registry
-        .get_cpu_mut::<CameraFraming>()
+        .get_cpu_mut::<RotationComposer>()
         .unwrap()
         .get_mut(vcam)
         .unwrap()
@@ -203,11 +203,11 @@ fn a_shoulder_and_a_framing_coexist() {
             .get_mut(vcam)
             .unwrap();
         cam.follow = crate::FOLLOW_THIRD_PERSON;
-        cam.distance = 3.0;
+        cam.camera_distance = 3.0;
         cam.pitch = 0.0;
-        cam.shoulder = Vec3::new(0.6, 0.0, 0.0);
+        cam.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
         registry
-            .get_cpu_mut::<CameraFraming>()
+            .get_cpu_mut::<RotationComposer>()
             .unwrap()
             .get_mut(vcam)
             .unwrap()
@@ -235,13 +235,13 @@ fn a_running_target_is_led() {
     let (mut resources, vcam, target) = world();
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
     registry
-        .get_cpu_mut::<CameraFraming>()
+        .get_cpu_mut::<RotationComposer>()
         .unwrap()
         .remove(vcam);
     registry.get_cpu_mut::<CameraLookahead>().unwrap().insert(
         vcam,
         CameraLookahead {
-            smoothing_time: 0.0,
+            smoothing: 0.0,
             ..Default::default()
         },
     );
@@ -279,10 +279,10 @@ fn the_rig_never_steps() {
                 .get_mut(vcam)
                 .unwrap();
             cam.follow = crate::FOLLOW_THIRD_PERSON;
-            cam.distance = 8.0;
+            cam.camera_distance = 8.0;
             cam.pitch = 18.0;
             registry
-                .get_cpu_mut::<CameraFraming>()
+                .get_cpu_mut::<RotationComposer>()
                 .unwrap()
                 .get_mut(vcam)
                 .unwrap()
@@ -329,12 +329,12 @@ fn framing_adds_no_jump_of_its_own() {
                 .get_mut(vcam)
                 .unwrap();
             cam.follow = crate::FOLLOW_THIRD_PERSON;
-            cam.distance = 8.0;
+            cam.camera_distance = 8.0;
             cam.pitch = 18.0;
-            cam.damping_value = Vec3::splat(0.3);
-            cam.rotation_damping_value = 0.5;
+            cam.damping = Vec3::splat(0.3);
+            cam.rotation_damping = 0.5;
             let frame = registry
-                .get_cpu_mut::<CameraFraming>()
+                .get_cpu_mut::<RotationComposer>()
                 .unwrap()
                 .get_mut(vcam)
                 .unwrap();
@@ -344,7 +344,7 @@ fn framing_adds_no_jump_of_its_own() {
             // cannot tell a boundary that is handled from one that is shoved (#1336).
             frame.dead_zone = Vec2::splat(0.04);
             frame.soft_zone = Vec2::splat(0.08);
-            frame.soft_time = 0.6;
+            frame.damping = Vec2::splat(0.6);
         }
         let (dt, radius) = (1.0 / 60.0, 8.0);
         let (mut last, mut previous, mut worst) = (0.0_f32, 0.0_f32, 0.0_f32);
@@ -386,7 +386,7 @@ fn framing_adds_no_jump_of_its_own() {
 }
 
 /// 🔴 #1330: a wall's push is not slack. The frame reads where the rig had the camera before the
-/// collision, or it spends a `soft_time` undoing what the wall just did — two things moving
+/// collision, or it spends a `damping` undoing what the wall just did — two things moving
 /// one camera, one stage apart.
 #[test]
 fn a_wall_is_not_slack() {
@@ -422,7 +422,7 @@ fn only_one_aim_runs() {
             .unwrap()
             .look_at = crate::LOOK_AT_SIMPLE;
         registry
-            .get_cpu_mut::<CameraFraming>()
+            .get_cpu_mut::<RotationComposer>()
             .unwrap()
             .get_mut(vcam)
             .unwrap()

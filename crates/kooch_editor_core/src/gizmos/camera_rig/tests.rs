@@ -63,7 +63,7 @@ fn a_heavier_target_draws_bigger() {
 /// A collision draws nothing without the arm it is describing: the sweep is state.
 #[test]
 fn a_collision_without_state_is_silent() {
-    let collision = CameraCollision {
+    let collision = Deoccluder {
         enabled: true,
         ..Default::default()
     };

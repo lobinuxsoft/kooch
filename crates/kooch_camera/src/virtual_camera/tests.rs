@@ -3,8 +3,8 @@ use super::*;
 fn vcam(follow: u32) -> VirtualCamera {
     VirtualCamera {
         follow,
-        damping_value: Vec3::ZERO,
-        rotation_damping_value: 0.0,
+        damping: Vec3::ZERO,
+        rotation_damping: 0.0,
         ..Default::default()
     }
 }
@@ -104,7 +104,7 @@ fn simple_follow_is_the_target_plus_the_offset() {
 #[test]
 fn the_spring_arm_keeps_its_length_at_every_yaw() {
     let mut r = vcam(FOLLOW_THIRD_PERSON);
-    r.distance = 7.0;
+    r.camera_distance = 7.0;
     for yaw in [0.0, 37.0, 90.0, 180.0, -145.0] {
         r.yaw = yaw;
         let (pos, _) = desired(
@@ -174,11 +174,11 @@ fn damped_for(r: &VirtualCamera, desired: Vec3, fps: f32, seconds: f32) -> Vec3 
 #[test]
 fn damping_leaves_a_hundredth() {
     let r = VirtualCamera {
-        damping_value: Vec3::splat(0.5),
+        damping: Vec3::splat(0.5),
         ..Default::default()
     };
     let desired = Vec3::new(10.0, -2.0, 4.0);
-    // 🔴 A hundredth of the gap after `damping_value` seconds, at any frame rate — Cinemachine's
+    // 🔴 A hundredth of the gap after `damping` seconds, at any frame rate — Cinemachine's
     // contract, and not an exact arrival. An exact arrival needs a tween that restarts when its
     // goal moves, and that restart is what stepped whenever the target started or stopped (#1336).
     for fps in [30.0_f32, 60.0, 144.0] {
@@ -195,8 +195,8 @@ fn damping_leaves_a_hundredth() {
 #[test]
 fn damping_off_snaps_exactly() {
     let r = VirtualCamera {
-        damping_value: Vec3::ZERO,
-        rotation_damping_value: 0.0,
+        damping: Vec3::ZERO,
+        rotation_damping: 0.0,
         ..Default::default()
     };
     let desired = Vec3::new(3.0, 4.0, 5.0);
@@ -207,8 +207,7 @@ fn damping_off_snaps_exactly() {
 #[test]
 fn a_zero_time_is_rigid_on_that_axis_only() {
     let r = VirtualCamera {
-        damping: true,
-        damping_value: Vec3::new(0.0, 0.2, 0.2),
+        damping: Vec3::new(0.0, 0.2, 0.2),
         ..Default::default()
     };
     let got = r.damped(Vec3::ZERO, Vec3::splat(10.0), 1.0 / 60.0);
@@ -316,7 +315,7 @@ fn look_at_none_keeps_the_cameras_own_rotation() {
 #[test]
 fn world_up_reproduces_the_old_fixed_axis_arm() {
     let mut r = vcam(FOLLOW_THIRD_PERSON);
-    r.distance = 5.0;
+    r.camera_distance = 5.0;
     for (yaw, pitch) in [(0.0, 0.0), (30.0, 15.0), (-120.0, -40.0), (180.0, 60.0)] {
         r.yaw = yaw;
         r.pitch = pitch;
@@ -345,7 +344,7 @@ fn world_up_reproduces_the_old_fixed_axis_arm() {
 fn the_arm_follows_an_arbitrary_up() {
     let mut r = vcam(FOLLOW_THIRD_PERSON);
     r.look_at = LOOK_AT_SIMPLE;
-    r.distance = 4.0;
+    r.camera_distance = 4.0;
     r.pitch = 0.0;
 
     // Gravity pulling along -X means up is +X.
@@ -381,7 +380,7 @@ fn the_arm_follows_an_arbitrary_up() {
 #[test]
 fn pitch_raises_the_arm_along_the_local_up() {
     let mut r = vcam(FOLLOW_THIRD_PERSON);
-    r.distance = 3.0;
+    r.camera_distance = 3.0;
     r.pitch = 30.0;
     let up = Vec3::new(0.0, 0.0, 1.0);
     let (pos, _) = desired(
@@ -422,8 +421,7 @@ fn a_zero_up_falls_back_to_world_instead_of_nan() {
 #[test]
 fn rotation_damping_eases_instead_of_snapping_() {
     let r = VirtualCamera {
-        damping: true,
-        rotation_damping_value: 0.2,
+        rotation_damping: 0.2,
         ..Default::default()
     };
     let from = glam::Quat::IDENTITY;
@@ -453,8 +451,7 @@ fn rotation_damping_eases_instead_of_snapping_() {
 #[test]
 fn rotation_damping_takes_the_short_way_round() {
     let r = VirtualCamera {
-        damping: true,
-        rotation_damping_value: 0.2,
+        rotation_damping: 0.2,
         ..Default::default()
     };
     let from = glam::Quat::IDENTITY;
@@ -470,8 +467,8 @@ fn rotation_damping_takes_the_short_way_round() {
 #[test]
 fn rotation_damping_off_snaps_exactly() {
     let r = VirtualCamera {
-        damping_value: Vec3::ZERO,
-        rotation_damping_value: 0.0,
+        damping: Vec3::ZERO,
+        rotation_damping: 0.0,
         ..Default::default()
     };
     let to = glam::Quat::from_rotation_x(0.9);
@@ -524,11 +521,11 @@ fn looking_straight_down_stays_finite() {
 fn rolling_over_the_pole_does_not_flip() {
     let vcam = VirtualCamera {
         follow: FOLLOW_THIRD_PERSON,
-        distance: 5.0,
+        camera_distance: 5.0,
         pitch: 0.0,
         yaw: 0.0,
-        damping_value: Vec3::ZERO,
-        rotation_damping_value: 0.0,
+        damping: Vec3::ZERO,
+        rotation_damping: 0.0,
         ..Default::default()
     };
 
@@ -603,17 +600,17 @@ fn blend_time_still_loads() {
 fn damping_value_still_loads() {
     let mut vcam = VirtualCamera::default();
     vcam.reflect_set(
-        "damping_value",
+        "damping",
         kooch_ecs::reflect::ReflectValue::Vec3(Vec3::splat(0.3)),
     )
     .unwrap();
     vcam.reflect_set(
-        "rotation_damping_value",
+        "rotation_damping",
         kooch_ecs::reflect::ReflectValue::F32(0.2),
     )
     .unwrap();
-    assert_eq!(vcam.damping_value, Vec3::splat(0.3));
-    assert_eq!(vcam.rotation_damping_value, 0.2);
+    assert_eq!(vcam.damping, Vec3::splat(0.3));
+    assert_eq!(vcam.rotation_damping, 0.2);
 }
 
 /// Every name a camera duration was saved under still loads.
@@ -627,55 +624,20 @@ fn old_duration_names_load() {
     )
     .unwrap();
     vcam.reflect_set("rotation_damping_time", F32(0.4)).unwrap();
-    assert_eq!(vcam.damping_value, Vec3::splat(0.4));
-    assert_eq!(vcam.rotation_damping_value, 0.4);
+    assert_eq!(vcam.damping, Vec3::splat(0.4));
+    assert_eq!(vcam.rotation_damping, 0.4);
 
-    let mut framing = crate::CameraFraming::default();
+    // 🔴 The framing's changed shape as well as name: a scalar cannot land in a `Vec2`, so the old
+    // field is still here and a migration empties it (#1367).
+    let mut framing = crate::RotationComposer::default();
     framing.reflect_set("soft_time", F32(0.4)).unwrap();
-    assert_eq!(framing.soft_time, 0.4);
+    assert_eq!(framing.was_soft_time, 0.4);
 
-    let mut collision = crate::CameraCollision::default();
+    let mut collision = crate::Deoccluder::default();
     collision.reflect_set("return_time", F32(0.4)).unwrap();
     assert_eq!(collision.damping, 0.4);
     collision.reflect_set("return_duration", F32(0.6)).unwrap();
     assert_eq!(collision.damping, 0.6);
-}
-
-/// 🔴 #1333: `damping: false` and a zero duration said the same thing, and the pair could
-/// disagree — the Inspector showed a slider the switch had already turned off. The switch is
-/// folded into the durations on load, which is the only reading it can have.
-#[test]
-fn the_damping_switch_becomes_zero_durations() {
-    use kooch_core::resource::Resources;
-    use kooch_ecs::component::ComponentRegistry;
-
-    let mut resources = Resources::new();
-    let mut registry = ComponentRegistry::new();
-    registry.register_cpu_reflected::<VirtualCamera>();
-    let entity = kooch_ecs::entity::Entity::new(1, 0);
-    registry.get_cpu_mut::<VirtualCamera>().unwrap().insert(
-        entity,
-        VirtualCamera {
-            damping: false,
-            damping_value: Vec3::splat(0.5),
-            rotation_damping_value: 0.5,
-            ..Default::default()
-        },
-    );
-    resources.insert(registry);
-
-    crate::virtual_camera::migrate_damping_switch(&mut resources);
-
-    let vcam = *resources
-        .get::<ComponentRegistry>()
-        .unwrap()
-        .get_cpu::<VirtualCamera>()
-        .unwrap()
-        .get(entity)
-        .unwrap();
-    assert_eq!(vcam.damping_value, Vec3::ZERO, "the switch was ignored");
-    assert_eq!(vcam.rotation_damping_value, 0.0);
-    assert!(vcam.damping, "the switch was not cleared");
 }
 
 /// The whole point of the offset: the camera stands beside the arm, along the axis it would call
@@ -684,7 +646,7 @@ fn the_damping_switch_becomes_zero_durations() {
 fn a_shoulder_stands_beside_the_arm() {
     let mut r = vcam(FOLLOW_THIRD_PERSON);
     r.look_at = LOOK_AT_ARM;
-    r.distance = 3.0;
+    r.camera_distance = 3.0;
     r.pitch = 0.0;
     r.yaw = 40.0;
 
@@ -697,7 +659,7 @@ fn a_shoulder_stands_beside_the_arm() {
         glam::Quat::IDENTITY,
         Vec3::Y,
     );
-    r.shoulder = Vec3::new(0.6, 0.0, 0.0);
+    r.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
     let (beside, rot) = desired(
         &r,
         target,
@@ -724,9 +686,9 @@ fn a_shoulder_stands_beside_the_arm() {
 #[test]
 fn pitch_leaves_the_shoulder_alone() {
     let mut r = vcam(FOLLOW_THIRD_PERSON);
-    r.distance = 3.0;
+    r.camera_distance = 3.0;
     r.yaw = 25.0;
-    r.shoulder = Vec3::new(0.5, 0.3, -0.2);
+    r.shoulder_offset = Vec3::new(0.5, 0.3, -0.2);
 
     let up = Vec3::Y;
     let reference = seed_reference(up);
@@ -748,10 +710,10 @@ fn pitch_leaves_the_shoulder_alone() {
 #[test]
 fn the_arm_rises_with_the_pitch() {
     let mut r = vcam(FOLLOW_THIRD_PERSON);
-    r.distance = 0.0;
+    r.camera_distance = 0.0;
     r.yaw = 0.0;
     r.pitch = 0.0;
-    r.arm_rise = 1.0;
+    r.vertical_arm_length = 1.0;
 
     let up = Vec3::Y;
     let reference = seed_reference(up);
@@ -774,18 +736,18 @@ fn the_arm_rises_with_the_pitch() {
 #[test]
 fn the_side_mirrors_the_shoulder() {
     let mut r = vcam(FOLLOW_THIRD_PERSON);
-    r.distance = 0.0;
+    r.camera_distance = 0.0;
     r.pitch = 0.0;
-    r.shoulder = Vec3::new(0.6, 0.0, 0.0);
+    r.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
 
     let up = Vec3::Y;
     let reference = seed_reference(up);
     let at = |r: &VirtualCamera| r.wanted(Vec3::ZERO, Vec3::ZERO, up, reference);
 
     let right = at(&r);
-    r.side = 0.0;
+    r.camera_side = 0.0;
     let left = at(&r);
-    r.side = 0.5;
+    r.camera_side = 0.5;
     let centred = at(&r);
 
     assert!((right + left).length() < 1e-4, "{right:?} and {left:?}");
@@ -798,8 +760,8 @@ fn the_side_mirrors_the_shoulder() {
 #[test]
 fn an_arm_aim_holds_the_target_off_centre() {
     let mut r = vcam(FOLLOW_THIRD_PERSON);
-    r.distance = 3.0;
-    r.shoulder = Vec3::new(0.6, 0.0, 0.0);
+    r.camera_distance = 3.0;
+    r.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
 
     let target = Vec3::ZERO;
     let off_centre = |vcam: &VirtualCamera| {
@@ -834,7 +796,7 @@ fn an_arm_aim_holds_the_target_off_centre() {
 fn a_zero_arm_still_aims() {
     let mut r = vcam(FOLLOW_THIRD_PERSON);
     r.look_at = LOOK_AT_ARM;
-    r.distance = 0.0;
+    r.camera_distance = 0.0;
     r.pitch = 0.0;
     r.yaw = 90.0;
 

@@ -11,8 +11,8 @@ fn lens() -> Lens {
     Lens::new(90.0, 1.0)
 }
 
-fn framing() -> CameraFraming {
-    CameraFraming {
+fn framing() -> RotationComposer {
+    RotationComposer {
         dead_zone: Vec2::splat(0.2),
         soft_zone: Vec2::splat(0.6),
         ..Default::default()
@@ -21,11 +21,11 @@ fn framing() -> CameraFraming {
 
 /// Nothing held off centre, nothing eased: what a test that wants the whole correction in one step
 /// asks for.
-fn rigid() -> CameraFraming {
-    CameraFraming {
+fn rigid() -> RotationComposer {
+    RotationComposer {
         dead_zone: Vec2::ZERO,
         soft_zone: Vec2::ZERO,
-        soft_time: 0.0,
+        damping: Vec2::splat(0.0),
         ..Default::default()
     }
 }
@@ -55,7 +55,7 @@ fn on_screen(rotation: Quat, eye: Vec3, target: Vec3) -> Vec2 {
 }
 
 /// One step, answering where the target ends up on screen.
-fn step(framing: &CameraFraming, state: &mut Framed, target: Vec3, dt: f32) -> Vec2 {
+fn step(framing: &RotationComposer, state: &mut Framed, target: Vec3, dt: f32) -> Vec2 {
     let mut frame = frame_at(target, Vec3::ZERO);
     framing.compose(state, &mut frame, Vec3::Y, Vec3::Z, dt);
     on_screen(frame.rotation, frame.position, target)
@@ -100,7 +100,7 @@ fn the_position_belongs_to_the_body() {
 /// `screen` moves where the target is held, so a rig can keep it off centre.
 #[test]
 fn the_screen_offset_is_where_it_holds() {
-    let right = CameraFraming {
+    let right = RotationComposer {
         screen: Vec2::new(0.25, 0.0),
         ..rigid()
     };
@@ -124,11 +124,11 @@ fn a_pan_never_rolls_the_horizon() {
 }
 
 /// 🔴 The duration is a duration: once the target stops, the camera brings it to the dead zone's
-/// edge in exactly `soft_time`, at any frame rate.
+/// edge in exactly `damping`, at any frame rate.
 #[test]
 fn the_soft_zone_arrives_on_time() {
-    let framing = CameraFraming {
-        soft_time: 0.5,
+    let framing = RotationComposer {
+        damping: Vec2::splat(0.5),
         ..framing()
     };
     for fps in [30.0_f32, 60.0, 144.0] {
@@ -220,4 +220,43 @@ fn a_moving_up_never_rolls_it() {
         "the horizon rolled to {} off {up}",
         right.dot(up),
     );
+}
+
+/// 🔴 A renamed field keeps its value through `#[reflect(alias)]`; a field that also changed
+/// **shape** cannot, because the loader has an `F32` and the field wants a `Vec2`. Without the
+/// migration every authored composer would take the default and nothing would say so.
+#[test]
+fn a_scalar_soft_time_becomes_both_axes() {
+    use kooch_ecs::Reflect;
+    use kooch_ecs::component::ComponentRegistry;
+
+    let mut resources = kooch_core::resource::Resources::new();
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu_reflected::<RotationComposer>();
+    let entity = kooch_ecs::entity::Entity::new(1, 0);
+    let mut framing = RotationComposer::default();
+    framing
+        .reflect_set("soft_time", kooch_ecs::reflect::ReflectValue::F32(0.01))
+        .unwrap();
+    registry
+        .get_cpu_mut::<RotationComposer>()
+        .unwrap()
+        .insert(entity, framing);
+    resources.insert(registry);
+
+    super::migrate_soft_time(&mut resources);
+
+    let after = *resources
+        .get::<ComponentRegistry>()
+        .unwrap()
+        .get_cpu::<RotationComposer>()
+        .unwrap()
+        .get(entity)
+        .unwrap();
+    assert_eq!(
+        after.damping,
+        Vec2::splat(0.01),
+        "the authored value was lost"
+    );
+    assert_eq!(after.was_soft_time, 0.0, "the old field was not cleared");
 }

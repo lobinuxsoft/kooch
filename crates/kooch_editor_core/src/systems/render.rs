@@ -423,7 +423,7 @@ fn selected_framing(
     };
     let registry = resources.get::<kooch_ecs::component::ComponentRegistry>()?;
     let framing = *registry
-        .get_cpu::<kooch_camera::CameraFraming>()?
+        .get_cpu::<kooch_camera::RotationComposer>()?
         .get(*entity)
         .filter(|framing| framing.enabled)?;
 

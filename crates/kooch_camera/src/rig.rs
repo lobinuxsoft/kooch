@@ -56,6 +56,13 @@ impl CameraRig {
         rig.add(RigStage::Body, crate::virtual_camera::body_stage);
         rig.add(RigStage::Collide, crate::occlusion::collide_stage);
         rig.add(RigStage::Aim, crate::virtual_camera::aim_stage);
+        // Last at each stage, because an extension is the hand-made word over what the stage
+        // decided — added after it, which is what `add` keeps in order.
+        rig.add(RigStage::Lead, crate::extensions::after_lead);
+        rig.add(RigStage::Body, crate::extensions::after_body);
+        rig.add(RigStage::Frame, crate::extensions::after_frame);
+        rig.add(RigStage::Collide, crate::extensions::after_collide);
+        rig.add(RigStage::Aim, crate::extensions::after_aim);
         rig
     }
 
@@ -109,8 +116,11 @@ pub struct RigMemory {
     pub horizons: Horizons,
     /// Each vcam's arm: where the rig would have it, and any return in progress.
     pub arms: Arms,
-    /// Where each framing last saw its target.
+    /// Where each rotation composer last saw its target.
     pub tracked: Tracked,
+    /// The same for each position composer. Its own, because a vcam may carry both and one memory
+    /// shared between two owners is the defect this rig keeps having.
+    pub composed: Tracked,
     /// Each lead's offset.
     pub leads: Leads,
 }
@@ -153,18 +163,47 @@ pub fn report_orphans(resources: &mut Resources) {
             })
         };
         sweep(
-            "CameraFraming",
-            entities_of::<crate::CameraFraming>(registry),
+            "RotationComposer",
+            entities_of::<crate::RotationComposer>(registry),
             &composing,
         );
+        // A position composer is the vcam's Position Control: on a vcam whose body is something else
+        // the whole component does nothing (#1369).
+        let placing = |entity: Entity| {
+            vcams.is_some_and(|vcams| {
+                vcams
+                    .get(entity)
+                    .is_some_and(|vcam| vcam.follow == crate::FOLLOW_POSITION_COMPOSER)
+            })
+        };
         sweep(
-            "CameraCollision",
-            entities_of::<crate::CameraCollision>(registry),
+            "PositionComposer",
+            entities_of::<crate::PositionComposer>(registry),
+            &placing,
+        );
+        sweep(
+            "Deoccluder",
+            entities_of::<crate::Deoccluder>(registry),
             &posed,
         );
         sweep(
             "CameraOrbit",
             entities_of::<crate::orbit::CameraOrbit>(registry),
+            &posed,
+        );
+        sweep(
+            "CameraOffset",
+            entities_of::<crate::CameraOffset>(registry),
+            &posed,
+        );
+        sweep(
+            "CameraRecomposer",
+            entities_of::<crate::CameraRecomposer>(registry),
+            &posed,
+        );
+        sweep(
+            "ThirdPersonAim",
+            entities_of::<crate::ThirdPersonAim>(registry),
             &posed,
         );
         sweep(
@@ -194,7 +233,32 @@ pub fn report_orphans(resources: &mut Resources) {
         }
     }
 
+    // 🔴 Two composers on one vcam is two owners of where the target sits on screen: the body
+    // slides to put it there and the aim turns to put it there, and they chase each other. Not an
+    // orphan — both are read — which is why it is said separately.
+    let mut both: Vec<Entity> = Vec::new();
+    if let Some(registry) = resources.get::<ComponentRegistry>()
+        && let Some(vcams) = registry.get_cpu::<VirtualCamera>()
+    {
+        both.extend(vcams.iter().filter_map(|(&entity, vcam)| {
+            (vcam.follow == crate::FOLLOW_POSITION_COMPOSER
+                && vcam.look_at == crate::LOOK_AT_COMPOSED)
+                .then_some(entity)
+        }));
+    }
+
     let mut said = resources.get::<Orphans>().cloned().unwrap_or_default();
+    for entity in both {
+        if !said.0.insert(entity) {
+            continue;
+        }
+        tracing::warn!(
+            target: "kooch_camera",
+            entity = entity.index(),
+            "a virtual camera composes in both slots: the body slides the target to where it belongs \
+             and the aim turns it there, and they answer each other. Pick one.",
+        );
+    }
     for (entity, name) in found {
         if !said.0.insert(entity) {
             continue;

@@ -8,7 +8,7 @@
 use glam::Vec3;
 
 use kooch_camera::{
-    CameraCollision, CameraRig, CameraTarget, FOLLOW_THIRD_PERSON, LOOK_AT_SIMPLE, VirtualCamera,
+    CameraRig, CameraTarget, Deoccluder, FOLLOW_THIRD_PERSON, LOOK_AT_SIMPLE, VirtualCamera,
     drive_virtual_cameras,
 };
 use kooch_core::resource::Resources;
@@ -50,7 +50,7 @@ fn world() -> Resources {
     registry.register_cpu::<kooch_physics::plugin::SolverBody>();
     registry.register_cpu_reflected::<VirtualCamera>();
     registry.register_cpu_reflected::<CameraTarget>();
-    registry.register_cpu_reflected::<CameraCollision>();
+    registry.register_cpu_reflected::<Deoccluder>();
     r
 }
 
@@ -143,11 +143,10 @@ fn rig_damped(collision: bool, damping: bool) -> (Resources, Entity, Entity) {
         VirtualCamera {
             follow: FOLLOW_THIRD_PERSON,
             look_at: LOOK_AT_SIMPLE,
-            distance: ARM,
-            damping,
+            camera_distance: ARM,
             // 🔴 The duration is what says rigid, not the switch: since #1333 the switch is folded
             // into it on load and a vcam built in code never goes through one.
-            damping_value: match damping {
+            damping: match damping {
                 true => Vec3::splat(0.5),
                 false => Vec3::ZERO,
             },
@@ -155,7 +154,7 @@ fn rig_damped(collision: bool, damping: bool) -> (Resources, Entity, Entity) {
         },
     );
     if collision {
-        insert(&mut resources, vcam, CameraCollision::default());
+        insert(&mut resources, vcam, Deoccluder::default());
     }
     frame(&mut resources);
     (resources, target, vcam)
