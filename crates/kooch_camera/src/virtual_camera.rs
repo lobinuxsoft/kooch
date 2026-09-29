@@ -21,6 +21,9 @@ pub const LOOK_AT_NONE: u32 = 0;
 pub const LOOK_AT_MIMIC: u32 = 1;
 /// Points straight at the target.
 pub const LOOK_AT_SIMPLE: u32 = 2;
+/// Looks along the spring arm: the orbit's own direction, so a shoulder offset stays off centre
+/// instead of being turned back into the middle.
+pub const LOOK_AT_ARM: u32 = 3;
 
 /// An inactive vcam computes nothing.
 pub const INACTIVE_NEVER: u32 = 0;
@@ -84,6 +87,10 @@ pub static LOOK_AT_CHOICES: &[FieldChoice] = &[
         label: "Look at target",
         value: LOOK_AT_SIMPLE as i64,
     },
+    FieldChoice {
+        label: "Along the arm",
+        value: LOOK_AT_ARM as i64,
+    },
 ];
 
 /// Labels for the `inactive_update` dropdown.
@@ -144,6 +151,14 @@ pub struct VirtualCamera {
     /// Rotation above the horizon, in degrees. Positive looks down.
     #[reflect(shown_when = THIRD_PERSON_WHEN)]
     pub pitch: f32,
+    /// Where the arm's pivot sits, offset from the target in the arm's own basis: `x` beside the
+    /// view, `y` along `up`, `z` the way the camera looks. An over-the-shoulder view (#1359).
+    ///
+    /// 🔴 The arm's basis, not the target's. Cinemachine's `ThirdPersonFollow` offsets in the
+    /// target's, which it can because its rotation IS the target's; here the orbit owns the yaw, so
+    /// a shoulder in the character's frame would swing around it as the player looks about.
+    #[reflect(shown_when = THIRD_PERSON_WHEN)]
+    pub shoulder: Vec3,
     /// Where the camera looks. One of the `LOOK_AT_*` constants.
     #[reflect(choices = LOOK_AT_CHOICES)]
     pub look_at: u32,
@@ -266,6 +281,9 @@ impl Default for VirtualCamera {
             distance: 6.0,
             yaw: 0.0,
             pitch: 20.0,
+            // Centred: an authored scene that never heard of a shoulder is
+            // placed exactly where it was.
+            shoulder: Vec3::ZERO,
             look_at: LOOK_AT_SIMPLE,
             damping: true,
             damping_value: Vec3::splat(0.5),
@@ -320,23 +338,50 @@ impl VirtualCamera {
         match self.look_at {
             LOOK_AT_MIMIC => target_rot,
             LOOK_AT_SIMPLE => look_at(eye, target, up, reference),
+            // A direction, not the pivot: the eye is eased and the aim is not, so a rigid view
+            // along the arm cannot inherit the body's lag.
+            LOOK_AT_ARM => {
+                let along = self.along(self.back(up, reference), up);
+                look_at(eye, eye - along, up, reference)
+            }
             _ => current,
         }
     }
 
-    /// The spring arm's offset: around `up` by yaw, raised off the horizon by pitch — the horizon
-    /// being the plane perpendicular to `up`. Fixed length; shortening against obstacles needs
-    /// #562.
+    /// The spring arm's offset: its pivot, plus its reach from there. Fixed length; shortening
+    /// against obstacles needs #562.
+    ///
+    /// Two segments, as Cinemachine's `ThirdPersonFollow`: **yaw swings the whole basis, pitch turns
+    /// only the reach.** That is what keeps a shoulder beside the head instead of rolling it under
+    /// the character when the player looks down.
     fn arm(&self, up: Vec3, reference: Vec3) -> Vec3 {
+        let back = self.back(up, reference);
+        self.shouldered(back, up) + self.along(back, up) * self.distance.max(0.0)
+    }
+
+    /// The yaw's direction on `up`'s horizon — the plane perpendicular to it — pointing away from
+    /// what the camera looks at.
+    fn back(&self, up: Vec3, reference: Vec3) -> Vec3 {
+        glam::Quat::from_axis_angle(up, self.yaw.to_radians()) * flattened(reference, up)
+    }
+
+    /// The unit direction from the pivot out to the camera: `back`, raised off the horizon by pitch.
+    /// Independent of `distance`, so an aim along it survives a zero-length arm.
+    fn along(&self, back: Vec3, up: Vec3) -> Vec3 {
         // Clamped just shy of the poles: a fully vertical arm leaves no
         // horizontal basis, and the camera flips.
         let pitch = self.pitch.to_radians().clamp(-1.5533, 1.5533);
         let (sin_pitch, cos_pitch) = pitch.sin_cos();
+        back * cos_pitch + up * sin_pitch
+    }
 
-        let forward = flattened(reference, up);
-        let swung = glam::Quat::from_axis_angle(up, self.yaw.to_radians()) * forward;
-
-        (swung * cos_pitch + up * sin_pitch) * self.distance.max(0.0)
+    /// The pivot's offset from the target, read in the arm's basis. Built off `back` alone, so
+    /// pitching the view does not roll the shoulder.
+    fn shouldered(&self, back: Vec3, up: Vec3) -> Vec3 {
+        let forward = -back;
+        // `forward × up`, the same hand `look_at` builds its basis with.
+        let right = forward.cross(up);
+        right * self.shoulder.x + up * self.shoulder.y + forward * self.shoulder.z
     }
 
     /// Eases `current` towards `desired`, per axis, leaving a hundredth of the gap after

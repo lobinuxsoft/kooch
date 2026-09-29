@@ -8,7 +8,7 @@
 use glam::Vec3;
 
 use kooch_camera::{
-    CameraCollision, CameraTarget, FOLLOW_THIRD_PERSON, LOOK_AT_SIMPLE, VirtualCamera,
+    CameraCollision, CameraRig, CameraTarget, FOLLOW_THIRD_PERSON, LOOK_AT_SIMPLE, VirtualCamera,
     drive_virtual_cameras,
 };
 use kooch_core::resource::Resources;
@@ -39,6 +39,8 @@ fn world() -> Resources {
     r.insert(DynamicComponents::new());
     r.insert(Time::new());
     r.insert(PhysicsWorld::new(Box::new(RapierBackend::new())));
+    // The stages the plugin registers. Without them the plan is empty and no camera moves at all.
+    r.insert(CameraRig::standard());
     Playing::set(&mut r, true);
 
     let registry = r.get_mut::<ComponentRegistry>().unwrap();
@@ -143,7 +145,12 @@ fn rig_damped(collision: bool, damping: bool) -> (Resources, Entity, Entity) {
             look_at: LOOK_AT_SIMPLE,
             distance: ARM,
             damping,
-            damping_value: Vec3::splat(0.5),
+            // 🔴 The duration is what says rigid, not the switch: since #1333 the switch is folded
+            // into it on load and a vcam built in code never goes through one.
+            damping_value: match damping {
+                true => Vec3::splat(0.5),
+                false => Vec3::ZERO,
+            },
             ..Default::default()
         },
     );
