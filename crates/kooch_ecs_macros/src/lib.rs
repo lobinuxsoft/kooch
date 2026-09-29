@@ -28,7 +28,7 @@ use syn::{Data, DeriveInput, Fields, parse_macro_input};
 use crate::attrs::{
     parse_category_attr, parse_field_asset_type, parse_field_bits, parse_field_choices,
     parse_field_doc, parse_field_group, parse_field_requires, parse_field_shown_when,
-    parse_field_skip, parse_inspector_attr,
+    parse_field_skip, parse_inspector_attr, parse_type_aliases,
 };
 use crate::type_mapping::type_mapping;
 use crate::unit_struct::unit_struct_impl;
@@ -63,6 +63,10 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
     };
 
     // Parse #[reflect(category = "...")] attribute.
+    let aliases = match parse_type_aliases(&input) {
+        Ok(a) => a,
+        Err(e) => return e,
+    };
     let category = match parse_category_attr(&input) {
         Ok(cat) => cat,
         Err(err) => return err,
@@ -495,6 +499,14 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
         }
     });
 
+    let alias_method = (!aliases.is_empty()).then(|| {
+        quote! {
+            fn aliases() -> &'static [&'static str] {
+                &[#(#aliases),*]
+            }
+        }
+    });
+
     let category_method = category.as_deref().map(|cat| {
         quote! {
             fn category() -> Option<&'static str> {
@@ -541,6 +553,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
 
             #visibility_method
             #category_method
+            #alias_method
         }
     };
 

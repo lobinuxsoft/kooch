@@ -367,3 +367,90 @@ mod reflection {
         assert_eq!(fields, vec![("strength".to_owned(), ReflectValue::U32(5))]);
     }
 }
+
+/// 🔴 #1368: a renamed component is resolved by string, so without this it disappears from every
+/// entity on load — no error, no log, the fields simply not there.
+mod renamed {
+    use super::*;
+    use crate::Reflect;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Default, Reflect)]
+    #[reflect(alias = "old::Framing, older::Framing")]
+    struct Composer {
+        screen: f32,
+    }
+    impl Component for Composer {}
+
+    #[derive(Debug, Clone, Copy, PartialEq, Default, Reflect)]
+    struct Plain {
+        value: f32,
+    }
+    impl Component for Plain {}
+
+    fn registry() -> ComponentRegistry {
+        let mut registry = ComponentRegistry::new();
+        registry.register_cpu_reflected::<Composer>();
+        registry
+    }
+
+    #[test]
+    fn an_old_name_still_resolves() {
+        let registry = registry();
+        let mine = TypeId::of::<Composer>();
+        assert_eq!(registry.type_id_by_name("old::Framing"), Some(mine));
+        assert_eq!(registry.type_id_by_name("older::Framing"), Some(mine));
+    }
+
+    #[test]
+    fn the_current_name_still_resolves() {
+        let registry = registry();
+        let name = std::any::type_name::<Composer>();
+        assert_eq!(
+            registry.type_id_by_name(name),
+            Some(TypeId::of::<Composer>())
+        );
+    }
+
+    #[test]
+    fn a_name_nobody_claims_is_none() {
+        assert!(registry().type_id_by_name("nobody::Knows").is_none());
+    }
+
+    /// A clash is refused loudly at registration, whichever of the two arrives first: a load that
+    /// picked one of them would make the other vanish from every entity with nothing said.
+    #[derive(Debug, Clone, Copy, PartialEq, Default, Reflect)]
+    #[reflect(alias = "kooch_ecs::component::registry::tests::renamed::Plain")]
+    struct Thief {
+        value: f32,
+    }
+    impl Component for Thief {}
+
+    #[test]
+    #[should_panic(expected = "own name")]
+    fn stealing_a_live_name_is_refused() {
+        let mut registry = ComponentRegistry::new();
+        registry.register_cpu_reflected::<Plain>();
+        registry.register_cpu_reflected::<Thief>();
+    }
+
+    #[test]
+    #[should_panic(expected = "which is")]
+    fn arriving_first_does_not_help() {
+        let mut registry = ComponentRegistry::new();
+        registry.register_cpu_reflected::<Thief>();
+        registry.register_cpu_reflected::<Plain>();
+    }
+
+    /// The backstop for the one clash registration cannot see: a component registered **without**
+    /// reflection runs no check, so the lookup answers live names first whatever an alias claims.
+    #[test]
+    fn a_live_name_beats_an_alias() {
+        let mut registry = ComponentRegistry::new();
+        registry.register_cpu_reflected::<Thief>();
+        registry.register_cpu::<Plain>();
+        assert_eq!(
+            registry.type_id_by_name(std::any::type_name::<Plain>()),
+            Some(TypeId::of::<Plain>()),
+        );
+    }
+}

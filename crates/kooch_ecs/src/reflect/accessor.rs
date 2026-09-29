@@ -44,6 +44,9 @@ pub(crate) trait ReflectAccessor: Send + Sync {
 
     /// Returns the editor category (if any) for grouping in the menu.
     fn category(&self) -> Option<&'static str>;
+
+    /// Type names a saved file may still call this component.
+    fn aliases(&self) -> &'static [&'static str];
 }
 
 /// Concrete [`ReflectAccessor`] for a component type `T: Reflect`.
@@ -127,5 +130,9 @@ impl<T: Reflect> ReflectAccessor for TypedReflectAccessor<T> {
 
     fn category(&self) -> Option<&'static str> {
         T::category()
+    }
+
+    fn aliases(&self) -> &'static [&'static str] {
+        T::aliases()
     }
 }
