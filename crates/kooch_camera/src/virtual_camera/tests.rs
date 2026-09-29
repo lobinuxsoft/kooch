@@ -734,13 +734,63 @@ fn pitch_leaves_the_shoulder_alone() {
     let first = r.shouldered(back, up);
     for pitch in [-60.0, 0.0, 35.0, 80.0] {
         r.pitch = pitch;
-        let pivot =
-            r.wanted(Vec3::ZERO, Vec3::ZERO, up, reference) - r.along(back, up) * r.distance;
         assert!(
-            (pivot - first).length() < 1e-4,
-            "pitch {pitch} moved the pivot to {pivot:?}, was {first:?}",
+            (r.shouldered(back, up) - first).length() < 1e-4,
+            "pitch {pitch} moved the shoulder",
         );
     }
+}
+
+/// 🔴 #1365: the hand is **not** the shoulder. It rises along the view's own up, which pitches, so
+/// looking down swings it forward and down while the shoulder stays — and that is what holds the
+/// target still on screen as the view turns vertically. #1359 dropped the field believing the two
+/// were one axis.
+#[test]
+fn the_arm_rises_with_the_pitch() {
+    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    r.distance = 0.0;
+    r.yaw = 0.0;
+    r.pitch = 0.0;
+    r.arm_rise = 1.0;
+
+    let up = Vec3::Y;
+    let reference = seed_reference(up);
+    let level = r.wanted(Vec3::ZERO, Vec3::ZERO, up, reference);
+    assert!(
+        level.abs_diff_eq(Vec3::Y, 1e-4),
+        "a level arm rises straight up: {level:?}",
+    );
+
+    r.pitch = 90.0;
+    let pitched = r.wanted(Vec3::ZERO, Vec3::ZERO, up, reference);
+    // Looking straight down, the view's up is the way it came from — the arm's own `back`.
+    assert!(
+        pitched.dot(up).abs() < 0.05 && pitched.dot(r.back(up, reference)) < -0.9,
+        "the arm did not pitch with the view: {pitched:?}",
+    );
+}
+
+/// `side` picks the shoulder without touching the offset that says how far off it sits.
+#[test]
+fn the_side_mirrors_the_shoulder() {
+    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    r.distance = 0.0;
+    r.pitch = 0.0;
+    r.shoulder = Vec3::new(0.6, 0.0, 0.0);
+
+    let up = Vec3::Y;
+    let reference = seed_reference(up);
+    let at = |r: &VirtualCamera| r.wanted(Vec3::ZERO, Vec3::ZERO, up, reference);
+
+    let right = at(&r);
+    r.side = 0.0;
+    let left = at(&r);
+    r.side = 0.5;
+    let centred = at(&r);
+
+    assert!((right + left).length() < 1e-4, "{right:?} and {left:?}");
+    assert!(centred.length() < 1e-4, "halfway is neither: {centred:?}");
+    assert!((right.length() - 0.6).abs() < 1e-4, "{right:?}");
 }
 
 /// Without this the offset is invisible: `Simple` turns to put the target back in the middle, so

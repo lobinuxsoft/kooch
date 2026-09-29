@@ -118,6 +118,13 @@ pub static OFFSET_WHEN: FieldCondition = FieldCondition {
     values: &[FOLLOW_SIMPLE as i64],
 };
 
+/// Both shoulders and everywhere between them.
+pub static SIDE_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::FieldRange {
+    min: 0.0,
+    max: 1.0,
+    step: 0.01,
+};
+
 /// The spring arm's parameters.
 pub static THIRD_PERSON_WHEN: FieldCondition = FieldCondition {
     field: "follow",
@@ -166,6 +173,18 @@ pub struct VirtualCamera {
     /// a shoulder in the character's frame would swing around it as the player looks about.
     #[reflect(shown_when = THIRD_PERSON_WHEN)]
     pub shoulder: Vec3,
+    /// How far the arm's pivot sits above the shoulder — Cinemachine's `VerticalArmLength`.
+    ///
+    /// 🔴 Not the same axis as `shoulder.y`, which #1359 assumed and was wrong about (#1365). The
+    /// shoulder sits in the **levelled** basis and this along the view's own up, which pitches: look
+    /// down and the pivot swings forward and down while the shoulder stays. It is what decides how
+    /// the target's place on screen moves as the view turns vertically.
+    #[reflect(shown_when = THIRD_PERSON_WHEN)]
+    pub arm_rise: f32,
+    /// Which shoulder the camera is on: `0` the left, `1` the right, halfway between them centred.
+    /// Cinemachine's `CameraSide`, and what a swap animates without touching the authored offset.
+    #[reflect(range = SIDE_RANGE, shown_when = THIRD_PERSON_WHEN)]
+    pub side: f32,
     /// Where the camera looks. One of the `LOOK_AT_*` constants.
     #[reflect(choices = LOOK_AT_CHOICES)]
     pub look_at: u32,
@@ -291,6 +310,9 @@ impl Default for VirtualCamera {
             // Centred: an authored scene that never heard of a shoulder is
             // placed exactly where it was.
             shoulder: Vec3::ZERO,
+            arm_rise: 0.0,
+            // The authored `shoulder.x` as written: `2 × 1 − 1` is one.
+            side: 1.0,
             look_at: LOOK_AT_SIMPLE,
             damping: true,
             damping_value: Vec3::splat(0.5),
@@ -363,7 +385,22 @@ impl VirtualCamera {
     /// the character when the player looks down.
     fn arm(&self, up: Vec3, reference: Vec3) -> Vec3 {
         let back = self.back(up, reference);
-        self.shouldered(back, up) + self.along(back, up) * self.distance.max(0.0)
+        self.shouldered(back, up)
+            + self.risen(back, up) * self.arm_rise
+            + self.along(back, up) * self.distance.max(0.0)
+    }
+
+    /// The view's own up, pitched with it — Cinemachine's `targetRot * Vector3.up`, and the axis the
+    /// arm rises along. Perpendicular to `along`, so the two segments never fold onto each other.
+    fn risen(&self, back: Vec3, up: Vec3) -> Vec3 {
+        let (sin_pitch, cos_pitch) = self.pitched();
+        up * cos_pitch - back * sin_pitch
+    }
+
+    /// The clamped pitch, as a sine and a cosine. Clamped just shy of the poles: a fully vertical arm
+    /// leaves no horizontal basis, and the camera flips.
+    fn pitched(&self) -> (f32, f32) {
+        self.pitch.to_radians().clamp(-1.5533, 1.5533).sin_cos()
     }
 
     /// The yaw's direction on `up`'s horizon — the plane perpendicular to it — pointing away from
@@ -375,10 +412,7 @@ impl VirtualCamera {
     /// The unit direction from the pivot out to the camera: `back`, raised off the horizon by pitch.
     /// Independent of `distance`, so an aim along it survives a zero-length arm.
     fn along(&self, back: Vec3, up: Vec3) -> Vec3 {
-        // Clamped just shy of the poles: a fully vertical arm leaves no
-        // horizontal basis, and the camera flips.
-        let pitch = self.pitch.to_radians().clamp(-1.5533, 1.5533);
-        let (sin_pitch, cos_pitch) = pitch.sin_cos();
+        let (sin_pitch, cos_pitch) = self.pitched();
         back * cos_pitch + up * sin_pitch
     }
 
@@ -388,7 +422,9 @@ impl VirtualCamera {
         let forward = -back;
         // `forward × up`, the same hand `look_at` builds its basis with.
         let right = forward.cross(up);
-        right * self.shoulder.x + up * self.shoulder.y + forward * self.shoulder.z
+        // `Lerp(-x, x, side)`, written as the multiplier it is.
+        let beside = self.shoulder.x * (self.side.clamp(0.0, 1.0) * 2.0 - 1.0);
+        right * beside + up * self.shoulder.y + forward * self.shoulder.z
     }
 
     /// Eases `current` towards `desired`, per axis, leaving a hundredth of the gap after
