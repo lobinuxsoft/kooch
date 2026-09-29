@@ -27,11 +27,14 @@ pub enum RigStage {
     Lead,
     /// Where the camera stands. Owns `position` and `free`.
     Body,
-    /// Where the target sits on screen. Moves `position` sideways, never in depth.
+    /// Moves `position` sideways, never in depth. Nothing of the engine's runs here since the
+    /// framing became an aim (#1361); the slot stays because displacing the camera before the walls
+    /// are considered is still a coherent thing for a project to want.
     Frame,
     /// The last word on `position`: a wall pulls the camera in.
     Collide,
-    /// Where the camera looks. Owns `rotation` — in a third-person rig, the player's.
+    /// Where the camera looks. Owns `rotation`, and exactly one thing does: the vcam's `look_at`
+    /// picks which, as Cinemachine's Rotation Control slot holds one component.
     Aim,
 }
 
@@ -51,7 +54,6 @@ impl CameraRig {
         let mut rig = Self::default();
         rig.add(RigStage::Lead, crate::lookahead::lead_stage);
         rig.add(RigStage::Body, crate::virtual_camera::body_stage);
-        rig.add(RigStage::Frame, crate::framing::frame_stage);
         rig.add(RigStage::Collide, crate::occlusion::collide_stage);
         rig.add(RigStage::Aim, crate::virtual_camera::aim_stage);
         rig
@@ -107,7 +109,7 @@ pub struct RigMemory {
     pub horizons: Horizons,
     /// Each vcam's arm: where the rig would have it, and any return in progress.
     pub arms: Arms,
-    /// Each framing's slack.
+    /// Where each framing last saw its target.
     pub tracked: Tracked,
     /// Each lead's offset.
     pub leads: Leads,
@@ -141,10 +143,19 @@ pub fn report_orphans(resources: &mut Resources) {
             entities_of::<crate::CameraLookahead>(registry),
             &posed,
         );
+        // A framing is the vcam's Rotation Control, so a vcam that aims some other way does not read
+        // it — the whole component, tuned for hours, does nothing (#1361).
+        let composing = |entity: Entity| {
+            vcams.is_some_and(|vcams| {
+                vcams
+                    .get(entity)
+                    .is_some_and(|vcam| vcam.look_at == crate::LOOK_AT_COMPOSED)
+            })
+        };
         sweep(
             "CameraFraming",
             entities_of::<crate::CameraFraming>(registry),
-            &posed,
+            &composing,
         );
         sweep(
             "CameraCollision",

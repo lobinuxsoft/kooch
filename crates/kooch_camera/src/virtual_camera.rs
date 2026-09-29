@@ -24,6 +24,9 @@ pub const LOOK_AT_SIMPLE: u32 = 2;
 /// Looks along the spring arm: the orbit's own direction, so a shoulder offset stays off centre
 /// instead of being turned back into the middle.
 pub const LOOK_AT_ARM: u32 = 3;
+/// A [`CameraFraming`](crate::CameraFraming) owns the rotation: it pans and tilts to hold the target
+/// where it belongs on screen, inside a dead zone. Cinemachine's `RotationComposer` (#1361).
+pub const LOOK_AT_COMPOSED: u32 = 4;
 
 /// An inactive vcam computes nothing.
 pub const INACTIVE_NEVER: u32 = 0;
@@ -90,6 +93,10 @@ pub static LOOK_AT_CHOICES: &[FieldChoice] = &[
     FieldChoice {
         label: "Along the arm",
         value: LOOK_AT_ARM as i64,
+    },
+    FieldChoice {
+        label: "Composed (framing)",
+        value: LOOK_AT_COMPOSED as i64,
     },
 ];
 
@@ -449,7 +456,7 @@ pub fn transported(reference: Vec3, from_up: Vec3, to_up: Vec3) -> Vec3 {
 
 /// A unit vector on `up`'s horizon plane, nearest `reference`: transport drifts off the plane in
 /// `f32`, and a tilted reference builds a basis that is not square.
-fn flattened(reference: Vec3, up: Vec3) -> Vec3 {
+pub(crate) fn flattened(reference: Vec3, up: Vec3) -> Vec3 {
     let flat = reference - up * reference.dot(up);
     // Parallel to `up`, so it names no direction on the horizon at all.
     // Only reachable from a caller that handed in a reference for some
@@ -493,11 +500,8 @@ pub fn body_stage(step: &mut crate::rig::RigStep) {
         step.up,
         step.reference,
     );
-    let placed = match crate::framing::of(step.registry, step.entity) {
-        Some(_) => wanted,
-        None => step.vcam.damped(step.frame.previous, wanted, step.dt),
-    };
-    step.frame.place(placed);
+    step.frame
+        .place(step.vcam.damped(step.frame.previous, wanted, step.dt));
 }
 
 /// The Aim stage: where the camera looks. One owner — in a third-person rig it is the player's, and
@@ -508,8 +512,15 @@ pub fn body_stage(step: &mut crate::rig::RigStep) {
 /// aiming from the moved position would cancel the frame it just asked for. A wall pulls in along
 /// the same line, so for it the two are the same direction anyway.
 pub fn aim_stage(step: &mut crate::rig::RigStep) {
+    // 🔴 The composer eases the residual angle itself, so it is the whole of the aim: running the
+    // vcam's rotation damping over it is two eases in series on one quantity, which is #1329 on the
+    // other axis.
+    if step.vcam.look_at == LOOK_AT_COMPOSED {
+        crate::framing::composed(step);
+        return;
+    }
     let aimed = step.vcam.aimed(
-        step.frame.free,
+        step.frame.position,
         step.frame.target,
         step.target.rotation,
         step.frame.rotation,

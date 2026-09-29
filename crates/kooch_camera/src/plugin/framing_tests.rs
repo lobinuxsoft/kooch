@@ -32,6 +32,8 @@ fn world() -> (Resources, Entity, Entity) {
         vcam,
         VirtualCamera {
             follow: crate::FOLLOW_SIMPLE,
+            // The framing IS the Rotation Control: a vcam has to ask for it (#1361).
+            look_at: crate::LOOK_AT_COMPOSED,
             offset: Vec3::Z * 5.0,
             damping_value: Vec3::ZERO,
             rotation_damping_value: 0.0,
@@ -52,6 +54,32 @@ fn world() -> (Resources, Entity, Entity) {
     (resources, vcam, target)
 }
 
+/// Changes what a vcam's body does, leaving the rest of the world alone.
+fn follows(resources: &mut Resources, vcam: Entity, follow: u32) {
+    resources
+        .get_mut::<ComponentRegistry>()
+        .unwrap()
+        .get_cpu_mut::<VirtualCamera>()
+        .unwrap()
+        .get_mut(vcam)
+        .unwrap()
+        .follow = follow;
+}
+
+/// Zeroes a framing's zones, for a test that measures where it holds rather than how it eases: with
+/// a zone the target stops on its edge, which is the zone's job and not the hold's.
+fn rigid(resources: &mut Resources, vcam: Entity) {
+    let framing = resources
+        .get_mut::<ComponentRegistry>()
+        .unwrap()
+        .get_cpu_mut::<CameraFraming>()
+        .unwrap()
+        .get_mut(vcam)
+        .unwrap();
+    framing.dead_zone = Vec2::ZERO;
+    framing.soft_zone = Vec2::ZERO;
+}
+
 fn place(resources: &mut Resources, entity: Entity, position: Vec3) {
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
     registry
@@ -64,6 +92,19 @@ fn place(resources: &mut Resources, entity: Entity, position: Vec3) {
 
 fn pose(resources: &Resources, entity: Entity) -> (Vec3, glam::Quat) {
     camera_pose(resources, entity).unwrap()
+}
+
+/// Where `target` lands on screen for the vcam's pose, through the lens the rig itself used.
+fn on_screen(resources: &Resources, vcam: Entity, target: Vec3) -> Vec2 {
+    let registry = resources.get::<ComponentRegistry>().unwrap();
+    let lens = lens(resources, registry);
+    let (position, rotation) = pose(resources, vcam);
+    let to = target - position;
+    let span = lens.span(to.dot(rotation * -Vec3::Z));
+    Vec2::new(
+        to.dot(rotation * Vec3::X) / span.x,
+        to.dot(rotation * Vec3::Y) / span.y,
+    )
 }
 
 /// 🔴 #1323: the dead zone holds the **aim**, not the rig. The camera follows its target like any
@@ -88,25 +129,48 @@ fn the_dead_zone_holds_the_aim() {
     );
 }
 
-/// And leaving it moves the rig, until the target sits back on the zone's edge.
+/// And leaving it turns the camera, until the target sits back on the zone's edge.
+///
+/// `Follow::None` on purpose: a body that tracks the target sideways carries its own dead zone with
+/// it and the aim's is never reached. A camera that stands still and only turns is what a composer
+/// is for.
 #[test]
-fn leaving_the_dead_zone_moves_it() {
+fn leaving_the_dead_zone_turns_it() {
     let (mut resources, vcam, target) = world();
+    follows(&mut resources, vcam, crate::FOLLOW_NONE);
     drive_virtual_cameras(&mut resources);
-    place(&mut resources, target, Vec3::X * 4.0);
+    let moved = Vec3::X * 4.0;
+    place(&mut resources, target, moved);
     for _ in 0..200 {
         drive_virtual_cameras(&mut resources);
     }
-    let (position, _) = pose(&resources, vcam);
     // It stops once the target is back on the dead zone's edge, not centred on it.
-    assert!(position.x > 3.0 && position.x < 4.0, "{position}");
+    let seen = on_screen(&resources, vcam, moved).x;
+    assert!((seen - 0.05).abs() < 0.01, "held at {seen}, not the edge");
 }
 
-/// `screen` holds the target off centre, which moves the rig sideways rather than turning it: the
-/// rotation belongs to whoever is looking around (#1329).
+/// 🔴 #1361: the composer pans and tilts the camera where it is. The body decides where it stands,
+/// and that is what lets a shoulder offset and a framing coexist.
 #[test]
-fn the_screen_offset_moves_it() {
+fn the_frame_never_moves_the_camera() {
+    let (mut resources, vcam, target) = world();
+    drive_virtual_cameras(&mut resources);
+    place(&mut resources, target, Vec3::new(4.0, 2.0, 0.0));
+    for _ in 0..200 {
+        drive_virtual_cameras(&mut resources);
+    }
+    // `Simple` puts it on the target plus the offset, and nothing else has a say.
+    let (position, _) = pose(&resources, vcam);
+    let wanted = Vec3::new(4.0, 2.0, 0.0) + Vec3::Z * 5.0;
+    assert!(position.abs_diff_eq(wanted, 1e-3), "{position}");
+}
+
+/// `screen` holds the target off centre, and now it is the aim that does it — one owner of where the
+/// character sits, and the body free to stand wherever it likes (#1361).
+#[test]
+fn the_screen_offset_turns_it() {
     let (mut resources, vcam, _) = world();
+    rigid(&mut resources, vcam);
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
     registry
         .get_cpu_mut::<CameraFraming>()
@@ -118,14 +182,51 @@ fn the_screen_offset_moves_it() {
     for _ in 0..200 {
         drive_virtual_cameras(&mut resources);
     }
-    let (position, rotation) = pose(&resources, vcam);
-    // Held right of centre, so the rig stands to the left of the target.
-    assert!(position.x < -0.1, "{position}");
-    // And it did not turn to do it.
+    let seen = on_screen(&resources, vcam, Vec3::ZERO).x;
+    assert!((seen - 0.25).abs() < 0.01, "held at {seen}, wanted 0.25");
+    // And it did not move to do it.
+    let (position, _) = pose(&resources, vcam);
+    assert!(position.abs_diff_eq(Vec3::Z * 5.0, 1e-3), "{position}");
+}
+
+/// 🔴 The acceptance of #1361, and the question that asked for it: a shoulder decides where the
+/// camera stands, a framing decides where the character sits, and neither touches the other.
+#[test]
+fn a_shoulder_and_a_framing_coexist() {
+    let (mut resources, vcam, _) = world();
+    rigid(&mut resources, vcam);
+    {
+        let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+        let cam = registry
+            .get_cpu_mut::<VirtualCamera>()
+            .unwrap()
+            .get_mut(vcam)
+            .unwrap();
+        cam.follow = crate::FOLLOW_THIRD_PERSON;
+        cam.distance = 3.0;
+        cam.pitch = 0.0;
+        cam.shoulder = Vec3::new(0.6, 0.0, 0.0);
+        registry
+            .get_cpu_mut::<CameraFraming>()
+            .unwrap()
+            .get_mut(vcam)
+            .unwrap()
+            .screen
+            .x = -0.2;
+    }
+    for _ in 0..200 {
+        drive_virtual_cameras(&mut resources);
+    }
+    // Yaw zero looks down −Z, so the arm is +Z and the shoulder is +X: the body's answer exactly,
+    // and the framing has not touched it.
+    let (position, _) = pose(&resources, vcam);
     assert!(
-        rotation.abs_diff_eq(glam::Quat::IDENTITY, 1e-3),
-        "the frame turned the camera: {rotation}",
+        position.abs_diff_eq(Vec3::new(0.6, 0.0, 3.0), 1e-3),
+        "the shoulder did not place it: {position}",
     );
+    // And the framing holds the character where it was asked to, not where the shoulder left it.
+    let seen = on_screen(&resources, vcam, Vec3::ZERO).x;
+    assert!((seen + 0.2).abs() < 0.01, "held at {seen}, wanted -0.2");
 }
 
 /// With a lookahead and no framing, a running target puts the rig ahead of it (#1253).
@@ -303,5 +404,38 @@ fn a_wall_is_not_slack() {
     assert!(
         after.abs_diff_eq(settled, 1e-4),
         "the frame drifted while nothing moved: {settled} then {after}",
+    );
+}
+
+/// 🔴 The rule the whole change rests on: exactly **one** aim runs. A framing on a vcam that aims at
+/// its target is ignored, not folded in — two owners of the rotation is what #1329 ran from.
+#[test]
+fn only_one_aim_runs() {
+    let (mut resources, vcam, _) = world();
+    rigid(&mut resources, vcam);
+    {
+        let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+        registry
+            .get_cpu_mut::<VirtualCamera>()
+            .unwrap()
+            .get_mut(vcam)
+            .unwrap()
+            .look_at = crate::LOOK_AT_SIMPLE;
+        registry
+            .get_cpu_mut::<CameraFraming>()
+            .unwrap()
+            .get_mut(vcam)
+            .unwrap()
+            .screen
+            .x = 0.25;
+    }
+    for _ in 0..200 {
+        drive_virtual_cameras(&mut resources);
+    }
+    // `Simple` aims at the target, so it is centred and the framing's offset never happened.
+    let seen = on_screen(&resources, vcam, Vec3::ZERO).x;
+    assert!(
+        seen.abs() < 0.01,
+        "the framing reached an aim it does not own: {seen}"
     );
 }
