@@ -1,4 +1,6 @@
 use super::*;
+use crate::protocol::MovedComponent;
+use kooch_ecs::reflect::ReflectValue;
 
 fn at(id: u32, x: f32) -> MovedTransform {
     let mut matrix = [0.0; 16];
@@ -83,4 +85,45 @@ fn a_stale_revision_forces_a_full_reply() {
     cache.reply(vec![at(1, 0.0)], None);
     let reply = cache.reply(vec![at(1, 9.0)], Some(999));
     assert!(reply.full);
+}
+
+/// A declared component, with `fov` at `value`.
+fn lens(id: u32, value: f32) -> MovedComponent {
+    MovedComponent {
+        id: EntityId {
+            index: id,
+            generation: 0,
+        },
+        component: crate::protocol::ComponentSnapshot {
+            type_name: "kooch_ecs::perspective_camera::PerspectiveCamera".to_owned(),
+            fields: vec![("fov".to_owned(), ReflectValue::F32(value))],
+        },
+    }
+}
+
+/// 🔴 A changed component is sent and an unchanged one is not — the whole reason this path can
+/// afford to carry components at all. Without the diff, every frame would resend every declared
+/// component on every entity that carries one, which is the cost the play-mode pull exists to
+/// avoid (#1407).
+#[test]
+fn only_a_changed_component_is_sent() {
+    let mut cache = MovedCache::default();
+    // The first reply is full and carries no diff, so the cache learns the world here.
+    let first = cache.reply_with(vec![at(1, 0.0)], vec![lens(1, 60.0)], None);
+    assert!(first.full);
+    assert!(first.components.is_empty(), "a full reply carries no diff");
+
+    let same = cache.reply_with(vec![at(1, 0.0)], vec![lens(1, 60.0)], Some(first.revision));
+    assert!(
+        same.components.is_empty(),
+        "an unchanged lens was sent anyway: {:?}",
+        same.components,
+    );
+
+    let moved = cache.reply_with(vec![at(1, 0.0)], vec![lens(1, 30.0)], Some(same.revision));
+    assert_eq!(
+        moved.components.len(),
+        1,
+        "the changed lens did not reach the reply",
+    );
 }
