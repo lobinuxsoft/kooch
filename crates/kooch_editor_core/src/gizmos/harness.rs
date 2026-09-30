@@ -75,3 +75,28 @@ where
     visualizer.draw(component, &GlobalTransform { matrix }, &mut gizmos);
     meshes.arrows
 }
+
+/// Every segment a visualizer draws when it has the world to read, as `(start, end)`.
+pub(crate) fn draw_with<C, V>(
+    visualizer: &V,
+    component: &C,
+    matrix: Mat4,
+    entity: kooch_ecs::entity::Entity,
+    resources: &kooch_core::resource::Resources,
+) -> Vec<(Vec3, Vec3)>
+where
+    V: Visualizer<C>,
+    C: kooch_ecs::component::Component,
+{
+    let mut lines = GizmoBatch::default();
+    let mut meshes = MeshBatch::default();
+    let mut gizmos = Gizmos::new(&mut lines, &mut meshes);
+    visualizer.draw_with(
+        component,
+        &GlobalTransform { matrix },
+        entity,
+        resources,
+        &mut gizmos,
+    );
+    lines.lines.iter().map(|s| (s.start, s.end)).collect()
+}

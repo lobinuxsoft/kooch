@@ -178,7 +178,7 @@ impl Visualizer<CameraTarget> for CameraTargetVisualizer {
 }
 
 /// The world point a vcam follows: its group's centre, or nothing when the group is empty.
-fn followed_point(resources: &Resources, vcam: Entity) -> Option<Vec3> {
+pub(super) fn followed_point(resources: &Resources, vcam: Entity) -> Option<Vec3> {
     let registry = resources.get::<kooch_ecs::component::ComponentRegistry>()?;
     let group = registry
         .get_cpu::<kooch_camera::VirtualCamera>()?

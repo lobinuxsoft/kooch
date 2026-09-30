@@ -1,10 +1,15 @@
 //! Gizmo for [`VirtualCamera`].
 
 use glam::Vec3;
+use kooch_camera::RigMemory;
 use kooch_camera::VirtualCamera;
 use kooch_camera::virtual_camera::{FOLLOW_THIRD_PERSON, UP_GRAVITY, UP_TARGET};
+use kooch_core::resource::Resources;
+use kooch_ecs::entity::Entity;
 use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_gizmos::{Gizmos, Visualizer};
+
+use super::camera_rig::followed_point;
 
 /// Warm, to separate it at a glance from the cool blues the real
 /// cameras use — the difference between "this renders" and "this aims".
@@ -26,6 +31,11 @@ const UP_LENGTH: f32 = 0.9;
 /// Segments in the spring-arm orbit. Enough to read as a circle at the
 /// distances a camera orbits from.
 const ORBIT_SEGMENTS: usize = 48;
+/// The pivot chain from the target to the camera. Cool against the vcam's warm body, because it is
+/// the rig's doing rather than the marker's.
+const RIG: Vec3 = Vec3::new(0.45, 0.8, 0.7);
+/// A pivot on it.
+const PIVOT: f32 = 0.08;
 
 /// Draws where a virtual camera is, which way it aims, and — in
 /// third-person — the circle its spring arm swings around.
@@ -91,4 +101,62 @@ impl Visualizer<VirtualCamera> for VirtualCameraVisualizer {
             gizmos.line(origin, centre, colour * 0.55);
         }
     }
+
+    /// The pivot chain the shoulder builds, drawn as Cinemachine draws it: root → shoulder → hand →
+    /// camera, with a sphere on each.
+    ///
+    /// 🔴 State, not settings. A composer in the Aim turns the camera back to re-frame the target,
+    /// which **cancels the shoulder's effect on screen** and leaves only the parallax — the offset is
+    /// working and nothing says so. Measured: a `shoulder_offset.x` of 0.6 moves the character
+    /// −0.117 of the screen under `Pan Tilt` and **0.000** under `Rotation Composer`. Cinemachine
+    /// answers that by drawing the rig rather than warning about the combination, and so does this
+    /// (#1379).
+    fn draw_with(
+        &self,
+        vcam: &VirtualCamera,
+        transform: &GlobalTransform,
+        entity: Entity,
+        resources: &Resources,
+        gizmos: &mut Gizmos<'_>,
+    ) {
+        self.draw(vcam, transform, gizmos);
+        if vcam.follow != FOLLOW_THIRD_PERSON {
+            return;
+        }
+        // The up and reference the rig actually used. Derived here instead, the chain drawn would
+        // not be the chain running.
+        let Some((up, reference)) = resources
+            .get::<RigMemory>()
+            .and_then(|memory| memory.horizons.used(entity))
+        else {
+            return;
+        };
+        let Some(target) = followed_point(resources, entity) else {
+            return;
+        };
+        let (root, shoulder, hand) = vcam.rig_positions(target, up, reference);
+        // Nothing authored collapses all three onto the target: a plain orbital rig draws the arm it
+        // already had, not a chain of stubs on top of it.
+        if root.abs_diff_eq(hand, 1e-4) {
+            return;
+        }
+        let camera = transform.matrix.to_scale_rotation_translation().2;
+        gizmos.line(root, shoulder, RIG);
+        gizmos.line(shoulder, hand, RIG);
+        gizmos.line(hand, camera, RIG);
+        for at in [root, shoulder, hand] {
+            cross(gizmos, at, PIVOT, RIG);
+        }
+    }
 }
+
+/// Three axis-aligned strokes through `at`. A sphere is what Cinemachine draws; three lines read the
+/// same at a pivot's size and cost three lines.
+fn cross(gizmos: &mut Gizmos<'_>, at: Vec3, size: f32, colour: Vec3) {
+    for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+        gizmos.line(at - axis * size, at + axis * size, colour);
+    }
+}
+
+#[cfg(test)]
+mod tests;

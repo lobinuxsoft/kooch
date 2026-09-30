@@ -299,6 +299,14 @@ impl Horizons {
         }
     }
 
+    /// The up and reference this vcam last used, or `None` for one the rig has not planned.
+    ///
+    /// 🔴 For anything that has to show what the rig **did**, rather than work out what it would do:
+    /// a gizmo that re-derived these would draw a rig that is not the one running (#1379).
+    pub fn used(&self, vcam: Entity) -> Option<(Vec3, Vec3)> {
+        self.frames.get(&vcam).copied()
+    }
+
     /// Remembers what this vcam used, for the next step to carry from.
     pub fn set(&mut self, vcam: Entity, up: Vec3, reference: Vec3) {
         self.frames.insert(vcam, (up, reference));
