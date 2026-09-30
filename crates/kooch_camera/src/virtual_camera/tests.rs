@@ -9,6 +9,17 @@ fn vcam(follow: u32) -> VirtualCamera {
     }
 }
 
+/// The shoulder body a vcam names, with nothing authored — every test that wants one starts here.
+fn shoulder() -> crate::ThirdPersonFollow {
+    crate::ThirdPersonFollow {
+        shoulder_offset: Vec3::ZERO,
+        vertical_arm_length: 0.0,
+        camera_side: 1.0,
+        // The arm the tests were written against, and the orbital body's radius through `desired`.
+        camera_distance: 6.0,
+    }
+}
+
 /// A vcam cannot know whether its group has members;
 /// `plugin::nothing_tagged_means_nothing_to_follow` covers that. `is_inert` answers only what a
 /// vcam knows alone.
@@ -46,8 +57,11 @@ fn the_default_is_ready_to_work_the_moment_something_is_tagged() {
 
 /// Both quantities at once, seeding the yaw origin as a first step does — what the rig's Body and
 /// Aim stages each do one of.
+/// 🔴 One bag of numbers for either body. A test cares about the geometry, not about which component
+/// holds it, so the helper hands `body` to whichever the vcam names (#1391).
 fn desired(
     vcam: &VirtualCamera,
+    body: crate::ThirdPersonFollow,
     target: Vec3,
     target_rot: glam::Quat,
     current: Vec3,
@@ -56,7 +70,22 @@ fn desired(
 ) -> (Vec3, glam::Quat) {
     let up = super::normalised_up(up);
     let reference = seed_reference(up);
-    let position = vcam.wanted(target, current, up, reference);
+    // A body is a component now (#1391), so a test that wants one names it. These are the defaults;
+    // a test with numbers of its own calls `on_sphere` or `on_shoulder` directly.
+    let position = match vcam.follow {
+        FOLLOW_ORBITAL => vcam.on_sphere(
+            target,
+            crate::OrbitalFollow {
+                radius: body.camera_distance,
+                ..Default::default()
+            },
+            0.5,
+            up,
+            reference,
+        ),
+        FOLLOW_SHOULDER => vcam.on_shoulder(target, body, up, reference),
+        _ => vcam.wanted(target, current, up, reference),
+    };
     let rotation = vcam.aimed(position, target, target_rot, current_rot, up, reference);
     (position, rotation)
 }
@@ -69,6 +98,7 @@ fn the_default_frames_a_subject_correctly() {
     let target = Vec3::new(0.0, 0.0, -20.0);
     let (pos, rot) = desired(
         &v,
+        shoulder(),
         target,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -88,10 +118,11 @@ fn the_default_frames_a_subject_correctly() {
 
 #[test]
 fn simple_follow_is_the_target_plus_the_offset() {
-    let mut r = vcam(FOLLOW_SIMPLE);
+    let (mut r, mut body) = (vcam(FOLLOW_SIMPLE), shoulder());
     r.offset = Vec3::new(0.0, 3.0, 10.0);
     let (pos, _) = desired(
         &r,
+        body,
         Vec3::new(5.0, 0.0, 0.0),
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -103,12 +134,13 @@ fn simple_follow_is_the_target_plus_the_offset() {
 
 #[test]
 fn the_spring_arm_keeps_its_length_at_every_yaw() {
-    let mut r = vcam(FOLLOW_ORBITAL);
-    r.camera_distance = 7.0;
+    let (mut r, mut body) = (vcam(FOLLOW_ORBITAL), shoulder());
+    body.camera_distance = 7.0;
     for yaw in [0.0, 37.0, 90.0, 180.0, -145.0] {
         r.yaw = yaw;
         let (pos, _) = desired(
             &r,
+            body,
             Vec3::ZERO,
             glam::Quat::IDENTITY,
             Vec3::ZERO,
@@ -127,10 +159,11 @@ fn the_spring_arm_keeps_its_length_at_every_yaw() {
 /// rolls over. The clamp is what stops it.
 #[test]
 fn pitch_is_clamped_short_of_the_pole() {
-    let mut r = vcam(FOLLOW_ORBITAL);
+    let (mut r, mut body) = (vcam(FOLLOW_ORBITAL), shoulder());
     r.pitch = 90.0;
     let (pos, _) = desired(
         &r,
+        body,
         Vec3::ZERO,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -146,11 +179,12 @@ fn pitch_is_clamped_short_of_the_pole() {
 /// Follow `None` with a look-at is a turret: it tracks and stays put.
 #[test]
 fn follow_none_leaves_the_position_alone() {
-    let mut r = vcam(FOLLOW_NONE);
+    let (mut r, mut body) = (vcam(FOLLOW_NONE), shoulder());
     r.look_at = LOOK_AT_SIMPLE;
     let here = Vec3::new(1.0, 2.0, 3.0);
     let (pos, _) = desired(
         &r,
+        body,
         Vec3::new(9.0, 0.0, 0.0),
         glam::Quat::IDENTITY,
         here,
@@ -219,7 +253,7 @@ fn a_zero_time_is_rigid_on_that_axis_only() {
 /// ship.
 #[test]
 fn look_at_points_the_camera_at_the_target() {
-    let mut r = vcam(FOLLOW_NONE);
+    let (mut r, mut body) = (vcam(FOLLOW_NONE), shoulder());
     r.look_at = LOOK_AT_SIMPLE;
 
     for (eye, target) in [
@@ -230,6 +264,7 @@ fn look_at_points_the_camera_at_the_target() {
     ] {
         let (_, rot) = desired(
             &r,
+            body,
             target,
             glam::Quat::IDENTITY,
             eye,
@@ -250,10 +285,11 @@ fn look_at_points_the_camera_at_the_target() {
 /// roll of 180° that a forward-only assertion would let through.
 #[test]
 fn look_at_keeps_the_horizon_upright() {
-    let mut r = vcam(FOLLOW_NONE);
+    let (mut r, mut body) = (vcam(FOLLOW_NONE), shoulder());
     r.look_at = LOOK_AT_SIMPLE;
     let (_, rot) = desired(
         &r,
+        body,
         Vec3::new(0.0, 0.0, -10.0),
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -271,10 +307,11 @@ fn look_at_keeps_the_horizon_upright() {
 /// It was a reflection, which `is_finite()` happily accepted.
 #[test]
 fn the_canonical_look_at_is_the_identity() {
-    let mut r = vcam(FOLLOW_NONE);
+    let (mut r, mut body) = (vcam(FOLLOW_NONE), shoulder());
     r.look_at = LOOK_AT_SIMPLE;
     let (_, rot) = desired(
         &r,
+        body,
         Vec3::new(0.0, 0.0, -1.0),
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -292,12 +329,13 @@ fn the_canonical_look_at_is_the_identity() {
 /// which is what `Mimic` is for.
 #[test]
 fn look_at_none_keeps_the_cameras_own_rotation() {
-    let mut r = vcam(FOLLOW_SIMPLE);
+    let (mut r, mut body) = (vcam(FOLLOW_SIMPLE), shoulder());
     r.look_at = LOOK_AT_NONE;
     let mine = glam::Quat::from_rotation_y(0.7);
     let targets = glam::Quat::from_rotation_x(1.3);
     let (_, rot) = desired(
         &r,
+        body,
         Vec3::new(4.0, 0.0, 0.0),
         targets,
         Vec3::ZERO,
@@ -314,13 +352,14 @@ fn look_at_none_keeps_the_cameras_own_rotation() {
 /// did, or every scene authored before it would reframe itself.
 #[test]
 fn world_up_reproduces_the_old_fixed_axis_arm() {
-    let mut r = vcam(FOLLOW_ORBITAL);
-    r.camera_distance = 5.0;
+    let (mut r, mut body) = (vcam(FOLLOW_ORBITAL), shoulder());
+    body.camera_distance = 5.0;
     for (yaw, pitch) in [(0.0, 0.0), (30.0, 15.0), (-120.0, -40.0), (180.0, 60.0)] {
         r.yaw = yaw;
         r.pitch = pitch;
         let (pos, _) = desired(
             &r,
+            body,
             Vec3::ZERO,
             glam::Quat::IDENTITY,
             Vec3::ZERO,
@@ -342,9 +381,9 @@ fn world_up_reproduces_the_old_fixed_axis_arm() {
 /// the local up over its head.
 #[test]
 fn the_arm_follows_an_arbitrary_up() {
-    let mut r = vcam(FOLLOW_ORBITAL);
+    let (mut r, mut body) = (vcam(FOLLOW_ORBITAL), shoulder());
     r.look_at = LOOK_AT_SIMPLE;
-    r.camera_distance = 4.0;
+    body.camera_distance = 4.0;
     r.pitch = 0.0;
 
     // Gravity pulling along -X means up is +X.
@@ -352,6 +391,7 @@ fn the_arm_follows_an_arbitrary_up() {
     let target = Vec3::new(10.0, 0.0, 0.0);
     let (pos, rot) = desired(
         &r,
+        body,
         target,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -379,12 +419,13 @@ fn the_arm_follows_an_arbitrary_up() {
 /// Pitch is measured off the local horizon, not the world one.
 #[test]
 fn pitch_raises_the_arm_along_the_local_up() {
-    let mut r = vcam(FOLLOW_ORBITAL);
-    r.camera_distance = 3.0;
+    let (mut r, mut body) = (vcam(FOLLOW_ORBITAL), shoulder());
+    body.camera_distance = 3.0;
     r.pitch = 30.0;
     let up = Vec3::new(0.0, 0.0, 1.0);
     let (pos, _) = desired(
         &r,
+        body,
         Vec3::ZERO,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -403,10 +444,11 @@ fn pitch_raises_the_arm_along_the_local_up() {
 /// normalised zero is `NaN` in every basis downstream.
 #[test]
 fn a_zero_up_falls_back_to_world_instead_of_nan() {
-    let mut r = vcam(FOLLOW_ORBITAL);
+    let (mut r, mut body) = (vcam(FOLLOW_ORBITAL), shoulder());
     r.look_at = LOOK_AT_SIMPLE;
     let (pos, rot) = desired(
         &r,
+        body,
         Vec3::ZERO,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -477,7 +519,7 @@ fn rotation_damping_off_snaps_exactly() {
 
 #[test]
 fn a_disabled_rig_is_inert() {
-    let mut r = vcam(FOLLOW_SIMPLE);
+    let (mut r, mut body) = (vcam(FOLLOW_SIMPLE), shoulder());
     assert!(!r.is_inert());
     r.enabled = false;
     assert!(r.is_inert(), "a switched-off vcam must not be a candidate");
@@ -485,10 +527,11 @@ fn a_disabled_rig_is_inert() {
 
 #[test]
 fn looking_at_where_you_already_are_is_not_a_nan() {
-    let mut r = vcam(FOLLOW_GLUED);
+    let (mut r, mut body) = (vcam(FOLLOW_GLUED), shoulder());
     r.look_at = LOOK_AT_SIMPLE;
     let (_, rot) = desired(
         &r,
+        body,
         Vec3::splat(2.0),
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -502,10 +545,11 @@ fn looking_at_where_you_already_are_is_not_a_nan() {
 /// has to stay finite rather than roll.
 #[test]
 fn looking_straight_down_stays_finite() {
-    let mut r = vcam(FOLLOW_NONE);
+    let (mut r, mut body) = (vcam(FOLLOW_NONE), shoulder());
     r.look_at = LOOK_AT_SIMPLE;
     let (_, rot) = desired(
         &r,
+        body,
         Vec3::ZERO,
         glam::Quat::IDENTITY,
         Vec3::new(0.0, 10.0, 0.0),
@@ -521,7 +565,6 @@ fn looking_straight_down_stays_finite() {
 fn rolling_over_the_pole_does_not_flip() {
     let vcam = VirtualCamera {
         follow: FOLLOW_ORBITAL,
-        camera_distance: 5.0,
         pitch: 0.0,
         yaw: 0.0,
         damping: Vec3::ZERO,
@@ -541,7 +584,16 @@ fn rolling_over_the_pole_does_not_flip() {
         reference = transported(reference, up, next);
         up = next;
 
-        let position = vcam.wanted(Vec3::ZERO, Vec3::ZERO, up, reference);
+        let position = vcam.on_sphere(
+            Vec3::ZERO,
+            crate::OrbitalFollow {
+                radius: 5.0,
+                ..Default::default()
+            },
+            0.5,
+            up,
+            reference,
+        );
         if let Some(previous) = previous {
             // One degree of arc at five metres is under a tenth of a
             // metre. A flip is seven.
@@ -644,24 +696,26 @@ fn old_duration_names_load() {
 /// right, and not further back or higher up.
 #[test]
 fn a_shoulder_stands_beside_the_arm() {
-    let mut r = vcam(FOLLOW_SHOULDER);
+    let (mut r, mut body) = (vcam(FOLLOW_SHOULDER), shoulder());
     r.look_at = LOOK_AT_ARM;
-    r.camera_distance = 3.0;
+    body.camera_distance = 3.0;
     r.pitch = 0.0;
     r.yaw = 40.0;
 
     let target = Vec3::ZERO;
     let (centred, _) = desired(
         &r,
+        body,
         target,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
         glam::Quat::IDENTITY,
         Vec3::Y,
     );
-    r.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
+    body.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
     let (beside, rot) = desired(
         &r,
+        body,
         target,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -685,19 +739,19 @@ fn a_shoulder_stands_beside_the_arm() {
 /// character as the player looks down, which is what a single pivot did.
 #[test]
 fn pitch_leaves_the_shoulder_alone() {
-    let mut r = vcam(FOLLOW_SHOULDER);
-    r.camera_distance = 3.0;
+    let (mut r, mut body) = (vcam(FOLLOW_SHOULDER), shoulder());
+    body.camera_distance = 3.0;
     r.yaw = 25.0;
-    r.shoulder_offset = Vec3::new(0.5, 0.3, -0.2);
+    body.shoulder_offset = Vec3::new(0.5, 0.3, -0.2);
 
     let up = Vec3::Y;
     let reference = seed_reference(up);
     let back = r.back(up, reference);
-    let first = r.shouldered(back, up);
+    let first = body.shouldered(back, up);
     for pitch in [-60.0, 0.0, 35.0, 80.0] {
         r.pitch = pitch;
         assert!(
-            (r.shouldered(back, up) - first).length() < 1e-4,
+            (body.shouldered(back, up) - first).length() < 1e-4,
             "pitch {pitch} moved the shoulder",
         );
     }
@@ -709,22 +763,22 @@ fn pitch_leaves_the_shoulder_alone() {
 /// were one axis.
 #[test]
 fn the_arm_rises_with_the_pitch() {
-    let mut r = vcam(FOLLOW_SHOULDER);
-    r.camera_distance = 0.0;
+    let (mut r, mut body) = (vcam(FOLLOW_SHOULDER), shoulder());
+    body.camera_distance = 0.0;
     r.yaw = 0.0;
     r.pitch = 0.0;
-    r.vertical_arm_length = 1.0;
+    body.vertical_arm_length = 1.0;
 
     let up = Vec3::Y;
     let reference = seed_reference(up);
-    let level = r.wanted(Vec3::ZERO, Vec3::ZERO, up, reference);
+    let level = r.on_shoulder(Vec3::ZERO, body, up, reference);
     assert!(
         level.abs_diff_eq(Vec3::Y, 1e-4),
         "a level arm rises straight up: {level:?}",
     );
 
     r.pitch = 90.0;
-    let pitched = r.wanted(Vec3::ZERO, Vec3::ZERO, up, reference);
+    let pitched = r.on_shoulder(Vec3::ZERO, body, up, reference);
     // Looking straight down, the view's up is the way it came from — the arm's own `back`.
     assert!(
         pitched.dot(up).abs() < 0.05 && pitched.dot(r.back(up, reference)) < -0.9,
@@ -735,20 +789,20 @@ fn the_arm_rises_with_the_pitch() {
 /// `side` picks the shoulder without touching the offset that says how far off it sits.
 #[test]
 fn the_side_mirrors_the_shoulder() {
-    let mut r = vcam(FOLLOW_SHOULDER);
-    r.camera_distance = 0.0;
+    let (mut r, mut body) = (vcam(FOLLOW_SHOULDER), shoulder());
+    body.camera_distance = 0.0;
     r.pitch = 0.0;
-    r.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
+    body.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
 
     let up = Vec3::Y;
     let reference = seed_reference(up);
-    let at = |r: &VirtualCamera| r.wanted(Vec3::ZERO, Vec3::ZERO, up, reference);
+    let at = |r: &VirtualCamera, body| r.on_shoulder(Vec3::ZERO, body, up, reference);
 
-    let right = at(&r);
-    r.camera_side = 0.0;
-    let left = at(&r);
-    r.camera_side = 0.5;
-    let centred = at(&r);
+    let right = at(&r, body);
+    body.camera_side = 0.0;
+    let left = at(&r, body);
+    body.camera_side = 0.5;
+    let centred = at(&r, body);
 
     assert!((right + left).length() < 1e-4, "{right:?} and {left:?}");
     assert!(centred.length() < 1e-4, "halfway is neither: {centred:?}");
@@ -759,14 +813,15 @@ fn the_side_mirrors_the_shoulder() {
 /// only the parallax shifts and the character never leaves centre screen.
 #[test]
 fn an_arm_aim_holds_the_target_off_centre() {
-    let mut r = vcam(FOLLOW_SHOULDER);
-    r.camera_distance = 3.0;
-    r.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
+    let (mut r, mut body) = (vcam(FOLLOW_SHOULDER), shoulder());
+    body.camera_distance = 3.0;
+    body.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
 
     let target = Vec3::ZERO;
     let off_centre = |vcam: &VirtualCamera| {
         let (pos, rot) = desired(
             vcam,
+            body,
             target,
             glam::Quat::IDENTITY,
             Vec3::ZERO,
@@ -794,14 +849,15 @@ fn an_arm_aim_holds_the_target_off_centre() {
 /// measure — a `look_at` between two coincident points returns identity.
 #[test]
 fn a_zero_arm_still_aims() {
-    let mut r = vcam(FOLLOW_ORBITAL);
+    let (mut r, mut body) = (vcam(FOLLOW_ORBITAL), shoulder());
     r.look_at = LOOK_AT_ARM;
-    r.camera_distance = 0.0;
+    body.camera_distance = 0.0;
     r.pitch = 0.0;
     r.yaw = 90.0;
 
     let (_, rot) = desired(
         &r,
+        body,
         Vec3::ZERO,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -820,18 +876,18 @@ fn a_zero_arm_still_aims() {
 /// would drift, and the one drawn would stop being the one used.
 #[test]
 fn the_rig_positions_lead_to_the_camera() {
-    let mut r = vcam(FOLLOW_SHOULDER);
-    r.camera_distance = 3.0;
+    let (mut r, mut body) = (vcam(FOLLOW_SHOULDER), shoulder());
+    body.camera_distance = 3.0;
     r.yaw = 35.0;
     r.pitch = 15.0;
-    r.shoulder_offset = Vec3::new(0.6, -0.4, 0.2);
-    r.vertical_arm_length = 1.2;
+    body.shoulder_offset = Vec3::new(0.6, -0.4, 0.2);
+    body.vertical_arm_length = 1.2;
 
     let up = Vec3::Y;
     let reference = seed_reference(up);
     let target = Vec3::new(2.0, 1.0, -3.0);
-    let (root, shoulder, hand) = r.rig_positions(target, up, reference);
-    let camera = r.wanted(target, Vec3::ZERO, up, reference);
+    let (root, shoulder, hand) = r.rig_positions(target, up, reference, body);
+    let camera = r.on_shoulder(target, body, up, reference);
 
     assert_eq!(root, target, "the chain starts on what it follows");
     assert!(
@@ -850,15 +906,14 @@ fn the_rig_positions_lead_to_the_camera() {
     );
 }
 
-/// 🔴 The orbital body has no chain at all: the shoulder's fields do not show there and are not read
-/// there either, so one left behind by a switch cannot move the camera from a hidden row (#1380).
+/// 🔴 #1391: a body is a component, so "does the orbital rig have a shoulder" is answered by the
+/// component not being there — not by a gate inside the geometry. A rig with nothing authored still
+/// collapses its three pivots onto the target, which is what stops the gizmo drawing a knot of stubs.
 #[test]
 fn a_plain_rig_has_no_chain() {
-    let mut r = vcam(FOLLOW_ORBITAL);
-    r.shoulder_offset = Vec3::new(0.6, 0.4, 0.0);
-    r.vertical_arm_length = 1.0;
+    let (r, body) = (vcam(FOLLOW_ORBITAL), shoulder());
     let up = Vec3::Y;
-    let (root, shoulder, hand) = r.rig_positions(Vec3::ZERO, up, seed_reference(up));
+    let (root, shoulder, hand) = r.rig_positions(Vec3::ZERO, up, seed_reference(up), body);
     assert_eq!(root, shoulder);
     assert_eq!(shoulder, hand);
 }
@@ -882,7 +937,7 @@ fn a_shoulder_moves_to_its_own_body() {
         moved,
         VirtualCamera {
             follow: FOLLOW_ORBITAL,
-            shoulder_offset: Vec3::new(0.6, -0.4, 0.0),
+            was_shoulder: Vec3::new(0.6, -0.4, 0.0),
             ..Default::default()
         },
     );
@@ -896,7 +951,7 @@ fn a_shoulder_moves_to_its_own_body() {
     );
     resources.insert(registry);
 
-    crate::virtual_camera::migrate_shoulder_body(&mut resources);
+    crate::virtual_camera::migrate_bodies(&mut resources);
 
     let of = |entity| {
         resources
@@ -910,4 +965,71 @@ fn a_shoulder_moves_to_its_own_body() {
     };
     assert_eq!(of(moved), FOLLOW_SHOULDER, "the shoulder was stranded");
     assert_eq!(of(left), FOLLOW_ORBITAL);
+}
+
+/// 🔴 #1391: a body is a component, and the numbers a scene wrote on the vcam have to reach it. An
+/// alias maps a name inside a type; a field that moved to another component is not covered, so
+/// without this every authored rig would take the defaults with nothing said.
+#[test]
+fn the_body_numbers_reach_their_component() {
+    use kooch_ecs::component::ComponentRegistry;
+
+    let mut resources = kooch_core::resource::Resources::new();
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu_reflected::<VirtualCamera>();
+    registry.register_cpu_reflected::<crate::OrbitalFollow>();
+    registry.register_cpu_reflected::<crate::ThirdPersonFollow>();
+    let (orbital, shouldered) = (
+        kooch_ecs::entity::Entity::new(1, 0),
+        kooch_ecs::entity::Entity::new(2, 0),
+    );
+    let storage = registry.get_cpu_mut::<VirtualCamera>().unwrap();
+    storage.insert(
+        orbital,
+        VirtualCamera {
+            follow: FOLLOW_ORBITAL,
+            was_distance: 9.0,
+            was_orbit_style: ORBIT_THREE_RING,
+            ..Default::default()
+        },
+    );
+    storage.insert(
+        shouldered,
+        VirtualCamera {
+            follow: FOLLOW_ORBITAL,
+            was_distance: 2.5,
+            was_shoulder: Vec3::new(0.6, -0.4, 0.0),
+            was_arm_length: 1.2,
+            was_side: 0.0,
+            ..Default::default()
+        },
+    );
+    resources.insert(registry);
+
+    crate::virtual_camera::migrate_bodies(&mut resources);
+
+    let registry = resources.get::<ComponentRegistry>().unwrap();
+    let ring = registry
+        .get_cpu::<crate::OrbitalFollow>()
+        .unwrap()
+        .get(orbital)
+        .expect("the orbital body was never made");
+    assert_eq!(ring.radius, 9.0);
+    assert_eq!(ring.orbit_style, ORBIT_THREE_RING);
+
+    let arm = registry
+        .get_cpu::<crate::ThirdPersonFollow>()
+        .unwrap()
+        .get(shouldered)
+        .expect("the shoulder body was never made");
+    assert_eq!(arm.shoulder_offset, Vec3::new(0.6, -0.4, 0.0));
+    assert_eq!(arm.vertical_arm_length, 1.2);
+    assert_eq!(arm.camera_side, 0.0, "a left shoulder is not no shoulder");
+    assert_eq!(arm.camera_distance, 2.5);
+
+    // And a shoulder anywhere means the shoulder body, as #1380 decided.
+    let vcams = registry.get_cpu::<VirtualCamera>().unwrap();
+    assert_eq!(vcams.get(shouldered).unwrap().follow, FOLLOW_SHOULDER);
+    // The hidden fields are emptied, so the migration runs once.
+    assert_eq!(vcams.get(orbital).unwrap().was_distance, 0.0);
 }

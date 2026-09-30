@@ -1,6 +1,7 @@
 //! [`VirtualCamera`] — camera behaviour as data a designer authors, with modes and names from
 //! phantom-camera (MIT, #671).
 
+use crate::third_person_follow::ThirdPersonFollow;
 use glam::Vec3;
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
@@ -202,40 +203,32 @@ pub struct VirtualCamera {
     #[reflect(shown_when = OFFSET_WHEN)]
     pub offset: Vec3,
     /// Spring arm length — how far back from the target the camera sits.
-    /// 🔴 Not read under `Three Ring`, where the rings are the distance. It still **shows** there:
-    /// `FieldCondition` tests one field, and "an arm, and a sphere" is two. The condition that would
-    /// hide it correctly is the one improvement this needs.
-    #[reflect(alias = "distance", shown_when = ARM_WHEN)]
-    pub camera_distance: f32,
-    /// Which surface the arm rides. One of the `ORBIT_*` constants.
-    #[reflect(choices = ORBIT_STYLE_CHOICES, shown_when = ORBITAL_WHEN)]
-    pub orbit_style: u32,
+    /// The arm's length, before a body carried its own. Folded into the body's on load and cleared
+    /// (#1391) — an alias maps a name inside a type and cannot follow a field to another component.
+    #[reflect(hidden, alias = "distance, camera_distance")]
+    pub was_distance: f32,
+    /// The same, for the surface a scene chose before `OrbitalFollow` existed.
+    #[reflect(hidden, alias = "orbit_style")]
+    pub was_orbit_style: u32,
     /// Rotation around the target's up axis, in degrees.
+    ///
+    /// 🔴 Stays here: `CameraOrbit` writes it and **both** arm bodies read it. Cinemachine has its
+    /// axes on `OrbitalFollow` because its `ThirdPersonFollow` takes its angles from the target's
+    /// rotation, which ours cannot (#1380).
     #[reflect(shown_when = ARM_WHEN)]
     pub yaw: f32,
-    /// Rotation above the horizon, in degrees. Positive looks down.
+    /// Rotation above the horizon, in degrees. Positive looks down. The same, as above.
     #[reflect(shown_when = ARM_WHEN)]
     pub pitch: f32,
-    /// Where the arm's pivot sits, offset from the target in the arm's own basis: `x` beside the
-    /// view, `y` along `up`, `z` the way the camera looks. An over-the-shoulder view (#1359).
-    ///
-    /// 🔴 The arm's basis, not the target's. Cinemachine's `ThirdPersonFollow` offsets in the
-    /// target's, which it can because its rotation IS the target's; here the orbit owns the yaw, so
-    /// a shoulder in the character's frame would swing around it as the player looks about.
-    #[reflect(alias = "shoulder", shown_when = SHOULDER_WHEN)]
-    pub shoulder_offset: Vec3,
-    /// How far the arm's pivot sits above the shoulder — Cinemachine's `VerticalArmLength`.
-    ///
-    /// 🔴 Not the same axis as `shoulder.y`, which #1359 assumed and was wrong about (#1365). The
-    /// shoulder sits in the **levelled** basis and this along the view's own up, which pitches: look
-    /// down and the pivot swings forward and down while the shoulder stays. It is what decides how
-    /// the target's place on screen moves as the view turns vertically.
-    #[reflect(alias = "arm_rise", shown_when = SHOULDER_WHEN)]
-    pub vertical_arm_length: f32,
-    /// Which shoulder the camera is on: `0` the left, `1` the right, halfway between them centred.
-    /// Cinemachine's `CameraSide`, and what a swap animates without touching the authored offset.
-    #[reflect(alias = "side", range = SIDE_RANGE, shown_when = SHOULDER_WHEN)]
-    pub camera_side: f32,
+    /// The shoulder a scene wrote before `ThirdPersonFollow` carried it. The same as `was_distance`.
+    #[reflect(hidden, alias = "shoulder, shoulder_offset")]
+    pub was_shoulder: Vec3,
+    /// The same.
+    #[reflect(hidden, alias = "arm_rise, vertical_arm_length")]
+    pub was_arm_length: f32,
+    /// The same. `-1` is "nothing was written", since `0` is the left shoulder.
+    #[reflect(hidden, alias = "side, camera_side")]
+    pub was_side: f32,
     /// Where the camera looks. One of the `LOOK_AT_*` constants.
     #[reflect(choices = LOOK_AT_CHOICES)]
     pub look_at: u32,
@@ -322,16 +315,13 @@ impl Default for VirtualCamera {
             follow: FOLLOW_ORBITAL,
             group: 0,
             offset: Vec3::new(0.0, 2.0, 6.0),
-            camera_distance: 6.0,
-            orbit_style: ORBIT_SPHERE,
+            was_distance: 0.0,
+            was_orbit_style: ORBIT_SPHERE,
             yaw: 0.0,
             pitch: 20.0,
-            // Centred: an authored scene that never heard of a shoulder is
-            // placed exactly where it was.
-            shoulder_offset: Vec3::ZERO,
-            vertical_arm_length: 0.0,
-            // The authored `shoulder.x` as written: `2 × 1 − 1` is one.
-            camera_side: 1.0,
+            was_shoulder: Vec3::ZERO,
+            was_arm_length: 0.0,
+            was_side: -1.0,
             look_at: LOOK_AT_SIMPLE,
             damping: Vec3::splat(0.5),
             up_mode: UP_WORLD,
@@ -364,7 +354,8 @@ impl VirtualCamera {
         match self.follow {
             FOLLOW_GLUED => target,
             FOLLOW_SIMPLE => target + self.offset,
-            FOLLOW_ORBITAL | FOLLOW_SHOULDER => target + self.arm(up, reference),
+            // The arm bodies carry their own numbers; `body_stage` places them from those.
+            FOLLOW_ORBITAL | FOLLOW_SHOULDER => current,
             _ => current,
         }
     }
@@ -401,9 +392,41 @@ impl VirtualCamera {
     /// Two segments, as Cinemachine's `ThirdPersonFollow`: **yaw swings the whole basis, pitch turns
     /// only the reach.** That is what keeps a shoulder beside the head instead of rolling it under
     /// the character when the player looks down.
-    fn arm(&self, up: Vec3, reference: Vec3) -> Vec3 {
-        let (_, _, hand) = self.rig_positions(Vec3::ZERO, up, reference);
-        hand + self.along(self.back(up, reference), up) * self.camera_distance.max(0.0)
+    /// Where an [`OrbitalFollow`](crate::OrbitalFollow) body stands the camera, around `target`.
+    ///
+    /// `t` is where the pitch sits in its range, used only by the ring surface. Pure, because the
+    /// geometry is worth testing without a world to build first.
+    pub fn on_sphere(
+        &self,
+        target: Vec3,
+        body: crate::OrbitalFollow,
+        t: f32,
+        up: Vec3,
+        reference: Vec3,
+    ) -> Vec3 {
+        let up = normalised_up(up);
+        let back = self.back(up, reference);
+        target
+            + match body.orbit_style {
+                ORBIT_THREE_RING => body.at(t, back, up),
+                _ => self.along(back, up) * body.radius.max(0.0),
+            }
+    }
+
+    /// Where a [`ThirdPersonFollow`](crate::ThirdPersonFollow) body stands it, around `target`.
+    pub fn on_shoulder(
+        &self,
+        target: Vec3,
+        body: ThirdPersonFollow,
+        up: Vec3,
+        reference: Vec3,
+    ) -> Vec3 {
+        target + self.arm(body, normalised_up(up), reference)
+    }
+
+    fn arm(&self, body: ThirdPersonFollow, up: Vec3, reference: Vec3) -> Vec3 {
+        let (_, _, hand) = self.rig_positions(Vec3::ZERO, up, reference, body);
+        hand + self.along(self.back(up, reference), up) * body.camera_distance.max(0.0)
     }
 
     /// The arm's three pivots around `target`: its root, the shoulder, and the hand the camera
@@ -411,19 +434,20 @@ impl VirtualCamera {
     /// the Inspector and a test all want these points and must not each derive them.
     ///
     /// The camera itself is [`wanted`](Self::wanted); this is the chain that leads to it.
-    pub fn rig_positions(&self, target: Vec3, up: Vec3, reference: Vec3) -> (Vec3, Vec3, Vec3) {
-        // 🔴 Only the body that shows the fields reads them. Authored under one body and left behind
-        // by a switch to another, they would otherwise still move the camera from a hidden row.
-        if self.follow != FOLLOW_SHOULDER {
-            return (target, target, target);
-        }
+    pub fn rig_positions(
+        &self,
+        target: Vec3,
+        up: Vec3,
+        reference: Vec3,
+        body: ThirdPersonFollow,
+    ) -> (Vec3, Vec3, Vec3) {
         let up = normalised_up(up);
         let back = self.back(up, reference);
-        let shoulder = target + self.shouldered(back, up);
+        let shoulder = target + body.shouldered(back, up);
         (
             target,
             shoulder,
-            shoulder + self.risen(back, up) * self.vertical_arm_length,
+            shoulder + self.risen(back, up) * body.vertical_arm_length,
         )
     }
 
@@ -451,17 +475,6 @@ impl VirtualCamera {
     fn along(&self, back: Vec3, up: Vec3) -> Vec3 {
         let (sin_pitch, cos_pitch) = self.pitched();
         back * cos_pitch + up * sin_pitch
-    }
-
-    /// The pivot's offset from the target, read in the arm's basis. Built off `back` alone, so
-    /// pitching the view does not roll the shoulder.
-    fn shouldered(&self, back: Vec3, up: Vec3) -> Vec3 {
-        let forward = -back;
-        // `forward × up`, the same hand `look_at` builds its basis with.
-        let right = forward.cross(up);
-        // `Lerp(-x, x, side)`, written as the multiplier it is.
-        let beside = self.shoulder_offset.x * (self.camera_side.clamp(0.0, 1.0) * 2.0 - 1.0);
-        right * beside + up * self.shoulder_offset.y + forward * self.shoulder_offset.z
     }
 
     /// Eases `current` towards `desired`, per axis, leaving a hundredth of the gap after
@@ -565,25 +578,42 @@ pub(crate) fn look_at(eye: Vec3, target: Vec3, up: Vec3, reference: Vec3) -> gla
     glam::Quat::from_mat3(&glam::Mat3::from_cols(right, up, -forward))
 }
 
-/// Where the rings would stand this vcam, or `None` where it is not riding any.
+/// Where this vcam's **body** stands it, or `None` where it carries none of them.
 ///
-/// The pitch maps over the [`CameraOrbit`](crate::orbit::CameraOrbit)'s own limits, so the ends of
-/// the stick reach the ends of the rig — read from the orbit rather than copied, because the limits
-/// have one owner. Without an orbit the arm's own pole clamp stands in.
-fn ringed(step: &crate::rig::RigStep) -> Option<Vec3> {
-    if step.vcam.follow != FOLLOW_ORBITAL || step.vcam.orbit_style != ORBIT_THREE_RING {
-        return None;
+/// 🔴 A body is a component and its numbers live on it (#1391), so the placement is here rather than
+/// in `wanted`, which has no registry to ask. The pitch maps over the
+/// [`CameraOrbit`](crate::orbit::CameraOrbit)'s own limits, read from it rather than copied, because
+/// the limits have one owner.
+fn bodied(step: &crate::rig::RigStep) -> Option<Vec3> {
+    let up = normalised_up(step.up);
+    let target = step.frame.target;
+    match step.vcam.follow {
+        FOLLOW_ORBITAL => Some(step.vcam.on_sphere(
+            target,
+            crate::orbital_follow::of(step.registry, step.entity)?,
+            pitched(step),
+            up,
+            step.reference,
+        )),
+        FOLLOW_SHOULDER => Some(step.vcam.on_shoulder(
+            target,
+            crate::third_person_follow::of(step.registry, step.entity)?,
+            up,
+            step.reference,
+        )),
+        _ => None,
     }
-    let rings = crate::orbital_rings::of(step.registry, step.entity)?;
+}
+
+/// Where the pitch sits in the orbit's own range, `0` to `1`. Without an orbit the arm's pole clamp
+/// stands in, which is the widest a pitch can be anyway.
+fn pitched(step: &crate::rig::RigStep) -> f32 {
     let (low, high) = step
         .registry
         .get_cpu::<crate::orbit::CameraOrbit>()
         .and_then(|orbits| orbits.get(step.entity))
         .map_or((-89.0, 89.0), |orbit| (orbit.pitch_min, orbit.pitch_max));
-    let span = (high - low).max(1e-3);
-    let t = (step.vcam.pitch - low) / span;
-    let up = normalised_up(step.up);
-    Some(step.frame.target + rings.at(t, step.vcam.back(up, step.reference), up))
+    (step.vcam.pitch - low) / (high - low).max(1e-3)
 }
 
 /// The Body stage: where the camera stands.
@@ -593,7 +623,7 @@ fn ringed(step: &crate::rig::RigStep) -> Option<Vec3> {
 pub fn body_stage(step: &mut crate::rig::RigStep) {
     // The rings replace the arm's own length and angle: the pitch picks a point on the surface
     // rather than swinging anything (#1389).
-    if let Some(wanted) = ringed(step) {
+    if let Some(wanted) = bodied(step) {
         step.frame
             .place(step.vcam.damped(step.frame.previous, wanted, step.dt));
         return;
@@ -650,23 +680,84 @@ mod tests;
 /// 🔴 The shoulder lived on `Orbital Follow` until #1380 split the two, the way Cinemachine has
 /// always had them. Left alone, the fields would stop showing and stop being read on the same load —
 /// an offset tuned for an hour, gone with nothing said.
-pub fn migrate_shoulder_body(resources: &mut kooch_core::resource::Resources) {
+pub fn migrate_bodies(resources: &mut kooch_core::resource::Resources) {
     let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
         return;
     };
-    let Some(storage) = registry.get_cpu_mut::<VirtualCamera>() else {
+    let Some(vcams) = registry.get_cpu::<VirtualCamera>() else {
         return;
     };
-    for (&entity, vcam) in storage.iter_mut() {
-        let authored = vcam.shoulder_offset != Vec3::ZERO || vcam.vertical_arm_length != 0.0;
-        if vcam.follow != FOLLOW_ORBITAL || !authored {
-            continue;
+    // 🔴 An alias maps a name inside a type; a field that moved to another component is not covered,
+    // so the old ones are still here, hidden, and this is what empties them (#1391).
+    let moved: Vec<_> = vcams
+        .iter()
+        .filter(|(_, vcam)| {
+            vcam.was_distance != 0.0
+                || vcam.was_shoulder != Vec3::ZERO
+                || vcam.was_arm_length != 0.0
+                || vcam.was_side >= 0.0
+                || vcam.was_orbit_style != ORBIT_SPHERE
+        })
+        .map(|(&entity, vcam)| (entity, *vcam))
+        .collect();
+    if moved.is_empty() {
+        return;
+    }
+
+    for (entity, vcam) in &moved {
+        // A shoulder authored anywhere means the shoulder body, as #1380 already decided.
+        let shouldered = vcam.was_shoulder != Vec3::ZERO || vcam.was_arm_length != 0.0;
+        if shouldered {
+            let body = crate::ThirdPersonFollow {
+                shoulder_offset: vcam.was_shoulder,
+                vertical_arm_length: vcam.was_arm_length,
+                camera_side: match vcam.was_side >= 0.0 {
+                    true => vcam.was_side,
+                    false => 1.0,
+                },
+                camera_distance: match vcam.was_distance > 0.0 {
+                    true => vcam.was_distance,
+                    false => 2.0,
+                },
+            };
+            if let Some(storage) = registry.get_cpu_mut::<crate::ThirdPersonFollow>() {
+                storage.insert(*entity, body);
+            }
+        } else {
+            let body = crate::OrbitalFollow {
+                radius: match vcam.was_distance > 0.0 {
+                    true => vcam.was_distance,
+                    false => 6.0,
+                },
+                orbit_style: vcam.was_orbit_style,
+                ..Default::default()
+            };
+            if let Some(storage) = registry.get_cpu_mut::<crate::OrbitalFollow>() {
+                storage.insert(*entity, body);
+            }
         }
-        vcam.follow = FOLLOW_SHOULDER;
         tracing::info!(
             target: "kooch_camera",
             entity = entity.index(),
-            "a vcam with a shoulder moved from Orbital Follow to Third Person Follow",
+            shouldered,
+            "a vcam's body numbers moved onto the component that reads them",
         );
+    }
+
+    if let Some(vcams) = registry.get_cpu_mut::<VirtualCamera>() {
+        for (entity, _) in &moved {
+            if let Some(vcam) = vcams.get_mut(*entity) {
+                let shouldered = vcam.was_shoulder != Vec3::ZERO || vcam.was_arm_length != 0.0;
+                vcam.follow = match shouldered {
+                    true => FOLLOW_SHOULDER,
+                    false => vcam.follow,
+                };
+                vcam.was_distance = 0.0;
+                vcam.was_orbit_style = ORBIT_SPHERE;
+                vcam.was_shoulder = Vec3::ZERO;
+                vcam.was_arm_length = 0.0;
+                vcam.was_side = -1.0;
+            }
+        }
     }
 }

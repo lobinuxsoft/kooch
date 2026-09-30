@@ -54,6 +54,25 @@ fn world() -> (Resources, Entity, Entity) {
     (resources, vcam, target)
 }
 
+/// The orbital body a vcam names, at `radius`.
+fn arm(resources: &mut Resources, vcam: Entity, radius: f32) {
+    body(
+        resources,
+        vcam,
+        crate::OrbitalFollow {
+            radius,
+            ..Default::default()
+        },
+    );
+}
+
+/// Gives a vcam the body it names, so a test can set that body's own numbers.
+fn body<T: kooch_ecs::component::Component>(resources: &mut Resources, vcam: Entity, value: T) {
+    let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+    registry.register_cpu::<T>();
+    registry.get_cpu_mut::<T>().unwrap().insert(vcam, value);
+}
+
 /// Changes what a vcam's body does, leaving the rest of the world alone.
 fn follows(resources: &mut Resources, vcam: Entity, follow: u32) {
     resources
@@ -195,6 +214,16 @@ fn the_screen_offset_turns_it() {
 fn a_shoulder_and_a_framing_coexist() {
     let (mut resources, vcam, _) = world();
     rigid(&mut resources, vcam);
+    body(
+        &mut resources,
+        vcam,
+        crate::ThirdPersonFollow {
+            shoulder_offset: Vec3::new(0.6, 0.0, 0.0),
+            vertical_arm_length: 0.0,
+            camera_side: 1.0,
+            camera_distance: 3.0,
+        },
+    );
     {
         let registry = resources.get_mut::<ComponentRegistry>().unwrap();
         let cam = registry
@@ -203,9 +232,7 @@ fn a_shoulder_and_a_framing_coexist() {
             .get_mut(vcam)
             .unwrap();
         cam.follow = crate::FOLLOW_SHOULDER;
-        cam.camera_distance = 3.0;
         cam.pitch = 0.0;
-        cam.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
         registry
             .get_cpu_mut::<RotationComposer>()
             .unwrap()
@@ -271,6 +298,7 @@ fn a_running_target_is_led() {
 fn the_rig_never_steps() {
     for speed in [6.0_f32, 40.0] {
         let (mut resources, vcam, target) = world();
+        arm(&mut resources, vcam, 8.0);
         {
             let registry = resources.get_mut::<ComponentRegistry>().unwrap();
             let cam = registry
@@ -279,7 +307,6 @@ fn the_rig_never_steps() {
                 .get_mut(vcam)
                 .unwrap();
             cam.follow = crate::FOLLOW_ORBITAL;
-            cam.camera_distance = 8.0;
             cam.pitch = 18.0;
             registry
                 .get_cpu_mut::<RotationComposer>()
@@ -321,6 +348,7 @@ fn framing_adds_no_jump_of_its_own() {
     /// step. A jump is a change of rate; moving faster is not a jump.
     fn worst_step(framed: bool, speed: f32) -> f32 {
         let (mut resources, vcam, target) = world();
+        arm(&mut resources, vcam, 8.0);
         {
             let registry = resources.get_mut::<ComponentRegistry>().unwrap();
             let cam = registry
@@ -329,7 +357,6 @@ fn framing_adds_no_jump_of_its_own() {
                 .get_mut(vcam)
                 .unwrap();
             cam.follow = crate::FOLLOW_ORBITAL;
-            cam.camera_distance = 8.0;
             cam.pitch = 18.0;
             cam.damping = Vec3::splat(0.3);
             cam.rotation_damping = 0.5;
@@ -447,11 +474,19 @@ fn the_pitch_walks_the_ring_surface() {
     let (mut resources, vcam, _) = world();
     {
         let registry = resources.get_mut::<ComponentRegistry>().unwrap();
-        registry.register_cpu::<crate::OrbitalRings>();
+        registry.register_cpu::<crate::OrbitalFollow>();
         registry
-            .get_cpu_mut::<crate::OrbitalRings>()
+            .get_cpu_mut::<crate::OrbitalFollow>()
             .unwrap()
-            .insert(vcam, crate::OrbitalRings::default());
+            .insert(
+                vcam,
+                crate::OrbitalFollow {
+                    orbit_style: crate::ORBIT_THREE_RING,
+                    // 99, to prove the sphere's radius places nothing under the rings.
+                    radius: 99.0,
+                    ..Default::default()
+                },
+            );
         registry.register_cpu::<crate::orbit::CameraOrbit>();
         registry
             .get_cpu_mut::<crate::orbit::CameraOrbit>()
@@ -470,9 +505,7 @@ fn the_pitch_walks_the_ring_surface() {
             .get_mut(vcam)
             .unwrap();
         cam.follow = crate::FOLLOW_ORBITAL;
-        cam.orbit_style = crate::ORBIT_THREE_RING;
         cam.look_at = crate::LOOK_AT_ARM;
-        cam.camera_distance = 99.0;
     }
     let at = |resources: &mut Resources, pitch: f32| {
         resources
@@ -492,7 +525,7 @@ fn the_pitch_walks_the_ring_surface() {
     let bottom = at(&mut resources, -30.0);
     let middle = at(&mut resources, 20.0);
     let top = at(&mut resources, 70.0);
-    let rings = crate::OrbitalRings::default();
+    let rings = crate::OrbitalFollow::default();
 
     // The ends land on the rings they name, and `camera_distance` is not what places any of them.
     assert!((bottom.y - rings.bottom_height).abs() < 0.05, "{bottom:?}");
