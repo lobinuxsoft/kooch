@@ -28,13 +28,21 @@ fn world() -> (Resources, Entity, Entity) {
         .get_cpu_mut::<Transform>()
         .unwrap()
         .insert(target, at(Vec3::ZERO));
+    registry.register_cpu::<crate::Follow>();
+    registry.register_cpu::<crate::HardLookAt>();
+    registry
+        .get_cpu_mut::<crate::HardLookAt>()
+        .unwrap()
+        .insert(vcam, crate::HardLookAt);
+    registry.get_cpu_mut::<crate::Follow>().unwrap().insert(
+        vcam,
+        crate::Follow {
+            offset: Vec3::Z * 5.0,
+        },
+    );
     registry.get_cpu_mut::<VirtualCamera>().unwrap().insert(
         vcam,
         VirtualCamera {
-            follow: crate::FOLLOW_SIMPLE,
-            // The framing IS the Rotation Control: a vcam has to ask for it (#1361).
-            look_at: crate::LOOK_AT_COMPOSED,
-            offset: Vec3::Z * 5.0,
             damping: Vec3::ZERO,
             rotation_damping: 0.0,
             ..Default::default()
@@ -73,16 +81,17 @@ fn body<T: kooch_ecs::component::Component>(resources: &mut Resources, vcam: Ent
     registry.get_cpu_mut::<T>().unwrap().insert(vcam, value);
 }
 
-/// Changes what a vcam's body does, leaving the rest of the world alone.
-fn follows(resources: &mut Resources, vcam: Entity, follow: u32) {
-    resources
-        .get_mut::<ComponentRegistry>()
-        .unwrap()
-        .get_cpu_mut::<VirtualCamera>()
-        .unwrap()
-        .get_mut(vcam)
-        .unwrap()
-        .follow = follow;
+/// Replaces a vcam's body with `body`, which is what changing what it does means now (#1397).
+fn follows<T: kooch_ecs::component::Component>(resources: &mut Resources, vcam: Entity, body: T) {
+    let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+    if let Some(storage) = registry.get_cpu_mut::<crate::Follow>() {
+        storage.remove(vcam);
+    }
+    if let Some(storage) = registry.get_cpu_mut::<crate::OrbitalFollow>() {
+        storage.remove(vcam);
+    }
+    registry.register_cpu::<T>();
+    registry.get_cpu_mut::<T>().unwrap().insert(vcam, body);
 }
 
 /// Zeroes a framing's zones, for a test that measures where it holds rather than how it eases: with
@@ -156,7 +165,13 @@ fn the_dead_zone_holds_the_aim() {
 #[test]
 fn leaving_the_dead_zone_turns_it() {
     let (mut resources, vcam, target) = world();
-    follows(&mut resources, vcam, crate::FOLLOW_NONE);
+    // No body at all: the camera stands still and only the aim answers.
+    {
+        let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+        if let Some(storage) = registry.get_cpu_mut::<crate::Follow>() {
+            storage.remove(vcam);
+        }
+    }
     drive_virtual_cameras(&mut resources);
     let moved = Vec3::X * 4.0;
     place(&mut resources, target, moved);
@@ -231,7 +246,6 @@ fn a_shoulder_and_a_framing_coexist() {
             .unwrap()
             .get_mut(vcam)
             .unwrap();
-        cam.follow = crate::FOLLOW_SHOULDER;
         cam.pitch = 0.0;
         registry
             .get_cpu_mut::<RotationComposer>()
@@ -306,7 +320,6 @@ fn the_rig_never_steps() {
                 .unwrap()
                 .get_mut(vcam)
                 .unwrap();
-            cam.follow = crate::FOLLOW_ORBITAL;
             cam.pitch = 18.0;
             registry
                 .get_cpu_mut::<RotationComposer>()
@@ -356,7 +369,6 @@ fn framing_adds_no_jump_of_its_own() {
                 .unwrap()
                 .get_mut(vcam)
                 .unwrap();
-            cam.follow = crate::FOLLOW_ORBITAL;
             cam.pitch = 18.0;
             cam.damping = Vec3::splat(0.3);
             cam.rotation_damping = 0.5;
@@ -446,8 +458,7 @@ fn only_one_aim_runs() {
             .get_cpu_mut::<VirtualCamera>()
             .unwrap()
             .get_mut(vcam)
-            .unwrap()
-            .look_at = crate::LOOK_AT_SIMPLE;
+            .unwrap();
         registry
             .get_cpu_mut::<RotationComposer>()
             .unwrap()
@@ -504,8 +515,6 @@ fn the_pitch_walks_the_ring_surface() {
             .unwrap()
             .get_mut(vcam)
             .unwrap();
-        cam.follow = crate::FOLLOW_ORBITAL;
-        cam.look_at = crate::LOOK_AT_ARM;
     }
     let at = |resources: &mut Resources, pitch: f32| {
         resources

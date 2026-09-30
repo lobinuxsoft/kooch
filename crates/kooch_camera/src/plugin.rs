@@ -74,6 +74,11 @@ impl Plugin for CameraComponentsPlugin {
                 registry.register_cpu_reflected::<crate::PositionComposer>();
                 registry.register_cpu_reflected::<crate::OrbitalFollow>();
                 registry.register_cpu_reflected::<crate::ThirdPersonFollow>();
+                registry.register_cpu_reflected::<crate::Follow>();
+                registry.register_cpu_reflected::<crate::HardLockToTarget>();
+                registry.register_cpu_reflected::<crate::HardLookAt>();
+                registry.register_cpu_reflected::<crate::PanTilt>();
+                registry.register_cpu_reflected::<crate::RotateWithFollowTarget>();
                 registry.register_cpu_reflected::<crate::ThirdPersonAim>();
                 registry.register_cpu_reflected::<crate::CameraOffset>();
                 registry.register_cpu_reflected::<crate::CameraRecomposer>();
@@ -363,7 +368,7 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, RigMemory) {
     let mut plan = Vec::new();
     let mut memory = RigMemory::default();
     for (&entity, vcam) in vcams.iter() {
-        if vcam.is_inert() {
+        if vcam.is_inert(registry, entity) {
             continue;
         }
 

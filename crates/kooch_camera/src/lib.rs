@@ -3,6 +3,8 @@
 //! Design ported from phantom-camera (MIT), Cinemachine's open equivalent (#671).
 
 pub mod blend;
+pub mod aims;
+pub mod bodies;
 pub mod brain;
 pub mod extensions;
 pub mod frame;
@@ -30,6 +32,8 @@ pub use framing::RotationComposer;
 pub use lookahead::CameraLookahead;
 pub use occlusion::Deoccluder;
 pub use orbit::{CameraOrbit, orbit_cameras};
+pub use aims::{HardLookAt, PanTilt, RotateWithFollowTarget};
+pub use bodies::{Follow, HardLockToTarget};
 pub use orbital_follow::OrbitalFollow;
 pub use plugin::{
     CameraBlend, CameraComponentsPlugin, CameraPlugin, drive_virtual_cameras, up_for,

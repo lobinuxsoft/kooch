@@ -21,11 +21,21 @@ fn world() -> (Resources, Entity, Entity) {
     let transforms = registry.get_cpu_mut::<Transform>().unwrap();
     transforms.insert(vcam, at(Vec3::Z * 5.0));
     transforms.insert(target, at(Vec3::ZERO));
+    registry.register_cpu::<crate::Follow>();
+    registry.register_cpu::<crate::HardLookAt>();
+    registry
+        .get_cpu_mut::<crate::HardLookAt>()
+        .unwrap()
+        .insert(vcam, crate::HardLookAt);
+    registry.get_cpu_mut::<crate::Follow>().unwrap().insert(
+        vcam,
+        crate::Follow {
+            offset: Vec3::Z * 5.0,
+        },
+    );
     registry.get_cpu_mut::<VirtualCamera>().unwrap().insert(
         vcam,
         VirtualCamera {
-            follow: crate::FOLLOW_SIMPLE,
-            offset: Vec3::Z * 5.0,
             // Slow enough that one step leaves the camera nowhere near where it is going.
             damping: Vec3::splat(2.0),
             rotation_damping: 0.0,
