@@ -16,6 +16,7 @@ fn component(name: &str) -> ComponentDisplayInfo {
 }
 
 /// The same, carrying one reflected field — what a mode check reads.
+#[allow(dead_code)]
 fn aiming(at: u32) -> ComponentDisplayInfo {
     ComponentDisplayInfo {
         fields: ReflectedFields::Values(vec![(
@@ -53,7 +54,6 @@ fn a_lookahead_off_the_vcam_is_flagged() {
         vec![Orphan {
             component: "CameraLookahead",
             reader: "VirtualCamera",
-            unasked: None,
         }]
     );
     assert!(found[0].summary().starts_with("CameraLookahead"));
@@ -82,61 +82,22 @@ fn every_rig_component_is_checked() {
     }
 }
 
-/// A binding needs the orbit it fills, not the vcam — a vcam alone leaves it inert.
+/// 🔴 #1397: a mode is a component, so "is this read" is only ever "is there a vcam here". The rows
+/// that named a field are gone with the fields, and so is the case they described — a framing beside
+/// a vcam is read, full stop.
 #[test]
-fn a_binding_without_an_orbit_is_flagged() {
-    let found = warnings(&["VirtualCamera", "OrbitInput"]);
-    assert_eq!(
-        found,
-        vec![Orphan {
-            component: "OrbitInput",
-            reader: "CameraOrbit",
-            unasked: None,
-        }]
-    );
-    assert!(found[0].message().contains("Camera Orbit"));
-}
-
-#[test]
-fn a_binding_on_an_orbit_is_quiet() {
-    assert!(warnings(&["VirtualCamera", "CameraOrbit", "OrbitInput"]).is_empty());
-}
-
-/// 🔴 #1361: a framing is the vcam's Rotation Control. On a vcam that aims some other way the
-/// component is there, the reader is there, and nothing reads it — the one case a name-only check
-/// calls healthy.
-#[test]
-fn a_framing_the_vcam_never_asks_for_is_flagged() {
-    let mut info = entity(&["RotationComposer"]);
-    info[0]
-        .components
-        .push(aiming(kooch_camera::LOOK_AT_SIMPLE));
-    let found = warnings_for(Entity::new(0, 0), &info);
-    assert_eq!(found.len(), 1, "{found:?}");
-    assert!(
-        found[0].message().contains("Composed (framing)"),
-        "{}",
-        found[0].message()
-    );
-}
-
-#[test]
-fn a_framing_the_vcam_asks_for_is_quiet() {
-    let mut info = entity(&["RotationComposer"]);
-    info[0]
-        .components
-        .push(aiming(kooch_camera::LOOK_AT_COMPOSED));
-    assert!(warnings_for(Entity::new(0, 0), &info).is_empty());
-}
-
-/// A snapshot that skipped the values cannot say what mode the vcam is in, and a warning drawn from
-/// nothing is worse than none: a remote client would flag every framing it ever showed.
-#[test]
-fn an_unread_mode_says_nothing() {
-    let mut info = entity(&["RotationComposer"]);
-    info[0].components.push(ComponentDisplayInfo {
-        fields: ReflectedFields::NotGathered,
-        ..component("VirtualCamera")
-    });
-    assert!(warnings_for(Entity::new(0, 0), &info).is_empty());
+fn a_mode_beside_its_vcam_is_quiet() {
+    for mode in [
+        "RotationComposer",
+        "OrbitalFollow",
+        "ThirdPersonFollow",
+        "HardLookAt",
+        "PanTilt",
+    ] {
+        assert!(
+            warnings(&["VirtualCamera", mode]).is_empty(),
+            "{mode} beside its vcam was flagged",
+        );
+        assert_eq!(warnings(&[mode]).len(), 1, "{mode} alone went unsaid");
+    }
 }

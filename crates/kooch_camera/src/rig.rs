@@ -129,6 +129,14 @@ pub struct RigMemory {
 #[derive(Debug, Clone, Default)]
 pub struct Orphans(std::collections::HashSet<Entity>);
 
+impl Orphans {
+    /// Whether this entity has already been told about. Public so a test can ask what the author was
+    /// told, rather than scraping a log.
+    pub fn contains(&self, entity: Entity) -> bool {
+        self.0.contains(&entity)
+    }
+}
+
 /// Says once, per entity, that a rig component sits where nothing will read it.
 ///
 /// 🔴 The Inspector says the same thing where the author is looking (#1342); this is for a packaged
@@ -153,62 +161,43 @@ pub fn report_orphans(resources: &mut Resources) {
             entities_of::<crate::CameraLookahead>(registry),
             &posed,
         );
-        // A framing is the vcam's Rotation Control, so a vcam that aims some other way does not read
-        // it — the whole component, tuned for hours, does nothing (#1361).
-        let composing = |entity: Entity| {
-            vcams.is_some_and(|vcams| {
-                vcams
-                    .get(entity)
-                    .is_some_and(|vcam| vcam.look_at == crate::LOOK_AT_COMPOSED)
-            })
-        };
+        // 🔴 Every mode is a component now, so "is this read" is "is the vcam a rig at all" —
+        // the component's own presence says which mode it is (#1397).
         sweep(
             "RotationComposer",
             entities_of::<crate::RotationComposer>(registry),
-            &composing,
+            &posed,
         );
-        // A position composer is the vcam's Position Control: on a vcam whose body is something else
-        // the whole component does nothing (#1369).
-        let placing = |entity: Entity| {
-            vcams.is_some_and(|vcams| {
-                vcams
-                    .get(entity)
-                    .is_some_and(|vcam| vcam.follow == crate::FOLLOW_POSITION_COMPOSER)
-            })
-        };
-        // A body is read only by the vcam that names it.
-        let orbiting = |entity: Entity| {
-            vcams.is_some_and(|vcams| {
-                vcams
-                    .get(entity)
-                    .is_some_and(|vcam| vcam.follow == crate::FOLLOW_ORBITAL)
-            })
-        };
         sweep(
             "OrbitalFollow",
             entities_of::<crate::OrbitalFollow>(registry),
-            &orbiting,
+            &posed,
         );
-        let shouldering = |entity: Entity| {
-            vcams.is_some_and(|vcams| {
-                vcams
-                    .get(entity)
-                    .is_some_and(|vcam| vcam.follow == crate::FOLLOW_SHOULDER)
-            })
-        };
         sweep(
             "ThirdPersonFollow",
             entities_of::<crate::ThirdPersonFollow>(registry),
-            &shouldering,
+            &posed,
         );
         sweep(
             "PositionComposer",
             entities_of::<crate::PositionComposer>(registry),
-            &placing,
+            &posed,
+        );
+        sweep("Follow", entities_of::<crate::Follow>(registry), &posed);
+        sweep(
+            "HardLockToTarget",
+            entities_of::<crate::HardLockToTarget>(registry),
+            &posed,
         );
         sweep(
-            "Deoccluder",
-            entities_of::<crate::Deoccluder>(registry),
+            "HardLookAt",
+            entities_of::<crate::HardLookAt>(registry),
+            &posed,
+        );
+        sweep("PanTilt", entities_of::<crate::PanTilt>(registry), &posed);
+        sweep(
+            "RotateWithFollowTarget",
+            entities_of::<crate::RotateWithFollowTarget>(registry),
             &posed,
         );
         sweep(
@@ -259,33 +248,43 @@ pub fn report_orphans(resources: &mut Resources) {
     }
 
     // 🔴 Two composers on one vcam is two owners of where the target sits on screen: the body
-    // slides to put it there and the aim turns to put it there, and they chase each other. Not an
-    // orphan — both are read — which is why it is said separately.
+    // slides to put it there and the aim turns to put it there, and they chase each other.
     let mut both: Vec<Entity> = Vec::new();
     // 🔴 A shoulder under an aim that re-frames the target: measured, an offset of 0.6 moves the
     // character −0.117 of the screen under `Pan Tilt` and 0.000 under `Rotation Composer` or
-    // `Hard Look At`. The rig is working and the aim is undoing it, which is what the gizmo draws
-    // (#1379) and what this says for a build that has none.
+    // `Hard Look At`. The rig is working and the aim is undoing it.
     let mut cancelled: Vec<Entity> = Vec::new();
+    // 🔴 The case a smoke test found with nothing said: a vcam that names a target and carries no
+    // body at all, or carries two. The component is the choice, so counting them is the check
+    // `[DisallowMultipleComponent]` and an editor-managed slot do for Cinemachine (#1397).
+    let mut miscounted: Vec<(Entity, usize, usize)> = Vec::new();
     if let Some(registry) = resources.get::<ComponentRegistry>()
         && let Some(vcams) = registry.get_cpu::<VirtualCamera>()
     {
-        both.extend(vcams.iter().filter_map(|(&entity, vcam)| {
-            (vcam.follow == crate::FOLLOW_POSITION_COMPOSER
-                && vcam.look_at == crate::LOOK_AT_COMPOSED)
-                .then_some(entity)
-        }));
         let shoulders = registry.get_cpu::<crate::ThirdPersonFollow>();
-        cancelled.extend(vcams.iter().filter_map(|(&entity, vcam)| {
+        for (&entity, vcam) in vcams.iter() {
+            if !vcam.enabled {
+                continue;
+            }
+            let bodies = crate::virtual_camera::bodies_on(registry, entity);
+            let aims = crate::virtual_camera::aims_on(registry, entity);
+            if bodies != 1 || aims > 1 {
+                miscounted.push((entity, bodies, aims));
+            }
+            if crate::virtual_camera::one::<crate::PositionComposer>(registry, entity).is_some()
+                && crate::framing::of(registry, entity).is_some()
+            {
+                both.push(entity);
+            }
             let offset = shoulders
                 .and_then(|bodies| bodies.get(entity))
                 .is_some_and(|body| body.shoulder_offset != Vec3::ZERO);
-            (vcam.follow == crate::FOLLOW_SHOULDER
-                && vcam.look_at != crate::LOOK_AT_ARM
-                && vcam.look_at != crate::LOOK_AT_NONE
-                && offset)
-                .then_some(entity)
-        }));
+            let reframed = crate::framing::of(registry, entity).is_some()
+                || crate::virtual_camera::one::<crate::HardLookAt>(registry, entity).is_some();
+            if offset && reframed {
+                cancelled.push(entity);
+            }
+        }
     }
 
     let mut said = resources.get::<Orphans>().cloned().unwrap_or_default();
@@ -299,6 +298,19 @@ pub fn report_orphans(resources: &mut Resources) {
             "a shoulder offset under an aim that re-frames the target: the aim decides where the \
              character sits on screen, so the shoulder only shifts the parallax. Pan Tilt is the \
              aim a shoulder rig is built on.",
+        );
+    }
+    for (entity, bodies, aims) in miscounted {
+        if !said.0.insert(entity) {
+            continue;
+        }
+        tracing::warn!(
+            target: "kooch_camera",
+            entity = entity.index(),
+            bodies,
+            aims,
+            "a virtual camera does not carry exactly one body: the component is what says where the \
+             camera stands, so none means nothing places it and two means they disagree.",
         );
     }
     for entity in both {

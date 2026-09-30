@@ -8,44 +8,36 @@
 
 use crate::prelude::*;
 
-/// Every mode the Inspector offers is reachable by name from the prelude. Naming them is the test:
-/// a constant that stopped existing does not compile, which is the failure this file is for.
+/// 🔴 Every mode is a **component** now (#1397), so "reachable" means the type is nameable from the
+/// prelude — a project that cannot name `OrbitalFollow` cannot give a camera a body at all. Naming
+/// them is the test: a type that stopped existing does not compile.
 #[test]
 fn every_camera_mode_is_reachable() {
-    let bodies = [
-        FOLLOW_NONE,
-        FOLLOW_GLUED,
-        FOLLOW_SIMPLE,
-        FOLLOW_ORBITAL,
-        FOLLOW_POSITION_COMPOSER,
-        FOLLOW_SHOULDER,
+    let bodies: Vec<&str> = vec![
+        std::any::type_name::<HardLockToTarget>(),
+        std::any::type_name::<Follow>(),
+        std::any::type_name::<OrbitalFollow>(),
+        std::any::type_name::<ThirdPersonFollow>(),
+        std::any::type_name::<PositionComposer>(),
     ];
-    let aims = [
-        LOOK_AT_NONE,
-        LOOK_AT_MIMIC,
-        LOOK_AT_SIMPLE,
-        LOOK_AT_ARM,
-        LOOK_AT_COMPOSED,
+    let aims: Vec<&str> = vec![
+        std::any::type_name::<HardLookAt>(),
+        std::any::type_name::<PanTilt>(),
+        std::any::type_name::<RotateWithFollowTarget>(),
+        std::any::type_name::<RotationComposer>(),
     ];
-    let ups = [UP_WORLD, UP_GRAVITY, UP_TARGET];
-    let surfaces = [ORBIT_SPHERE, ORBIT_THREE_RING];
+    assert_eq!(bodies.len(), 5);
+    assert_eq!(aims.len(), 4);
 
-    // And each list is as long as the dropdown that offers it: a mode added to the engine and not
-    // exported is one a project cannot ask for from code.
-    assert_eq!(
-        bodies.len(),
-        kooch_camera::virtual_camera::FOLLOW_MODE_CHOICES.len(),
-    );
-    assert_eq!(
-        aims.len(),
-        kooch_camera::virtual_camera::LOOK_AT_CHOICES.len(),
-    );
-    assert_eq!(
-        ups.len(),
-        kooch_camera::virtual_camera::UP_MODE_CHOICES.len(),
-    );
+    // The one dropdown left is a field of the body that reads it, and it is still a list.
+    let surfaces = [ORBIT_SPHERE, ORBIT_THREE_RING];
     assert_eq!(
         surfaces.len(),
         kooch_camera::virtual_camera::ORBIT_STYLE_CHOICES.len(),
+    );
+    let ups = [UP_WORLD, UP_GRAVITY, UP_TARGET];
+    assert_eq!(
+        ups.len(),
+        kooch_camera::virtual_camera::UP_MODE_CHOICES.len(),
     );
 }

@@ -18,16 +18,23 @@ fn world() -> (Resources, Entity, Entity) {
     for entity in [orbital, shoulder, target] {
         transforms.insert(entity, Transform::default());
     }
-    let vcams = registry.get_cpu_mut::<VirtualCamera>().expect("registered");
+    registry.register_cpu::<crate::OrbitalFollow>();
     for (entity, priority) in [(orbital, 5), (shoulder, 1)] {
-        vcams.insert(
-            entity,
-            VirtualCamera {
-                priority,
-                follow: crate::FOLLOW_ORBITAL,
-                ..Default::default()
-            },
-        );
+        registry
+            .get_cpu_mut::<VirtualCamera>()
+            .expect("registered")
+            .insert(
+                entity,
+                VirtualCamera {
+                    priority,
+                    ..Default::default()
+                },
+            );
+        // The body is what says the camera stands anywhere at all (#1397).
+        registry
+            .get_cpu_mut::<crate::OrbitalFollow>()
+            .expect("registered")
+            .insert(entity, crate::OrbitalFollow::default());
     }
     registry
         .get_cpu_mut::<CameraTarget>()

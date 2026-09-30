@@ -2,7 +2,9 @@
 //! [`plugin`] copies the elected one onto the rendering camera.
 //! Design ported from phantom-camera (MIT), Cinemachine's open equivalent (#671).
 
+pub mod aims;
 pub mod blend;
+pub mod bodies;
 pub mod brain;
 pub mod extensions;
 pub mod frame;
@@ -20,10 +22,12 @@ pub mod third_person_follow;
 pub mod virtual_camera;
 pub mod when;
 
+pub use aims::{HardLookAt, PanTilt, RotateWithFollowTarget};
 pub use blend::{
     BLEND_CURVE_CHOICES, BLEND_EASE_CHOICES, CURVE_CUBIC, CURVE_EXPO, CURVE_LINEAR, CURVE_QUAD,
     CURVE_SINE, EASE_IN, EASE_IN_OUT, EASE_OUT,
 };
+pub use bodies::{Follow, HardLockToTarget};
 pub use brain::CameraBrain;
 pub use extensions::{CameraOffset, CameraRecomposer};
 pub use framing::RotationComposer;
@@ -39,10 +43,11 @@ pub use rig::{CameraRig, RigMemory, RigStage, RigStep};
 pub use target::{CameraTarget, GroupPose, weighted_centre};
 pub use third_person_aim::{ThirdPersonAim, resolve_aims};
 pub use third_person_follow::ThirdPersonFollow;
+// 🔴 The `FOLLOW_*` and `LOOK_AT_*` constants are **not** here any more (#1397). A mode is a
+// component, so naming one from code means adding it; those values are what a migration reads out of
+// a file written before that, and nothing else should reach for them.
 pub use virtual_camera::{
-    FOLLOW_GLUED, FOLLOW_NONE, FOLLOW_ORBITAL, FOLLOW_POSITION_COMPOSER, FOLLOW_SHOULDER,
-    FOLLOW_SIMPLE, INACTIVE_ALWAYS, INACTIVE_NEVER, LOOK_AT_ARM, LOOK_AT_COMPOSED, LOOK_AT_MIMIC,
-    LOOK_AT_NONE, LOOK_AT_SIMPLE, ORBIT_SPHERE, ORBIT_THREE_RING, UP_GRAVITY, UP_TARGET, UP_WORLD,
-    VirtualCamera, seed_reference,
+    INACTIVE_ALWAYS, INACTIVE_NEVER, ORBIT_SPHERE, ORBIT_THREE_RING, UP_GRAVITY, UP_TARGET,
+    UP_WORLD, VirtualCamera, seed_reference,
 };
 pub use when::{CameraWhen, step_camera_whens};

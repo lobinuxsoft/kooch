@@ -5,6 +5,8 @@ use crate::third_person_follow::ThirdPersonFollow;
 use glam::Vec3;
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
+use kooch_ecs::component::ComponentRegistry;
+use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::{FieldChoice, FieldCondition};
 
 /// No follow logic; the pose is whatever else wrote it.
@@ -192,16 +194,17 @@ pub struct VirtualCamera {
     pub priority: i32,
     /// A vcam that is switched off is not a candidate.
     pub enabled: bool,
-    /// Where the camera sits. One of the `FOLLOW_*` constants.
-    #[reflect(choices = FOLLOW_MODE_CHOICES)]
-    pub follow: u32,
+    /// The body a scene named before one was a component. Folded into it on load and cleared, the
+    /// way the arm's numbers were (#1397).
+    #[reflect(hidden, alias = "follow")]
+    pub was_follow: u32,
     /// Which [`CameraTarget`](crate::CameraTarget) group this framing follows — their weighted
     /// centre when several, inert while none.
     /// A group number, not an entity reference: a query has no identity to lose on reload (#712).
     pub group: u32,
-    /// Added to the target's position in `Simple`.
-    #[reflect(shown_when = OFFSET_WHEN)]
-    pub offset: Vec3,
+    /// The offset a scene wrote before [`Follow`](crate::Follow) carried it. The same.
+    #[reflect(hidden, alias = "offset")]
+    pub was_offset: Vec3,
     /// Spring arm length — how far back from the target the camera sits.
     /// The arm's length, before a body carried its own. Folded into the body's on load and cleared
     /// (#1391) — an alias maps a name inside a type and cannot follow a field to another component.
@@ -229,9 +232,9 @@ pub struct VirtualCamera {
     /// The same. `-1` is "nothing was written", since `0` is the left shoulder.
     #[reflect(hidden, alias = "side, camera_side")]
     pub was_side: f32,
-    /// Where the camera looks. One of the `LOOK_AT_*` constants.
-    #[reflect(choices = LOOK_AT_CHOICES)]
-    pub look_at: u32,
+    /// The aim a scene named before one was a component. The same.
+    #[reflect(hidden, alias = "look_at")]
+    pub was_look_at: u32,
     /// Seconds the camera takes to reach its pose once the target stops, per world axis — exactly,
     /// a tween that restarts while the target keeps moving. Zero is rigid.
     #[reflect(alias = "damping_value, damping_time")]
@@ -312,9 +315,9 @@ impl Default for VirtualCamera {
         Self {
             priority: 0,
             enabled: true,
-            follow: FOLLOW_ORBITAL,
+            was_follow: FOLLOW_NONE,
             group: 0,
-            offset: Vec3::new(0.0, 2.0, 6.0),
+            was_offset: Vec3::ZERO,
             was_distance: 0.0,
             was_orbit_style: ORBIT_SPHERE,
             yaw: 0.0,
@@ -322,7 +325,7 @@ impl Default for VirtualCamera {
             was_shoulder: Vec3::ZERO,
             was_arm_length: 0.0,
             was_side: -1.0,
-            look_at: LOOK_AT_SIMPLE,
+            was_look_at: LOOK_AT_NONE,
             damping: Vec3::splat(0.5),
             up_mode: UP_WORLD,
             // Long enough to read as a transition, short enough not to
@@ -339,60 +342,14 @@ impl Default for VirtualCamera {
 impl Component for VirtualCamera {}
 
 impl VirtualCamera {
-    /// Whether this vcam has anything to do as far as it can tell alone; whether its group has
-    /// members is checked where the pose is planned.
-    pub fn is_inert(&self) -> bool {
-        !self.enabled || (self.follow == FOLLOW_NONE && self.look_at == LOOK_AT_NONE)
+    /// Whether this vcam has nothing to do: switched off, or carrying neither a body nor an aim.
+    ///
+    /// 🔴 Asked of the **components** now (#1397). A field saying which body it had was a second
+    /// statement of a fact the entity already made, and the two could disagree — which they did.
+    pub fn is_inert(&self, registry: &ComponentRegistry, entity: Entity) -> bool {
+        !self.enabled || (bodies_on(registry, entity) == 0 && aims_on(registry, entity) == 0)
     }
 
-    /// Where this vcam wants to stand, before any damping, for the bodies that need nothing but the
-    /// point they follow. `current` is what `None` keeps, which is what lets a vcam look without
-    /// moving.
-    ///
-    /// 🔴 No `up` and no `reference`: since #1391 the arm bodies carry their own numbers and are
-    /// placed from their components ([`on_sphere`](Self::on_sphere), [`on_shoulder`](Self::on_shoulder)),
-    /// and what is left here needs neither. A parameter nothing reads makes every caller compute a
-    /// value to throw away and tells the next reader something untrue about what this depends on.
-    pub fn wanted(&self, target: Vec3, current: Vec3) -> Vec3 {
-        match self.follow {
-            FOLLOW_GLUED => target,
-            FOLLOW_SIMPLE => target + self.offset,
-            _ => current,
-        }
-    }
-
-    /// Where this vcam wants to look from `eye`, before any damping.
-    ///
-    /// `current` is what `LookAt::None` keeps, so a rig can move without turning.
-    pub fn aimed(
-        &self,
-        eye: Vec3,
-        target: Vec3,
-        target_rot: glam::Quat,
-        current: glam::Quat,
-        up: Vec3,
-        reference: Vec3,
-    ) -> glam::Quat {
-        let up = normalised_up(up);
-        match self.look_at {
-            LOOK_AT_MIMIC => target_rot,
-            LOOK_AT_SIMPLE => look_at(eye, target, up, reference),
-            // A direction, not the pivot: the eye is eased and the aim is not, so a rigid view
-            // along the arm cannot inherit the body's lag.
-            LOOK_AT_ARM => {
-                let along = self.along(self.back(up, reference), up);
-                look_at(eye, eye - along, up, reference)
-            }
-            _ => current,
-        }
-    }
-
-    /// The spring arm's offset: its pivot, plus its reach from there. Fixed length; shortening
-    /// against obstacles needs #562.
-    ///
-    /// Two segments, as Cinemachine's `ThirdPersonFollow`: **yaw swings the whole basis, pitch turns
-    /// only the reach.** That is what keeps a shoulder beside the head instead of rolling it under
-    /// the character when the player looks down.
     /// Where an [`OrbitalFollow`](crate::OrbitalFollow) body stands the camera, around `target`.
     ///
     /// `t` is where the pitch sits in its range, used only by the ring surface. Pure, because the
@@ -425,6 +382,12 @@ impl VirtualCamera {
         target + self.arm(body, normalised_up(up), reference)
     }
 
+    /// The spring arm's offset: its pivot, plus its reach from there. Fixed length; shortening
+    /// against obstacles needs #562.
+    ///
+    /// Two segments, as Cinemachine's `ThirdPersonFollow`: **yaw swings the whole basis, pitch turns
+    /// only the reach.** That is what keeps a shoulder beside the head instead of rolling it under
+    /// the character when the player looks down.
     fn arm(&self, body: ThirdPersonFollow, up: Vec3, reference: Vec3) -> Vec3 {
         let (_, _, hand) = self.rig_positions(Vec3::ZERO, up, reference, body);
         hand + self.along(self.back(up, reference), up) * body.camera_distance.max(0.0)
@@ -579,31 +542,36 @@ pub(crate) fn look_at(eye: Vec3, target: Vec3, up: Vec3, reference: Vec3) -> gla
     glam::Quat::from_mat3(&glam::Mat3::from_cols(right, up, -forward))
 }
 
-/// Where this vcam's **body** stands it, or `None` where it carries none of them.
+/// The component of this type on `entity`, if any. The shape every body and aim is asked for.
+pub(crate) fn one<T: kooch_ecs::component::Component + Copy>(
+    registry: &ComponentRegistry,
+    entity: Entity,
+) -> Option<T> {
+    registry.get_cpu::<T>()?.get(entity).copied()
+}
+
+/// Where this vcam's **body** stands it, or `None` where it carries none.
 ///
-/// 🔴 A body is a component and its numbers live on it (#1391), so the placement is here rather than
-/// in `wanted`, which has no registry to ask. The pitch maps over the
-/// [`CameraOrbit`](crate::orbit::CameraOrbit)'s own limits, read from it rather than copied, because
-/// the limits have one owner.
+/// 🔴 The component **is** the body, and its presence is the only statement of which one (#1397).
+/// A `follow` field beside it said the same thing a second time, and the two disagreed: a scene
+/// loaded naming a body it did not carry, the arm was placed by nothing, and nothing said a word.
 fn bodied(step: &crate::rig::RigStep) -> Option<Vec3> {
     let up = normalised_up(step.up);
-    let target = step.frame.target;
-    match step.vcam.follow {
-        FOLLOW_ORBITAL => Some(step.vcam.on_sphere(
-            target,
-            crate::orbital_follow::of(step.registry, step.entity)?,
-            pitched(step),
-            up,
-            step.reference,
-        )),
-        FOLLOW_SHOULDER => Some(step.vcam.on_shoulder(
-            target,
-            crate::third_person_follow::of(step.registry, step.entity)?,
-            up,
-            step.reference,
-        )),
-        _ => None,
+    let (target, registry, entity) = (step.frame.target, step.registry, step.entity);
+
+    if let Some(body) = crate::orbital_follow::of(registry, entity) {
+        return Some(
+            step.vcam
+                .on_sphere(target, body, pitched(step), up, step.reference),
+        );
     }
+    if let Some(body) = crate::third_person_follow::of(registry, entity) {
+        return Some(step.vcam.on_shoulder(target, body, up, step.reference));
+    }
+    if let Some(body) = one::<crate::Follow>(registry, entity) {
+        return Some(target + body.offset);
+    }
+    one::<crate::HardLockToTarget>(registry, entity).map(|_| target)
 }
 
 /// Where the pitch sits in the orbit's own range, `0` to `1`. Without an orbit the arm's pole clamp
@@ -631,11 +599,12 @@ pub fn body_stage(step: &mut crate::rig::RigStep) {
     }
     // 🔴 The composer eases the offset itself, so it is the whole of the body: running the vcam's
     // damping over it is two eases in series on one quantity, which is #1329.
-    if step.vcam.follow == FOLLOW_POSITION_COMPOSER {
+    if crate::position_composer::of(step.registry, step.entity).is_some() {
         crate::position_composer::body(step);
         return;
     }
-    let wanted = step.vcam.wanted(step.frame.target, step.frame.position);
+    // No body: the position is whatever else wrote it, which is what lets a vcam turn without moving.
+    let wanted = step.frame.position;
     step.frame
         .place(step.vcam.damped(step.frame.previous, wanted, step.dt));
 }
@@ -651,18 +620,26 @@ pub fn aim_stage(step: &mut crate::rig::RigStep) {
     // 🔴 The composer eases the residual angle itself, so it is the whole of the aim: running the
     // vcam's rotation damping over it is two eases in series on one quantity, which is #1329 on the
     // other axis.
-    if step.vcam.look_at == LOOK_AT_COMPOSED {
+    if crate::framing::of(step.registry, step.entity).is_some() {
         crate::framing::composed(step);
         return;
     }
-    let aimed = step.vcam.aimed(
-        step.frame.position,
-        step.frame.target,
-        step.target.rotation,
-        step.frame.rotation,
-        step.up,
-        step.reference,
-    );
+    let (eye, reference) = (step.frame.position, step.reference);
+    let up = normalised_up(step.up);
+    let aimed = if one::<crate::HardLookAt>(step.registry, step.entity).is_some() {
+        look_at(eye, step.frame.target, up, reference)
+    } else if one::<crate::PanTilt>(step.registry, step.entity).is_some() {
+        // A direction, not the pivot: the eye is eased and the aim is not, so a rigid view along the
+        // arm cannot inherit the body's lag.
+        let along = step.vcam.along(step.vcam.back(up, reference), up);
+        look_at(eye, eye - along, up, reference)
+    } else if one::<crate::RotateWithFollowTarget>(step.registry, step.entity).is_some() {
+        step.target.rotation
+    } else {
+        // No aim: the rotation is whatever else wrote it, which is what lets a vcam move without
+        // turning.
+        return;
+    };
     step.frame.rotation = step
         .vcam
         .damped_rotation(step.frame.rotation, aimed, step.dt);
@@ -688,7 +665,10 @@ pub fn migrate_bodies(resources: &mut kooch_core::resource::Resources) {
     let moved: Vec<_> = vcams
         .iter()
         .filter(|(_, vcam)| {
-            vcam.was_distance != 0.0
+            vcam.was_follow != FOLLOW_NONE
+                || vcam.was_look_at != LOOK_AT_NONE
+                || vcam.was_offset != Vec3::ZERO
+                || vcam.was_distance != 0.0
                 || vcam.was_shoulder != Vec3::ZERO
                 || vcam.was_arm_length != 0.0
                 || vcam.was_side >= 0.0
@@ -701,8 +681,45 @@ pub fn migrate_bodies(resources: &mut kooch_core::resource::Resources) {
     }
 
     for (entity, vcam) in &moved {
-        // A shoulder authored anywhere means the shoulder body, as #1380 already decided.
-        let shouldered = vcam.was_shoulder != Vec3::ZERO || vcam.was_arm_length != 0.0;
+        // The aim the scene named becomes the component that is it.
+        match vcam.was_look_at {
+            LOOK_AT_SIMPLE => added(resources, *entity, crate::HardLookAt),
+            LOOK_AT_ARM => added(resources, *entity, crate::PanTilt),
+            LOOK_AT_MIMIC => added(resources, *entity, crate::RotateWithFollowTarget),
+            _ => {}
+        }
+        // 🔴 The body is built from **whichever evidence exists**: an arm's numbers are as good a
+        // statement as the enum, and a scene that carried one without the other would otherwise be
+        // stranded with no body at all.
+        let shouldered = vcam.was_shoulder != Vec3::ZERO
+            || vcam.was_arm_length != 0.0
+            || vcam.was_follow == FOLLOW_SHOULDER;
+        let armed = shouldered
+            || vcam.was_follow == FOLLOW_ORBITAL
+            || vcam.was_distance != 0.0
+            || vcam.was_orbit_style != ORBIT_SPHERE;
+        match vcam.was_follow {
+            FOLLOW_GLUED => added(resources, *entity, crate::HardLockToTarget),
+            FOLLOW_SIMPLE => added(
+                resources,
+                *entity,
+                crate::Follow {
+                    offset: vcam.was_offset,
+                },
+            ),
+            FOLLOW_POSITION_COMPOSER => {
+                added(resources, *entity, crate::PositionComposer::default())
+            }
+            _ => {}
+        }
+        if !armed {
+            tracing::info!(
+                target: "kooch_camera",
+                entity = entity.index(),
+                "a vcam's modes became the components that are them",
+            );
+            continue;
+        }
         match shouldered {
             true => added(
                 resources,
@@ -751,14 +768,14 @@ pub fn migrate_bodies(resources: &mut kooch_core::resource::Resources) {
         let Some(vcam) = vcams.get_mut(*entity) else {
             continue;
         };
-        if vcam.was_shoulder != Vec3::ZERO || vcam.was_arm_length != 0.0 {
-            vcam.follow = FOLLOW_SHOULDER;
-        }
         vcam.was_distance = 0.0;
         vcam.was_orbit_style = ORBIT_SPHERE;
         vcam.was_shoulder = Vec3::ZERO;
         vcam.was_arm_length = 0.0;
         vcam.was_side = -1.0;
+        vcam.was_follow = FOLLOW_NONE;
+        vcam.was_look_at = LOOK_AT_NONE;
+        vcam.was_offset = Vec3::ZERO;
     }
 }
 
@@ -786,4 +803,32 @@ fn added<T: kooch_ecs::component::Component + kooch_ecs::reflect::Reflect>(
         let next = archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<T>());
         archetypes.register_entity(entity, next);
     }
+}
+
+/// How many body components `entity` carries. More than one is two answers to one question, and
+/// none on a vcam that follows something is the case a smoke test found with nothing said (#1397).
+pub fn bodies_on(registry: &ComponentRegistry, entity: Entity) -> usize {
+    [
+        one::<crate::OrbitalFollow>(registry, entity).is_some(),
+        one::<crate::ThirdPersonFollow>(registry, entity).is_some(),
+        one::<crate::PositionComposer>(registry, entity).is_some(),
+        one::<crate::Follow>(registry, entity).is_some(),
+        one::<crate::HardLockToTarget>(registry, entity).is_some(),
+    ]
+    .into_iter()
+    .filter(|has| *has)
+    .count()
+}
+
+/// The same for the aims.
+pub fn aims_on(registry: &ComponentRegistry, entity: Entity) -> usize {
+    [
+        crate::framing::of(registry, entity).is_some(),
+        one::<crate::HardLookAt>(registry, entity).is_some(),
+        one::<crate::PanTilt>(registry, entity).is_some(),
+        one::<crate::RotateWithFollowTarget>(registry, entity).is_some(),
+    ]
+    .into_iter()
+    .filter(|has| *has)
+    .count()
 }

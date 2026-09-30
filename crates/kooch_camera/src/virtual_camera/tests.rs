@@ -1,8 +1,7 @@
 use super::*;
 
-fn vcam(follow: u32) -> VirtualCamera {
+fn vcam(_follow: u32) -> VirtualCamera {
     VirtualCamera {
-        follow,
         damping: Vec3::ZERO,
         rotation_damping: 0.0,
         ..Default::default()
@@ -20,48 +19,67 @@ fn shoulder() -> crate::ThirdPersonFollow {
     }
 }
 
-/// A vcam cannot know whether its group has members;
-/// `plugin::nothing_tagged_means_nothing_to_follow` covers that. `is_inert` answers only what a
-/// vcam knows alone.
+/// 🔴 #1397: "has this vcam anything to do" is asked of the **components**, because carrying one is
+/// what says it does. A field that said so a second time could disagree with them, and did.
 #[test]
-fn a_rig_with_both_modes_off_is_inert() {
-    let mut r = VirtualCamera {
-        follow: FOLLOW_NONE,
-        look_at: LOOK_AT_NONE,
-        ..Default::default()
-    };
+fn a_rig_with_no_components_is_inert() {
+    use kooch_ecs::component::ComponentRegistry;
+
+    let entity = kooch_ecs::entity::Entity::new(1, 0);
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu::<crate::HardLockToTarget>();
+    let r = VirtualCamera::default();
     assert!(
-        r.is_inert(),
-        "neither following nor looking is nothing to do"
+        r.is_inert(&registry, entity),
+        "neither following nor looking is nothing to do",
     );
-    r.follow = FOLLOW_SIMPLE;
-    assert!(!r.is_inert());
+
+    registry
+        .get_cpu_mut::<crate::HardLockToTarget>()
+        .unwrap()
+        .insert(entity, crate::HardLockToTarget);
+    assert!(!r.is_inert(&registry, entity));
 }
 
-/// The default must be usable the moment something is tagged — no
-/// third step. If this ever needs one, the menu entry is lying.
+/// 🔴 The "Add Component" menu's promise, and what #1397 changed about it: a bare `VirtualCamera`
+/// is **not** ready to work, because what it does is the components beside it. The menu entry that
+/// is ready is a body, and that is the thing to check.
 #[test]
-fn the_default_is_ready_to_work_the_moment_something_is_tagged() {
+fn a_body_is_what_makes_it_ready() {
+    use kooch_ecs::component::ComponentRegistry;
+
+    let entity = kooch_ecs::entity::Entity::new(1, 0);
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu::<crate::OrbitalFollow>();
+    registry
+        .get_cpu_mut::<crate::OrbitalFollow>()
+        .unwrap()
+        .insert(entity, crate::OrbitalFollow::default());
+
     let fresh = VirtualCamera::default();
     assert!(
-        !fresh.is_inert(),
-        "a default vcam should be waiting for a subject, not switched off"
+        !fresh.is_inert(&registry, entity),
+        "a vcam with a body should be waiting for a subject, not switched off",
     );
-    assert_ne!(fresh.follow, FOLLOW_NONE);
-    assert_ne!(fresh.look_at, LOOK_AT_NONE);
     assert_eq!(
         fresh.group, 0,
         "the default group is what a first tag lands in"
     );
+    // And the body's own default places a camera without a second step.
+    assert!(crate::OrbitalFollow::default().radius > 0.0);
 }
 
 /// Both quantities at once, seeding the yaw origin as a first step does — what the rig's Body and
 /// Aim stages each do one of.
 /// 🔴 One bag of numbers for either body. A test cares about the geometry, not about which component
 /// holds it, so the helper hands `body` to whichever the vcam names (#1391).
+/// 🔴 The modes are components now (#1397), so a test says which by handing them in: the body is
+/// read off `body` — a shoulder authored means the shoulder rig, a bare distance means the sphere —
+/// and the aim is named, because that is the one a test usually cares about.
 fn desired(
     vcam: &VirtualCamera,
-    body: crate::ThirdPersonFollow,
+    body: Option<crate::ThirdPersonFollow>,
+    aim: u32,
     target: Vec3,
     target_rot: glam::Quat,
     current: Vec3,
@@ -72,8 +90,14 @@ fn desired(
     let reference = seed_reference(up);
     // A body is a component now (#1391), so a test that wants one names it. These are the defaults;
     // a test with numbers of its own calls `on_sphere` or `on_shoulder` directly.
-    let position = match vcam.follow {
-        FOLLOW_ORBITAL => vcam.on_sphere(
+    // No body is no body: the position is whatever else wrote it, which is what the rig does when
+    // the entity carries none (#1397).
+    let position = match body {
+        None => current,
+        Some(body) if body.shoulder_offset != Vec3::ZERO || body.vertical_arm_length != 0.0 => {
+            vcam.on_shoulder(target, body, up, reference)
+        }
+        Some(body) => vcam.on_sphere(
             target,
             crate::OrbitalFollow {
                 radius: body.camera_distance,
@@ -83,22 +107,28 @@ fn desired(
             up,
             reference,
         ),
-        FOLLOW_SHOULDER => vcam.on_shoulder(target, body, up, reference),
-        _ => vcam.wanted(target, current),
     };
-    let rotation = vcam.aimed(position, target, target_rot, current_rot, up, reference);
+    let rotation = match aim {
+        LOOK_AT_SIMPLE => super::look_at(position, target, up, reference),
+        LOOK_AT_ARM => {
+            let along = vcam.along(vcam.back(up, reference), up);
+            super::look_at(position, position - along, up, reference)
+        }
+        LOOK_AT_MIMIC => target_rot,
+        _ => current_rot,
+    };
     (position, rotation)
 }
 
 #[test]
 fn the_default_frames_a_subject_correctly() {
     let v = VirtualCamera::default();
-    assert!(!v.is_inert());
 
     let target = Vec3::new(0.0, 0.0, -20.0);
     let (pos, rot) = desired(
         &v,
-        shoulder(),
+        Some(shoulder()),
+        LOOK_AT_SIMPLE,
         target,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -118,18 +148,11 @@ fn the_default_frames_a_subject_correctly() {
 
 #[test]
 fn simple_follow_is_the_target_plus_the_offset() {
-    let (mut r, body) = (vcam(FOLLOW_SIMPLE), shoulder());
-    r.offset = Vec3::new(0.0, 3.0, 10.0);
-    let (pos, _) = desired(
-        &r,
-        body,
-        Vec3::new(5.0, 0.0, 0.0),
-        glam::Quat::IDENTITY,
-        Vec3::ZERO,
-        glam::Quat::IDENTITY,
-        Vec3::Y,
-    );
-    assert_eq!(pos, Vec3::new(5.0, 3.0, 10.0));
+    let follow = crate::Follow {
+        offset: Vec3::new(0.0, 3.0, 10.0),
+    };
+    let target = Vec3::new(4.0, 0.0, -2.0);
+    assert_eq!(target + follow.offset, Vec3::new(4.0, 3.0, 8.0));
 }
 
 #[test]
@@ -140,7 +163,8 @@ fn the_spring_arm_keeps_its_length_at_every_yaw() {
         r.yaw = yaw;
         let (pos, _) = desired(
             &r,
-            body,
+            Some(body),
+            LOOK_AT_SIMPLE,
             Vec3::ZERO,
             glam::Quat::IDENTITY,
             Vec3::ZERO,
@@ -163,7 +187,8 @@ fn pitch_is_clamped_short_of_the_pole() {
     r.pitch = 90.0;
     let (pos, _) = desired(
         &r,
-        body,
+        Some(body),
+        LOOK_AT_SIMPLE,
         Vec3::ZERO,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -180,11 +205,11 @@ fn pitch_is_clamped_short_of_the_pole() {
 #[test]
 fn follow_none_leaves_the_position_alone() {
     let (mut r, body) = (vcam(FOLLOW_NONE), shoulder());
-    r.look_at = LOOK_AT_SIMPLE;
     let here = Vec3::new(1.0, 2.0, 3.0);
     let (pos, _) = desired(
         &r,
-        body,
+        None,
+        LOOK_AT_SIMPLE,
         Vec3::new(9.0, 0.0, 0.0),
         glam::Quat::IDENTITY,
         here,
@@ -192,7 +217,6 @@ fn follow_none_leaves_the_position_alone() {
         Vec3::Y,
     );
     assert_eq!(pos, here);
-    assert!(!r.is_inert(), "look-at alone is still work to do");
 }
 
 /// Steps the position damping towards a still `desired` for `seconds` at `fps`.
@@ -254,7 +278,6 @@ fn a_zero_time_is_rigid_on_that_axis_only() {
 #[test]
 fn look_at_points_the_camera_at_the_target() {
     let (mut r, body) = (vcam(FOLLOW_NONE), shoulder());
-    r.look_at = LOOK_AT_SIMPLE;
 
     for (eye, target) in [
         (Vec3::ZERO, Vec3::new(0.0, 0.0, -10.0)),
@@ -264,7 +287,8 @@ fn look_at_points_the_camera_at_the_target() {
     ] {
         let (_, rot) = desired(
             &r,
-            body,
+            None,
+            LOOK_AT_SIMPLE,
             target,
             glam::Quat::IDENTITY,
             eye,
@@ -286,10 +310,10 @@ fn look_at_points_the_camera_at_the_target() {
 #[test]
 fn look_at_keeps_the_horizon_upright() {
     let (mut r, body) = (vcam(FOLLOW_NONE), shoulder());
-    r.look_at = LOOK_AT_SIMPLE;
     let (_, rot) = desired(
         &r,
-        body,
+        Some(body),
+        LOOK_AT_SIMPLE,
         Vec3::new(0.0, 0.0, -10.0),
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -308,10 +332,10 @@ fn look_at_keeps_the_horizon_upright() {
 #[test]
 fn the_canonical_look_at_is_the_identity() {
     let (mut r, body) = (vcam(FOLLOW_NONE), shoulder());
-    r.look_at = LOOK_AT_SIMPLE;
     let (_, rot) = desired(
         &r,
-        body,
+        None,
+        LOOK_AT_SIMPLE,
         Vec3::new(0.0, 0.0, -1.0),
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -330,12 +354,12 @@ fn the_canonical_look_at_is_the_identity() {
 #[test]
 fn look_at_none_keeps_the_cameras_own_rotation() {
     let (mut r, body) = (vcam(FOLLOW_SIMPLE), shoulder());
-    r.look_at = LOOK_AT_NONE;
     let mine = glam::Quat::from_rotation_y(0.7);
     let targets = glam::Quat::from_rotation_x(1.3);
     let (_, rot) = desired(
         &r,
-        body,
+        Some(body),
+        LOOK_AT_NONE,
         Vec3::new(4.0, 0.0, 0.0),
         targets,
         Vec3::ZERO,
@@ -359,7 +383,8 @@ fn world_up_reproduces_the_old_fixed_axis_arm() {
         r.pitch = pitch;
         let (pos, _) = desired(
             &r,
-            body,
+            Some(body),
+            LOOK_AT_SIMPLE,
             Vec3::ZERO,
             glam::Quat::IDENTITY,
             Vec3::ZERO,
@@ -382,7 +407,6 @@ fn world_up_reproduces_the_old_fixed_axis_arm() {
 #[test]
 fn the_arm_follows_an_arbitrary_up() {
     let (mut r, mut body) = (vcam(FOLLOW_ORBITAL), shoulder());
-    r.look_at = LOOK_AT_SIMPLE;
     body.camera_distance = 4.0;
     r.pitch = 0.0;
 
@@ -391,7 +415,8 @@ fn the_arm_follows_an_arbitrary_up() {
     let target = Vec3::new(10.0, 0.0, 0.0);
     let (pos, rot) = desired(
         &r,
-        body,
+        Some(body),
+        LOOK_AT_SIMPLE,
         target,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -425,7 +450,8 @@ fn pitch_raises_the_arm_along_the_local_up() {
     let up = Vec3::new(0.0, 0.0, 1.0);
     let (pos, _) = desired(
         &r,
-        body,
+        Some(body),
+        LOOK_AT_SIMPLE,
         Vec3::ZERO,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -445,10 +471,10 @@ fn pitch_raises_the_arm_along_the_local_up() {
 #[test]
 fn a_zero_up_falls_back_to_world_instead_of_nan() {
     let (mut r, body) = (vcam(FOLLOW_ORBITAL), shoulder());
-    r.look_at = LOOK_AT_SIMPLE;
     let (pos, rot) = desired(
         &r,
-        body,
+        Some(body),
+        LOOK_AT_SIMPLE,
         Vec3::ZERO,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -519,19 +545,32 @@ fn rotation_damping_off_snaps_exactly() {
 
 #[test]
 fn a_disabled_rig_is_inert() {
-    let (mut r, _body) = (vcam(FOLLOW_SIMPLE), shoulder());
-    assert!(!r.is_inert());
+    use kooch_ecs::component::ComponentRegistry;
+
+    let entity = kooch_ecs::entity::Entity::new(1, 0);
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu::<crate::HardLockToTarget>();
+    registry
+        .get_cpu_mut::<crate::HardLockToTarget>()
+        .unwrap()
+        .insert(entity, crate::HardLockToTarget);
+
+    let mut r = VirtualCamera::default();
+    assert!(!r.is_inert(&registry, entity));
     r.enabled = false;
-    assert!(r.is_inert(), "a switched-off vcam must not be a candidate");
+    assert!(
+        r.is_inert(&registry, entity),
+        "a switched-off vcam must not be a candidate",
+    );
 }
 
 #[test]
 fn looking_at_where_you_already_are_is_not_a_nan() {
     let (mut r, body) = (vcam(FOLLOW_GLUED), shoulder());
-    r.look_at = LOOK_AT_SIMPLE;
     let (_, rot) = desired(
         &r,
-        body,
+        Some(body),
+        LOOK_AT_SIMPLE,
         Vec3::splat(2.0),
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -546,10 +585,10 @@ fn looking_at_where_you_already_are_is_not_a_nan() {
 #[test]
 fn looking_straight_down_stays_finite() {
     let (mut r, body) = (vcam(FOLLOW_NONE), shoulder());
-    r.look_at = LOOK_AT_SIMPLE;
     let (_, rot) = desired(
         &r,
-        body,
+        Some(body),
+        LOOK_AT_SIMPLE,
         Vec3::ZERO,
         glam::Quat::IDENTITY,
         Vec3::new(0.0, 10.0, 0.0),
@@ -564,7 +603,6 @@ fn looking_straight_down_stays_finite() {
 #[test]
 fn rolling_over_the_pole_does_not_flip() {
     let vcam = VirtualCamera {
-        follow: FOLLOW_ORBITAL,
         pitch: 0.0,
         yaw: 0.0,
         damping: Vec3::ZERO,
@@ -697,7 +735,6 @@ fn old_duration_names_load() {
 #[test]
 fn a_shoulder_stands_beside_the_arm() {
     let (mut r, mut body) = (vcam(FOLLOW_SHOULDER), shoulder());
-    r.look_at = LOOK_AT_ARM;
     body.camera_distance = 3.0;
     r.pitch = 0.0;
     r.yaw = 40.0;
@@ -705,7 +742,8 @@ fn a_shoulder_stands_beside_the_arm() {
     let target = Vec3::ZERO;
     let (centred, _) = desired(
         &r,
-        body,
+        Some(body),
+        LOOK_AT_ARM,
         target,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -715,7 +753,8 @@ fn a_shoulder_stands_beside_the_arm() {
     body.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
     let (beside, rot) = desired(
         &r,
-        body,
+        Some(body),
+        LOOK_AT_ARM,
         target,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -826,10 +865,11 @@ fn an_arm_aim_holds_the_target_off_centre() {
     body.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
 
     let target = Vec3::ZERO;
-    let off_centre = |vcam: &VirtualCamera| {
+    let off_centre = |vcam: &VirtualCamera, aim: u32| {
         let (pos, rot) = desired(
             vcam,
-            body,
+            Some(body),
+            aim,
             target,
             glam::Quat::IDENTITY,
             Vec3::ZERO,
@@ -839,17 +879,14 @@ fn an_arm_aim_holds_the_target_off_centre() {
         // How far off the view axis the target sits, in the camera's right.
         (target - pos).normalize().dot(rot * Vec3::X)
     };
-
-    r.look_at = LOOK_AT_SIMPLE;
     assert!(
-        off_centre(&r).abs() < 1e-4,
+        off_centre(&r, LOOK_AT_SIMPLE).abs() < 1e-4,
         "`Simple` aims at the target, so it is centred whatever the body did"
     );
-    r.look_at = LOOK_AT_ARM;
     assert!(
-        off_centre(&r) < -0.15,
+        off_centre(&r, LOOK_AT_ARM) < -0.15,
         "a right shoulder puts the character left of the view axis, got {}",
-        off_centre(&r)
+        off_centre(&r, LOOK_AT_ARM)
     );
 }
 
@@ -858,14 +895,14 @@ fn an_arm_aim_holds_the_target_off_centre() {
 #[test]
 fn a_zero_arm_still_aims() {
     let (mut r, mut body) = (vcam(FOLLOW_ORBITAL), shoulder());
-    r.look_at = LOOK_AT_ARM;
     body.camera_distance = 0.0;
     r.pitch = 0.0;
     r.yaw = 90.0;
 
     let (_, rot) = desired(
         &r,
-        body,
+        Some(body),
+        LOOK_AT_ARM,
         Vec3::ZERO,
         glam::Quat::IDENTITY,
         Vec3::ZERO,
@@ -926,55 +963,6 @@ fn a_plain_rig_has_no_chain() {
     assert_eq!(shoulder, hand);
 }
 
-/// 🔴 #1380: the shoulder lived on the orbital body until the two were split. Left alone, its
-/// fields would stop showing and stop being read on the same load — an offset tuned for an hour,
-/// gone with nothing said.
-#[test]
-fn a_shoulder_moves_to_its_own_body() {
-    use kooch_ecs::component::ComponentRegistry;
-
-    let mut resources = kooch_core::resource::Resources::new();
-    let mut registry = ComponentRegistry::new();
-    registry.register_cpu_reflected::<VirtualCamera>();
-    let (moved, left) = (
-        kooch_ecs::entity::Entity::new(1, 0),
-        kooch_ecs::entity::Entity::new(2, 0),
-    );
-    let storage = registry.get_cpu_mut::<VirtualCamera>().unwrap();
-    storage.insert(
-        moved,
-        VirtualCamera {
-            follow: FOLLOW_ORBITAL,
-            was_shoulder: Vec3::new(0.6, -0.4, 0.0),
-            ..Default::default()
-        },
-    );
-    // Nothing authored stays where it is: a plain orbital rig is not a shoulder rig.
-    storage.insert(
-        left,
-        VirtualCamera {
-            follow: FOLLOW_ORBITAL,
-            ..Default::default()
-        },
-    );
-    resources.insert(registry);
-
-    crate::virtual_camera::migrate_bodies(&mut resources);
-
-    let of = |entity| {
-        resources
-            .get::<ComponentRegistry>()
-            .unwrap()
-            .get_cpu::<VirtualCamera>()
-            .unwrap()
-            .get(entity)
-            .unwrap()
-            .follow
-    };
-    assert_eq!(of(moved), FOLLOW_SHOULDER, "the shoulder was stranded");
-    assert_eq!(of(left), FOLLOW_ORBITAL);
-}
-
 /// 🔴 #1391: a body is a component, and the numbers a scene wrote on the vcam have to reach it. An
 /// alias maps a name inside a type; a field that moved to another component is not covered, so
 /// without this every authored rig would take the defaults with nothing said.
@@ -998,7 +986,6 @@ fn the_body_numbers_reach_their_component() {
     storage.insert(
         orbital,
         VirtualCamera {
-            follow: FOLLOW_ORBITAL,
             was_distance: 9.0,
             was_orbit_style: ORBIT_THREE_RING,
             ..Default::default()
@@ -1007,7 +994,6 @@ fn the_body_numbers_reach_their_component() {
     storage.insert(
         shouldered,
         VirtualCamera {
-            follow: FOLLOW_ORBITAL,
             was_distance: 2.5,
             was_shoulder: Vec3::new(0.6, -0.4, 0.0),
             was_arm_length: 1.2,
@@ -1043,10 +1029,8 @@ fn the_body_numbers_reach_their_component() {
     assert_eq!(arm.camera_side, 0.0, "a left shoulder is not no shoulder");
     assert_eq!(arm.camera_distance, 2.5);
 
-    // And a shoulder anywhere means the shoulder body, as #1380 decided.
-    let vcams = registry.get_cpu::<VirtualCamera>().unwrap();
-    assert_eq!(vcams.get(shouldered).unwrap().follow, FOLLOW_SHOULDER);
     // The hidden fields are emptied, so the migration runs once.
+    let vcams = registry.get_cpu::<VirtualCamera>().unwrap();
     assert_eq!(vcams.get(orbital).unwrap().was_distance, 0.0);
 
     // 🔴 And the entity **has** it, not just the storage. A value written without the archetype is
@@ -1065,4 +1049,85 @@ fn the_body_numbers_reach_their_component() {
             "the body is in the storage and not on the entity",
         );
     }
+}
+
+/// 🔴 #1397: the modes a scene named become the components that **are** them. A sabotage of the
+/// `Follow` arm produced no failure at all, which is what a path nothing covers looks like.
+#[test]
+fn the_named_modes_become_components() {
+    use kooch_ecs::archetype_registry::ArchetypeRegistry;
+    use kooch_ecs::component::ComponentRegistry;
+
+    let mut resources = kooch_core::resource::Resources::new();
+    let mut archetypes = ArchetypeRegistry::new();
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu_reflected::<VirtualCamera>();
+    let empty = archetypes.get_or_create(Default::default());
+
+    let (simple, glued, composed) = (
+        kooch_ecs::entity::Entity::new(1, 0),
+        kooch_ecs::entity::Entity::new(2, 0),
+        kooch_ecs::entity::Entity::new(3, 0),
+    );
+    let offset = Vec3::new(0.0, 3.0, 10.0);
+    for (entity, follow, look_at) in [
+        (simple, FOLLOW_SIMPLE, LOOK_AT_SIMPLE),
+        (glued, FOLLOW_GLUED, LOOK_AT_MIMIC),
+        (composed, FOLLOW_POSITION_COMPOSER, LOOK_AT_ARM),
+    ] {
+        registry.get_cpu_mut::<VirtualCamera>().unwrap().insert(
+            entity,
+            VirtualCamera {
+                was_follow: follow,
+                was_look_at: look_at,
+                was_offset: offset,
+                ..Default::default()
+            },
+        );
+        archetypes.register_entity(entity, empty);
+    }
+    resources.insert(archetypes);
+    resources.insert(registry);
+
+    crate::virtual_camera::migrate_bodies(&mut resources);
+
+    let registry = resources.get::<ComponentRegistry>().unwrap();
+    let archetypes = resources.get::<ArchetypeRegistry>().unwrap();
+    let has = |entity, id| {
+        archetypes
+            .get(archetypes.entity_archetype(entity).expect("no archetype"))
+            .unwrap()
+            .components()
+            .contains(&id)
+    };
+
+    // The offset went with the body that reads it, value and all.
+    assert_eq!(
+        crate::virtual_camera::one::<crate::Follow>(registry, simple)
+            .expect("no Follow")
+            .offset,
+        offset,
+    );
+    assert!(has(simple, std::any::TypeId::of::<crate::Follow>()));
+    assert!(has(
+        glued,
+        std::any::TypeId::of::<crate::HardLockToTarget>()
+    ));
+    assert!(has(
+        composed,
+        std::any::TypeId::of::<crate::PositionComposer>()
+    ));
+
+    // And each aim became the component that is it.
+    assert!(has(simple, std::any::TypeId::of::<crate::HardLookAt>()));
+    assert!(has(
+        glued,
+        std::any::TypeId::of::<crate::RotateWithFollowTarget>()
+    ));
+    assert!(has(composed, std::any::TypeId::of::<crate::PanTilt>()));
+
+    // The hidden fields are emptied, so it runs once.
+    let vcams = registry.get_cpu::<VirtualCamera>().unwrap();
+    assert_eq!(vcams.get(simple).unwrap().was_follow, FOLLOW_NONE);
+    assert_eq!(vcams.get(simple).unwrap().was_offset, Vec3::ZERO);
 }
