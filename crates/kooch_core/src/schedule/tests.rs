@@ -441,6 +441,10 @@ fn the_fixed_stages_run_inside_the_frame() {
     let at = |stage: Stage| super::RUN_ORDER.iter().position(|s| *s == stage).unwrap();
     assert!(at(Stage::Update) < at(Stage::Physics));
     assert!(at(Stage::PostPhysics) < at(Stage::PostUpdate));
+    // 🔴 `PrePhysics` is the whole point of #1316: it resolves the world between gameplay and the
+    // solver. Its discriminant is 14 — the largest — so only this list can say where it runs.
+    assert!(at(Stage::Update) < at(Stage::PrePhysics));
+    assert!(at(Stage::PrePhysics) < at(Stage::Physics));
     assert!(
         Stage::Gpu < Stage::Physics,
         "if this fails the enum was reordered and this test is now vacuous",

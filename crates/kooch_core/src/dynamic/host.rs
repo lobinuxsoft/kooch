@@ -21,6 +21,7 @@ pub(crate) const fn map_stage(stage: PluginStage) -> Stage {
         PluginStage::Input => Stage::Input,
         PluginStage::PreUpdate => Stage::PreUpdate,
         PluginStage::Update => Stage::Update,
+        PluginStage::PrePhysics => Stage::PrePhysics,
         PluginStage::PostUpdate => Stage::PostUpdate,
         PluginStage::GpuSync => Stage::GpuSync,
         PluginStage::Gpu => Stage::Gpu,

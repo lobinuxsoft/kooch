@@ -32,10 +32,19 @@ pub enum Stage {
     PostRender,
     /// End of frame.
     Last,
+    /// Before the fixed loop: collider geometry, hierarchy and transforms, so the solver reads a
+    /// world the frame has finished computing (#1316).
+    ///
+    /// 🔴 Declared last, not fifth, and it runs fifth. This enum crosses the plugin boundary: a
+    /// plugin built against an older header sends the number it knew, so no existing variant may
+    /// move. `kooch_core::Stage` numbers it the same way for the same reason.
+    PrePhysics,
 }
 
 impl Stage {
-    /// Every stage in schedule order, so the host's parity test fails on an unmapped stage.
+    /// Every stage in declaration order, so the host's parity test fails on an unmapped stage.
+    ///
+    /// Not the order a frame runs them — `PrePhysics` is declared last and runs fifth.
     pub const ALL: &'static [Stage] = &[
         Stage::Startup,
         Stage::First,
@@ -51,6 +60,7 @@ impl Stage {
         Stage::Render,
         Stage::PostRender,
         Stage::Last,
+        Stage::PrePhysics,
     ];
 }
 

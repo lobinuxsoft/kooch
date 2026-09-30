@@ -177,9 +177,13 @@ impl Schedule {
 
     /// Runs the frame stages that precede the fixed timestep loop.
     ///
-    /// First → Input → PreUpdate → Update
+    /// First → Input → PreUpdate → Update → PrePhysics
+    ///
+    /// 🔴 `PrePhysics` is the last thing before the solver for a reason: it resolves collider
+    /// geometry, then the hierarchy, then transforms, so the step reads a world this frame
+    /// finished computing rather than last frame's (#1316).
     pub fn run_pre_physics(&mut self, resources: &mut Resources) {
-        run_staged!(self, resources, First, Input, PreUpdate, Update);
+        run_staged!(self, resources, First, Input, PreUpdate, Update, PrePhysics);
     }
 
     /// Runs the fixed timestep stages once.
@@ -267,12 +271,13 @@ impl Schedule {
 }
 
 /// The stages a frame runs, in the order it runs them.
-pub const RUN_ORDER: [Stage; 14] = [
+pub const RUN_ORDER: [Stage; 15] = [
     Stage::Startup,
     Stage::First,
     Stage::Input,
     Stage::PreUpdate,
     Stage::Update,
+    Stage::PrePhysics,
     Stage::Physics,
     Stage::PostPhysics,
     Stage::PostUpdate,

@@ -87,6 +87,12 @@ impl Plugin for EcsPlugin {
         // Before anything reads a mask: a legacy field the author cannot see must not outrank the
         // one they can (#1320).
         app.add_system(Stage::First, crate::mesh_renderer::migrate_renderer_layers);
+        // 🔴 Propagation runs TWICE, and both passes are load-bearing (#1316). This one resolves
+        // the world the solver is about to read; the `PostUpdate` one below publishes what the
+        // solver just wrote, so the frame draws the step it simulated instead of the previous one.
+        // Avian and rapier's Bevy plugins split it the same way.
+        app.add_system(Stage::PrePhysics, hierarchy_sync_system);
+        app.add_system(Stage::PrePhysics, transform_propagation_system);
         app.add_system(Stage::PostUpdate, hierarchy_sync_system);
         app.add_system(Stage::PostUpdate, transform_propagation_system);
 
