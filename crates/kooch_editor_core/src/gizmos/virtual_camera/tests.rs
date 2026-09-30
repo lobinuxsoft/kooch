@@ -143,3 +143,56 @@ fn another_body_draws_no_chain() {
     );
     assert_eq!(chain(&drawn, &plain), 0);
 }
+
+/// 🔴 #1389: the ring surface is the thing being tuned, and three numbers in a list are not a shape.
+#[test]
+fn the_rings_draw_their_surface() {
+    let entity = Entity::new(1, 0);
+    let vcam = VirtualCamera {
+        follow: kooch_camera::FOLLOW_ORBITAL,
+        orbit_style: kooch_camera::ORBIT_THREE_RING,
+        camera_distance: 4.0,
+        ..Default::default()
+    };
+    let at = Mat4::from_translation(Vec3::Z * 4.0);
+    let plain = draw(&VirtualCameraVisualizer, &vcam, at);
+
+    let mut resources = world(vcam, entity, false);
+    let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+    registry.register_cpu::<kooch_camera::OrbitalRings>();
+    registry
+        .get_cpu_mut::<kooch_camera::OrbitalRings>()
+        .unwrap()
+        .insert(entity, kooch_camera::OrbitalRings::default());
+
+    let drawn = draw_with(&VirtualCameraVisualizer, &vcam, at, entity, &resources);
+    assert!(
+        chain(&drawn, &plain) > 24,
+        "the surface and its three circles are not there: {} extra",
+        chain(&drawn, &plain),
+    );
+}
+
+/// And a sphere draws none of it: the rings are not the surface it rides.
+#[test]
+fn a_sphere_draws_no_rings() {
+    let entity = Entity::new(1, 0);
+    let vcam = VirtualCamera {
+        follow: kooch_camera::FOLLOW_ORBITAL,
+        camera_distance: 4.0,
+        ..Default::default()
+    };
+    let at = Mat4::from_translation(Vec3::Z * 4.0);
+    let plain = draw(&VirtualCameraVisualizer, &vcam, at);
+
+    let mut resources = world(vcam, entity, false);
+    let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+    registry.register_cpu::<kooch_camera::OrbitalRings>();
+    registry
+        .get_cpu_mut::<kooch_camera::OrbitalRings>()
+        .unwrap()
+        .insert(entity, kooch_camera::OrbitalRings::default());
+
+    let drawn = draw_with(&VirtualCameraVisualizer, &vcam, at, entity, &resources);
+    assert_eq!(chain(&drawn, &plain), 0);
+}

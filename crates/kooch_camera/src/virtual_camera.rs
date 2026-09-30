@@ -17,6 +17,25 @@ pub const FOLLOW_ORBITAL: u32 = 3;
 /// A [`PositionComposer`](crate::PositionComposer) moves the camera so the target lands where it
 /// belongs on screen — Cinemachine's `PositionComposer` (#1369).
 pub const FOLLOW_POSITION_COMPOSER: u32 = 4;
+/// The camera rides a sphere of `camera_distance`, and pitch swings the arm along it.
+pub const ORBIT_SPHERE: u32 = 0;
+/// It rides a surface built from three rings, and pitch picks a point on it — Cinemachine's
+/// `OrbitStyles.ThreeRing` (#1389). The FreeLook shape: the camera comes in and rises as you look
+/// down, and pulls out and drops as you look up.
+pub const ORBIT_THREE_RING: u32 = 1;
+
+/// Labels for the `orbit_style` dropdown.
+pub static ORBIT_STYLE_CHOICES: &[FieldChoice] = &[
+    FieldChoice {
+        label: "Sphere",
+        value: ORBIT_SPHERE as i64,
+    },
+    FieldChoice {
+        label: "Three Ring",
+        value: ORBIT_THREE_RING as i64,
+    },
+];
+
 /// The same arm, over a shoulder: a pivot chain from the target through the shoulder and the hand —
 /// Cinemachine's `ThirdPersonFollow` (#1380). A shooter's body.
 pub const FOLLOW_SHOULDER: u32 = 5;
@@ -151,6 +170,12 @@ pub static SHOULDER_WHEN: FieldCondition = FieldCondition {
     values: &[FOLLOW_SHOULDER as i64],
 };
 
+/// Only the orbital body has a surface to choose.
+pub static ORBITAL_WHEN: FieldCondition = FieldCondition {
+    field: "follow",
+    values: &[FOLLOW_ORBITAL as i64],
+};
+
 /// How far a target must move, per axis in world units, before the camera writes a new pose. A
 /// floor, not a knob: damping is asymptotic and would otherwise write forever.
 pub const SETTLE_EPSILON: f32 = 1e-4;
@@ -177,8 +202,14 @@ pub struct VirtualCamera {
     #[reflect(shown_when = OFFSET_WHEN)]
     pub offset: Vec3,
     /// Spring arm length — how far back from the target the camera sits.
+    /// 🔴 Not read under `Three Ring`, where the rings are the distance. It still **shows** there:
+    /// `FieldCondition` tests one field, and "an arm, and a sphere" is two. The condition that would
+    /// hide it correctly is the one improvement this needs.
     #[reflect(alias = "distance", shown_when = ARM_WHEN)]
     pub camera_distance: f32,
+    /// Which surface the arm rides. One of the `ORBIT_*` constants.
+    #[reflect(choices = ORBIT_STYLE_CHOICES, shown_when = ORBITAL_WHEN)]
+    pub orbit_style: u32,
     /// Rotation around the target's up axis, in degrees.
     #[reflect(shown_when = ARM_WHEN)]
     pub yaw: f32,
@@ -292,6 +323,7 @@ impl Default for VirtualCamera {
             group: 0,
             offset: Vec3::new(0.0, 2.0, 6.0),
             camera_distance: 6.0,
+            orbit_style: ORBIT_SPHERE,
             yaw: 0.0,
             pitch: 20.0,
             // Centred: an authored scene that never heard of a shoulder is
@@ -533,11 +565,39 @@ pub(crate) fn look_at(eye: Vec3, target: Vec3, up: Vec3, reference: Vec3) -> gla
     glam::Quat::from_mat3(&glam::Mat3::from_cols(right, up, -forward))
 }
 
+/// Where the rings would stand this vcam, or `None` where it is not riding any.
+///
+/// The pitch maps over the [`CameraOrbit`](crate::orbit::CameraOrbit)'s own limits, so the ends of
+/// the stick reach the ends of the rig — read from the orbit rather than copied, because the limits
+/// have one owner. Without an orbit the arm's own pole clamp stands in.
+fn ringed(step: &crate::rig::RigStep) -> Option<Vec3> {
+    if step.vcam.follow != FOLLOW_ORBITAL || step.vcam.orbit_style != ORBIT_THREE_RING {
+        return None;
+    }
+    let rings = crate::orbital_rings::of(step.registry, step.entity)?;
+    let (low, high) = step
+        .registry
+        .get_cpu::<crate::orbit::CameraOrbit>()
+        .and_then(|orbits| orbits.get(step.entity))
+        .map_or((-89.0, 89.0), |orbit| (orbit.pitch_min, orbit.pitch_max));
+    let span = (high - low).max(1e-3);
+    let t = (step.vcam.pitch - low) / span;
+    let up = normalised_up(step.up);
+    Some(step.frame.target + rings.at(t, step.vcam.back(up, step.reference), up))
+}
+
 /// The Body stage: where the camera stands.
 ///
 /// 🔴 A framed rig is **not** damped twice. The frame's ease IS the body's smoothing — two eases in
 /// series on one position is what made every earlier version of this rig fight itself (#1329).
 pub fn body_stage(step: &mut crate::rig::RigStep) {
+    // The rings replace the arm's own length and angle: the pitch picks a point on the surface
+    // rather than swinging anything (#1389).
+    if let Some(wanted) = ringed(step) {
+        step.frame
+            .place(step.vcam.damped(step.frame.previous, wanted, step.dt));
+        return;
+    }
     // 🔴 The composer eases the offset itself, so it is the whole of the body: running the vcam's
     // damping over it is two eases in series on one quantity, which is #1329.
     if step.vcam.follow == FOLLOW_POSITION_COMPOSER {

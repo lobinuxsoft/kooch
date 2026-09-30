@@ -29,6 +29,15 @@ const OF_THE_RIG: &[(&str, &str, Option<InMode>)] = &[
             asked: "Position Composer",
         }),
     ),
+    (
+        "OrbitalRings",
+        "VirtualCamera",
+        Some(InMode {
+            field: "orbit_style",
+            value: kooch_camera::ORBIT_THREE_RING,
+            asked: "Three Ring",
+        }),
+    ),
     ("ThirdPersonAim", "VirtualCamera", None),
     ("CameraOffset", "VirtualCamera", None),
     ("CameraRecomposer", "VirtualCamera", None),

@@ -36,6 +36,11 @@ const ORBIT_SEGMENTS: usize = 48;
 const RIG: Vec3 = Vec3::new(0.45, 0.8, 0.7);
 /// A pivot on it.
 const PIVOT: f32 = 0.08;
+/// The three rings and the surface between them. Warmer than the shoulder chain, because it is the
+/// shape the camera rides rather than a chain of points.
+const RINGS: Vec3 = Vec3::new(0.8, 0.7, 0.45);
+/// Points along the surface between the rings. Enough to read as a curve at arm's length.
+const SURFACE: usize = 24;
 
 /// Draws where a virtual camera is, which way it aims, and — in
 /// third-person — the circle its spring arm swings around.
@@ -121,9 +126,6 @@ impl Visualizer<VirtualCamera> for VirtualCameraVisualizer {
         gizmos: &mut Gizmos<'_>,
     ) {
         self.draw(vcam, transform, gizmos);
-        if vcam.follow != FOLLOW_SHOULDER {
-            return;
-        }
         let Some(target) = followed_point(resources, entity) else {
             return;
         };
@@ -138,6 +140,40 @@ impl Visualizer<VirtualCamera> for VirtualCameraVisualizer {
                 let up = kooch_camera::up_for(vcam, resources, target, glam::Quat::IDENTITY);
                 (up, kooch_camera::seed_reference(up))
             });
+        // The surface an orbital rig rides, where it rides one: three circles and the spline joining
+        // them. A shape you cannot see is a shape you cannot tune (#1379).
+        if vcam.orbit_style == kooch_camera::ORBIT_THREE_RING
+            && let Some(rings) = resources
+                .get::<kooch_ecs::component::ComponentRegistry>()
+                .and_then(|registry| kooch_camera::orbital_rings::of(registry, entity))
+        {
+            let back = (transform.matrix.to_scale_rotation_translation().2 - target)
+                .try_normalize()
+                .map(|out| out - up * out.dot(up))
+                .and_then(Vec3::try_normalize)
+                .unwrap_or(reference);
+            let mut previous = None;
+            for step in 0..=SURFACE {
+                let at = target + rings.at(step as f32 / SURFACE as f32, back, up);
+                if let Some(from) = previous {
+                    gizmos.line(from, at, RINGS);
+                }
+                previous = Some(at);
+            }
+            for t in [0.0, 0.5, 1.0] {
+                let on = rings.at(t, back, up);
+                circle(
+                    gizmos,
+                    target + up * on.dot(up),
+                    up,
+                    (on - up * on.dot(up)).length(),
+                    RINGS,
+                );
+            }
+        }
+        if vcam.follow != FOLLOW_SHOULDER {
+            return;
+        }
         let (root, shoulder, hand) = vcam.rig_positions(target, up, reference);
         // Nothing authored collapses all three onto the target: a plain orbital rig draws the arm it
         // already had, not a chain of stubs on top of it.
@@ -151,6 +187,25 @@ impl Visualizer<VirtualCamera> for VirtualCameraVisualizer {
         for at in [root, shoulder, hand] {
             cross(gizmos, at, PIVOT, RIG);
         }
+    }
+}
+
+/// A circle of `radius` around `centre`, on the plane `axis` is normal to.
+fn circle(gizmos: &mut Gizmos<'_>, centre: Vec3, axis: Vec3, radius: f32, colour: Vec3) {
+    if radius <= 1e-3 {
+        return;
+    }
+    let start = match axis.cross(Vec3::X).try_normalize() {
+        Some(side) => side,
+        None => axis.cross(Vec3::Z).normalize(),
+    };
+    let side = axis.cross(start);
+    let mut previous = centre + start * radius;
+    for i in 1..=ORBIT_SEGMENTS {
+        let a = i as f32 / ORBIT_SEGMENTS as f32 * std::f32::consts::TAU;
+        let at = centre + (start * a.cos() + side * a.sin()) * radius;
+        gizmos.line(previous, at, colour);
+        previous = at;
     }
 }
 
