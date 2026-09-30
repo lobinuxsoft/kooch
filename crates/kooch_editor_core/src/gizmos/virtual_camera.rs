@@ -3,7 +3,7 @@
 use glam::Vec3;
 use kooch_camera::RigMemory;
 use kooch_camera::VirtualCamera;
-use kooch_camera::virtual_camera::{FOLLOW_THIRD_PERSON, UP_GRAVITY, UP_TARGET};
+use kooch_camera::virtual_camera::{FOLLOW_ORBITAL, FOLLOW_SHOULDER, UP_GRAVITY, UP_TARGET};
 use kooch_core::resource::Resources;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::hierarchy::GlobalTransform;
@@ -74,7 +74,8 @@ impl Visualizer<VirtualCamera> for VirtualCameraVisualizer {
 
         // The spring arm's orbit. `distance` and `yaw` are otherwise two numbers with nothing to
         // check them against, and this is the circle the camera will swing along when yaw changes.
-        if vcam.follow == FOLLOW_THIRD_PERSON && vcam.camera_distance > 1e-3 {
+        let on_an_arm = vcam.follow == FOLLOW_ORBITAL || vcam.follow == FOLLOW_SHOULDER;
+        if on_an_arm && vcam.camera_distance > 1e-3 {
             let forward = (to_world(-Vec3::Z) - origin).normalize_or(-Vec3::Z);
             let up = (to_world(Vec3::Y) - origin).normalize_or(Vec3::Y);
             let centre = origin + forward * vcam.camera_distance;
@@ -120,7 +121,7 @@ impl Visualizer<VirtualCamera> for VirtualCameraVisualizer {
         gizmos: &mut Gizmos<'_>,
     ) {
         self.draw(vcam, transform, gizmos);
-        if vcam.follow != FOLLOW_THIRD_PERSON {
+        if vcam.follow != FOLLOW_SHOULDER {
             return;
         }
         // The up and reference the rig actually used. Derived here instead, the chain drawn would

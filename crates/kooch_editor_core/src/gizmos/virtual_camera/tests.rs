@@ -9,7 +9,7 @@ use kooch_ecs::component::ComponentRegistry;
 
 fn shoulder() -> VirtualCamera {
     VirtualCamera {
-        follow: FOLLOW_THIRD_PERSON,
+        follow: kooch_camera::FOLLOW_SHOULDER,
         camera_distance: 2.5,
         shoulder_offset: Vec3::new(0.6, -0.4, 0.0),
         vertical_arm_length: 1.2,
@@ -83,7 +83,7 @@ fn a_shoulder_draws_its_chain() {
 fn a_plain_rig_draws_no_chain() {
     let entity = Entity::new(1, 0);
     let vcam = VirtualCamera {
-        follow: FOLLOW_THIRD_PERSON,
+        follow: FOLLOW_ORBITAL,
         camera_distance: 2.5,
         ..Default::default()
     };

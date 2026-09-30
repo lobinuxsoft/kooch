@@ -12,11 +12,14 @@ pub const FOLLOW_NONE: u32 = 0;
 pub const FOLLOW_GLUED: u32 = 1;
 /// The target's position plus a fixed offset.
 pub const FOLLOW_SIMPLE: u32 = 2;
-/// A spring arm on the target, rotatable around it. Third person.
-pub const FOLLOW_THIRD_PERSON: u32 = 3;
+/// A spring arm on the target, rotatable around it — Cinemachine's `OrbitalFollow`.
+pub const FOLLOW_ORBITAL: u32 = 3;
 /// A [`PositionComposer`](crate::PositionComposer) moves the camera so the target lands where it
 /// belongs on screen — Cinemachine's `PositionComposer` (#1369).
 pub const FOLLOW_POSITION_COMPOSER: u32 = 4;
+/// The same arm, over a shoulder: a pivot chain from the target through the shoulder and the hand —
+/// Cinemachine's `ThirdPersonFollow` (#1380). A shooter's body.
+pub const FOLLOW_SHOULDER: u32 = 5;
 
 /// No rotation logic.
 pub const LOOK_AT_NONE: u32 = 0;
@@ -75,11 +78,15 @@ pub static FOLLOW_MODE_CHOICES: &[FieldChoice] = &[
     },
     FieldChoice {
         label: "Orbital Follow",
-        value: FOLLOW_THIRD_PERSON as i64,
+        value: FOLLOW_ORBITAL as i64,
     },
     FieldChoice {
         label: "Position Composer",
         value: FOLLOW_POSITION_COMPOSER as i64,
+    },
+    FieldChoice {
+        label: "Third Person Follow",
+        value: FOLLOW_SHOULDER as i64,
     },
 ];
 
@@ -132,10 +139,16 @@ pub static SIDE_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::Fiel
     step: 0.01,
 };
 
-/// The spring arm's parameters.
-pub static THIRD_PERSON_WHEN: FieldCondition = FieldCondition {
+/// The spring arm's parameters, shared by both bodies built on one.
+pub static ARM_WHEN: FieldCondition = FieldCondition {
     field: "follow",
-    values: &[FOLLOW_THIRD_PERSON as i64],
+    values: &[FOLLOW_ORBITAL as i64, FOLLOW_SHOULDER as i64],
+};
+
+/// The shoulder's own, which only one body reads — so a field never shows where it does nothing.
+pub static SHOULDER_WHEN: FieldCondition = FieldCondition {
+    field: "follow",
+    values: &[FOLLOW_SHOULDER as i64],
 };
 
 /// How far a target must move, per axis in world units, before the camera writes a new pose. A
@@ -164,13 +177,13 @@ pub struct VirtualCamera {
     #[reflect(shown_when = OFFSET_WHEN)]
     pub offset: Vec3,
     /// Spring arm length — how far back from the target the camera sits.
-    #[reflect(alias = "distance", shown_when = THIRD_PERSON_WHEN)]
+    #[reflect(alias = "distance", shown_when = ARM_WHEN)]
     pub camera_distance: f32,
     /// Rotation around the target's up axis, in degrees.
-    #[reflect(shown_when = THIRD_PERSON_WHEN)]
+    #[reflect(shown_when = ARM_WHEN)]
     pub yaw: f32,
     /// Rotation above the horizon, in degrees. Positive looks down.
-    #[reflect(shown_when = THIRD_PERSON_WHEN)]
+    #[reflect(shown_when = ARM_WHEN)]
     pub pitch: f32,
     /// Where the arm's pivot sits, offset from the target in the arm's own basis: `x` beside the
     /// view, `y` along `up`, `z` the way the camera looks. An over-the-shoulder view (#1359).
@@ -178,7 +191,7 @@ pub struct VirtualCamera {
     /// 🔴 The arm's basis, not the target's. Cinemachine's `ThirdPersonFollow` offsets in the
     /// target's, which it can because its rotation IS the target's; here the orbit owns the yaw, so
     /// a shoulder in the character's frame would swing around it as the player looks about.
-    #[reflect(alias = "shoulder", shown_when = THIRD_PERSON_WHEN)]
+    #[reflect(alias = "shoulder", shown_when = SHOULDER_WHEN)]
     pub shoulder_offset: Vec3,
     /// How far the arm's pivot sits above the shoulder — Cinemachine's `VerticalArmLength`.
     ///
@@ -186,11 +199,11 @@ pub struct VirtualCamera {
     /// shoulder sits in the **levelled** basis and this along the view's own up, which pitches: look
     /// down and the pivot swings forward and down while the shoulder stays. It is what decides how
     /// the target's place on screen moves as the view turns vertically.
-    #[reflect(alias = "arm_rise", shown_when = THIRD_PERSON_WHEN)]
+    #[reflect(alias = "arm_rise", shown_when = SHOULDER_WHEN)]
     pub vertical_arm_length: f32,
     /// Which shoulder the camera is on: `0` the left, `1` the right, halfway between them centred.
     /// Cinemachine's `CameraSide`, and what a swap animates without touching the authored offset.
-    #[reflect(alias = "side", range = SIDE_RANGE, shown_when = THIRD_PERSON_WHEN)]
+    #[reflect(alias = "side", range = SIDE_RANGE, shown_when = SHOULDER_WHEN)]
     pub camera_side: f32,
     /// Where the camera looks. One of the `LOOK_AT_*` constants.
     #[reflect(choices = LOOK_AT_CHOICES)]
@@ -275,7 +288,7 @@ impl Default for VirtualCamera {
         Self {
             priority: 0,
             enabled: true,
-            follow: FOLLOW_THIRD_PERSON,
+            follow: FOLLOW_ORBITAL,
             group: 0,
             offset: Vec3::new(0.0, 2.0, 6.0),
             camera_distance: 6.0,
@@ -319,7 +332,7 @@ impl VirtualCamera {
         match self.follow {
             FOLLOW_GLUED => target,
             FOLLOW_SIMPLE => target + self.offset,
-            FOLLOW_THIRD_PERSON => target + self.arm(up, reference),
+            FOLLOW_ORBITAL | FOLLOW_SHOULDER => target + self.arm(up, reference),
             _ => current,
         }
     }
@@ -367,6 +380,11 @@ impl VirtualCamera {
     ///
     /// The camera itself is [`wanted`](Self::wanted); this is the chain that leads to it.
     pub fn rig_positions(&self, target: Vec3, up: Vec3, reference: Vec3) -> (Vec3, Vec3, Vec3) {
+        // 🔴 Only the body that shows the fields reads them. Authored under one body and left behind
+        // by a switch to another, they would otherwise still move the camera from a hidden row.
+        if self.follow != FOLLOW_SHOULDER {
+            return (target, target, target);
+        }
         let up = normalised_up(up);
         let back = self.back(up, reference);
         let shoulder = target + self.shouldered(back, up);
@@ -563,3 +581,29 @@ pub fn aim_stage(step: &mut crate::rig::RigStep) {
 
 #[cfg(test)]
 mod tests;
+
+/// Moves a vcam that authored a shoulder on the orbital body onto the one that reads it, once.
+///
+/// 🔴 The shoulder lived on `Orbital Follow` until #1380 split the two, the way Cinemachine has
+/// always had them. Left alone, the fields would stop showing and stop being read on the same load —
+/// an offset tuned for an hour, gone with nothing said.
+pub fn migrate_shoulder_body(resources: &mut kooch_core::resource::Resources) {
+    let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
+        return;
+    };
+    let Some(storage) = registry.get_cpu_mut::<VirtualCamera>() else {
+        return;
+    };
+    for (&entity, vcam) in storage.iter_mut() {
+        let authored = vcam.shoulder_offset != Vec3::ZERO || vcam.vertical_arm_length != 0.0;
+        if vcam.follow != FOLLOW_ORBITAL || !authored {
+            continue;
+        }
+        vcam.follow = FOLLOW_SHOULDER;
+        tracing::info!(
+            target: "kooch_camera",
+            entity = entity.index(),
+            "a vcam with a shoulder moved from Orbital Follow to Third Person Follow",
+        );
+    }
+}

@@ -24,7 +24,7 @@ fn world() -> (Resources, Entity, Entity) {
             entity,
             VirtualCamera {
                 priority,
-                follow: crate::FOLLOW_THIRD_PERSON,
+                follow: crate::FOLLOW_ORBITAL,
                 ..Default::default()
             },
         );

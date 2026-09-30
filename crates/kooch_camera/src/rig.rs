@@ -237,6 +237,11 @@ pub fn report_orphans(resources: &mut Resources) {
     // slides to put it there and the aim turns to put it there, and they chase each other. Not an
     // orphan — both are read — which is why it is said separately.
     let mut both: Vec<Entity> = Vec::new();
+    // 🔴 A shoulder under an aim that re-frames the target: measured, an offset of 0.6 moves the
+    // character −0.117 of the screen under `Pan Tilt` and 0.000 under `Rotation Composer` or
+    // `Hard Look At`. The rig is working and the aim is undoing it, which is what the gizmo draws
+    // (#1379) and what this says for a build that has none.
+    let mut cancelled: Vec<Entity> = Vec::new();
     if let Some(registry) = resources.get::<ComponentRegistry>()
         && let Some(vcams) = registry.get_cpu::<VirtualCamera>()
     {
@@ -245,9 +250,28 @@ pub fn report_orphans(resources: &mut Resources) {
                 && vcam.look_at == crate::LOOK_AT_COMPOSED)
                 .then_some(entity)
         }));
+        cancelled.extend(vcams.iter().filter_map(|(&entity, vcam)| {
+            (vcam.follow == crate::FOLLOW_SHOULDER
+                && vcam.look_at != crate::LOOK_AT_ARM
+                && vcam.look_at != crate::LOOK_AT_NONE
+                && vcam.shoulder_offset != Vec3::ZERO)
+                .then_some(entity)
+        }));
     }
 
     let mut said = resources.get::<Orphans>().cloned().unwrap_or_default();
+    for entity in cancelled {
+        if !said.0.insert(entity) {
+            continue;
+        }
+        tracing::warn!(
+            target: "kooch_camera",
+            entity = entity.index(),
+            "a shoulder offset under an aim that re-frames the target: the aim decides where the \
+             character sits on screen, so the shoulder only shifts the parallax. Pan Tilt is the \
+             aim a shoulder rig is built on.",
+        );
+    }
     for entity in both {
         if !said.0.insert(entity) {
             continue;

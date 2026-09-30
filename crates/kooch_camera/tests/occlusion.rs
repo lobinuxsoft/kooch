@@ -8,7 +8,7 @@
 use glam::Vec3;
 
 use kooch_camera::{
-    CameraRig, CameraTarget, Deoccluder, FOLLOW_THIRD_PERSON, LOOK_AT_SIMPLE, VirtualCamera,
+    CameraRig, CameraTarget, Deoccluder, FOLLOW_ORBITAL, LOOK_AT_SIMPLE, VirtualCamera,
     drive_virtual_cameras,
 };
 use kooch_core::resource::Resources;
@@ -141,7 +141,7 @@ fn rig_damped(collision: bool, damping: bool) -> (Resources, Entity, Entity) {
         &mut resources,
         vcam,
         VirtualCamera {
-            follow: FOLLOW_THIRD_PERSON,
+            follow: FOLLOW_ORBITAL,
             look_at: LOOK_AT_SIMPLE,
             camera_distance: ARM,
             // 🔴 The duration is what says rigid, not the switch: since #1333 the switch is folded
