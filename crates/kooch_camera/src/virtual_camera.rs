@@ -357,10 +357,24 @@ impl VirtualCamera {
     /// only the reach.** That is what keeps a shoulder beside the head instead of rolling it under
     /// the character when the player looks down.
     fn arm(&self, up: Vec3, reference: Vec3) -> Vec3 {
+        let (_, _, hand) = self.rig_positions(Vec3::ZERO, up, reference);
+        hand + self.along(self.back(up, reference), up) * self.camera_distance.max(0.0)
+    }
+
+    /// The arm's three pivots around `target`: its root, the shoulder, and the hand the camera
+    /// reaches back from. Cinemachine's `GetRigPositions`, and public for the same reason — a gizmo,
+    /// the Inspector and a test all want these points and must not each derive them.
+    ///
+    /// The camera itself is [`wanted`](Self::wanted); this is the chain that leads to it.
+    pub fn rig_positions(&self, target: Vec3, up: Vec3, reference: Vec3) -> (Vec3, Vec3, Vec3) {
+        let up = normalised_up(up);
         let back = self.back(up, reference);
-        self.shouldered(back, up)
-            + self.risen(back, up) * self.vertical_arm_length
-            + self.along(back, up) * self.camera_distance.max(0.0)
+        let shoulder = target + self.shouldered(back, up);
+        (
+            target,
+            shoulder,
+            shoulder + self.risen(back, up) * self.vertical_arm_length,
+        )
     }
 
     /// The view's own up, pitched with it — Cinemachine's `targetRot * Vector3.up`, and the axis the

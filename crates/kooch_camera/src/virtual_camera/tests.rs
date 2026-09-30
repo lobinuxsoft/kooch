@@ -815,3 +815,48 @@ fn a_zero_arm_still_aims() {
         rot * Vec3::NEG_Z
     );
 }
+
+/// 🔴 #1379: the gizmo, the Inspector and this all want the same three points. Derived twice they
+/// would drift, and the one drawn would stop being the one used.
+#[test]
+fn the_rig_positions_lead_to_the_camera() {
+    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    r.camera_distance = 3.0;
+    r.yaw = 35.0;
+    r.pitch = 15.0;
+    r.shoulder_offset = Vec3::new(0.6, -0.4, 0.2);
+    r.vertical_arm_length = 1.2;
+
+    let up = Vec3::Y;
+    let reference = seed_reference(up);
+    let target = Vec3::new(2.0, 1.0, -3.0);
+    let (root, shoulder, hand) = r.rig_positions(target, up, reference);
+    let camera = r.wanted(target, Vec3::ZERO, up, reference);
+
+    assert_eq!(root, target, "the chain starts on what it follows");
+    assert!(
+        (shoulder - root).length() > 0.1,
+        "the shoulder is not offset: {shoulder:?}",
+    );
+    assert!(
+        ((hand - shoulder).length() - 1.2).abs() < 1e-4,
+        "the arm is not its own length: {}",
+        (hand - shoulder).length(),
+    );
+    assert!(
+        ((camera - hand).length() - 3.0).abs() < 1e-4,
+        "the camera is not a distance back from the hand: {}",
+        (camera - hand).length(),
+    );
+}
+
+/// And with nothing authored the three collapse onto the target, so a plain orbital rig draws one
+/// line and not a chain of stubs.
+#[test]
+fn a_plain_rig_has_no_chain() {
+    let r = vcam(FOLLOW_THIRD_PERSON);
+    let up = Vec3::Y;
+    let (root, shoulder, hand) = r.rig_positions(Vec3::ZERO, up, seed_reference(up));
+    assert_eq!(root, shoulder);
+    assert_eq!(shoulder, hand);
+}
