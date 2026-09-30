@@ -84,7 +84,7 @@ fn desired(
             reference,
         ),
         FOLLOW_SHOULDER => vcam.on_shoulder(target, body, up, reference),
-        _ => vcam.wanted(target, current, up, reference),
+        _ => vcam.wanted(target, current),
     };
     let rotation = vcam.aimed(position, target, target_rot, current_rot, up, reference);
     (position, rotation)
@@ -118,7 +118,7 @@ fn the_default_frames_a_subject_correctly() {
 
 #[test]
 fn simple_follow_is_the_target_plus_the_offset() {
-    let (mut r, mut body) = (vcam(FOLLOW_SIMPLE), shoulder());
+    let (mut r, body) = (vcam(FOLLOW_SIMPLE), shoulder());
     r.offset = Vec3::new(0.0, 3.0, 10.0);
     let (pos, _) = desired(
         &r,
@@ -159,7 +159,7 @@ fn the_spring_arm_keeps_its_length_at_every_yaw() {
 /// rolls over. The clamp is what stops it.
 #[test]
 fn pitch_is_clamped_short_of_the_pole() {
-    let (mut r, mut body) = (vcam(FOLLOW_ORBITAL), shoulder());
+    let (mut r, body) = (vcam(FOLLOW_ORBITAL), shoulder());
     r.pitch = 90.0;
     let (pos, _) = desired(
         &r,
@@ -179,7 +179,7 @@ fn pitch_is_clamped_short_of_the_pole() {
 /// Follow `None` with a look-at is a turret: it tracks and stays put.
 #[test]
 fn follow_none_leaves_the_position_alone() {
-    let (mut r, mut body) = (vcam(FOLLOW_NONE), shoulder());
+    let (mut r, body) = (vcam(FOLLOW_NONE), shoulder());
     r.look_at = LOOK_AT_SIMPLE;
     let here = Vec3::new(1.0, 2.0, 3.0);
     let (pos, _) = desired(
@@ -253,7 +253,7 @@ fn a_zero_time_is_rigid_on_that_axis_only() {
 /// ship.
 #[test]
 fn look_at_points_the_camera_at_the_target() {
-    let (mut r, mut body) = (vcam(FOLLOW_NONE), shoulder());
+    let (mut r, body) = (vcam(FOLLOW_NONE), shoulder());
     r.look_at = LOOK_AT_SIMPLE;
 
     for (eye, target) in [
@@ -285,7 +285,7 @@ fn look_at_points_the_camera_at_the_target() {
 /// roll of 180° that a forward-only assertion would let through.
 #[test]
 fn look_at_keeps_the_horizon_upright() {
-    let (mut r, mut body) = (vcam(FOLLOW_NONE), shoulder());
+    let (mut r, body) = (vcam(FOLLOW_NONE), shoulder());
     r.look_at = LOOK_AT_SIMPLE;
     let (_, rot) = desired(
         &r,
@@ -307,7 +307,7 @@ fn look_at_keeps_the_horizon_upright() {
 /// It was a reflection, which `is_finite()` happily accepted.
 #[test]
 fn the_canonical_look_at_is_the_identity() {
-    let (mut r, mut body) = (vcam(FOLLOW_NONE), shoulder());
+    let (mut r, body) = (vcam(FOLLOW_NONE), shoulder());
     r.look_at = LOOK_AT_SIMPLE;
     let (_, rot) = desired(
         &r,
@@ -329,7 +329,7 @@ fn the_canonical_look_at_is_the_identity() {
 /// which is what `Mimic` is for.
 #[test]
 fn look_at_none_keeps_the_cameras_own_rotation() {
-    let (mut r, mut body) = (vcam(FOLLOW_SIMPLE), shoulder());
+    let (mut r, body) = (vcam(FOLLOW_SIMPLE), shoulder());
     r.look_at = LOOK_AT_NONE;
     let mine = glam::Quat::from_rotation_y(0.7);
     let targets = glam::Quat::from_rotation_x(1.3);
@@ -444,7 +444,7 @@ fn pitch_raises_the_arm_along_the_local_up() {
 /// normalised zero is `NaN` in every basis downstream.
 #[test]
 fn a_zero_up_falls_back_to_world_instead_of_nan() {
-    let (mut r, mut body) = (vcam(FOLLOW_ORBITAL), shoulder());
+    let (mut r, body) = (vcam(FOLLOW_ORBITAL), shoulder());
     r.look_at = LOOK_AT_SIMPLE;
     let (pos, rot) = desired(
         &r,
@@ -519,7 +519,7 @@ fn rotation_damping_off_snaps_exactly() {
 
 #[test]
 fn a_disabled_rig_is_inert() {
-    let (mut r, mut body) = (vcam(FOLLOW_SIMPLE), shoulder());
+    let (mut r, _body) = (vcam(FOLLOW_SIMPLE), shoulder());
     assert!(!r.is_inert());
     r.enabled = false;
     assert!(r.is_inert(), "a switched-off vcam must not be a candidate");
@@ -527,7 +527,7 @@ fn a_disabled_rig_is_inert() {
 
 #[test]
 fn looking_at_where_you_already_are_is_not_a_nan() {
-    let (mut r, mut body) = (vcam(FOLLOW_GLUED), shoulder());
+    let (mut r, body) = (vcam(FOLLOW_GLUED), shoulder());
     r.look_at = LOOK_AT_SIMPLE;
     let (_, rot) = desired(
         &r,
@@ -545,7 +545,7 @@ fn looking_at_where_you_already_are_is_not_a_nan() {
 /// has to stay finite rather than roll.
 #[test]
 fn looking_straight_down_stays_finite() {
-    let (mut r, mut body) = (vcam(FOLLOW_NONE), shoulder());
+    let (mut r, body) = (vcam(FOLLOW_NONE), shoulder());
     r.look_at = LOOK_AT_SIMPLE;
     let (_, rot) = desired(
         &r,
@@ -741,18 +741,26 @@ fn a_shoulder_stands_beside_the_arm() {
 fn pitch_leaves_the_shoulder_alone() {
     let (mut r, mut body) = (vcam(FOLLOW_SHOULDER), shoulder());
     body.camera_distance = 3.0;
+    body.vertical_arm_length = 1.0;
     r.yaw = 25.0;
     body.shoulder_offset = Vec3::new(0.5, 0.3, -0.2);
 
     let up = Vec3::Y;
     let reference = seed_reference(up);
-    let back = r.back(up, reference);
-    let first = body.shouldered(back, up);
+    // 🔴 Through the whole chain, not through `shouldered` alone: that lives on the body now and
+    // takes no pitch, so calling it in a loop over pitches asks it nothing and passes for free. The
+    // compiler said so — "value assigned to `r` is never read" — before anyone did.
+    let (_, first, _) = r.rig_positions(Vec3::ZERO, up, reference, body);
     for pitch in [-60.0, 0.0, 35.0, 80.0] {
         r.pitch = pitch;
+        let (_, shoulder, hand) = r.rig_positions(Vec3::ZERO, up, reference, body);
         assert!(
-            (body.shouldered(back, up) - first).length() < 1e-4,
-            "pitch {pitch} moved the shoulder",
+            (shoulder - first).length() < 1e-4,
+            "pitch {pitch} moved the shoulder to {shoulder:?}",
+        );
+        assert!(
+            (hand - shoulder).length() > 0.0,
+            "the hand should still rise off it",
         );
     }
 }

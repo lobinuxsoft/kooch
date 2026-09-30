@@ -109,7 +109,7 @@ fn a_move_into_itself_is_refused() {
 #[test]
 fn membership_travels_beside_the_components_not_among_them() {
     let mut resources = ecs();
-    let mut manager = kooch_ecs::SceneManager::new();
+    let manager = kooch_ecs::SceneManager::new();
     let active = manager.active_id().expect("a scene");
     resources.insert(manager);
 

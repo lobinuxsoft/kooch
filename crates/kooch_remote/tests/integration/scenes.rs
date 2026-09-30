@@ -49,7 +49,7 @@ fn loading_a_second_scene_teaches_the_manager() {
     let dir = std::env::temp_dir().join("kooch_remote_load_scene");
     std::fs::create_dir_all(&dir).expect("temp dir");
 
-    let mut write_scene = |name: &str, id: &str| {
+    let write_scene = |name: &str, id: &str| {
         let path = dir.join(name);
         std::fs::write(
             &path,
@@ -61,7 +61,7 @@ fn loading_a_second_scene_teaches_the_manager() {
     let first = write_scene("station.scene", "ae0b881d-c3e2-49e1-ae19-cf8c3db5288e");
     let second = write_scene("hangar.scene", "019023f7-29d5-433e-98c8-e79461209106");
 
-    let mut load = |resources: &mut Resources, path: &std::path::Path| {
+    let load = |resources: &mut Resources, path: &std::path::Path| {
         call(
             resources,
             Method::LoadScene {
