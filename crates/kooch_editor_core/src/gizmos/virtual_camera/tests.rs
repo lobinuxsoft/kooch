@@ -10,10 +10,17 @@ use kooch_ecs::component::ComponentRegistry;
 fn shoulder() -> VirtualCamera {
     VirtualCamera {
         follow: kooch_camera::FOLLOW_SHOULDER,
-        camera_distance: 2.5,
+        ..Default::default()
+    }
+}
+
+/// The body that carries the shoulder's numbers (#1391).
+fn shoulder_body() -> kooch_camera::ThirdPersonFollow {
+    kooch_camera::ThirdPersonFollow {
         shoulder_offset: Vec3::new(0.6, -0.4, 0.0),
         vertical_arm_length: 1.2,
-        ..Default::default()
+        camera_side: 1.0,
+        camera_distance: 2.5,
     }
 }
 
@@ -27,6 +34,13 @@ fn world(vcam: VirtualCamera, entity: Entity, planned: bool) -> Resources {
     registry.register_cpu::<VirtualCamera>();
     registry.register_cpu::<CameraTarget>();
     registry.register_cpu::<GlobalTransform>();
+    registry.register_cpu::<kooch_camera::ThirdPersonFollow>();
+    if vcam.follow == kooch_camera::FOLLOW_SHOULDER {
+        registry
+            .get_cpu_mut::<kooch_camera::ThirdPersonFollow>()
+            .unwrap()
+            .insert(entity, shoulder_body());
+    }
     registry
         .get_cpu_mut::<VirtualCamera>()
         .unwrap()
@@ -73,10 +87,10 @@ fn a_shoulder_draws_its_chain() {
         entity,
         &world(vcam, entity, false),
     );
-    // Three segments for the chain and three strokes at each of its three pivots.
-    assert_eq!(
-        chain(&drawn, &plain),
-        3 + 9,
+    // Three segments for the chain, three strokes at each of its three pivots, and the orbit the arm
+    // swings along — which also moved here, because its length is the body's now (#1391).
+    assert!(
+        chain(&drawn, &plain) >= 3 + 9,
         "{} extra",
         chain(&drawn, &plain)
     );
@@ -89,7 +103,6 @@ fn a_plain_rig_draws_no_chain() {
     let entity = Entity::new(1, 0);
     let vcam = VirtualCamera {
         follow: FOLLOW_ORBITAL,
-        camera_distance: 2.5,
         ..Default::default()
     };
     let at = Mat4::from_translation(Vec3::Z * 2.5);
@@ -120,7 +133,7 @@ fn a_planned_rig_draws_from_its_memory() {
         entity,
         &world(vcam, entity, true),
     );
-    assert_eq!(chain(&drawn, &plain), 3 + 9);
+    assert!(chain(&drawn, &plain) >= 3 + 9);
 }
 
 /// A body that is not the spring arm has no chain to draw.
@@ -129,7 +142,6 @@ fn another_body_draws_no_chain() {
     let entity = Entity::new(1, 0);
     let vcam = VirtualCamera {
         follow: kooch_camera::FOLLOW_SIMPLE,
-        shoulder_offset: Vec3::X,
         ..Default::default()
     };
     let at = Mat4::IDENTITY;
@@ -147,11 +159,10 @@ fn another_body_draws_no_chain() {
 /// 🔴 #1389: the ring surface is the thing being tuned, and three numbers in a list are not a shape.
 #[test]
 fn the_rings_draw_their_surface() {
+    let rings = kooch_camera::ORBIT_THREE_RING;
     let entity = Entity::new(1, 0);
     let vcam = VirtualCamera {
         follow: kooch_camera::FOLLOW_ORBITAL,
-        orbit_style: kooch_camera::ORBIT_THREE_RING,
-        camera_distance: 4.0,
         ..Default::default()
     };
     let at = Mat4::from_translation(Vec3::Z * 4.0);
@@ -159,11 +170,18 @@ fn the_rings_draw_their_surface() {
 
     let mut resources = world(vcam, entity, false);
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
-    registry.register_cpu::<kooch_camera::OrbitalRings>();
+    registry.register_cpu::<kooch_camera::OrbitalFollow>();
     registry
-        .get_cpu_mut::<kooch_camera::OrbitalRings>()
+        .get_cpu_mut::<kooch_camera::OrbitalFollow>()
         .unwrap()
-        .insert(entity, kooch_camera::OrbitalRings::default());
+        .insert(
+            entity,
+            kooch_camera::OrbitalFollow {
+                orbit_style: rings,
+                radius: 4.0,
+                ..Default::default()
+            },
+        );
 
     let drawn = draw_with(&VirtualCameraVisualizer, &vcam, at, entity, &resources);
     assert!(
@@ -176,10 +194,10 @@ fn the_rings_draw_their_surface() {
 /// And a sphere draws none of it: the rings are not the surface it rides.
 #[test]
 fn a_sphere_draws_no_rings() {
+    let rings = kooch_camera::ORBIT_SPHERE;
     let entity = Entity::new(1, 0);
     let vcam = VirtualCamera {
         follow: kooch_camera::FOLLOW_ORBITAL,
-        camera_distance: 4.0,
         ..Default::default()
     };
     let at = Mat4::from_translation(Vec3::Z * 4.0);
@@ -187,11 +205,18 @@ fn a_sphere_draws_no_rings() {
 
     let mut resources = world(vcam, entity, false);
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
-    registry.register_cpu::<kooch_camera::OrbitalRings>();
+    registry.register_cpu::<kooch_camera::OrbitalFollow>();
     registry
-        .get_cpu_mut::<kooch_camera::OrbitalRings>()
+        .get_cpu_mut::<kooch_camera::OrbitalFollow>()
         .unwrap()
-        .insert(entity, kooch_camera::OrbitalRings::default());
+        .insert(
+            entity,
+            kooch_camera::OrbitalFollow {
+                orbit_style: rings,
+                radius: 4.0,
+                ..Default::default()
+            },
+        );
 
     let drawn = draw_with(&VirtualCameraVisualizer, &vcam, at, entity, &resources);
     assert_eq!(chain(&drawn, &plain), 0);

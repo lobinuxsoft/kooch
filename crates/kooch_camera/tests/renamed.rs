@@ -53,8 +53,10 @@ fn the_old_field_names_still_load() {
         };
         assert!(set.is_ok(), "{was} was dropped: {set:?}");
     }
-    assert_eq!(vcam.camera_distance, 9.0);
-    assert_eq!(vcam.shoulder_offset, glam::Vec3::splat(0.5));
-    assert_eq!(vcam.vertical_arm_length, 1.5);
-    assert_eq!(vcam.camera_side, 0.25);
+    // 🔴 These moved to the body components in #1391, so the alias lands them in the hidden fields a
+    // migration empties — the value survives the load, which is what the alias is for.
+    assert_eq!(vcam.was_distance, 9.0);
+    assert_eq!(vcam.was_shoulder, glam::Vec3::splat(0.5));
+    assert_eq!(vcam.was_arm_length, 1.5);
+    assert_eq!(vcam.was_side, 0.25);
 }

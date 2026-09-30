@@ -1,8 +1,8 @@
 use super::*;
 
 /// The three rings, as Cinemachine ships them.
-fn rings() -> OrbitalRings {
-    OrbitalRings::default()
+fn rings() -> OrbitalFollow {
+    OrbitalFollow::default()
 }
 
 /// Looking down −Z from the target, so a point reads as `(height, radius back)`.
@@ -68,11 +68,11 @@ fn the_surface_stands_on_the_local_up() {
 /// Curvature shapes the ends without moving them: the rings are knots the curve passes through.
 #[test]
 fn curvature_leaves_the_rings_alone() {
-    let taut = OrbitalRings {
+    let taut = OrbitalFollow {
         spline_curvature: 0.0,
         ..rings()
     };
-    let loose = OrbitalRings {
+    let loose = OrbitalFollow {
         spline_curvature: 1.0,
         ..rings()
     };

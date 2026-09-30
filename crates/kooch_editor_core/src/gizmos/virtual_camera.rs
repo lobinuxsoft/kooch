@@ -76,36 +76,6 @@ impl Visualizer<VirtualCamera> for VirtualCameraVisualizer {
             let up = (to_world(Vec3::Y) - origin).normalize_or(Vec3::Y);
             gizmos.line(origin, origin + up * UP_LENGTH, UP_COLOR);
         }
-
-        // The spring arm's orbit. `distance` and `yaw` are otherwise two numbers with nothing to
-        // check them against, and this is the circle the camera will swing along when yaw changes.
-        let on_an_arm = vcam.follow == FOLLOW_ORBITAL || vcam.follow == FOLLOW_SHOULDER;
-        if on_an_arm && vcam.camera_distance > 1e-3 {
-            let forward = (to_world(-Vec3::Z) - origin).normalize_or(-Vec3::Z);
-            let up = (to_world(Vec3::Y) - origin).normalize_or(Vec3::Y);
-            let centre = origin + forward * vcam.camera_distance;
-
-            // A basis on the orbit plane: perpendicular to up, through
-            // the vcam. Using the vcam's own offset as the start angle
-            // means the circle always passes through the marker.
-            let radial = origin - centre;
-            let radial_flat = radial - up * radial.dot(up);
-            let Some(start) = radial_flat.try_normalize() else {
-                return;
-            };
-            let radius = radial_flat.length();
-            let side = up.cross(start);
-
-            let mut prev = centre + start * radius;
-            for i in 1..=ORBIT_SEGMENTS {
-                let a = i as f32 / ORBIT_SEGMENTS as f32 * std::f32::consts::TAU;
-                let p = centre + (start * a.cos() + side * a.sin()) * radius;
-                gizmos.line(prev, p, colour * 0.55);
-                prev = p;
-            }
-            // And the arm itself, so the radius is not just implied.
-            gizmos.line(origin, centre, colour * 0.55);
-        }
     }
 
     /// The pivot chain the shoulder builds, drawn as Cinemachine draws it: root → shoulder → hand →
@@ -142,10 +112,12 @@ impl Visualizer<VirtualCamera> for VirtualCameraVisualizer {
             });
         // The surface an orbital rig rides, where it rides one: three circles and the spline joining
         // them. A shape you cannot see is a shape you cannot tune (#1379).
-        if vcam.orbit_style == kooch_camera::ORBIT_THREE_RING
-            && let Some(rings) = resources
-                .get::<kooch_ecs::component::ComponentRegistry>()
-                .and_then(|registry| kooch_camera::orbital_rings::of(registry, entity))
+        if let Some(rings) = resources
+            .get::<kooch_ecs::component::ComponentRegistry>()
+            .and_then(|registry| kooch_camera::orbital_follow::of(registry, entity))
+            .filter(|body| {
+                vcam.follow == FOLLOW_ORBITAL && body.orbit_style == kooch_camera::ORBIT_THREE_RING
+            })
         {
             let back = (transform.matrix.to_scale_rotation_translation().2 - target)
                 .try_normalize()
@@ -171,16 +143,28 @@ impl Visualizer<VirtualCamera> for VirtualCameraVisualizer {
                 );
             }
         }
-        if vcam.follow != FOLLOW_SHOULDER {
+        let Some(body) = resources
+            .get::<kooch_ecs::component::ComponentRegistry>()
+            .and_then(|registry| kooch_camera::third_person_follow::of(registry, entity))
+            .filter(|_| vcam.follow == FOLLOW_SHOULDER)
+        else {
             return;
+        };
+        // The spring arm's orbit, from the body that knows how long it is: `camera_distance` and
+        // `yaw` are otherwise two numbers with nothing to check them against.
+        let camera = transform.matrix.to_scale_rotation_translation().2;
+        let (root, shoulder, hand) = vcam.rig_positions(target, up, reference, body);
+        if body.camera_distance > 1e-3 {
+            // The hand the arm reaches back from: the last pivot, whatever the shoulder did.
+            let centre = hand;
+            circle(gizmos, centre, up, (camera - centre).length(), RIG * 0.8);
+            gizmos.line(camera, centre, RIG * 0.8);
         }
-        let (root, shoulder, hand) = vcam.rig_positions(target, up, reference);
         // Nothing authored collapses all three onto the target: a plain orbital rig draws the arm it
         // already had, not a chain of stubs on top of it.
         if root.abs_diff_eq(hand, 1e-4) {
             return;
         }
-        let camera = transform.matrix.to_scale_rotation_translation().2;
         gizmos.line(root, shoulder, RIG);
         gizmos.line(shoulder, hand, RIG);
         gizmos.line(hand, camera, RIG);

@@ -176,19 +176,30 @@ pub fn report_orphans(resources: &mut Resources) {
                     .is_some_and(|vcam| vcam.follow == crate::FOLLOW_POSITION_COMPOSER)
             })
         };
-        // Rings are read only by the body that rides them, and only in the style that asks.
-        let ringed = |entity: Entity| {
+        // A body is read only by the vcam that names it.
+        let orbiting = |entity: Entity| {
             vcams.is_some_and(|vcams| {
-                vcams.get(entity).is_some_and(|vcam| {
-                    vcam.follow == crate::FOLLOW_ORBITAL
-                        && vcam.orbit_style == crate::ORBIT_THREE_RING
-                })
+                vcams
+                    .get(entity)
+                    .is_some_and(|vcam| vcam.follow == crate::FOLLOW_ORBITAL)
             })
         };
         sweep(
-            "OrbitalRings",
-            entities_of::<crate::OrbitalRings>(registry),
-            &ringed,
+            "OrbitalFollow",
+            entities_of::<crate::OrbitalFollow>(registry),
+            &orbiting,
+        );
+        let shouldering = |entity: Entity| {
+            vcams.is_some_and(|vcams| {
+                vcams
+                    .get(entity)
+                    .is_some_and(|vcam| vcam.follow == crate::FOLLOW_SHOULDER)
+            })
+        };
+        sweep(
+            "ThirdPersonFollow",
+            entities_of::<crate::ThirdPersonFollow>(registry),
+            &shouldering,
         );
         sweep(
             "PositionComposer",
@@ -264,11 +275,15 @@ pub fn report_orphans(resources: &mut Resources) {
                 && vcam.look_at == crate::LOOK_AT_COMPOSED)
                 .then_some(entity)
         }));
+        let shoulders = registry.get_cpu::<crate::ThirdPersonFollow>();
         cancelled.extend(vcams.iter().filter_map(|(&entity, vcam)| {
+            let offset = shoulders
+                .and_then(|bodies| bodies.get(entity))
+                .is_some_and(|body| body.shoulder_offset != Vec3::ZERO);
             (vcam.follow == crate::FOLLOW_SHOULDER
                 && vcam.look_at != crate::LOOK_AT_ARM
                 && vcam.look_at != crate::LOOK_AT_NONE
-                && vcam.shoulder_offset != Vec3::ZERO)
+                && offset)
                 .then_some(entity)
         }));
     }

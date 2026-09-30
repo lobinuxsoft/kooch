@@ -30,12 +30,21 @@ const OF_THE_RIG: &[(&str, &str, Option<InMode>)] = &[
         }),
     ),
     (
-        "OrbitalRings",
+        "OrbitalFollow",
         "VirtualCamera",
         Some(InMode {
-            field: "orbit_style",
-            value: kooch_camera::ORBIT_THREE_RING,
-            asked: "Three Ring",
+            field: "follow",
+            value: kooch_camera::FOLLOW_ORBITAL,
+            asked: "Orbital Follow",
+        }),
+    ),
+    (
+        "ThirdPersonFollow",
+        "VirtualCamera",
+        Some(InMode {
+            field: "follow",
+            value: kooch_camera::FOLLOW_SHOULDER,
+            asked: "Third Person Follow",
         }),
     ),
     ("ThirdPersonAim", "VirtualCamera", None),

@@ -50,6 +50,7 @@ fn world() -> Resources {
     registry.register_cpu::<kooch_physics::plugin::SolverBody>();
     registry.register_cpu_reflected::<VirtualCamera>();
     registry.register_cpu_reflected::<CameraTarget>();
+    registry.register_cpu_reflected::<kooch_camera::OrbitalFollow>();
     registry.register_cpu_reflected::<Deoccluder>();
     r
 }
@@ -143,13 +144,20 @@ fn rig_damped(collision: bool, damping: bool) -> (Resources, Entity, Entity) {
         VirtualCamera {
             follow: FOLLOW_ORBITAL,
             look_at: LOOK_AT_SIMPLE,
-            camera_distance: ARM,
             // 🔴 The duration is what says rigid, not the switch: since #1333 the switch is folded
             // into it on load and a vcam built in code never goes through one.
             damping: match damping {
                 true => Vec3::splat(0.5),
                 false => Vec3::ZERO,
             },
+            ..Default::default()
+        },
+    );
+    insert(
+        &mut resources,
+        vcam,
+        kooch_camera::OrbitalFollow {
+            radius: ARM,
             ..Default::default()
         },
     );
