@@ -50,7 +50,9 @@ pub(crate) use visibility::{
     GizmoGroup, GizmoVisibility, draw_gizmo_menu, groups_from_resources, load_visibility_system,
     save_visibility_system,
 };
-use visualizers::{OrthographicCameraVisualizer, PerspectiveCameraVisualizer};
+use visualizers::{
+    LensOverrideVisualizer, OrthographicCameraVisualizer, PerspectiveCameraVisualizer,
+};
 
 // ---------------------------------------------------------------------------
 // Systems
@@ -71,9 +73,9 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     // much of the arm a wall is holding, which point a group of targets resolves to. None of it
     // was on screen, and three days of this rig's bugs were found by playing instead (#1334).
     registry.register::<kooch_camera::CameraLookahead, camera_rig::LookaheadVisualizer>();
+    registry.register::<kooch_camera::LensOverride, LensOverrideVisualizer>();
     registry
-        .register::<kooch_camera::occlusion::Deoccluder, camera_rig::CameraCollisionVisualizer>(
-        );
+        .register::<kooch_camera::occlusion::Deoccluder, camera_rig::CameraCollisionVisualizer>();
     registry.register::<kooch_camera::target::CameraTarget, camera_rig::CameraTargetVisualizer>();
     // Lights: where they point and how far they reach. `range` and the
     // cone angles are otherwise numbers with nothing to check them against.

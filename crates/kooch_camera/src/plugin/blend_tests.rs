@@ -7,7 +7,12 @@ fn vcam(index: u32) -> Entity {
 
 fn started(duration: f32) -> CameraBlend {
     let mut b = CameraBlend::default();
-    b.begin(vcam(1), (Vec3::ZERO, glam::Quat::IDENTITY), duration);
+    b.begin(
+        vcam(1),
+        (Vec3::ZERO, glam::Quat::IDENTITY),
+        LensOverride::default(),
+        duration,
+    );
     b
 }
 
@@ -34,7 +39,12 @@ fn interrupting_a_handover_starts_from_where_the_camera_is() {
     let mut b = started(1.0);
     b.elapsed = 0.5;
     let on_screen = Vec3::new(3.0, 1.0, -2.0);
-    b.begin(vcam(2), (on_screen, glam::Quat::IDENTITY), 1.0);
+    b.begin(
+        vcam(2),
+        (on_screen, glam::Quat::IDENTITY),
+        LensOverride::default(),
+        1.0,
+    );
 
     assert_eq!(b.active, Some(vcam(2)));
     assert_eq!(b.from_pos, on_screen);

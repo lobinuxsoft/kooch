@@ -10,6 +10,9 @@ use kooch_gizmos::{Gizmos, Visualizer};
 
 const FRUSTUM_COLOR: Vec3 = Vec3::new(0.4, 0.8, 1.0);
 const ORTHO_COLOR: Vec3 = Vec3::new(0.6, 0.85, 1.0);
+/// What a vcam asks for, in the rig's warm hue rather than the camera's blue: this is the rig's
+/// doing, not the camera's own shape.
+const ASKED_COLOR: Vec3 = Vec3::new(1.0, 0.85, 0.45);
 
 /// Aspect ratio used to draw camera frustums. The viewport's actual aspect is not exposed to
 /// visualizers in v1 — a fixed 16:9 keeps the frustum shape readable. Future work: read the live
@@ -28,52 +31,65 @@ impl Visualizer<PerspectiveCamera> for PerspectiveCameraVisualizer {
         transform: &GlobalTransform,
         gizmos: &mut Gizmos<'_>,
     ) {
-        let half_fov = (camera.fov.to_radians() * 0.5).tan();
-        let near_h = camera.near * half_fov;
-        let near_w = near_h * FRUSTUM_ASPECT;
-        let far_h = camera.far * half_fov;
-        let far_w = far_h * FRUSTUM_ASPECT;
+        frustum(
+            gizmos,
+            transform.matrix,
+            camera.fov,
+            camera.near,
+            camera.far,
+            FRUSTUM_COLOR,
+        );
+    }
+}
 
-        // Local-space corners. Camera looks down -Z (right-handed).
-        let near = [
-            Vec3::new(near_w, near_h, -camera.near),
-            Vec3::new(-near_w, near_h, -camera.near),
-            Vec3::new(-near_w, -near_h, -camera.near),
-            Vec3::new(near_w, -near_h, -camera.near),
-        ];
-        let far = [
-            Vec3::new(far_w, far_h, -camera.far),
-            Vec3::new(-far_w, far_h, -camera.far),
-            Vec3::new(-far_w, -far_h, -camera.far),
-            Vec3::new(far_w, -far_h, -camera.far),
-        ];
+/// The pyramid a lens cuts out of the world: rectangles at the near and far planes and the four
+/// edges between them, drawn in the space `matrix` puts them.
+fn frustum(
+    gizmos: &mut Gizmos<'_>,
+    matrix: glam::Mat4,
+    fov: f32,
+    near: f32,
+    far: f32,
+    colour: Vec3,
+) {
+    let half_fov = (fov.clamp(1.0, 179.0).to_radians() * 0.5).tan();
+    // Camera looks down -Z (right-handed).
+    let plane = |distance: f32| {
+        let h = distance * half_fov;
+        let w = h * FRUSTUM_ASPECT;
+        [
+            matrix.transform_point3(Vec3::new(w, h, -distance)),
+            matrix.transform_point3(Vec3::new(-w, h, -distance)),
+            matrix.transform_point3(Vec3::new(-w, -h, -distance)),
+            matrix.transform_point3(Vec3::new(w, -h, -distance)),
+        ]
+    };
+    let (near, far) = (plane(near), plane(far));
+    for i in 0..4 {
+        gizmos.line(near[i], near[(i + 1) % 4], colour);
+        gizmos.line(far[i], far[(i + 1) % 4], colour);
+        gizmos.line(near[i], far[i], colour);
+    }
+}
 
-        let to_world = |p: Vec3| transform.matrix.transform_point3(p);
-        let near_w: [Vec3; 4] = [
-            to_world(near[0]),
-            to_world(near[1]),
-            to_world(near[2]),
-            to_world(near[3]),
-        ];
-        let far_w: [Vec3; 4] = [
-            to_world(far[0]),
-            to_world(far[1]),
-            to_world(far[2]),
-            to_world(far[3]),
-        ];
+/// The frustum a vcam ASKS for, while it is selected (#1254).
+///
+/// 🔴 Drawn from the vcam's own pose, in its own colour, because it is not the camera's: a vcam
+/// that asks for 30° next to one that asks for 90° is two different pictures of the same scene,
+/// and the number in the Inspector does not say how different. The roll is in here too — it is the
+/// only place `dutch` can be seen without pressing Play.
+#[derive(Default)]
+pub(crate) struct LensOverrideVisualizer;
 
-        // Near rectangle.
-        for i in 0..4 {
-            gizmos.line(near_w[i], near_w[(i + 1) % 4], FRUSTUM_COLOR);
-        }
-        // Far rectangle.
-        for i in 0..4 {
-            gizmos.line(far_w[i], far_w[(i + 1) % 4], FRUSTUM_COLOR);
-        }
-        // Connecting edges from near to far (the 4 frustum side edges).
-        for i in 0..4 {
-            gizmos.line(near_w[i], far_w[i], FRUSTUM_COLOR);
-        }
+impl Visualizer<kooch_camera::LensOverride> for LensOverrideVisualizer {
+    fn draw(
+        &self,
+        lens: &kooch_camera::LensOverride,
+        transform: &GlobalTransform,
+        gizmos: &mut Gizmos<'_>,
+    ) {
+        let rolled = transform.matrix * glam::Mat4::from_rotation_z(-lens.dutch.to_radians());
+        frustum(gizmos, rolled, lens.fov, lens.near, lens.far, ASKED_COLOR);
     }
 }
 

@@ -1,6 +1,7 @@
 //! The rig with a [`RotationComposer`] (#1252): a target wandering inside the dead zone moves nothing.
 
 use super::*;
+use crate::framing::Lens;
 use crate::{CameraLookahead, RotationComposer};
 use glam::Vec2;
 use kooch_ecs::allocator::EntityAllocator;
@@ -125,7 +126,9 @@ fn pose(resources: &Resources, entity: Entity) -> (Vec3, glam::Quat) {
 /// Where `target` lands on screen for the vcam's pose, through the lens the rig itself used.
 fn on_screen(resources: &Resources, vcam: Entity, target: Vec3) -> Vec2 {
     let registry = resources.get::<ComponentRegistry>().unwrap();
-    let lens = lens(resources, registry);
+    // The same lens the rig used: what this vcam asks for, or the camera's.
+    let asked = crate::lens_override::lens_of(registry, vcam, authored_lens(resources, registry));
+    let lens = Lens::new(asked.fov, view_aspect(resources));
     let (position, rotation) = pose(resources, vcam);
     let to = target - position;
     let span = lens.span(to.dot(rotation * -Vec3::Z));
