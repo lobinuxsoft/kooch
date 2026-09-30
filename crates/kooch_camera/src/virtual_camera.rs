@@ -345,17 +345,18 @@ impl VirtualCamera {
         !self.enabled || (self.follow == FOLLOW_NONE && self.look_at == LOOK_AT_NONE)
     }
 
-    /// Where this vcam wants to stand, before any damping: a pure function of the point it follows,
-    /// where it is now and a resolved `up`.
+    /// Where this vcam wants to stand, before any damping, for the bodies that need nothing but the
+    /// point they follow. `current` is what `None` keeps, which is what lets a vcam look without
+    /// moving.
     ///
-    /// `current` is what `Follow::None` keeps, which is what lets a vcam look without moving.
-    pub fn wanted(&self, target: Vec3, current: Vec3, up: Vec3, reference: Vec3) -> Vec3 {
-        let up = normalised_up(up);
+    /// 🔴 No `up` and no `reference`: since #1391 the arm bodies carry their own numbers and are
+    /// placed from their components ([`on_sphere`](Self::on_sphere), [`on_shoulder`](Self::on_shoulder)),
+    /// and what is left here needs neither. A parameter nothing reads makes every caller compute a
+    /// value to throw away and tells the next reader something untrue about what this depends on.
+    pub fn wanted(&self, target: Vec3, current: Vec3) -> Vec3 {
         match self.follow {
             FOLLOW_GLUED => target,
             FOLLOW_SIMPLE => target + self.offset,
-            // The arm bodies carry their own numbers; `body_stage` places them from those.
-            FOLLOW_ORBITAL | FOLLOW_SHOULDER => current,
             _ => current,
         }
     }
@@ -634,12 +635,7 @@ pub fn body_stage(step: &mut crate::rig::RigStep) {
         crate::position_composer::body(step);
         return;
     }
-    let wanted = step.vcam.wanted(
-        step.frame.target,
-        step.frame.position,
-        step.up,
-        step.reference,
-    );
+    let wanted = step.vcam.wanted(step.frame.target, step.frame.position);
     step.frame
         .place(step.vcam.damped(step.frame.previous, wanted, step.dt));
 }

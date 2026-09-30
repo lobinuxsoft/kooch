@@ -138,7 +138,7 @@ fn the_soft_zone_arrives_on_time() {
             let target = Vec3::new(3.0, 0.0, 0.0);
             let mut state = Framed::at(Vec3::ZERO);
             let mut rotation = Quat::IDENTITY;
-            let mut at = |state: &mut Framed, point: Vec3, rotation: Quat| {
+            let at = |state: &mut Framed, point: Vec3, rotation: Quat| {
                 let mut frame = CameraFrame::new(EYE, EYE, rotation, point, lens());
                 framing.compose(state, &mut frame, Vec3::Y, Vec3::Z, dt);
                 frame.rotation

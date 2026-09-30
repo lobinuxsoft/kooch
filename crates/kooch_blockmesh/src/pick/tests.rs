@@ -1,4 +1,4 @@
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Vec2, Vec3};
 
 use super::{Screen, edge_at, face_at, vertex_at};
 use crate::{Adjacency, BlockMesh};
