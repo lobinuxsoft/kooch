@@ -677,7 +677,7 @@ mod tests;
 /// always had them. Left alone, the fields would stop showing and stop being read on the same load —
 /// an offset tuned for an hour, gone with nothing said.
 pub fn migrate_bodies(resources: &mut kooch_core::resource::Resources) {
-    let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
+    let Some(registry) = resources.get::<kooch_ecs::component::ComponentRegistry>() else {
         return;
     };
     let Some(vcams) = registry.get_cpu::<VirtualCamera>() else {
@@ -703,34 +703,35 @@ pub fn migrate_bodies(resources: &mut kooch_core::resource::Resources) {
     for (entity, vcam) in &moved {
         // A shoulder authored anywhere means the shoulder body, as #1380 already decided.
         let shouldered = vcam.was_shoulder != Vec3::ZERO || vcam.was_arm_length != 0.0;
-        if shouldered {
-            let body = crate::ThirdPersonFollow {
-                shoulder_offset: vcam.was_shoulder,
-                vertical_arm_length: vcam.was_arm_length,
-                camera_side: match vcam.was_side >= 0.0 {
-                    true => vcam.was_side,
-                    false => 1.0,
+        match shouldered {
+            true => added(
+                resources,
+                *entity,
+                crate::ThirdPersonFollow {
+                    shoulder_offset: vcam.was_shoulder,
+                    vertical_arm_length: vcam.was_arm_length,
+                    camera_side: match vcam.was_side >= 0.0 {
+                        true => vcam.was_side,
+                        false => 1.0,
+                    },
+                    camera_distance: match vcam.was_distance > 0.0 {
+                        true => vcam.was_distance,
+                        false => 2.0,
+                    },
                 },
-                camera_distance: match vcam.was_distance > 0.0 {
-                    true => vcam.was_distance,
-                    false => 2.0,
+            ),
+            false => added(
+                resources,
+                *entity,
+                crate::OrbitalFollow {
+                    radius: match vcam.was_distance > 0.0 {
+                        true => vcam.was_distance,
+                        false => 6.0,
+                    },
+                    orbit_style: vcam.was_orbit_style,
+                    ..Default::default()
                 },
-            };
-            if let Some(storage) = registry.get_cpu_mut::<crate::ThirdPersonFollow>() {
-                storage.insert(*entity, body);
-            }
-        } else {
-            let body = crate::OrbitalFollow {
-                radius: match vcam.was_distance > 0.0 {
-                    true => vcam.was_distance,
-                    false => 6.0,
-                },
-                orbit_style: vcam.was_orbit_style,
-                ..Default::default()
-            };
-            if let Some(storage) = registry.get_cpu_mut::<crate::OrbitalFollow>() {
-                storage.insert(*entity, body);
-            }
+            ),
         }
         tracing::info!(
             target: "kooch_camera",
@@ -740,20 +741,49 @@ pub fn migrate_bodies(resources: &mut kooch_core::resource::Resources) {
         );
     }
 
-    if let Some(vcams) = registry.get_cpu_mut::<VirtualCamera>() {
-        for (entity, _) in &moved {
-            if let Some(vcam) = vcams.get_mut(*entity) {
-                let shouldered = vcam.was_shoulder != Vec3::ZERO || vcam.was_arm_length != 0.0;
-                vcam.follow = match shouldered {
-                    true => FOLLOW_SHOULDER,
-                    false => vcam.follow,
-                };
-                vcam.was_distance = 0.0;
-                vcam.was_orbit_style = ORBIT_SPHERE;
-                vcam.was_shoulder = Vec3::ZERO;
-                vcam.was_arm_length = 0.0;
-                vcam.was_side = -1.0;
-            }
+    let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
+        return;
+    };
+    let Some(vcams) = registry.get_cpu_mut::<VirtualCamera>() else {
+        return;
+    };
+    for (entity, _) in &moved {
+        let Some(vcam) = vcams.get_mut(*entity) else {
+            continue;
+        };
+        if vcam.was_shoulder != Vec3::ZERO || vcam.was_arm_length != 0.0 {
+            vcam.follow = FOLLOW_SHOULDER;
         }
+        vcam.was_distance = 0.0;
+        vcam.was_orbit_style = ORBIT_SPHERE;
+        vcam.was_shoulder = Vec3::ZERO;
+        vcam.was_arm_length = 0.0;
+        vcam.was_side = -1.0;
+    }
+}
+
+/// Puts `value` on `entity` **and** tells the archetype registry about it.
+///
+/// 🔴 Two steps, and the second is the one that makes the entity *have* the component. Without it
+/// the value sits in the storage where a direct lookup finds it, while every query and the Inspector
+/// skip the entity entirely — which is how a migrated body reached its storage and never its
+/// entity (#1395).
+fn added<T: kooch_ecs::component::Component + kooch_ecs::reflect::Reflect>(
+    resources: &mut kooch_core::resource::Resources,
+    entity: kooch_ecs::entity::Entity,
+    value: T,
+) {
+    if let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() {
+        registry.register_cpu_reflected::<T>();
+        if let Some(storage) = registry.get_cpu_mut::<T>() {
+            storage.insert(entity, value);
+        }
+    }
+    if let Some(archetypes) =
+        resources.get_mut::<kooch_ecs::archetype_registry::ArchetypeRegistry>()
+        && let Some(current) = archetypes.entity_archetype(entity)
+    {
+        let next = archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<T>());
+        archetypes.register_entity(entity, next);
     }
 }

@@ -982,7 +982,10 @@ fn a_shoulder_moves_to_its_own_body() {
 fn the_body_numbers_reach_their_component() {
     use kooch_ecs::component::ComponentRegistry;
 
+    use kooch_ecs::archetype_registry::ArchetypeRegistry;
+
     let mut resources = kooch_core::resource::Resources::new();
+    let mut archetypes = ArchetypeRegistry::new();
     let mut registry = ComponentRegistry::new();
     registry.register_cpu_reflected::<VirtualCamera>();
     registry.register_cpu_reflected::<crate::OrbitalFollow>();
@@ -1012,6 +1015,11 @@ fn the_body_numbers_reach_their_component() {
             ..Default::default()
         },
     );
+    // The entities exist in the world, which is what the migration has to add to.
+    let empty = archetypes.get_or_create(Default::default());
+    archetypes.register_entity(orbital, empty);
+    archetypes.register_entity(shouldered, empty);
+    resources.insert(archetypes);
     resources.insert(registry);
 
     crate::virtual_camera::migrate_bodies(&mut resources);
@@ -1040,4 +1048,21 @@ fn the_body_numbers_reach_their_component() {
     assert_eq!(vcams.get(shouldered).unwrap().follow, FOLLOW_SHOULDER);
     // The hidden fields are emptied, so the migration runs once.
     assert_eq!(vcams.get(orbital).unwrap().was_distance, 0.0);
+
+    // 🔴 And the entity **has** it, not just the storage. A value written without the archetype is
+    // invisible to every query and to the Inspector, which is exactly how this shipped (#1395).
+    let archetypes = resources.get::<ArchetypeRegistry>().unwrap();
+    for (entity, name) in [
+        (orbital, std::any::TypeId::of::<crate::OrbitalFollow>()),
+        (
+            shouldered,
+            std::any::TypeId::of::<crate::ThirdPersonFollow>(),
+        ),
+    ] {
+        let at = archetypes.entity_archetype(entity).expect("no archetype");
+        assert!(
+            archetypes.get(at).unwrap().components().contains(&name),
+            "the body is in the storage and not on the entity",
+        );
+    }
 }
