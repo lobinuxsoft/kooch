@@ -3,7 +3,8 @@
 
 use std::any::TypeId;
 
-use kooch_camera::VirtualCamera;
+use kooch_camera::orbit::CameraOrbit;
+use kooch_camera::{OrbitalFollow, PanTilt, RotationComposer, ThirdPersonFollow, VirtualCamera};
 use kooch_ecs::directional_light::DirectionalLight;
 use kooch_ecs::mesh_renderer::MeshRenderer;
 use kooch_ecs::orthographic_camera::OrthographicCamera;
@@ -22,6 +23,30 @@ fn display_name(stem: &str) -> String {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
     }
+}
+
+/// The components an Orbital Follow rig is, in the order the menu spawns them.
+///
+/// 🔴 Named rather than written inline so a test can assert the set is one the rig does not report
+/// on: since #1397 the components **are** the rig, and a menu that spawns an incomplete one is the
+/// new way to get this wrong (#1399).
+pub(crate) fn orbital_rig() -> Vec<TypeId> {
+    vec![
+        TypeId::of::<VirtualCamera>(),
+        TypeId::of::<OrbitalFollow>(),
+        TypeId::of::<RotationComposer>(),
+        TypeId::of::<CameraOrbit>(),
+    ]
+}
+
+/// The same for a Third Person Follow rig.
+pub(crate) fn shoulder_rig() -> Vec<TypeId> {
+    vec![
+        TypeId::of::<VirtualCamera>(),
+        TypeId::of::<ThirdPersonFollow>(),
+        TypeId::of::<PanTilt>(),
+        TypeId::of::<CameraOrbit>(),
+    ]
 }
 
 /// The spawn entries, shared by every menu that offers them.
@@ -61,7 +86,30 @@ pub(super) fn spawn_entries(
             // Separated because it is not a camera: it is a framing that
             // drives one. Sitting in the same list unmarked invites
             // spawning it and wondering why nothing renders through it.
-            if ui.button("Virtual Camera").clicked() {
+            // 🔴 The whole rig, because since #1397 the components **are** the rig and a bare vcam
+            // is one the engine reports as incomplete the moment it spawns. Assembling four
+            // components from memory is the way this is got wrong now (#1399).
+            if ui.button("Orbital Follow Camera").clicked() {
+                actions.push(EditorAction::Spawn {
+                    into,
+                    extra: orbital_rig(),
+                    name: Some("Orbital Follow Camera".to_owned()),
+                });
+                ui.close();
+            }
+            // `PanTilt`, not a composer: a composer turns back to re-frame the target and cancels
+            // the shoulder's effect on screen — measured at −0.117 against 0.000 (#1379).
+            if ui.button("Third Person Follow Camera").clicked() {
+                actions.push(EditorAction::Spawn {
+                    into,
+                    extra: shoulder_rig(),
+                    name: Some("Third Person Follow Camera".to_owned()),
+                });
+                ui.close();
+            }
+            // Kept: a rig assembled by hand is a legitimate thing to want, and a menu that removed
+            // the option would be deciding for the author.
+            if ui.button("Virtual Camera (bare)").clicked() {
                 actions.push(EditorAction::Spawn {
                     into,
                     extra: vec![TypeId::of::<VirtualCamera>()],
@@ -156,3 +204,6 @@ fn block_menu(
         }
     });
 }
+
+#[cfg(test)]
+mod tests;
