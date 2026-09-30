@@ -439,3 +439,66 @@ fn only_one_aim_runs() {
         "the framing reached an aim it does not own: {seen}"
     );
 }
+
+/// 🔴 #1389: the pitch **selects** a point on the ring surface instead of swinging an arm, and it
+/// maps over the orbit's own limits so the ends of the stick reach the ends of the rig.
+#[test]
+fn the_pitch_walks_the_ring_surface() {
+    let (mut resources, vcam, _) = world();
+    {
+        let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+        registry.register_cpu::<crate::OrbitalRings>();
+        registry
+            .get_cpu_mut::<crate::OrbitalRings>()
+            .unwrap()
+            .insert(vcam, crate::OrbitalRings::default());
+        registry.register_cpu::<crate::orbit::CameraOrbit>();
+        registry
+            .get_cpu_mut::<crate::orbit::CameraOrbit>()
+            .unwrap()
+            .insert(
+                vcam,
+                crate::orbit::CameraOrbit {
+                    pitch_min: -30.0,
+                    pitch_max: 70.0,
+                    ..Default::default()
+                },
+            );
+        let cam = registry
+            .get_cpu_mut::<VirtualCamera>()
+            .unwrap()
+            .get_mut(vcam)
+            .unwrap();
+        cam.follow = crate::FOLLOW_ORBITAL;
+        cam.orbit_style = crate::ORBIT_THREE_RING;
+        cam.look_at = crate::LOOK_AT_ARM;
+        cam.camera_distance = 99.0;
+    }
+    let at = |resources: &mut Resources, pitch: f32| {
+        resources
+            .get_mut::<ComponentRegistry>()
+            .unwrap()
+            .get_cpu_mut::<VirtualCamera>()
+            .unwrap()
+            .get_mut(vcam)
+            .unwrap()
+            .pitch = pitch;
+        for _ in 0..200 {
+            drive_virtual_cameras(resources);
+        }
+        pose(resources, vcam).0
+    };
+
+    let bottom = at(&mut resources, -30.0);
+    let middle = at(&mut resources, 20.0);
+    let top = at(&mut resources, 70.0);
+    let rings = crate::OrbitalRings::default();
+
+    // The ends land on the rings they name, and `camera_distance` is not what places any of them.
+    assert!((bottom.y - rings.bottom_height).abs() < 0.05, "{bottom:?}");
+    assert!((top.y - rings.top_height).abs() < 0.05, "{top:?}");
+    // And the middle is wider than either end: the surface, not a sphere.
+    let out = |at: Vec3| Vec2::new(at.x, at.z).length();
+    assert!(out(middle) > out(bottom) + 1.0, "{middle:?} vs {bottom:?}");
+    assert!(out(middle) > out(top) + 1.0, "{middle:?} vs {top:?}");
+}

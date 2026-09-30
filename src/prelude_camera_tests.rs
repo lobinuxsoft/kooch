@@ -28,6 +28,7 @@ fn every_camera_mode_is_reachable() {
         LOOK_AT_COMPOSED,
     ];
     let ups = [UP_WORLD, UP_GRAVITY, UP_TARGET];
+    let surfaces = [ORBIT_SPHERE, ORBIT_THREE_RING];
 
     // And each list is as long as the dropdown that offers it: a mode added to the engine and not
     // exported is one a project cannot ask for from code.
@@ -42,5 +43,9 @@ fn every_camera_mode_is_reachable() {
     assert_eq!(
         ups.len(),
         kooch_camera::virtual_camera::UP_MODE_CHOICES.len(),
+    );
+    assert_eq!(
+        surfaces.len(),
+        kooch_camera::virtual_camera::ORBIT_STYLE_CHOICES.len(),
     );
 }
