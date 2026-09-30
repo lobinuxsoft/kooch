@@ -17,6 +17,7 @@ use kooch_ecs::transform::Transform;
 use crate::brain::CameraBrain;
 use crate::frame::CameraFrame;
 use crate::framing::Lens;
+use crate::lens_override::LensOverride;
 use crate::rig::{CameraRig, RigMemory, RigStep};
 use crate::target::{CameraTarget, GroupPose};
 use crate::virtual_camera::{
@@ -69,6 +70,7 @@ impl Plugin for CameraComponentsPlugin {
                 registry.register_cpu_reflected::<crate::occlusion::Deoccluder>();
                 registry.register_cpu_reflected::<crate::framing::RotationComposer>();
                 registry.register_cpu_reflected::<crate::lookahead::CameraLookahead>();
+                registry.register_cpu_reflected::<LensOverride>();
                 registry.register_cpu_reflected::<crate::orbit::CameraOrbit>();
                 registry.register_cpu_reflected::<crate::when::CameraWhen>();
                 registry.register_cpu_reflected::<crate::PositionComposer>();
@@ -161,6 +163,8 @@ pub struct CameraBlend {
     /// Where the render camera was when this handover started.
     from_pos: Vec3,
     from_rot: glam::Quat,
+    /// And the lens it had then, so a widening frame eases like the pose does (#1254).
+    from_lens: LensOverride,
     /// Seconds since it started, and how many it was given.
     elapsed: f32,
     duration: f32,
@@ -174,10 +178,17 @@ impl CameraBlend {
 
     /// Begins a handover from the camera's visible pose, not the outgoing vcam's, so interrupting a
     /// blend never snaps back.
-    fn begin(&mut self, winner: Entity, from: (Vec3, glam::Quat), duration: f32) {
+    fn begin(
+        &mut self,
+        winner: Entity,
+        from: (Vec3, glam::Quat),
+        from_lens: LensOverride,
+        duration: f32,
+    ) {
         self.active = Some(winner);
         self.from_pos = from.0;
         self.from_rot = from.1;
+        self.from_lens = from_lens;
         self.elapsed = 0.0;
         self.duration = duration.max(0.0);
     }
@@ -207,31 +218,36 @@ pub fn drive_virtual_cameras(resources: &mut Resources) {
     let dt = fixed_dt(resources);
     let mut blend = resources.get::<CameraBlend>().copied().unwrap_or_default();
 
-    let (position, rotation) = if blend.active == Some(winner) {
+    let target_lens = pose.lens;
+    let (position, rotation, lens) = if blend.active == Some(winner) {
         blend.elapsed += dt;
         if blend.running() {
             let t = crate::blend::eased(blend.elapsed / blend.duration, curve, ease);
             (
                 blend.from_pos.lerp(target_pos, t),
                 short_slerp(blend.from_rot, target_rot, t),
+                blend.from_lens.lerp(target_lens, t),
             )
         } else {
-            (target_pos, target_rot)
+            (target_pos, target_rot, target_lens)
         }
     } else {
         // A different vcam won: start from where the camera is now. On the first frame there is
         // nothing to come from, so the scene opens on its camera.
         let from = camera_pose(resources, camera).unwrap_or((target_pos, target_rot));
+        // The lens it is wearing, not the outgoing vcam's: interrupting a blend mid-widen has to
+        // carry on from the width on screen, the same reason the pose comes from the camera.
+        let from_lens = worn_lens(resources, camera).unwrap_or(target_lens);
         let duration = if blend.active.is_none() {
             0.0
         } else {
             duration
         };
-        blend.begin(winner, from, duration);
+        blend.begin(winner, from, from_lens, duration);
         if blend.running() {
-            (from.0, from.1)
+            (from.0, from.1, from_lens)
         } else {
-            (target_pos, target_rot)
+            (target_pos, target_rot, target_lens)
         }
     };
 
@@ -241,10 +257,58 @@ pub fn drive_virtual_cameras(resources: &mut Resources) {
         &[Pose {
             entity: camera,
             position,
-            rotation,
+            // 🔴 The roll goes on HERE, not in the rig. Aim owns `CameraFrame.rotation` and a
+            // second writer to it is the bug this rig keeps having (#1361). Around the camera's
+            // own forward axis, so it rolls the horizon rather than steering.
+            rotation: rotation * glam::Quat::from_rotation_z(-lens.dutch.to_radians()),
             priority: 0,
+            lens,
         }],
     );
+    apply_lens(resources, camera, lens);
+}
+
+/// The lens the render camera is wearing right now.
+fn worn_lens(resources: &Resources, camera: Entity) -> Option<LensOverride> {
+    let registry = resources.get::<ComponentRegistry>()?;
+    let cam = registry.get_cpu::<PerspectiveCamera>()?.get(camera)?;
+    Some(LensOverride {
+        fov: cam.fov,
+        near: cam.near,
+        far: cam.far,
+        // Read back off the transform it would have to be decomposed from; the blend's own
+        // `from_lens` carries it across an interruption, and this is only the first frame.
+        dutch: 0.0,
+    })
+}
+
+/// Writes the blended lens onto the render camera. `dutch` is not here — it is a rotation, and it
+/// went on with the pose.
+///
+/// 🔴 Yes, this writes the authored `fov`. It is safe for the same reason writing the camera's
+/// `Transform` is: the rig runs `run_if_playing` inside the PROJECT's process, and the editor adds
+/// only `CameraComponentsPlugin` — it authors camera behaviour and never runs it. The process that
+/// saves the scene is not the one that moved the number.
+fn apply_lens(resources: &mut Resources, camera: Entity, lens: LensOverride) {
+    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
+        return;
+    };
+    let Some(cam) = registry
+        .get_cpu_mut::<PerspectiveCamera>()
+        .and_then(|cameras| cameras.get_mut(camera))
+    else {
+        return;
+    };
+    // Below the floor it has arrived: writing anyway dirties a component the renderer re-uploads.
+    if (cam.fov - lens.fov).abs() < SETTLE_EPSILON
+        && (cam.near - lens.near).abs() < SETTLE_EPSILON
+        && (cam.far - lens.far).abs() < SETTLE_EPSILON
+    {
+        return;
+    }
+    cam.fov = lens.fov;
+    cam.near = lens.near;
+    cam.far = lens.far;
 }
 
 /// The fixed step, or a 60 Hz stand-in when there is no clock.
@@ -295,6 +359,8 @@ struct Pose {
     position: Vec3,
     rotation: glam::Quat,
     priority: i32,
+    /// What this vcam ends up asking of the lens: its own [`LensOverride`], or the camera's.
+    lens: LensOverride,
 }
 
 /// Where a vcam's group is this step, or `None` when nothing carries its tag and there is nothing
@@ -357,7 +423,8 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, RigMemory) {
         });
         return (Vec::new(), carried);
     };
-    let lens = lens(resources, registry);
+    let camera_lens = authored_lens(resources, registry);
+    let aspect = view_aspect(resources);
     let cameras = registry.get_cpu::<PerspectiveCamera>();
     let transforms = registry.get_cpu::<Transform>();
     let targets = registry.get_cpu::<CameraTarget>();
@@ -397,13 +464,16 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, RigMemory) {
         // body's, and a return is the collision's to time.
         let previous = carried.arms.free_of(entity).unwrap_or(current.position);
 
+        // 🔴 Per vcam, not one shared screen. Two vcams with different fields of view frame
+        // differently, and every zone is measured against the screen its own vcam sees (#1254).
+        let asked = crate::lens_override::lens_of(registry, entity, camera_lens);
         let mut step = RigStep {
             frame: CameraFrame::new(
                 current.position,
                 previous,
                 current.rotation,
                 target.position,
-                lens,
+                Lens::new(asked.fov, aspect),
             ),
             entity,
             vcam,
@@ -426,6 +496,7 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, RigMemory) {
             // component that wrote `vcam.priority` would be a second owner of it, and letting go
             // would not give the authored value back (#1352).
             priority: vcam.priority + crate::when::boost_of(registry, entity),
+            lens: asked,
         });
     }
     (plan, memory)
@@ -449,27 +520,36 @@ pub(crate) fn poses(
     }
 }
 
-/// The lens every vcam is seen through: the driven camera's field of view over the last rendered
-/// aspect. A vcam frames one screen, and that is the one.
-fn lens(resources: &Resources, registry: &ComponentRegistry) -> Lens {
-    let fov = registry
-        .get_cpu::<PerspectiveCamera>()
-        .and_then(|cameras| {
-            let brains = registry.get_cpu::<CameraBrain>();
-            cameras
-                .iter()
-                .filter(|(entity, cam)| {
-                    cam.active && brains.is_some_and(|brains| brains.get(**entity).is_some())
-                })
-                .min_by_key(|(entity, cam)| (-cam.priority, entity.index()))
-                .map(|(_, cam)| cam.fov)
-        })
-        .unwrap_or(PerspectiveCamera::default().fov);
-    let aspect = resources
+/// The lens the driven camera was authored with — what a vcam that asks for nothing ends up using.
+fn authored_lens(resources: &Resources, registry: &ComponentRegistry) -> LensOverride {
+    let _ = resources;
+    let camera = registry.get_cpu::<PerspectiveCamera>().and_then(|cameras| {
+        let brains = registry.get_cpu::<CameraBrain>();
+        cameras
+            .iter()
+            .filter(|(entity, cam)| {
+                cam.active && brains.is_some_and(|brains| brains.get(**entity).is_some())
+            })
+            .min_by_key(|(entity, cam)| (-cam.priority, entity.index()))
+            .map(|(_, cam)| *cam)
+    });
+    let camera = camera.unwrap_or_default();
+    LensOverride {
+        fov: camera.fov,
+        near: camera.near,
+        far: camera.far,
+        // The camera has no roll of its own; a level one is what asking for nothing means.
+        dutch: 0.0,
+    }
+}
+
+/// The aspect the last frame was rendered at. A vcam frames the screen it is actually shown on.
+fn view_aspect(resources: &Resources) -> f32 {
+    resources
         .get::<kooch_ecs::ViewAspect>()
         .copied()
-        .unwrap_or_default();
-    Lens::new(fov, aspect.0)
+        .unwrap_or_default()
+        .0
 }
 
 /// The virtual camera driving the render camera: highest priority, ties to the lower entity index.

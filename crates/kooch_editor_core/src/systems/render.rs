@@ -452,7 +452,11 @@ fn selected_framing(
             let depth = offset.dot(forward);
             match depth > 0.0 {
                 true => {
-                    let lens = kooch_camera::framing::Lens::new(60.0, 16.0 / 9.0);
+                    // 🔴 The lens this vcam actually frames through, not a guess. It was
+                    // `Lens::new(60.0, 16.0 / 9.0)` hardcoded, so the target's mark and the held
+                    // point were drawn in the wrong place on any camera that is not 60° in 16:9 —
+                    // in the overlay whose whole job is finding framing bugs (#1254).
+                    let lens = vcam_lens(resources, *entity);
                     let span = lens.span(depth);
                     let on = |v: glam::Vec3| {
                         glam::Vec2::new(v.dot(right) / span.x, v.dot(above) / span.y)
@@ -470,6 +474,40 @@ fn selected_framing(
         held,
         target: seen,
     })
+}
+
+/// The lens a vcam frames through: what it asks for, or the active camera's, over the rendered
+/// aspect.
+fn vcam_lens(
+    resources: &Resources,
+    vcam: kooch_ecs::entity::Entity,
+) -> kooch_camera::framing::Lens {
+    let fov = resources
+        .get::<kooch_ecs::component::ComponentRegistry>()
+        .map(|registry| {
+            let camera = registry
+                .get_cpu::<kooch_ecs::perspective_camera::PerspectiveCamera>()
+                .and_then(|cameras| {
+                    cameras
+                        .iter()
+                        .filter(|(_, cam)| cam.active)
+                        .min_by_key(|(entity, cam)| (-cam.priority, entity.index()))
+                        .map(|(_, cam)| cam.fov)
+                })
+                .unwrap_or(kooch_ecs::perspective_camera::PerspectiveCamera::default().fov);
+            registry
+                .get_cpu::<kooch_camera::LensOverride>()
+                .and_then(|storage| storage.get(vcam))
+                .map(|lens| lens.fov)
+                .unwrap_or(camera)
+        })
+        .unwrap_or(60.0);
+    let aspect = resources
+        .get::<kooch_ecs::ViewAspect>()
+        .copied()
+        .unwrap_or_default()
+        .0;
+    kooch_camera::framing::Lens::new(fov, aspect)
 }
 
 /// The point a vcam follows: the weighted centre of its target group.
