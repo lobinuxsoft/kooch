@@ -25,7 +25,10 @@ use crate::virtual_camera::{
 
 /// Which way is up for a virtual camera, from its `up_mode`. Not the target's rotation: a rolling
 /// ball's up points wherever the last bounce left it.
-pub(crate) fn up_for(
+///
+/// Public because a gizmo has to draw the rig the rig would build, and one that worked the up out
+/// for itself would drift from this the first time either changed (#1387).
+pub fn up_for(
     vcam: &VirtualCamera,
     resources: &Resources,
     target_pos: Vec3,
