@@ -145,12 +145,14 @@ impl RemoteClient {
         match self.call(Method::ListMoved { since })? {
             ResponseData::Moved {
                 moved,
+                components,
                 removed,
                 revision,
                 full,
                 host,
             } => Ok(MovedUpdate {
                 moved,
+                components,
                 removed,
                 revision,
                 full,
@@ -505,6 +507,8 @@ pub struct EntityUpdate {
 #[derive(Debug, Clone)]
 pub struct MovedUpdate {
     pub moved: Vec<crate::protocol::MovedTransform>,
+    /// Declared components whose values changed this frame (#1407).
+    pub components: Vec<crate::protocol::MovedComponent>,
     pub removed: Vec<crate::protocol::EntityId>,
     /// Pass back as `since` on the next call.
     pub revision: u64,

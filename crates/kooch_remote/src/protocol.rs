@@ -40,6 +40,17 @@ pub struct ComponentSnapshot {
     pub fields: Vec<(String, ReflectValue)>,
 }
 
+/// One component a declared type changed on, while playing (#1407).
+///
+/// 🔴 Beside [`MovedTransform`] rather than inside it, because the two have different costs: a
+/// transform is sixteen floats off one column, this is a reflection of one component on the few
+/// entities that carry it. Only types a plugin put in `StreamedComponents` are ever here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MovedComponent {
+    pub id: EntityId,
+    pub component: ComponentSnapshot,
+}
+
 /// One entity's local transform as matrix columns — the mirror writes `Transform`, so no rebuild
 /// from three fields.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -281,6 +292,10 @@ pub enum ResponseData {
     /// whole [`Method::ListEntities`] that frame.
     Moved {
         moved: Vec<MovedTransform>,
+        /// Declared components whose values changed (#1407). `default` so an older host that does
+        /// not send them still parses.
+        #[serde(default)]
+        components: Vec<MovedComponent>,
         #[serde(default)]
         removed: Vec<EntityId>,
         revision: u64,

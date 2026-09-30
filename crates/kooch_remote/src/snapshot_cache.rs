@@ -81,5 +81,42 @@ impl SnapshotCache {
     }
 }
 
+impl SnapshotCache {
+    /// Component type names whose values changed since the last world this cache described, minus
+    /// the ones a plugin declared as streamed (#1407).
+    ///
+    /// 🔴 The guard on a hand-maintained list. `StreamedComponents` is what reaches a watching
+    /// editor every frame, and forgetting to declare a component there used to fail the way #1254
+    /// failed: the author sees nothing and has no way to tell why. Called only while the project
+    /// PLAYS, where the editor cannot edit — so every difference is the gameplay's, and there are no
+    /// false positives.
+    ///
+    /// Free: the comparison is the one `reply` already makes, over a world already reflected.
+    pub fn undeclared_changes(&self, world: &[EntitySnapshot], declared: &[&str]) -> Vec<String> {
+        let mut named: Vec<String> = Vec::new();
+        for entity in world {
+            let Some(before) = self.last.get(&entity.id) else {
+                // A new entity is not a changed component.
+                continue;
+            };
+            for component in &entity.components {
+                if declared.contains(&component.type_name.as_str()) {
+                    continue;
+                }
+                let unchanged = before.components.iter().any(|had| {
+                    had.type_name == component.type_name && had.fields == component.fields
+                });
+                if unchanged {
+                    continue;
+                }
+                if !named.contains(&component.type_name) {
+                    named.push(component.type_name.clone());
+                }
+            }
+        }
+        named
+    }
+}
+
 #[cfg(test)]
 mod tests;
