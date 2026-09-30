@@ -328,16 +328,22 @@ fn list_moved(id: u64, resources: &mut Resources, since: Option<u64>) -> Respons
         current
     };
 
+    // 🔴 The declared components, and ONLY those (#1407). Reflecting the world here is the 38.9 ms
+    // this method exists to avoid; reflecting one type on the few entities that carry it is a walk
+    // over one storage. A project that declares nothing pays nothing.
+    let components = streamed_components(resources);
+
     let mut cache = resources
         .remove::<crate::moved_cache::MovedCache>()
         .unwrap_or_default();
-    let delta = cache.reply(current, since);
+    let delta = cache.reply_with(current, components, since);
     resources.insert(cache);
 
     Response::ok(
         id,
         ResponseData::Moved {
             moved: delta.moved,
+            components: delta.components,
             removed: delta.removed,
             revision: delta.revision,
             full: delta.full,
@@ -519,3 +525,60 @@ use scenes::*;
 
 #[cfg(test)]
 mod tests;
+
+/// Every declared component's current values, for the entities that carry one (#1407).
+///
+/// 🔴 Walks the component's own storage rather than the entity list: the types declared here are
+/// ones a handful of entities carry — a camera's lens, not every mesh — so the cost is the length of
+/// that storage and not of the world.
+fn streamed_components(resources: &Resources) -> Vec<crate::protocol::MovedComponent> {
+    let Some(streamed) = resources.get::<kooch_ecs::StreamedComponents>() else {
+        return Vec::new();
+    };
+    if streamed.is_empty() {
+        return Vec::new();
+    }
+    let Some(registry) = resources.get::<ComponentRegistry>() else {
+        return Vec::new();
+    };
+    let alive = resources.get::<EntityAllocator>();
+    let live = |entity: Entity| alive.is_none_or(|a| a.is_alive(entity));
+
+    let Some(archetypes) = resources.get::<kooch_ecs::archetype_registry::ArchetypeRegistry>()
+    else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for type_id in streamed.iter() {
+        let Some(type_name) = registry.component_name(type_id) else {
+            continue;
+        };
+        // The archetypes carrying it, so the walk is over the entities that HAVE the component
+        // rather than over the world.
+        let carriers = archetypes
+            .iter_matching(std::slice::from_ref(type_id))
+            .flat_map(|archetype| archetype.entities().iter().copied());
+        for entity in carriers {
+            if !live(entity) {
+                continue;
+            }
+            let Some(fields) = registry.reflect_get_fields(type_id, entity) else {
+                continue;
+            };
+            out.push(crate::protocol::MovedComponent {
+                id: entity.into(),
+                component: crate::protocol::ComponentSnapshot {
+                    type_name: type_name.to_owned(),
+                    fields,
+                },
+            });
+        }
+    }
+    // Sorted, so the reply is stable frame to frame and a diff means what it says — the same reason
+    // the transforms are.
+    out.sort_unstable_by(|a, b| {
+        (a.id.index, &a.component.type_name).cmp(&(b.id.index, &b.component.type_name))
+    });
+    out
+}

@@ -274,9 +274,9 @@ impl RemoteSession {
     }
 
     /// The play-mode pull: what moved, and nothing else (#1012).
-    pub fn refresh_moved(&mut self) -> Option<Vec<kooch_remote::protocol::MovedTransform>> {
+    pub fn refresh_moved(&mut self) -> Option<MovedThisFrame> {
         if self.state != ConnectionState::Connected {
-            return Some(Vec::new());
+            return Some(MovedThisFrame::default());
         }
         let Some(pump) = self.pump.as_ref() else {
             // `set_pulling` has not run yet. Nothing has been asked, so
@@ -287,6 +287,7 @@ impl RemoteSession {
         pump.drain(&mut pulled);
 
         let mut moved = Vec::new();
+        let mut components = Vec::new();
         // Either the project declined or the exchange failed. In both
         // cases what this side holds cannot be diffed onto.
         let mut structural = false;
@@ -301,13 +302,16 @@ impl RemoteSession {
                     if update.full || !update.removed.is_empty() {
                         structural = true;
                         moved.clear();
+                        components.clear();
                     } else {
                         moved.extend(update.moved);
+                        components.extend(update.components);
                     }
                 }
                 crate::moved_pump::Pulled::Failed(reason) => {
                     structural = true;
                     moved.clear();
+                    components.clear();
                     if self.stale.replace(reason.clone()).is_none() {
                         tracing::warn!(
                             "the remote snapshot stopped updating: {reason}. \
@@ -317,14 +321,14 @@ impl RemoteSession {
                 }
             }
         }
-        self.changed_last_refresh = !moved.is_empty();
+        self.changed_last_refresh = !moved.is_empty() || !components.is_empty();
         if structural {
             // The SNAPSHOT revision is the one that must not be trusted
             // now: the full pull that follows has to be a full one.
             self.revision = None;
             return None;
         }
-        Some(moved)
+        Some(MovedThisFrame { moved, components })
     }
 
     pub fn refresh(&mut self) {
@@ -469,3 +473,11 @@ mod merge_tests;
 
 #[cfg(test)]
 mod changed_flag_tests;
+
+/// What the play-mode pull brought this frame: the transforms, and the declared components whose
+/// values changed (#1407).
+#[derive(Debug, Default, Clone)]
+pub struct MovedThisFrame {
+    pub moved: Vec<kooch_remote::protocol::MovedTransform>,
+    pub components: Vec<kooch_remote::protocol::MovedComponent>,
+}

@@ -67,6 +67,7 @@ impl RemoteMirror {
     pub fn apply_moved(
         &mut self,
         moved: &[kooch_remote::protocol::MovedTransform],
+        components: &[kooch_remote::protocol::MovedComponent],
         resources: &mut Resources,
     ) {
         profiling::scope!("mirror: moved");
@@ -76,6 +77,20 @@ impl RemoteMirror {
             };
             let matrix = glam::Mat4::from_cols_array(&entry.matrix);
             write_transform(resources, entity, matrix);
+        }
+        // 🔴 `Transform` used to be the only thing this path carried, so anything else gameplay
+        // wrote was invisible while playing: a vcam's roll arrived and its field of view did not
+        // (#1407). Only the types a plugin declared in `StreamedComponents` get here.
+        for entry in components {
+            let Some(&entity) = self.id_map.get(&entry.id) else {
+                continue;
+            };
+            insert_component(
+                resources,
+                entity,
+                &entry.component.type_name,
+                &entry.component.fields,
+            );
         }
     }
 

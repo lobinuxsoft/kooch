@@ -164,7 +164,7 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
                 refresh = Some(started.elapsed());
                 sync.last_pull = Some(Instant::now());
                 profiling::scope!("remote: apply moved");
-                mirror.apply_moved(&moved, resources);
+                mirror.apply_moved(&moved.moved, &moved.components, resources);
                 record_stats(resources, session, refresh, Duration::ZERO);
                 return;
             }

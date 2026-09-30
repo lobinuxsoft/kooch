@@ -62,7 +62,16 @@ pub struct CameraComponentsPlugin;
 
 impl Plugin for CameraComponentsPlugin {
     fn build(&self, app: &mut App) {
+        // 🔴 The lens is written by the rig DURING PLAY, and the play-mode pull used to carry only
+        // `Transform` — so a vcam's roll reached a watching editor and its field of view did not
+        // (#1407). Declared here so the author sees what the rig is doing to the lens.
         app.add_system(Stage::Startup, |resources: &mut Resources| {
+            if !resources.contains::<kooch_ecs::StreamedComponents>() {
+                resources.insert(kooch_ecs::StreamedComponents::new());
+            }
+            if let Some(streamed) = resources.get_mut::<kooch_ecs::StreamedComponents>() {
+                streamed.add::<PerspectiveCamera>();
+            }
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                 registry.register_cpu_reflected::<VirtualCamera>();
                 registry.register_cpu_reflected::<CameraTarget>();
@@ -297,6 +306,14 @@ fn apply_lens(resources: &mut Resources, camera: Entity, lens: LensOverride) {
         .get_cpu_mut::<PerspectiveCamera>()
         .and_then(|cameras| cameras.get_mut(camera))
     else {
+        // Once: a live vcam whose camera has no lens to write is an authoring state worth hearing
+        // about, and the previous silence is what let this ship.
+        static SAID: std::sync::Once = std::sync::Once::new();
+        SAID.call_once(|| {
+            tracing::warn!(
+                "the driven camera carries no PerspectiveCamera, so a vcam's lens reaches nothing"
+            );
+        });
         return;
     };
     // Below the floor it has arrived: writing anyway dirties a component the renderer re-uploads.
