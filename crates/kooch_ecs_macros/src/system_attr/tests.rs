@@ -6,8 +6,13 @@ use super::STAGES;
 fn the_stages_match_the_engine() {
     let source = include_str!("../../../kooch_core/src/stage.rs");
     let all = source
-        .split_once("pub const ALL: [Stage; 14] = [")
-        .expect("`Stage::ALL` moved or changed length")
+        // Matched without the length, so a stage being ADDED fails this test for drift rather
+        // than for the pattern no longer matching.
+        .split_once("pub const ALL: [Stage;")
+        .expect("`Stage::ALL` moved")
+        .1
+        .split_once("= [")
+        .expect("`Stage::ALL` is not an array literal")
         .1
         .split_once("];")
         .expect("`Stage::ALL` is not terminated")

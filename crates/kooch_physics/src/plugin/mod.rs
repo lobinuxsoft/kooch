@@ -18,6 +18,7 @@ pub use world::{BodySpec, PhysicsWorld, SolverBody};
 use kooch_core::app::App;
 use kooch_core::plugin::Plugin;
 use kooch_core::run_state::run_if_playing;
+use kooch_core::schedule::Order;
 use kooch_core::stage::Stage;
 use kooch_ecs::component::ComponentRegistry;
 
@@ -131,7 +132,14 @@ impl Plugin for PhysicsPlugin {
         // Lifecycle before sync, ungated: a play-gated system cannot see play end. Sync runs always
         // (bodies mirror the ECS while authoring); step and writeback are gameplay.
         app.add_system(Stage::PreUpdate, events::physics_lifecycle_system);
-        app.add_system(Stage::PreUpdate, physics_sync_system);
+        // 🔴 `PrePhysics`, after the propagation that runs there, so the solver is authored from
+        // this frame's world pose rather than the one published before the last step (#1316).
+        // Named rather than positional: the order must hold whichever plugin was added first.
+        app.add_ordered(
+            Stage::PrePhysics,
+            Order::after("transform_propagation_system"),
+            physics_sync_system,
+        );
         app.add_system(Stage::Physics, run_if_playing(physics_step_system));
         app.add_system(Stage::PostPhysics, run_if_playing(physics_writeback_system));
 

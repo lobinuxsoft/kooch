@@ -28,7 +28,7 @@ fn a_parented_body_is_where_it_is_drawn() {
     );
     insert(&mut resources, child, Parent { entity: parent });
 
-    physics_sync_system(&mut resources);
+    pre_physics(&mut resources);
 
     let slot = slot_of(&resources, child).expect("the child is in the solver");
     let pose = resources
@@ -109,7 +109,7 @@ fn a_parented_scale_multiplies() {
     );
     insert(&mut resources, child, Parent { entity: parent });
 
-    physics_sync_system(&mut resources);
+    pre_physics(&mut resources);
 
     let slot = slot_of(&resources, child).expect("the child is in the solver");
     let spec = resources

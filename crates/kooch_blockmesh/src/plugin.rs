@@ -3,6 +3,7 @@
 use kooch_core::app::App;
 use kooch_core::plugin::Plugin;
 use kooch_core::resource::Resources;
+use kooch_core::schedule::Order;
 use kooch_core::stage::Stage;
 use kooch_ecs::component::ComponentRegistry;
 
@@ -21,13 +22,23 @@ impl Plugin for BlockPlugin {
             }
             resources.insert(BuiltBlocks::default());
         });
-        // Before physics, so a block edited this frame is collided
-        // against this frame rather than next. Ungated: a level is built
-        // while stopped, which is exactly when it has to be visible.
-        app.add_system(Stage::PreUpdate, sync_blocks);
+        // 🔴 A block's collider is geometry the solver reads, so it is built in `PrePhysics` and
+        // said out loud that it comes first (#1316). This used to sit in `PreUpdate` beside
+        // `physics_sync_system`, where the only thing deciding which ran first was which plugin
+        // had been added first — and a mesh that lost that race appeared a frame late without
+        // failing. Ungated: a level is built while stopped, which is exactly when it has to be
+        // visible.
+        app.add_ordered(
+            Stage::PrePhysics,
+            Order::before("physics_sync_system"),
+            sync_blocks,
+        );
     }
 
     fn name(&self) -> &str {
         "BlockPlugin"
     }
 }
+
+#[cfg(test)]
+mod tests;

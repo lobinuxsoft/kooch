@@ -17,9 +17,9 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Ident, Token, punctuated::Punctuated};
 
-/// The fourteen stages, in `Stage::ALL` order — copied, since a proc-macro crate cannot depend on
+/// The fifteen stages, in `Stage::ALL` order — copied, since a proc-macro crate cannot depend on
 /// the engine; the test keeps them honest.
-pub(crate) const STAGES: [&str; 14] = [
+pub(crate) const STAGES: [&str; 15] = [
     "Startup",
     "First",
     "Input",
@@ -34,6 +34,7 @@ pub(crate) const STAGES: [&str; 14] = [
     "Render",
     "PostRender",
     "Last",
+    "PrePhysics",
 ];
 
 pub(crate) fn system_impl(args: TokenStream, item: TokenStream) -> TokenStream {

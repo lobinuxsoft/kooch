@@ -82,9 +82,10 @@ A system is registered into a stage, and stages run in a fixed order every frame
 | `Input` | Reading devices into intent. |
 | `PreUpdate` | Preparing what `Update` will need. |
 | **`Update`** | **Your game logic — the default choice** |
+| `PrePhysics` | Resolving what the solver reads: collider geometry, the hierarchy, then `Transform` into `GlobalTransform`. |
 | `Physics` | Fixed timestep. May run several times a frame, or none. |
 | `PostPhysics` | Same timestep, after the solver. |
-| `PostUpdate` | After gameplay *and* after the solver, and where `Transform` becomes `GlobalTransform`. |
+| `PostUpdate` | After gameplay *and* after the solver, and where `Transform` becomes `GlobalTransform` a second time. |
 | `GpuSync` | Handing this frame's data to the GPU. |
 | `Gpu` | Compute submitted with the frame's encoder. |
 | `PreRender` | Last chance before drawing. |
@@ -99,12 +100,27 @@ back into `Transform`, and the propagation that follows turns them into the `Glo
 meshes, lights and cameras read. Physics first, transforms after — so nothing renders a frame
 behind the simulation.
 
-🔴 **`PostUpdate` is the one that bites.** It is where a local `Transform` is resolved into the
-`GlobalTransform` that meshes, lights and cameras actually read. Write a transform *before* it
-and the change lands this frame. Write it *after* — `PostUpdate`, `Gpu`, anywhere later — and
-everything downstream renders **one frame behind, forever**, with no error and no log line. The
-symptom is shadows or child objects that lag when the camera moves, which is not a bug anybody
-traces back to a stage.
+### Propagation runs twice
+
+`Transform` becomes `GlobalTransform` in **`PrePhysics` and again in `PostUpdate`**, and both
+passes matter:
+
+- The `PrePhysics` pass resolves the world the **solver** is about to read. Without it a body
+  parented under something that moved this frame was authored at last frame's pose — and a static
+  body, which the solver never moves, stayed there (#1316).
+- The `PostUpdate` pass resolves what the solver just **wrote**, so the frame draws the step it
+  simulated rather than the previous one.
+
+Avian and rapier's Bevy plugins split it the same way, for the same reason. `PrePhysics` also
+builds collider geometry, ahead of both: a mesh-derived collider must exist before the step that
+queries it.
+
+🔴 **Which pass you land in front of decides who sees your write.** A `Transform` written in
+`Update` is seen by both — that is why `Update` is the default. Written in `Physics` or
+`PostPhysics`, it reaches rendering but not this step's solver. Written *after* `PostUpdate` —
+`Gpu`, `Render`, anywhere later — everything downstream renders **one frame behind, forever**, with
+no error and no log line. The symptom is shadows or child objects that lag when the camera moves,
+which is not a bug anybody traces back to a stage.
 
 Physics runs on a **fixed** timestep, so a system in `Physics` or `PostPhysics` should use
 `Time::fixed_delta_secs()` rather than `delta_secs()`. Using the wrong one is a bug that only
@@ -126,7 +142,7 @@ events in six — silently. That is what killed every post-process volume in a b
 
 A system that publishes settings or a lookup table must be registered **before the first stage that
 reads it**, not merely early-looking. The layer table was published in `Update` while the physics
-sync read it in `PreUpdate`, so the first frame of a build authored every collider against the
+sync read it before `Update` had run, so the first frame of a build authored every collider against the
 default table — and a collider is only re-authored when its shape or filters move, so frame 0's
 answer stuck (#1313). A consumer that runs earlier in the frame than its producer is a race
 whatever the values are.

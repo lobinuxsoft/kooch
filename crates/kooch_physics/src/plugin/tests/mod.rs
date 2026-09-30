@@ -177,10 +177,22 @@ fn solver_position(resources: &Resources, entity: Entity) -> Vec3 {
         .0
 }
 
+/// What `Stage::PrePhysics` runs, in its order: the hierarchy and the transforms the solver is
+/// about to read, then the sync that reads them (#1316).
+///
+/// 🔴 Calling `physics_sync_system` alone is not a frame. It used to be equivalent, because the
+/// sync walked `Parent` itself; now it reads `GlobalTransform`, and a test that never propagates is
+/// asking the solver about a world nothing published.
+fn pre_physics(resources: &mut Resources) {
+    kooch_ecs::hierarchy::hierarchy_sync_system(resources);
+    kooch_ecs::hierarchy::transform_propagation_system(resources);
+    physics_sync_system(resources);
+}
+
 /// Runs `steps` frames: sync every frame, step + writeback while playing.
 fn simulate(resources: &mut Resources, steps: u32) {
     for _ in 0..steps {
-        physics_sync_system(resources);
+        pre_physics(resources);
         if Playing::is_playing(resources) {
             physics_step_system(resources);
             physics_writeback_system(resources);

@@ -45,8 +45,13 @@ fn the_scaffolds_are_what_the_scan_detects() {
 fn the_scaffold_lists_every_stage() {
     let stages = include_str!("../../../../../crates/kooch_core/src/stage.rs");
     let all = stages
-        .split_once("pub const ALL: [Stage; 14] = [")
-        .expect("`Stage::ALL` moved or changed length")
+        // Matched without the length, so a stage being ADDED fails this test for drift rather
+        // than for the pattern no longer matching.
+        .split_once("pub const ALL: [Stage;")
+        .expect("`Stage::ALL` moved")
+        .1
+        .split_once("= [")
+        .expect("`Stage::ALL` is not an array literal")
         .1
         .split_once("];")
         .expect("`Stage::ALL` is not terminated")

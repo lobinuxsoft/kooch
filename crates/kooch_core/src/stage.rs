@@ -12,6 +12,7 @@
 /// Input       → Process input events
 /// PreUpdate   → Prepare for main update
 /// Update      → Main game logic
+/// PrePhysics  → Resolve what the solver reads: geometry, hierarchy, transforms
 /// Physics*    → Physics simulation (fixed timestep)
 /// PostPhysics*→ Post-physics processing (fixed timestep)
 /// PostUpdate  → Cleanup after main update (transform propagation)
@@ -26,8 +27,11 @@
 /// ```
 ///
 /// The discriminants below still number `PostUpdate`..`Gpu` before the
-/// fixed stages, because they double as the `BTreeMap` key that orders
-/// systems *within* a run. Execution order is the list above, decided by
+/// fixed stages, and `PrePhysics` last of all, because they double as the
+/// `BTreeMap` key that orders systems *within* a run — and because a
+/// dynamic plugin compiled against an older header must keep the meaning
+/// of every number it already knows. Execution order is the list above,
+/// decided by
 /// [`Schedule::run_pre_physics`] / `run_fixed_stages` / `run_post_physics`.
 ///
 /// [`Schedule::run_pre_physics`]: crate::schedule::Schedule::run_pre_physics
@@ -62,11 +66,21 @@ pub enum Stage {
     PostRender = 12,
     /// End of frame cleanup.
     Last = 13,
+    /// Preparation before the fixed loop: collider geometry, hierarchy and transforms, so the
+    /// solver reads a world the frame has finished computing (#1316).
+    ///
+    /// Numbered last and run fifth — see the note above.
+    PrePhysics = 14,
 }
 
 impl Stage {
-    /// Returns all stages in execution order.
-    pub const ALL: [Stage; 14] = [
+    /// Every stage, in declaration order.
+    ///
+    /// 🔴 **Not** the order a frame runs them: the fixed stages and `PrePhysics` are numbered out
+    /// of place, so anything that cares about order wants
+    /// [`RUN_ORDER`](crate::schedule::RUN_ORDER) instead. This list is for exhaustiveness — "did I
+    /// handle every stage" — and nothing else.
+    pub const ALL: [Stage; 15] = [
         Stage::Startup,
         Stage::First,
         Stage::Input,
@@ -81,6 +95,7 @@ impl Stage {
         Stage::Render,
         Stage::PostRender,
         Stage::Last,
+        Stage::PrePhysics,
     ];
 
     /// Returns the stage name as a string.
@@ -100,6 +115,7 @@ impl Stage {
             Stage::Render => "Render",
             Stage::PostRender => "PostRender",
             Stage::Last => "Last",
+            Stage::PrePhysics => "PrePhysics",
         }
     }
 }

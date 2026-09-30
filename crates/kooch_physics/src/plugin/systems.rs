@@ -3,10 +3,14 @@
 //! # Where they run
 //!
 //! ```text
-//! PreUpdate    physics_sync_system        once per frame
+//! PrePhysics   physics_sync_system        once per frame, after propagation
 //! Physics      physics_step_system        once per fixed step, playing only
 //! PostPhysics  physics_writeback_system   once per fixed step, playing only
 //! ```
+//!
+//! The sync sits in `PrePhysics`, behind the collider geometry and the transform propagation that
+//! stage exists to run first, so the solver is authored from a world this frame finished
+//! computing (#1316).
 //!
 //! `Physics` and `PostPhysics` are the engine's fixed-timestep stages:
 //! [`Time`] accumulates the frame's delta and the runner runs them however
@@ -141,10 +145,10 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
                     let collider =
                         as_region(registry, entity, collider_or_default(colliders, entity))
                             .in_layers(layers);
-                    // 🔴 The world pose, composed here rather than read from the published
-                    // `GlobalTransform`: propagation runs after the fixed stages, so a parented
-                    // body used to be authored at its LOCAL offset — a volume 19 m from where it
-                    // is drawn, and a sensor nobody could walk into (#1316).
+                    // The world pose, from the `GlobalTransform` that `PrePhysics` propagated a
+                    // moment ago. Before that stage existed, propagation ran after the fixed
+                    // stages and a parented body was authored at its LOCAL offset — a volume 19 m
+                    // from where it is drawn, and a sensor nobody could walk into (#1316).
                     let (position, rotation, scale) = super::pose::world_pose(registry, entity);
                     let attachments = super::compound::attachments_for(resources, entity);
                     let spec = BodySpec::with_attachments(
