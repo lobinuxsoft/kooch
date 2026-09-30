@@ -472,7 +472,10 @@ fn normalised_up(up: Vec3) -> Vec3 {
 
 /// A first yaw origin for a vcam with none. First frame only: by the hairy ball theorem no
 /// reference derived from `up` alone is continuous, so [`transported`] carries it after.
-pub(crate) fn seed_reference(up: Vec3) -> Vec3 {
+///
+/// Public for the same reason [`up_for`](crate::plugin::up_for) is: what a gizmo draws before the
+/// rig has run is the answer the rig itself would start from (#1387).
+pub fn seed_reference(up: Vec3) -> Vec3 {
     let axis = if up.dot(Vec3::Z).abs() > 0.999 {
         Vec3::X
     } else {

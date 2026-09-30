@@ -124,17 +124,20 @@ impl Visualizer<VirtualCamera> for VirtualCameraVisualizer {
         if vcam.follow != FOLLOW_SHOULDER {
             return;
         }
-        // The up and reference the rig actually used. Derived here instead, the chain drawn would
-        // not be the chain running.
-        let Some((up, reference)) = resources
-            .get::<RigMemory>()
-            .and_then(|memory| memory.horizons.used(entity))
-        else {
-            return;
-        };
         let Some(target) = followed_point(resources, entity) else {
             return;
         };
+        // 🔴 What the rig used, where it has run. Where it has not — a stopped editor, which is
+        // precisely when a shoulder is tuned — the rig's **own** first-step answers, not a second
+        // opinion: `RigMemory` is not even inserted in the editor's process, and reading only it
+        // meant this never drew at all (#1387).
+        let (up, reference) = resources
+            .get::<RigMemory>()
+            .and_then(|memory| memory.horizons.used(entity))
+            .unwrap_or_else(|| {
+                let up = kooch_camera::up_for(vcam, resources, target, glam::Quat::IDENTITY);
+                (up, kooch_camera::seed_reference(up))
+            });
         let (root, shoulder, hand) = vcam.rig_positions(target, up, reference);
         // Nothing authored collapses all three onto the target: a plain orbital rig draws the arm it
         // already had, not a chain of stubs on top of it.
