@@ -272,6 +272,12 @@ fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Resp
     let mut cache = resources
         .remove::<crate::snapshot_cache::SnapshotCache>()
         .unwrap_or_default();
+    // 🔴 The guard on the hand-maintained list, and the reason forgetting to declare a component is
+    // no longer silent (#1407). Only while PLAYING, where the editor cannot edit, so every
+    // difference here is the gameplay's own. Free: the comparison is the one `reply` makes anyway.
+    if kooch_core::run_state::Playing::is_playing(resources) {
+        warn_undeclared(resources, &cache, &entities);
+    }
     let delta = cache.reply(entities, since);
     resources.insert(cache);
 
@@ -582,3 +588,54 @@ fn streamed_components(resources: &Resources) -> Vec<crate::protocol::MovedCompo
     });
     out
 }
+
+/// Names any component gameplay changed that no plugin declared streamed, once each (#1407).
+fn warn_undeclared(
+    resources: &mut Resources,
+    cache: &crate::snapshot_cache::SnapshotCache,
+    world: &[crate::protocol::EntitySnapshot],
+) {
+    let missing = {
+        let Some(registry) = resources.get::<ComponentRegistry>() else {
+            return;
+        };
+        let mut declared: Vec<&'static str> = resources
+            .get::<kooch_ecs::StreamedComponents>()
+            .map(|streamed| {
+                streamed
+                    .iter()
+                    .filter_map(|id| registry.component_name(id))
+                    .collect()
+            })
+            .unwrap_or_default();
+        // `Transform` has its own cheaper path and is deliberately not declared, so it is not
+        // missing.
+        declared.push(std::any::type_name::<kooch_ecs::Transform>());
+        cache.undeclared_changes(world, &declared)
+    };
+    if missing.is_empty() {
+        return;
+    }
+    if !resources.contains::<SaidUndeclared>() {
+        resources.insert(SaidUndeclared::default());
+    }
+    for name in missing {
+        // A set rather than a `Once`: one line per TYPE is the useful amount, and a `Once` would
+        // name the first and hide every other.
+        let fresh = resources
+            .get_mut::<SaidUndeclared>()
+            .is_some_and(|said| said.0.insert(name.clone()));
+        if fresh {
+            tracing::warn!(
+                component = %name,
+                "gameplay changed this component and no plugin declared it in StreamedComponents, \
+                 so a watching editor will not see the change until play stops. Add \
+                 `streamed.add::<T>()` where the component is registered."
+            );
+        }
+    }
+}
+
+/// Which undeclared components have already been named, so the log carries one line per type.
+#[derive(Default)]
+struct SaidUndeclared(std::collections::HashSet<String>);
