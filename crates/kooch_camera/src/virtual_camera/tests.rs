@@ -103,7 +103,7 @@ fn simple_follow_is_the_target_plus_the_offset() {
 
 #[test]
 fn the_spring_arm_keeps_its_length_at_every_yaw() {
-    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    let mut r = vcam(FOLLOW_ORBITAL);
     r.camera_distance = 7.0;
     for yaw in [0.0, 37.0, 90.0, 180.0, -145.0] {
         r.yaw = yaw;
@@ -127,7 +127,7 @@ fn the_spring_arm_keeps_its_length_at_every_yaw() {
 /// rolls over. The clamp is what stops it.
 #[test]
 fn pitch_is_clamped_short_of_the_pole() {
-    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    let mut r = vcam(FOLLOW_ORBITAL);
     r.pitch = 90.0;
     let (pos, _) = desired(
         &r,
@@ -314,7 +314,7 @@ fn look_at_none_keeps_the_cameras_own_rotation() {
 /// did, or every scene authored before it would reframe itself.
 #[test]
 fn world_up_reproduces_the_old_fixed_axis_arm() {
-    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    let mut r = vcam(FOLLOW_ORBITAL);
     r.camera_distance = 5.0;
     for (yaw, pitch) in [(0.0, 0.0), (30.0, 15.0), (-120.0, -40.0), (180.0, 60.0)] {
         r.yaw = yaw;
@@ -342,7 +342,7 @@ fn world_up_reproduces_the_old_fixed_axis_arm() {
 /// the local up over its head.
 #[test]
 fn the_arm_follows_an_arbitrary_up() {
-    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    let mut r = vcam(FOLLOW_ORBITAL);
     r.look_at = LOOK_AT_SIMPLE;
     r.camera_distance = 4.0;
     r.pitch = 0.0;
@@ -379,7 +379,7 @@ fn the_arm_follows_an_arbitrary_up() {
 /// Pitch is measured off the local horizon, not the world one.
 #[test]
 fn pitch_raises_the_arm_along_the_local_up() {
-    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    let mut r = vcam(FOLLOW_ORBITAL);
     r.camera_distance = 3.0;
     r.pitch = 30.0;
     let up = Vec3::new(0.0, 0.0, 1.0);
@@ -403,7 +403,7 @@ fn pitch_raises_the_arm_along_the_local_up() {
 /// normalised zero is `NaN` in every basis downstream.
 #[test]
 fn a_zero_up_falls_back_to_world_instead_of_nan() {
-    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    let mut r = vcam(FOLLOW_ORBITAL);
     r.look_at = LOOK_AT_SIMPLE;
     let (pos, rot) = desired(
         &r,
@@ -520,7 +520,7 @@ fn looking_straight_down_stays_finite() {
 #[test]
 fn rolling_over_the_pole_does_not_flip() {
     let vcam = VirtualCamera {
-        follow: FOLLOW_THIRD_PERSON,
+        follow: FOLLOW_ORBITAL,
         camera_distance: 5.0,
         pitch: 0.0,
         yaw: 0.0,
@@ -644,7 +644,7 @@ fn old_duration_names_load() {
 /// right, and not further back or higher up.
 #[test]
 fn a_shoulder_stands_beside_the_arm() {
-    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    let mut r = vcam(FOLLOW_SHOULDER);
     r.look_at = LOOK_AT_ARM;
     r.camera_distance = 3.0;
     r.pitch = 0.0;
@@ -685,7 +685,7 @@ fn a_shoulder_stands_beside_the_arm() {
 /// character as the player looks down, which is what a single pivot did.
 #[test]
 fn pitch_leaves_the_shoulder_alone() {
-    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    let mut r = vcam(FOLLOW_SHOULDER);
     r.camera_distance = 3.0;
     r.yaw = 25.0;
     r.shoulder_offset = Vec3::new(0.5, 0.3, -0.2);
@@ -709,7 +709,7 @@ fn pitch_leaves_the_shoulder_alone() {
 /// were one axis.
 #[test]
 fn the_arm_rises_with_the_pitch() {
-    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    let mut r = vcam(FOLLOW_SHOULDER);
     r.camera_distance = 0.0;
     r.yaw = 0.0;
     r.pitch = 0.0;
@@ -735,7 +735,7 @@ fn the_arm_rises_with_the_pitch() {
 /// `side` picks the shoulder without touching the offset that says how far off it sits.
 #[test]
 fn the_side_mirrors_the_shoulder() {
-    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    let mut r = vcam(FOLLOW_SHOULDER);
     r.camera_distance = 0.0;
     r.pitch = 0.0;
     r.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
@@ -759,7 +759,7 @@ fn the_side_mirrors_the_shoulder() {
 /// only the parallax shifts and the character never leaves centre screen.
 #[test]
 fn an_arm_aim_holds_the_target_off_centre() {
-    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    let mut r = vcam(FOLLOW_SHOULDER);
     r.camera_distance = 3.0;
     r.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
 
@@ -794,7 +794,7 @@ fn an_arm_aim_holds_the_target_off_centre() {
 /// measure — a `look_at` between two coincident points returns identity.
 #[test]
 fn a_zero_arm_still_aims() {
-    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    let mut r = vcam(FOLLOW_ORBITAL);
     r.look_at = LOOK_AT_ARM;
     r.camera_distance = 0.0;
     r.pitch = 0.0;
@@ -820,7 +820,7 @@ fn a_zero_arm_still_aims() {
 /// would drift, and the one drawn would stop being the one used.
 #[test]
 fn the_rig_positions_lead_to_the_camera() {
-    let mut r = vcam(FOLLOW_THIRD_PERSON);
+    let mut r = vcam(FOLLOW_SHOULDER);
     r.camera_distance = 3.0;
     r.yaw = 35.0;
     r.pitch = 15.0;
@@ -850,13 +850,64 @@ fn the_rig_positions_lead_to_the_camera() {
     );
 }
 
-/// And with nothing authored the three collapse onto the target, so a plain orbital rig draws one
-/// line and not a chain of stubs.
+/// 🔴 The orbital body has no chain at all: the shoulder's fields do not show there and are not read
+/// there either, so one left behind by a switch cannot move the camera from a hidden row (#1380).
 #[test]
 fn a_plain_rig_has_no_chain() {
-    let r = vcam(FOLLOW_THIRD_PERSON);
+    let mut r = vcam(FOLLOW_ORBITAL);
+    r.shoulder_offset = Vec3::new(0.6, 0.4, 0.0);
+    r.vertical_arm_length = 1.0;
     let up = Vec3::Y;
     let (root, shoulder, hand) = r.rig_positions(Vec3::ZERO, up, seed_reference(up));
     assert_eq!(root, shoulder);
     assert_eq!(shoulder, hand);
+}
+
+/// 🔴 #1380: the shoulder lived on the orbital body until the two were split. Left alone, its
+/// fields would stop showing and stop being read on the same load — an offset tuned for an hour,
+/// gone with nothing said.
+#[test]
+fn a_shoulder_moves_to_its_own_body() {
+    use kooch_ecs::component::ComponentRegistry;
+
+    let mut resources = kooch_core::resource::Resources::new();
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu_reflected::<VirtualCamera>();
+    let (moved, left) = (
+        kooch_ecs::entity::Entity::new(1, 0),
+        kooch_ecs::entity::Entity::new(2, 0),
+    );
+    let storage = registry.get_cpu_mut::<VirtualCamera>().unwrap();
+    storage.insert(
+        moved,
+        VirtualCamera {
+            follow: FOLLOW_ORBITAL,
+            shoulder_offset: Vec3::new(0.6, -0.4, 0.0),
+            ..Default::default()
+        },
+    );
+    // Nothing authored stays where it is: a plain orbital rig is not a shoulder rig.
+    storage.insert(
+        left,
+        VirtualCamera {
+            follow: FOLLOW_ORBITAL,
+            ..Default::default()
+        },
+    );
+    resources.insert(registry);
+
+    crate::virtual_camera::migrate_shoulder_body(&mut resources);
+
+    let of = |entity| {
+        resources
+            .get::<ComponentRegistry>()
+            .unwrap()
+            .get_cpu::<VirtualCamera>()
+            .unwrap()
+            .get(entity)
+            .unwrap()
+            .follow
+    };
+    assert_eq!(of(moved), FOLLOW_SHOULDER, "the shoulder was stranded");
+    assert_eq!(of(left), FOLLOW_ORBITAL);
 }

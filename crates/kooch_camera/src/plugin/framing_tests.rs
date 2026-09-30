@@ -202,7 +202,7 @@ fn a_shoulder_and_a_framing_coexist() {
             .unwrap()
             .get_mut(vcam)
             .unwrap();
-        cam.follow = crate::FOLLOW_THIRD_PERSON;
+        cam.follow = crate::FOLLOW_SHOULDER;
         cam.camera_distance = 3.0;
         cam.pitch = 0.0;
         cam.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
@@ -278,7 +278,7 @@ fn the_rig_never_steps() {
                 .unwrap()
                 .get_mut(vcam)
                 .unwrap();
-            cam.follow = crate::FOLLOW_THIRD_PERSON;
+            cam.follow = crate::FOLLOW_ORBITAL;
             cam.camera_distance = 8.0;
             cam.pitch = 18.0;
             registry
@@ -328,7 +328,7 @@ fn framing_adds_no_jump_of_its_own() {
                 .unwrap()
                 .get_mut(vcam)
                 .unwrap();
-            cam.follow = crate::FOLLOW_THIRD_PERSON;
+            cam.follow = crate::FOLLOW_ORBITAL;
             cam.camera_distance = 8.0;
             cam.pitch = 18.0;
             cam.damping = Vec3::splat(0.3);

@@ -24,7 +24,7 @@ fn world() -> (Resources, Entity) {
     registry.get_cpu_mut::<VirtualCamera>().unwrap().insert(
         vcam,
         VirtualCamera {
-            follow: crate::FOLLOW_THIRD_PERSON,
+            follow: crate::FOLLOW_ORBITAL,
             ..Default::default()
         },
     );
