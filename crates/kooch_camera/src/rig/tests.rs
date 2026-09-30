@@ -120,6 +120,12 @@ fn an_orphan_is_reported() {
         .get_cpu_mut::<VirtualCamera>()
         .unwrap()
         .insert(rig, VirtualCamera::default());
+    // A complete rig carries exactly one body, or the count itself is what gets reported (#1397).
+    registry.register_cpu_reflected::<crate::OrbitalFollow>();
+    registry
+        .get_cpu_mut::<crate::OrbitalFollow>()
+        .unwrap()
+        .insert(rig, crate::OrbitalFollow::default());
     resources.insert(registry);
 
     super::report_orphans(&mut resources);

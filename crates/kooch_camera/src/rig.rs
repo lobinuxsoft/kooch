@@ -129,6 +129,14 @@ pub struct RigMemory {
 #[derive(Debug, Clone, Default)]
 pub struct Orphans(std::collections::HashSet<Entity>);
 
+impl Orphans {
+    /// Whether this entity has already been told about. Public so a test can ask what the author was
+    /// told, rather than scraping a log.
+    pub fn contains(&self, entity: Entity) -> bool {
+        self.0.contains(&entity)
+    }
+}
+
 /// Says once, per entity, that a rig component sits where nothing will read it.
 ///
 /// 🔴 The Inspector says the same thing where the author is looking (#1342); this is for a packaged

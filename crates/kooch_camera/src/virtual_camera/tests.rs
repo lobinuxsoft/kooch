@@ -69,7 +69,6 @@ fn a_body_is_what_makes_it_ready() {
     assert!(crate::OrbitalFollow::default().radius > 0.0);
 }
 
-
 /// Both quantities at once, seeding the yaw origin as a first step does — what the rig's Body and
 /// Aim stages each do one of.
 /// 🔴 One bag of numbers for either body. A test cares about the geometry, not about which component
@@ -95,9 +94,7 @@ fn desired(
     // the entity carries none (#1397).
     let position = match body {
         None => current,
-        Some(body)
-            if body.shoulder_offset != Vec3::ZERO || body.vertical_arm_length != 0.0 =>
-        {
+        Some(body) if body.shoulder_offset != Vec3::ZERO || body.vertical_arm_length != 0.0 => {
             vcam.on_shoulder(target, body, up, reference)
         }
         Some(body) => vcam.on_sphere(
@@ -966,7 +963,6 @@ fn a_plain_rig_has_no_chain() {
     assert_eq!(shoulder, hand);
 }
 
-
 /// 🔴 #1391: a body is a component, and the numbers a scene wrote on the vcam have to reach it. An
 /// alias maps a name inside a type; a field that moved to another component is not covered, so
 /// without this every authored rig would take the defaults with nothing said.
@@ -1053,4 +1049,85 @@ fn the_body_numbers_reach_their_component() {
             "the body is in the storage and not on the entity",
         );
     }
+}
+
+/// 🔴 #1397: the modes a scene named become the components that **are** them. A sabotage of the
+/// `Follow` arm produced no failure at all, which is what a path nothing covers looks like.
+#[test]
+fn the_named_modes_become_components() {
+    use kooch_ecs::archetype_registry::ArchetypeRegistry;
+    use kooch_ecs::component::ComponentRegistry;
+
+    let mut resources = kooch_core::resource::Resources::new();
+    let mut archetypes = ArchetypeRegistry::new();
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu_reflected::<VirtualCamera>();
+    let empty = archetypes.get_or_create(Default::default());
+
+    let (simple, glued, composed) = (
+        kooch_ecs::entity::Entity::new(1, 0),
+        kooch_ecs::entity::Entity::new(2, 0),
+        kooch_ecs::entity::Entity::new(3, 0),
+    );
+    let offset = Vec3::new(0.0, 3.0, 10.0);
+    for (entity, follow, look_at) in [
+        (simple, FOLLOW_SIMPLE, LOOK_AT_SIMPLE),
+        (glued, FOLLOW_GLUED, LOOK_AT_MIMIC),
+        (composed, FOLLOW_POSITION_COMPOSER, LOOK_AT_ARM),
+    ] {
+        registry.get_cpu_mut::<VirtualCamera>().unwrap().insert(
+            entity,
+            VirtualCamera {
+                was_follow: follow,
+                was_look_at: look_at,
+                was_offset: offset,
+                ..Default::default()
+            },
+        );
+        archetypes.register_entity(entity, empty);
+    }
+    resources.insert(archetypes);
+    resources.insert(registry);
+
+    crate::virtual_camera::migrate_bodies(&mut resources);
+
+    let registry = resources.get::<ComponentRegistry>().unwrap();
+    let archetypes = resources.get::<ArchetypeRegistry>().unwrap();
+    let has = |entity, id| {
+        archetypes
+            .get(archetypes.entity_archetype(entity).expect("no archetype"))
+            .unwrap()
+            .components()
+            .contains(&id)
+    };
+
+    // The offset went with the body that reads it, value and all.
+    assert_eq!(
+        crate::virtual_camera::one::<crate::Follow>(registry, simple)
+            .expect("no Follow")
+            .offset,
+        offset,
+    );
+    assert!(has(simple, std::any::TypeId::of::<crate::Follow>()));
+    assert!(has(
+        glued,
+        std::any::TypeId::of::<crate::HardLockToTarget>()
+    ));
+    assert!(has(
+        composed,
+        std::any::TypeId::of::<crate::PositionComposer>()
+    ));
+
+    // And each aim became the component that is it.
+    assert!(has(simple, std::any::TypeId::of::<crate::HardLookAt>()));
+    assert!(has(
+        glued,
+        std::any::TypeId::of::<crate::RotateWithFollowTarget>()
+    ));
+    assert!(has(composed, std::any::TypeId::of::<crate::PanTilt>()));
+
+    // The hidden fields are emptied, so it runs once.
+    let vcams = registry.get_cpu::<VirtualCamera>().unwrap();
+    assert_eq!(vcams.get(simple).unwrap().was_follow, FOLLOW_NONE);
+    assert_eq!(vcams.get(simple).unwrap().was_offset, Vec3::ZERO);
 }

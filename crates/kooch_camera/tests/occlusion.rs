@@ -8,8 +8,7 @@
 use glam::Vec3;
 
 use kooch_camera::{
-    CameraRig, CameraTarget, Deoccluder, FOLLOW_ORBITAL, LOOK_AT_SIMPLE, VirtualCamera,
-    drive_virtual_cameras,
+    CameraRig, CameraTarget, Deoccluder, HardLookAt, VirtualCamera, drive_virtual_cameras,
 };
 use kooch_core::resource::Resources;
 use kooch_core::run_state::Playing;
@@ -51,6 +50,7 @@ fn world() -> Resources {
     registry.register_cpu_reflected::<VirtualCamera>();
     registry.register_cpu_reflected::<CameraTarget>();
     registry.register_cpu_reflected::<kooch_camera::OrbitalFollow>();
+    registry.register_cpu_reflected::<HardLookAt>();
     registry.register_cpu_reflected::<Deoccluder>();
     r
 }
@@ -151,6 +151,7 @@ fn rig_damped(collision: bool, damping: bool) -> (Resources, Entity, Entity) {
             ..Default::default()
         },
     );
+    insert(&mut resources, vcam, HardLookAt);
     insert(
         &mut resources,
         vcam,

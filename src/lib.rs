@@ -180,10 +180,10 @@ pub mod prelude {
     // camera work while orbiting a planet.
     #[cfg(feature = "camera")]
     pub use kooch_camera::{
-        CameraBrain, CameraPlugin, CameraTarget, FOLLOW_GLUED, FOLLOW_NONE, FOLLOW_ORBITAL,
-        FOLLOW_POSITION_COMPOSER, FOLLOW_SHOULDER, FOLLOW_SIMPLE, LOOK_AT_ARM, LOOK_AT_COMPOSED,
-        LOOK_AT_MIMIC, LOOK_AT_NONE, LOOK_AT_SIMPLE, ORBIT_SPHERE, ORBIT_THREE_RING, OrbitalFollow,
-        ThirdPersonFollow, UP_GRAVITY, UP_TARGET, UP_WORLD, VirtualCamera,
+        CameraBrain, CameraPlugin, CameraTarget, Follow, HardLockToTarget, HardLookAt,
+        ORBIT_SPHERE, ORBIT_THREE_RING, OrbitalFollow, PanTilt, PositionComposer,
+        RotateWithFollowTarget, RotationComposer, ThirdPersonFollow, UP_GRAVITY, UP_TARGET,
+        UP_WORLD, VirtualCamera,
     };
 
     // Playing a sound is gameplay; the mixer behind it is not.

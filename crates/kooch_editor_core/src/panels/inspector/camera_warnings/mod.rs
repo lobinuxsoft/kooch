@@ -6,73 +6,36 @@ use crate::state::EntityDisplayInfo;
 
 /// Each camera component, the one that reads it, and — where the reader only reads it in one mode —
 /// the field that has to say so. Anywhere else it is authored and inert.
-const OF_THE_RIG: &[(&str, &str, Option<InMode>)] = &[
-    ("CameraLookahead", "VirtualCamera", None),
-    // A framing is the vcam's Rotation Control: on a vcam that aims some other way the whole
-    // component does nothing, however long it was tuned for (#1361).
-    (
-        "RotationComposer",
-        "VirtualCamera",
-        Some(InMode {
-            field: "look_at",
-            value: kooch_camera::LOOK_AT_COMPOSED,
-            asked: "Composed (framing)",
-        }),
-    ),
-    ("Deoccluder", "VirtualCamera", None),
-    (
-        "PositionComposer",
-        "VirtualCamera",
-        Some(InMode {
-            field: "follow",
-            value: kooch_camera::FOLLOW_POSITION_COMPOSER,
-            asked: "Position Composer",
-        }),
-    ),
-    (
-        "OrbitalFollow",
-        "VirtualCamera",
-        Some(InMode {
-            field: "follow",
-            value: kooch_camera::FOLLOW_ORBITAL,
-            asked: "Orbital Follow",
-        }),
-    ),
-    (
-        "ThirdPersonFollow",
-        "VirtualCamera",
-        Some(InMode {
-            field: "follow",
-            value: kooch_camera::FOLLOW_SHOULDER,
-            asked: "Third Person Follow",
-        }),
-    ),
-    ("ThirdPersonAim", "VirtualCamera", None),
-    ("CameraOffset", "VirtualCamera", None),
-    ("CameraRecomposer", "VirtualCamera", None),
-    ("CameraOrbit", "VirtualCamera", None),
-    ("CameraWhen", "VirtualCamera", None),
+const OF_THE_RIG: &[(&str, &str)] = &[
+    ("CameraLookahead", "VirtualCamera"),
+    // 🔴 Every mode is a component now (#1397), so the question is only ever "is there a vcam here":
+    // which mode it is, the component's own presence says. A row that named a field was the second
+    // statement this refactor removed.
+    ("RotationComposer", "VirtualCamera"),
+    ("OrbitalFollow", "VirtualCamera"),
+    ("ThirdPersonFollow", "VirtualCamera"),
+    ("PositionComposer", "VirtualCamera"),
+    ("Follow", "VirtualCamera"),
+    ("HardLockToTarget", "VirtualCamera"),
+    ("HardLookAt", "VirtualCamera"),
+    ("PanTilt", "VirtualCamera"),
+    ("RotateWithFollowTarget", "VirtualCamera"),
+    ("Deoccluder", "VirtualCamera"),
+    ("ThirdPersonAim", "VirtualCamera"),
+    ("CameraOffset", "VirtualCamera"),
+    ("CameraRecomposer", "VirtualCamera"),
+    ("CameraOrbit", "VirtualCamera"),
+    ("CameraWhen", "VirtualCamera"),
     // A binding fills the component it is named for, so that is what has to be here — not the vcam.
-    ("OrbitInput", "CameraOrbit", None),
-    ("WhenInput", "CameraWhen", None),
+    ("OrbitInput", "CameraOrbit"),
+    ("WhenInput", "CameraWhen"),
 ];
 
-/// The mode a reader has to be in to read a component at all.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct InMode {
-    field: &'static str,
-    value: u32,
-    /// What the dropdown calls it, so the fix reads as the thing the author has to click.
-    asked: &'static str,
-}
-
-/// A camera component on an entity without the one that reads it, or with a reader not asking for it.
+/// A camera component on an entity without the one that reads it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Orphan {
     component: &'static str,
     reader: &'static str,
-    /// Set when the reader is here and the mode is what is missing.
-    unasked: Option<InMode>,
 }
 
 impl Orphan {
@@ -83,16 +46,6 @@ impl Orphan {
 
     pub(super) fn message(self) -> String {
         let named = spaced(self.reader);
-        if let Some(mode) = self.unasked {
-            return format!(
-                "{} is read only while the {}'s {} is \"{}\", and it is not — so nothing here is \
-                 ever read, whatever these fields say. Set it, or remove the component.",
-                self.component,
-                named,
-                spaced(mode.field),
-                mode.asked,
-            );
-        }
         let mut message = format!(
             "{} is read off the entity that carries the {}, and this entity has none — so \
              nothing here is ever read, whatever these fields say. Move the component onto the \
@@ -139,40 +92,11 @@ pub(super) fn warnings_for(entity: Entity, entities: &[EntityDisplayInfo]) -> Ve
     };
     OF_THE_RIG
         .iter()
-        .filter(|(component, ..)| has_component(info, component))
-        .filter_map(
-            |(component, reader, mode)| match has_component(info, reader) {
-                false => Some(Orphan {
-                    component,
-                    reader,
-                    unasked: None,
-                }),
-                // The reader is here; whether it asks for this is a field's answer, and a snapshot that
-                // skipped the values cannot say. Silence beats a warning drawn from nothing.
-                true => mode
-                    .filter(|mode| asks(info, reader, mode) == Some(false))
-                    .map(|mode| Orphan {
-                        component,
-                        reader,
-                        unasked: Some(mode),
-                    }),
-            },
-        )
+        .filter(|(component, reader)| {
+            has_component(info, component) && !has_component(info, reader)
+        })
+        .map(|(component, reader)| Orphan { component, reader })
         .collect()
-}
-
-/// Whether `reader` on this entity is in `mode`, or `None` where its values were not read.
-fn asks(info: &EntityDisplayInfo, reader: &str, mode: &InMode) -> Option<bool> {
-    let component = info
-        .components
-        .iter()
-        .find(|c| c.short_name.as_ref() == reader)?;
-    let values = component.fields.values()?;
-    let (_, value) = values.iter().find(|(name, _)| name == mode.field)?;
-    match value {
-        kooch_ecs::reflect::ReflectValue::U32(at) => Some(*at == mode.value),
-        _ => None,
-    }
 }
 
 /// Matched by `short_name`, which is what the display snapshot carries — a remote client has no

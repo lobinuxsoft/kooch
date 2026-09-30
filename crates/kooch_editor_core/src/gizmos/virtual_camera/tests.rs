@@ -9,7 +9,6 @@ use kooch_ecs::component::ComponentRegistry;
 
 fn shoulder() -> VirtualCamera {
     VirtualCamera {
-        follow: kooch_camera::FOLLOW_SHOULDER,
         ..Default::default()
     }
 }
@@ -28,14 +27,14 @@ fn shoulder_body() -> kooch_camera::ThirdPersonFollow {
 /// world **never has**: it adds `CameraComponentsPlugin` and not `CameraPlugin`, so `RigMemory` is
 /// not even inserted there, and a test that supplied one built the world the code wanted rather
 /// than the one that exists (#1387).
-fn world(vcam: VirtualCamera, entity: Entity, planned: bool) -> Resources {
+fn world(vcam: VirtualCamera, entity: Entity, planned: bool, shouldered: bool) -> Resources {
     let mut resources = Resources::new();
     let mut registry = ComponentRegistry::new();
     registry.register_cpu::<VirtualCamera>();
     registry.register_cpu::<CameraTarget>();
     registry.register_cpu::<GlobalTransform>();
     registry.register_cpu::<kooch_camera::ThirdPersonFollow>();
-    if vcam.follow == kooch_camera::FOLLOW_SHOULDER {
+    if shouldered {
         registry
             .get_cpu_mut::<kooch_camera::ThirdPersonFollow>()
             .unwrap()
@@ -85,7 +84,7 @@ fn a_shoulder_draws_its_chain() {
         &vcam,
         at,
         entity,
-        &world(vcam, entity, false),
+        &world(vcam, entity, false, true),
     );
     // Three segments for the chain, three strokes at each of its three pivots, and the orbit the arm
     // swings along — which also moved here, because its length is the body's now (#1391).
@@ -102,7 +101,6 @@ fn a_shoulder_draws_its_chain() {
 fn a_plain_rig_draws_no_chain() {
     let entity = Entity::new(1, 0);
     let vcam = VirtualCamera {
-        follow: FOLLOW_ORBITAL,
         ..Default::default()
     };
     let at = Mat4::from_translation(Vec3::Z * 2.5);
@@ -112,7 +110,7 @@ fn a_plain_rig_draws_no_chain() {
         &vcam,
         at,
         entity,
-        &world(vcam, entity, false),
+        &world(vcam, entity, false, false),
     );
     assert_eq!(chain(&drawn, &plain), 0);
 }
@@ -131,7 +129,7 @@ fn a_planned_rig_draws_from_its_memory() {
         &vcam,
         at,
         entity,
-        &world(vcam, entity, true),
+        &world(vcam, entity, true, true),
     );
     assert!(chain(&drawn, &plain) >= 3 + 9);
 }
@@ -141,7 +139,6 @@ fn a_planned_rig_draws_from_its_memory() {
 fn another_body_draws_no_chain() {
     let entity = Entity::new(1, 0);
     let vcam = VirtualCamera {
-        follow: kooch_camera::FOLLOW_SIMPLE,
         ..Default::default()
     };
     let at = Mat4::IDENTITY;
@@ -151,7 +148,7 @@ fn another_body_draws_no_chain() {
         &vcam,
         at,
         entity,
-        &world(vcam, entity, false),
+        &world(vcam, entity, false, false),
     );
     assert_eq!(chain(&drawn, &plain), 0);
 }
@@ -162,13 +159,12 @@ fn the_rings_draw_their_surface() {
     let rings = kooch_camera::ORBIT_THREE_RING;
     let entity = Entity::new(1, 0);
     let vcam = VirtualCamera {
-        follow: kooch_camera::FOLLOW_ORBITAL,
         ..Default::default()
     };
     let at = Mat4::from_translation(Vec3::Z * 4.0);
     let plain = draw(&VirtualCameraVisualizer, &vcam, at);
 
-    let mut resources = world(vcam, entity, false);
+    let mut resources = world(vcam, entity, false, false);
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
     registry.register_cpu::<kooch_camera::OrbitalFollow>();
     registry
@@ -197,13 +193,12 @@ fn a_sphere_draws_no_rings() {
     let rings = kooch_camera::ORBIT_SPHERE;
     let entity = Entity::new(1, 0);
     let vcam = VirtualCamera {
-        follow: kooch_camera::FOLLOW_ORBITAL,
         ..Default::default()
     };
     let at = Mat4::from_translation(Vec3::Z * 4.0);
     let plain = draw(&VirtualCameraVisualizer, &vcam, at);
 
-    let mut resources = world(vcam, entity, false);
+    let mut resources = world(vcam, entity, false, false);
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
     registry.register_cpu::<kooch_camera::OrbitalFollow>();
     registry

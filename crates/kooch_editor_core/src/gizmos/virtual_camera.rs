@@ -3,7 +3,7 @@
 use glam::Vec3;
 use kooch_camera::RigMemory;
 use kooch_camera::VirtualCamera;
-use kooch_camera::virtual_camera::{FOLLOW_ORBITAL, FOLLOW_SHOULDER, UP_GRAVITY, UP_TARGET};
+use kooch_camera::virtual_camera::{UP_GRAVITY, UP_TARGET};
 use kooch_core::resource::Resources;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::hierarchy::GlobalTransform;
@@ -115,9 +115,8 @@ impl Visualizer<VirtualCamera> for VirtualCameraVisualizer {
         if let Some(rings) = resources
             .get::<kooch_ecs::component::ComponentRegistry>()
             .and_then(|registry| kooch_camera::orbital_follow::of(registry, entity))
-            .filter(|body| {
-                vcam.follow == FOLLOW_ORBITAL && body.orbit_style == kooch_camera::ORBIT_THREE_RING
-            })
+            // The component's presence is what says it rides one (#1397).
+            .filter(|body| body.orbit_style == kooch_camera::ORBIT_THREE_RING)
         {
             let back = (transform.matrix.to_scale_rotation_translation().2 - target)
                 .try_normalize()
@@ -146,7 +145,6 @@ impl Visualizer<VirtualCamera> for VirtualCameraVisualizer {
         let Some(body) = resources
             .get::<kooch_ecs::component::ComponentRegistry>()
             .and_then(|registry| kooch_camera::third_person_follow::of(registry, entity))
-            .filter(|_| vcam.follow == FOLLOW_SHOULDER)
         else {
             return;
         };

@@ -446,36 +446,25 @@ fn a_wall_is_not_slack() {
     );
 }
 
-/// 🔴 The rule the whole change rests on: exactly **one** aim runs. A framing on a vcam that aims at
-/// its target is ignored, not folded in — two owners of the rotation is what #1329 ran from.
+/// 🔴 The rule the whole change rests on, and #1397 changed how it is kept: exactly **one** aim
+/// runs, and carrying two is now a thing the rig **reports** rather than a precedence nobody could
+/// see. A silent winner is what let a scene name a body it did not have.
 #[test]
-fn only_one_aim_runs() {
+fn two_aims_are_reported() {
     let (mut resources, vcam, _) = world();
     rigid(&mut resources, vcam);
-    {
-        let registry = resources.get_mut::<ComponentRegistry>().unwrap();
-        registry
-            .get_cpu_mut::<VirtualCamera>()
-            .unwrap()
-            .get_mut(vcam)
-            .unwrap();
-        registry
-            .get_cpu_mut::<RotationComposer>()
-            .unwrap()
-            .get_mut(vcam)
-            .unwrap()
-            .screen
-            .x = 0.25;
-    }
-    for _ in 0..200 {
-        drive_virtual_cameras(&mut resources);
-    }
-    // `Simple` aims at the target, so it is centred and the framing's offset never happened.
-    let seen = on_screen(&resources, vcam, Vec3::ZERO).x;
-    assert!(
-        seen.abs() < 0.01,
-        "the framing reached an aim it does not own: {seen}"
+    // The world already gives it a `HardLookAt`; the framing is the second.
+    assert_eq!(
+        crate::virtual_camera::aims_on(resources.get::<ComponentRegistry>().unwrap(), vcam),
+        2,
+        "the world should carry both aims for this to mean anything",
     );
+
+    crate::rig::report_orphans(&mut resources);
+
+    // Said once per entity, so a second pass is silent — the report is a warning, not a stream.
+    let said = resources.get::<crate::rig::Orphans>().expect("reported");
+    assert!(said.contains(vcam), "two aims went unreported");
 }
 
 /// 🔴 #1389: the pitch **selects** a point on the ring surface instead of swinging an arm, and it

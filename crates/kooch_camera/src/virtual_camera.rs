@@ -2,11 +2,11 @@
 //! phantom-camera (MIT, #671).
 
 use crate::third_person_follow::ThirdPersonFollow;
-use kooch_ecs::component::ComponentRegistry;
-use kooch_ecs::entity::Entity;
 use glam::Vec3;
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
+use kooch_ecs::component::ComponentRegistry;
+use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::{FieldChoice, FieldCondition};
 
 /// No follow logic; the pose is whatever else wrote it.
@@ -542,8 +542,6 @@ pub(crate) fn look_at(eye: Vec3, target: Vec3, up: Vec3, reference: Vec3) -> gla
     glam::Quat::from_mat3(&glam::Mat3::from_cols(right, up, -forward))
 }
 
-
-
 /// The component of this type on `entity`, if any. The shape every body and aim is asked for.
 pub(crate) fn one<T: kooch_ecs::component::Component + Copy>(
     registry: &ComponentRegistry,
@@ -690,7 +688,16 @@ pub fn migrate_bodies(resources: &mut kooch_core::resource::Resources) {
             LOOK_AT_MIMIC => added(resources, *entity, crate::RotateWithFollowTarget),
             _ => {}
         }
-        // And the bodies that are nothing but their fields.
+        // 🔴 The body is built from **whichever evidence exists**: an arm's numbers are as good a
+        // statement as the enum, and a scene that carried one without the other would otherwise be
+        // stranded with no body at all.
+        let shouldered = vcam.was_shoulder != Vec3::ZERO
+            || vcam.was_arm_length != 0.0
+            || vcam.was_follow == FOLLOW_SHOULDER;
+        let armed = shouldered
+            || vcam.was_follow == FOLLOW_ORBITAL
+            || vcam.was_distance != 0.0
+            || vcam.was_orbit_style != ORBIT_SPHERE;
         match vcam.was_follow {
             FOLLOW_GLUED => added(resources, *entity, crate::HardLockToTarget),
             FOLLOW_SIMPLE => added(
@@ -705,7 +712,7 @@ pub fn migrate_bodies(resources: &mut kooch_core::resource::Resources) {
             }
             _ => {}
         }
-        if !matches!(vcam.was_follow, FOLLOW_ORBITAL | FOLLOW_SHOULDER) {
+        if !armed {
             tracing::info!(
                 target: "kooch_camera",
                 entity = entity.index(),
@@ -713,10 +720,6 @@ pub fn migrate_bodies(resources: &mut kooch_core::resource::Resources) {
             );
             continue;
         }
-        // A shoulder authored anywhere means the shoulder body, as #1380 already decided.
-        let shouldered = vcam.was_shoulder != Vec3::ZERO
-            || vcam.was_arm_length != 0.0
-            || vcam.was_follow == FOLLOW_SHOULDER;
         match shouldered {
             true => added(
                 resources,
