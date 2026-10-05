@@ -242,7 +242,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<crate::install::Installing>()
         .map(crate::install::Installing::progress);
 
-    let game_rig = rig_view::selected_rig(resources, &taken.overlay.selected_entities);
+    let pinned: Vec<kooch_ecs::entity::Entity> =
+        taken.overlay.pinned_gizmos.iter().copied().collect();
+    let game_rig = rig_view::selected_rig(resources, &taken.overlay.selected_entities, &pinned);
     let ui_start = std::time::Instant::now();
     let (full_output, mut actions) = run_editor_ui(
         &mut taken.overlay,
