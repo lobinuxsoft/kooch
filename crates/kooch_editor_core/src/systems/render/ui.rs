@@ -59,7 +59,7 @@ pub(super) struct ViewportUi<'a> {
     pub(super) game_request: &'a mut Option<(u32, u32)>,
     pub(super) game_has_camera: bool,
     /// The selected vcam's framing, drawn over the Game view (#1252).
-    pub(super) game_framing: Option<crate::panels::game::FramingView>,
+    pub(super) game_rig: Option<crate::panels::game::rig_overlay::RigView>,
     /// The Shader Graph preview (#1159): its texture, the shape it is on, and the shape the panel
     /// asks for next.
     pub(super) preview_texture_id: egui::TextureId,
@@ -155,7 +155,7 @@ pub(super) fn run_editor_ui(
         game_texture_id,
         game_request,
         game_has_camera,
-        game_framing,
+        game_rig,
         preview_texture_id,
         preview_primitive,
         preview_refusal,
@@ -302,7 +302,7 @@ pub(super) fn run_editor_ui(
                 game_texture_id,
                 game_request,
                 game_has_camera,
-                game_framing,
+                game_rig: game_rig.clone(),
                 preview_texture_id,
                 preview_primitive,
                 preview_refusal,

@@ -129,6 +129,9 @@ pub(crate) struct HudVisibility {
     /// way — the full readout lives in the Performance tab.
     pub(crate) frame_time_card: bool,
     pub(crate) info_card: bool,
+    /// The selected vcam's rig over the picture (#1402). Off by default, like the cards: an overlay
+    /// that draws itself over somebody's game without being asked is in the way.
+    pub(crate) rig_overlay: bool,
 }
 
 /// One flag per pinnable section of the performance readout. A fixed
@@ -152,6 +155,7 @@ impl Default for HudVisibility {
     /// drawn over the game view they could not be read, which was the user's complaint.
     fn default() -> Self {
         Self {
+            rig_overlay: false,
             system_section: true,
             shadow_pages_window: false,
             panel_visible: false,

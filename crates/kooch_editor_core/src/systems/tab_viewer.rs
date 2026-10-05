@@ -69,7 +69,7 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Whether the last frame found a gameplay camera to render.
     pub(crate) game_has_camera: bool,
     /// The selected vcam's framing, drawn over the image while it is authored (#1252).
-    pub(crate) game_framing: Option<crate::panels::game::FramingView>,
+    pub(crate) game_rig: Option<crate::panels::game::rig_overlay::RigView>,
     /// Whether the game image was clicked this frame — what captures the cursor (#1266).
     pub(crate) game_clicked: &'a mut bool,
     /// Set while drawing when Game is the focused tab. Drives whether the project receives input —
@@ -258,7 +258,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                     self.game_request,
                     self.game_resolution,
                     self.game_has_camera,
-                    self.game_framing,
+                    self.game_rig.clone(),
                     self.perf_stats,
                     self.game_stats,
                     self.meshlet_debug_mode,
