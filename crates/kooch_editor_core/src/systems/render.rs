@@ -242,7 +242,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<crate::install::Installing>()
         .map(crate::install::Installing::progress);
 
-    let game_rig = rig_view::selected_rig(resources, &taken.overlay.selected_entities, vcam_lens);
+    let game_rig = rig_view::selected_rig(resources, &taken.overlay.selected_entities);
     let ui_start = std::time::Instant::now();
     let (full_output, mut actions) = run_editor_ui(
         &mut taken.overlay,
@@ -413,40 +413,6 @@ mod helpers;
 mod rig_view;
 
 use helpers::*;
-
-/// The lens a vcam frames through: what it asks for, or the active camera's, over the rendered
-/// aspect.
-fn vcam_lens(
-    resources: &Resources,
-    vcam: kooch_ecs::entity::Entity,
-) -> kooch_camera::framing::Lens {
-    let fov = resources
-        .get::<kooch_ecs::component::ComponentRegistry>()
-        .map(|registry| {
-            let camera = registry
-                .get_cpu::<kooch_ecs::perspective_camera::PerspectiveCamera>()
-                .and_then(|cameras| {
-                    cameras
-                        .iter()
-                        .filter(|(_, cam)| cam.active)
-                        .min_by_key(|(entity, cam)| (-cam.priority, entity.index()))
-                        .map(|(_, cam)| cam.fov)
-                })
-                .unwrap_or(kooch_ecs::perspective_camera::PerspectiveCamera::default().fov);
-            registry
-                .get_cpu::<kooch_camera::LensOverride>()
-                .and_then(|storage| storage.get(vcam))
-                .map(|lens| lens.fov)
-                .unwrap_or(camera)
-        })
-        .unwrap_or(60.0);
-    let aspect = resources
-        .get::<kooch_ecs::ViewAspect>()
-        .copied()
-        .unwrap_or_default()
-        .0;
-    kooch_camera::framing::Lens::new(fov, aspect)
-}
 
 /// The point a vcam follows: the weighted centre of its target group.
 fn camera_target_point(

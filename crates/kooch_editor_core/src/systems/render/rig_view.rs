@@ -5,6 +5,13 @@
 //! the target, and say nothing. Those become a line of text. What becomes a mark is what the lens
 //! actually separates — where the target sits against where the rig means to hold it.
 //!
+//! 🔴 **Projected from the camera that DREW the picture, never from the selected vcam.** They are
+//! not the same eye: a vcam you are inspecting may not be the one winning the election — a
+//! `priority` of -1 against 0 — and during a handover the camera is between two of them and is
+//! neither. Projecting from the vcam put every mark somewhere the picture does not agree with,
+//! which is the bug this overlay shipped with. `CameraStack::read` is the same call
+//! `viewport/game.rs` renders the panel through, so the two cannot drift apart again.
+//!
 //! Collected with `&Resources` and drawn later, so nothing here touches the world.
 
 use glam::{Vec2, Vec3};
@@ -46,11 +53,19 @@ impl Screen {
     }
 }
 
+/// The aspect the panel last rendered at.
+fn aspect(resources: &kooch_core::resource::Resources) -> f32 {
+    resources
+        .get::<kooch_ecs::ViewAspect>()
+        .copied()
+        .unwrap_or_default()
+        .0
+}
+
 /// The rig of the one selected vcam, or nothing when the selection is not a single vcam.
 pub(super) fn selected_rig(
     resources: &kooch_core::resource::Resources,
     selected: &[Entity],
-    lens: impl Fn(&kooch_core::resource::Resources, Entity) -> Lens,
 ) -> Option<RigView> {
     let [entity] = selected else {
         return None;
@@ -63,17 +78,20 @@ pub(super) fn selected_rig(
         .get_cpu::<kooch_camera::VirtualCamera>()?
         .get(entity)?;
 
-    let (_, rotation, at) = registry
-        .get_cpu::<GlobalTransform>()?
-        .get(entity)?
-        .matrix
-        .to_scale_rotation_translation();
+    // The eye the panel was rendered through, not this vcam's.
+    let camera = kooch_render::CameraStack::read::<
+        kooch_ecs::query::filter::Without<crate::editor_camera::markers::EditorCamera>,
+    >(resources)
+    .base?;
+    let (_, rotation, at) = camera.world_matrix.to_scale_rotation_translation();
     let screen = Screen {
         at,
         right: rotation * Vec3::X,
         above: rotation * Vec3::Y,
         forward: rotation * -Vec3::Z,
-        lens: lens(resources, entity),
+        // Its own lens too: during a blend this holds the interpolated field of view, which is what
+        // the frame was actually drawn with (#1254).
+        lens: Lens::new(camera.fov_y_rad.to_degrees(), aspect(resources)),
     };
 
     let mut view = RigView::default();
