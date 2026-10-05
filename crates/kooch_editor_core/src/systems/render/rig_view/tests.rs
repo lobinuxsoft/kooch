@@ -3,10 +3,12 @@
 //! is how `Lens::new(60.0, 16.0 / 9.0)` stayed hardcoded in this overlay until #1254, in the
 //! overlay whose job is finding framing bugs. Everything else about this feature is visible.
 //!
-//! ⚠️ **What these do NOT cover**: that the lens reaching `Screen` is the VCAM's. They build the
-//! `Screen` by hand, so putting `Lens::new(60.0, 16.0 / 9.0)` back in `selected_rig` leaves them
-//! green — the variable of interest held still, which is this repo's recurring test defect. The
-//! callsite passing `vcam_lens` is one typed line, and #1254 is what verified that path.
+//! ⚠️ **What these do NOT cover**: which camera `Screen` is built FROM. They build it by hand, so
+//! the first version of this overlay — projecting from the selected vcam rather than from the
+//! camera that drew the picture — was green here and visibly wrong on screen the moment a vcam
+//! that was not winning the election got selected. The variable of interest held still, which is
+//! this repo's recurring test defect, and a smoke test found it in minutes. What guards that now
+//! is `CameraStack::read` being the same call `viewport/game.rs` renders through.
 
 use super::*;
 

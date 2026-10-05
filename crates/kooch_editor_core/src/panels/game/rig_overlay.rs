@@ -132,10 +132,13 @@ impl ZoneKind {
         }
     }
 
+    /// 🔴 Faint, because a soft zone of `1.0` IS the whole screen — the default — and at the old
+    /// alpha the overlay tinted the entire game red. The band is a hint about where correction
+    /// ramps, not a filter over somebody's picture.
     fn tint(self) -> egui::Color32 {
         match self {
-            Self::Rotation => egui::Color32::from_rgba_unmultiplied(220, 60, 60, 40),
-            Self::Position => egui::Color32::from_rgba_unmultiplied(190, 110, 230, 36),
+            Self::Rotation => egui::Color32::from_rgba_unmultiplied(220, 60, 60, 14),
+            Self::Position => egui::Color32::from_rgba_unmultiplied(190, 110, 230, 13),
         }
     }
 }
@@ -231,7 +234,9 @@ fn draw_mark(painter: &egui::Painter, mark: &Mark, at: &impl Fn(Vec2) -> egui::P
             );
         }
     }
-    if let Some(radius) = mark.ring {
+    // 🔴 Only while it fits. A 4 m cap on a target two metres away is wider than the screen, and
+    // drawn it is an arc across the whole picture that communicates no limit at all.
+    if let Some(radius) = mark.ring.filter(|radius| *radius < 0.5) {
         // 🔴 A round circle, and the radius is a fraction of the WIDTH on both axes. That looks
         // wrong and is right: the vertical fraction of a world distance is `aspect` times the
         // horizontal one, and the panel's height is its width over `aspect`, so the two cancel. A
@@ -262,16 +267,44 @@ fn ring(centre: egui::Pos2, radius: f32, painter: &egui::Painter) -> Vec<egui::P
 }
 
 /// The notes, bottom-left, where no card sits.
+///
+/// 🔴 On a plate, because pale text over a bright floor is not text. The cards on the right edge
+/// have carried one since they existed; these shipped without and could not be read.
 fn draw_notes(painter: &egui::Painter, image: egui::Rect, notes: &[String]) {
     const LINE: f32 = 15.0;
-    let mut cursor = image.left_bottom() + egui::vec2(10.0, -10.0 - LINE * notes.len() as f32);
+    const PAD: f32 = 6.0;
+    if notes.is_empty() {
+        return;
+    }
+    let font = egui::FontId::proportional(12.0);
+    let widths: Vec<f32> = notes
+        .iter()
+        .map(|note| {
+            painter
+                .layout_no_wrap(note.clone(), font.clone(), egui::Color32::WHITE)
+                .rect
+                .width()
+        })
+        .collect();
+    let widest = widths.iter().copied().fold(0.0_f32, f32::max);
+    let height = LINE * notes.len() as f32;
+    let top_left = image.left_bottom() + egui::vec2(10.0, -10.0 - height);
+    painter.rect_filled(
+        egui::Rect::from_min_size(
+            top_left - egui::vec2(PAD, PAD),
+            egui::vec2(widest + PAD * 2.0, height + PAD * 2.0),
+        ),
+        4.0,
+        egui::Color32::from_rgba_unmultiplied(12, 12, 16, 190),
+    );
+    let mut cursor = top_left;
     for note in notes {
         painter.text(
             cursor,
             egui::Align2::LEFT_TOP,
             note,
-            egui::FontId::proportional(12.0),
-            egui::Color32::from_rgb(210, 215, 225),
+            font.clone(),
+            egui::Color32::from_rgb(220, 225, 235),
         );
         cursor.y += LINE;
     }
