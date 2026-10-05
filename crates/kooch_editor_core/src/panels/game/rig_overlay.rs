@@ -61,8 +61,6 @@ pub(crate) enum MarkKind {
     Member,
     /// The point a group resolves to — a place nothing stands.
     Centre,
-    /// Where the body would have stood the camera, before a wall.
-    Free,
     /// The shoulder a `ThirdPersonFollow` is holding.
     Shoulder,
     /// The point a body is following: the target plus its offset.
@@ -78,7 +76,6 @@ impl MarkKind {
             Self::Authored => egui::Color32::from_rgb(150, 125, 40),
             Self::Member => egui::Color32::from_rgb(140, 217, 242),
             Self::Centre => egui::Color32::from_rgb(242, 242, 153),
-            Self::Free => egui::Color32::from_rgb(102, 140, 191),
             Self::Shoulder => egui::Color32::from_rgb(255, 217, 115),
             Self::Followed => egui::Color32::from_rgb(245, 160, 90),
         }
