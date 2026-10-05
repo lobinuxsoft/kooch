@@ -62,23 +62,16 @@ fn aspect(resources: &kooch_core::resource::Resources) -> f32 {
         .0
 }
 
-/// The rig of the one selected vcam, or nothing when the selection is not a single vcam.
+/// The rig of the selected vcam, and of every pinned one.
+///
+/// 🔴 Pinned entities draw beside the selection in the Edit view, and an overlay that ignored them
+/// made pinning useless for the one view where a rig is actually judged.
 pub(super) fn selected_rig(
     resources: &kooch_core::resource::Resources,
     selected: &[Entity],
+    pinned: &[Entity],
 ) -> Option<RigView> {
-    let [entity] = selected else {
-        return None;
-    };
-    let entity = *entity;
-    let registry = resources.get::<ComponentRegistry>()?;
-    // 🔴 Not gated on `RotationComposer` any more. It was, so a vcam without one drew nothing at
-    // all — and a half-built rig is exactly when an author needs to see what it has (#1402).
-    let vcam = registry
-        .get_cpu::<kooch_camera::VirtualCamera>()?
-        .get(entity)?;
-
-    // The eye the panel was rendered through, not this vcam's.
+    // Read once, not per vcam: it is a query, and every vcam is seen through the same eye.
     let camera = kooch_render::CameraStack::read::<
         kooch_ecs::query::filter::Without<crate::editor_camera::markers::EditorCamera>,
     >(resources)
@@ -94,6 +87,46 @@ pub(super) fn selected_rig(
         lens: Lens::new(camera.fov_y_rad.to_degrees(), aspect(resources)),
     };
 
+    let registry = resources.get::<ComponentRegistry>()?;
+    let mut view = RigView::default();
+    // Selected first, then pinned minus whatever is both — drawing one twice doubles every line.
+    let drawn = selected
+        .iter()
+        .copied()
+        .chain(pinned.iter().copied().filter(|e| !selected.contains(e)));
+    for entity in drawn {
+        let Some(mut one) = one_rig(resources, registry, &screen, entity) else {
+            continue;
+        };
+        // 🔴 Named, because with a pin there are several and an unlabelled line belongs to nobody.
+        if let Some(name) = registry
+            .get_cpu::<kooch_ecs::Name>()
+            .and_then(|names| names.get(entity))
+        {
+            for note in &mut one.notes {
+                *note = format!("{}: {note}", name.value);
+            }
+        }
+        view.zones.extend(one.zones);
+        view.marks.extend(one.marks);
+        view.notes.extend(one.notes);
+    }
+    (!view.is_empty()).then_some(view)
+}
+
+/// One vcam's rig, or nothing when `entity` is not a vcam.
+fn one_rig(
+    resources: &kooch_core::resource::Resources,
+    registry: &ComponentRegistry,
+    screen: &Screen,
+    entity: Entity,
+) -> Option<RigView> {
+    // 🔴 Not gated on `RotationComposer` any more. It was, so a vcam without one drew nothing at
+    // all — and a half-built rig is exactly when an author needs to see what it has (#1402).
+    let vcam = registry
+        .get_cpu::<kooch_camera::VirtualCamera>()?
+        .get(entity)?;
+
     let mut view = RigView::default();
     let target = super::camera_target_point(resources, entity);
     let lead = resources
@@ -102,8 +135,8 @@ pub(super) fn selected_rig(
         .map(|lead| lead.offset())
         .unwrap_or(Vec3::ZERO);
 
-    group(&mut view, registry, &screen, vcam.group, target);
-    composers(&mut view, registry, entity, &screen, target, lead);
+    group(&mut view, registry, screen, vcam.group, target);
+    composers(&mut view, registry, entity, screen, target, lead);
     bodies(
         &mut view, registry, entity, &screen, target, resources, vcam,
     );
@@ -301,7 +334,20 @@ fn bodies(
                 let up = kooch_camera::up_for(vcam, resources, target, glam::Quat::IDENTITY);
                 (up, kooch_camera::seed_reference(up))
             });
-        let (_, shoulder, _) = vcam.rig_positions(target, up, reference, body);
+        // 🔴 The direction the rig is actually looking FROM, levelled against `up` — not the
+        // seeded reference, which is a fixed axis that knows nothing about where anything points.
+        // Handed the seed, the shoulder sat in one place while the camera swung around it, which is
+        // the opposite of what a shoulder is. `gizmos/virtual_camera.rs` works it out the same way.
+        let eye = registry
+            .get_cpu::<GlobalTransform>()
+            .and_then(|globals| globals.get(entity))
+            .map(|global| global.matrix.to_scale_rotation_translation().2);
+        let back = eye
+            .and_then(|eye| (eye - target).try_normalize())
+            .map(|out| out - up * out.dot(up))
+            .and_then(Vec3::try_normalize)
+            .unwrap_or(reference);
+        let (_, shoulder, _) = vcam.rig_positions(target, up, back, body);
         if let Some(on) = screen.of(shoulder) {
             view.marks
                 .push(Mark::new(on, MarkKind::Shoulder).from(centre.unwrap_or(on)));
