@@ -186,6 +186,8 @@ fn an_unreflected_type_reports_no_defaults() {
 
 // -- The dense handle (#891, stage 1) ---------------------------------------
 
+// Shape and size are the point; nothing reads these back.
+#[allow(dead_code)]
 struct Health(u32);
 impl Component for Health {}
 

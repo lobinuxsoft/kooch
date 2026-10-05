@@ -146,7 +146,7 @@ fn a_disconnected_project_waits() {
 #[test]
 fn a_restored_scene_keeps_its_file_and_stays_dirty() {
     let _alone = alone();
-    let mut manager = kooch_ecs::SceneManager::new();
+    let manager = kooch_ecs::SceneManager::new();
     let id = manager.active_id().expect("a scene");
     let mut resources = Resources::new();
     resources.insert(manager);

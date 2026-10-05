@@ -4,7 +4,7 @@
 mod common;
 
 use common::try_acquire_device;
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use kooch_render::mesh::{Aabb, MeshVertex};
 use kooch_render::meshlet::{
     CullParams, DEFAULT_MAX_TRIANGLES, MeshletCull, MeshletCullPipelines, MeshletDescriptor,

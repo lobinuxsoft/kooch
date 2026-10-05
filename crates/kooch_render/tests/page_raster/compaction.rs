@@ -10,7 +10,7 @@ fn a_hundred_lamps_compact_without_drops() {
         eprintln!("no adapter; skipping");
         return;
     };
-    let mut raster = rasterizer(&device);
+    let raster = rasterizer(&device);
     let mut pool = PagePool::new(&device, small());
     const LIGHTS: u32 = 100;
     let lamps: Vec<kooch_lighting::GpuLight> = (0..LIGHTS)

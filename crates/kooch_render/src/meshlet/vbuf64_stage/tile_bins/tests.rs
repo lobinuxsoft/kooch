@@ -173,7 +173,7 @@ fn a_second_binning_starts_clean() {
     let view = vbuf.create_view(&Default::default());
     let bins = TileBins::new(&device);
     let mut encoder = device.create_command_encoder(&Default::default());
-    let mut bin = |encoder: &mut wgpu::CommandEncoder| {
+    let bin = |encoder: &mut wgpu::CommandEncoder| {
         bins.bin(
             &device,
             &queue,

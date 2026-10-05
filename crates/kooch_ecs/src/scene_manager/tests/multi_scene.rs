@@ -11,8 +11,6 @@ use kooch_core::resource::Resources;
 
 /// Writes a scene file holding `count` entities with the given hp values.
 fn write_scene(name: &str, hps: &[u32]) -> std::path::PathBuf {
-    use crate::scene::SceneDocument;
-
     let mut resources = setup_resources();
     {
         let mut commands = resources.remove::<Commands>().unwrap();

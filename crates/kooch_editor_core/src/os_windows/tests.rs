@@ -113,7 +113,9 @@ fn a_split_panel_returns_home() {
 fn a_shared_panel_returns_home() {
     let mut before = default_dock_state();
     let game = before.find_tab(&EditorTab::View).unwrap();
-    before.set_active_tab(game);
+    before
+        .set_active_tab(game)
+        .expect("the View tab was found a line ago");
     let mut dock = before.clone();
     let mut windows = OsWindows::default();
     detach(&mut dock, &mut windows, EditorTab::View);

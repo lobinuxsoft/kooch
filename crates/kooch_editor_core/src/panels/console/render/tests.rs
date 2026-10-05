@@ -1,21 +1,4 @@
 use super::*;
-fn entry(level: Level, target: &str, message: &str) -> LogEntry {
-    LogEntry {
-        seq: 0,
-        level,
-        target: target.to_owned(),
-        message: message.to_owned(),
-        from_project: false,
-    }
-}
-
-fn from_project(level: Level, target: &str, message: &str) -> LogEntry {
-    LogEntry {
-        from_project: true,
-        ..entry(level, target, message)
-    }
-}
-
 /// The numbers are what anyone scans a log line for, so they have to
 /// come out of the prose.
 #[test]

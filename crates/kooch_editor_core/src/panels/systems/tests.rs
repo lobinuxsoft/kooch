@@ -16,7 +16,7 @@ fn with_ui<R>(body: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let ctx = egui::Context::default();
     let mut body = Some(body);
     let mut out = None;
-    ctx.run_ui(egui::RawInput::default(), |ui| {
+    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
         let body = body.take().expect("run_ui called the closure twice");
         egui::CentralPanel::default().show(ui, |ui| out = Some(body(ui)));
     });

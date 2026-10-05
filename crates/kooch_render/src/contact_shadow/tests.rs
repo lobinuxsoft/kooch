@@ -1,5 +1,4 @@
 use super::*;
-use glam::Vec4;
 
 /// The march recovers metres as `near / ndc.z`, and that identity is the entire reason the camera
 /// lost its far plane. Checked against the projection the camera actually builds, not against the

@@ -28,7 +28,7 @@ fn typing(events: Vec<Vec<egui::Event>>) -> Vec<EditorAction> {
             events: events[frame].clone(),
             ..Default::default()
         };
-        ctx.run_ui(input, |ui| {
+        let _ = ctx.run_ui(input, |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 super::asset_view::draw_layers(ui, guid, &names, &mut actions);
             });

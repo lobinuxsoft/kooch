@@ -8,6 +8,8 @@ impl Component for Health {}
 struct Speed(f32);
 impl Component for Speed {}
 
+// Shape and size are the point; nothing reads these back.
+#[allow(dead_code)]
 struct Armour(u8);
 impl Component for Armour {}
 

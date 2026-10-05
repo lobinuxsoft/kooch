@@ -7,9 +7,13 @@ use crate::archetype_registry::ArchetypeRegistry;
 use crate::component::ComponentRegistry;
 use crate::component::traits::Component;
 
+// Shape and size are the point; nothing reads these back.
+#[allow(dead_code)]
 struct Health(u32);
 impl Component for Health {}
 
+// Shape and size are the point; nothing reads these back.
+#[allow(dead_code)]
 struct Speed(f32);
 impl Component for Speed {}
 

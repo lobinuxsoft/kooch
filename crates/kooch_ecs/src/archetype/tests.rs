@@ -2,6 +2,8 @@ use super::*;
 
 struct Position;
 struct Velocity;
+// Shape and size are the point; nothing reads these back.
+#[allow(dead_code)]
 struct Health;
 
 #[test]

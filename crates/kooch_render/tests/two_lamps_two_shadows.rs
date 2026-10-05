@@ -25,7 +25,6 @@ use kooch_render::shadow::ShadowSettings;
 const SIZE: u32 = 1536;
 
 /// The lamp the inspector showed, overhead.
-const OVERHEAD: Vec3 = Vec3::new(0.0, 3.477, 0.0);
 /// The reported values, not the suite's 4 000 000 over 40 m.
 const INTENSITY: f32 = 320_000.0;
 const RANGE: f32 = 10.0;

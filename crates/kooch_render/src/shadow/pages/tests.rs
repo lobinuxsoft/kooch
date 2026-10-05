@@ -277,9 +277,9 @@ fn a_surface_nothing_reaches_residents_nothing() {
 
 #[test]
 fn a_lamp_strides_two_thousand_pages() {
-    /// The floored local stride is what makes the flat table affordable: a full chain per lamp is
-    /// 131 070 pages and the chain from `local_floor` up is 2 046, rounded to a word boundary. If
-    /// this grows, the table below grows with it.
+    // The floored local stride is what makes the flat table affordable: a full chain per lamp is
+    // 131 070 pages and the chain from `local_floor` up is 2 046, rounded to a word boundary. If
+    // this grows, the table below grows with it.
     let config = PageConfig::default();
     assert_eq!(config.local_face_pages(), 341);
     assert_eq!(super::mark::stride(config, ClipmapConfig::default()), 2048);

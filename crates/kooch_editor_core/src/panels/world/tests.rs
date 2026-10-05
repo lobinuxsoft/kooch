@@ -40,7 +40,7 @@ fn with_ui<R>(body: impl FnOnce(&mut egui::Ui) -> R) -> R {
         ..Default::default()
     };
     let mut out = None;
-    ctx.run_ui(input, |ui| {
+    let _ = ctx.run_ui(input, |ui| {
         let body = body.take().expect("run_ui called the closure twice");
         egui::CentralPanel::default().show(ui, |ui| out = Some(body(ui)));
     });

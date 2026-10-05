@@ -11,6 +11,8 @@ use crate::query::access::AccessTracker;
 use kooch_core::resource::Resources;
 
 #[derive(Clone, Copy)]
+// Shape and size are the point; nothing reads these back.
+#[allow(dead_code)]
 struct Position {
     x: f32,
     y: f32,
@@ -19,6 +21,8 @@ struct Position {
 impl Component for Position {}
 
 #[derive(Clone, Copy)]
+// Shape and size are the point; nothing reads these back.
+#[allow(dead_code)]
 struct Velocity {
     x: f32,
     y: f32,

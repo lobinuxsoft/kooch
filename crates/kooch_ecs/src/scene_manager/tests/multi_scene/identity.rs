@@ -324,7 +324,7 @@ fn every_scene_change_moves_the_epoch() {
     let mut manager = SceneManager::new();
 
     let mut seen = vec![manager.epoch()];
-    let mut moved = |manager: &SceneManager, seen: &mut Vec<u32>, what: &str| {
+    let moved = |manager: &SceneManager, seen: &mut Vec<u32>, what: &str| {
         let now = manager.epoch();
         assert!(
             !seen.contains(&now),

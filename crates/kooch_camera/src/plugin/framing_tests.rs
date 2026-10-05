@@ -82,19 +82,6 @@ fn body<T: kooch_ecs::component::Component>(resources: &mut Resources, vcam: Ent
     registry.get_cpu_mut::<T>().unwrap().insert(vcam, value);
 }
 
-/// Replaces a vcam's body with `body`, which is what changing what it does means now (#1397).
-fn follows<T: kooch_ecs::component::Component>(resources: &mut Resources, vcam: Entity, body: T) {
-    let registry = resources.get_mut::<ComponentRegistry>().unwrap();
-    if let Some(storage) = registry.get_cpu_mut::<crate::Follow>() {
-        storage.remove(vcam);
-    }
-    if let Some(storage) = registry.get_cpu_mut::<crate::OrbitalFollow>() {
-        storage.remove(vcam);
-    }
-    registry.register_cpu::<T>();
-    registry.get_cpu_mut::<T>().unwrap().insert(vcam, body);
-}
-
 /// Zeroes a framing's zones, for a test that measures where it holds rather than how it eases: with
 /// a zone the target stops on its edge, which is the zone's job and not the hold's.
 fn rigid(resources: &mut Resources, vcam: Entity) {
@@ -502,11 +489,6 @@ fn the_pitch_walks_the_ring_surface() {
                     ..Default::default()
                 },
             );
-        let cam = registry
-            .get_cpu_mut::<VirtualCamera>()
-            .unwrap()
-            .get_mut(vcam)
-            .unwrap();
     }
     let at = |resources: &mut Resources, pitch: f32| {
         resources

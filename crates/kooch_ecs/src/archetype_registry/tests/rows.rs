@@ -12,6 +12,8 @@ use crate::storage::TableRow;
 struct Health(u32);
 impl Component for Health {}
 
+// Shape and size are the point; nothing reads these back.
+#[allow(dead_code)]
 struct Speed(f32);
 impl Component for Speed {}
 
@@ -193,7 +195,7 @@ fn eviction_fixes_the_entity_it_displaced() {
 /// failure — the insert path reaches both cases with the same call.
 #[test]
 fn relocating_an_unplaced_entity_places_it() {
-    let (components, health, _) = components();
+    let (components, _health, _) = components();
     let mut archetypes = ArchetypeRegistry::new();
     let arch = archetypes.get_or_create(set(&[TypeId::of::<Health>()]));
 

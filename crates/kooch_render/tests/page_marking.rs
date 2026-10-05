@@ -152,8 +152,8 @@ fn wait(device: &wgpu::Device) {
     });
 }
 
-/// One run of the pass, returning what came back. Which marking path `run_pool` builds. The
-/// environment switch is an `OnceLock`, so one process cannot answer both ways; this can.
+// Which marking path `run_pool` builds. The environment switch is a `OnceLock`, so one process
+// cannot answer both ways; this can.
 thread_local! {
     static CLUSTER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// How far a receiver dilates its page request, in pages. Same
@@ -270,15 +270,15 @@ fn read_words(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer)
     words
 }
 
+#[path = "page_marking/claims.rs"]
+mod claims;
+#[path = "page_marking/clusters.rs"]
+mod clusters;
 #[path = "page_marking/marking.rs"]
 mod marking;
 #[path = "page_marking/paint.rs"]
 mod paint;
-#[path = "page_marking/claims.rs"]
-mod claims;
-#[path = "page_marking/residency.rs"]
-mod residency;
 #[path = "page_marking/ranking.rs"]
 mod ranking;
-#[path = "page_marking/clusters.rs"]
-mod clusters;
+#[path = "page_marking/residency.rs"]
+mod residency;
