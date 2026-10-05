@@ -30,7 +30,7 @@ fn idle<T: Reflect>(value: &T) -> Vec<(String, ReflectValue)> {
             )),
             ..Default::default()
         };
-        ctx.run_ui(input, |ui| {
+        let _ = ctx.run_ui(input, |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 edits.extend(super::single::draw_reflected_fields(
                     ui,
@@ -68,10 +68,7 @@ fn idle_components_write_nothing() {
             "VirtualCamera",
             idle(&kooch_camera::VirtualCamera::default()),
         ),
-        (
-            "Deoccluder",
-            idle(&kooch_camera::Deoccluder::default()),
-        ),
+        ("Deoccluder", idle(&kooch_camera::Deoccluder::default())),
         (
             "RotationComposer",
             idle(&kooch_camera::RotationComposer::default()),

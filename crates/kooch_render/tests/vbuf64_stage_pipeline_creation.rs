@@ -69,7 +69,8 @@ fn vbuf64_stage_creates_without_uncaptured_errors() {
     // Same arguments the production render plugin uses: the meshlet pool BGL comes from
     // `MeshletCull::meshlet_bind_group_layout`, depth format is the engine's reversed-Z target,
     // size matches the default render stage.
-    let cull = kooch_render::meshlet::MeshletCull::new(
+    // Constructed and dropped on purpose: that it builds at all is half of what this test asks.
+    kooch_render::meshlet::MeshletCull::new(
         &device,
         4096,
         kooch_render::meshlet::DEFAULT_MAX_TRIANGLES as u32,

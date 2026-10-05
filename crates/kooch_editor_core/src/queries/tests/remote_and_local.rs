@@ -95,7 +95,7 @@ fn parked_components_surface_read_only_without_a_session() {
 
 /// A `RemoteState` reporting a connected session whose schema is
 /// `components`.
-fn connected_with_schema(port: u16, components: &[(&str, Option<&str>)]) -> RemoteState {
+fn connected_with_schema(components: &[(&str, Option<&str>)]) -> RemoteState {
     use kooch_remote::protocol::ComponentSchema;
 
     let mut state = RemoteState::new();
@@ -122,13 +122,10 @@ fn the_menu_lists_the_projects_components_not_the_editors() {
     let mut resources = mirrored_world();
     // The editor knows Transform; the project also has a component this
     // binary has never heard of.
-    resources.insert(connected_with_schema(
-        1,
-        &[
-            ("game::spin::Spin", Some("Gameplay")),
-            ("kooch_ecs::transform::Transform", None),
-        ],
-    ));
+    resources.insert(connected_with_schema(&[
+        ("game::spin::Spin", Some("Gameplay")),
+        ("kooch_ecs::transform::Transform", None),
+    ]));
 
     intern_registry_names(&mut resources);
     let types = gather_reflected_types(&resources);

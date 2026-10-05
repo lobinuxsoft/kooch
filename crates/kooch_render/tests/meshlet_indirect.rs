@@ -5,7 +5,7 @@
 mod common;
 
 use common::{build_cube_mesh, read_u32, try_acquire_device};
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use kooch_render::meshlet::{
     CullParams, DrawIndirectArgs, MeshletCull, MeshletCullPipelines, build_default_meshlets,
 };

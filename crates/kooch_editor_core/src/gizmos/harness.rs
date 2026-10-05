@@ -4,7 +4,6 @@ use glam::{Mat4, Vec3};
 
 use kooch_gizmos::Gizmos;
 
-use super::gravity::ARROW;
 use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_gizmos::{GizmoBatch, MeshBatch, Visualizer};
 
@@ -28,26 +27,6 @@ pub(crate) fn reach(segments: &[(Vec3, Vec3)]) -> f32 {
         .iter()
         .flat_map(|(a, b)| [a.length(), b.length()])
         .fold(0.0, f32::max)
-}
-
-/// The direction the longest segments run in, which for an arrow shaft
-/// is the direction of the field.
-pub(crate) fn shaft(segments: &[(Vec3, Vec3)]) -> Vec3 {
-    segments
-        .iter()
-        .max_by(|x, y| (x.1 - x.0).length().total_cmp(&(y.1 - y.0).length()))
-        .map(|(a, b)| (*b - *a).normalize())
-        .expect("nothing was drawn")
-}
-
-/// Only the wire arrow shafts, as unit directions — the heads are short segments at the tip and
-/// would drown the signal.
-pub(crate) fn shafts(segments: &[(Vec3, Vec3)]) -> Vec<Vec3> {
-    segments
-        .iter()
-        .filter(|(a, b)| ((*b - *a).length() - ARROW).abs() < 1e-3)
-        .map(|(a, b)| (*b - *a).normalize())
-        .collect()
 }
 
 /// Every arrow a visualizer drew, as a unit direction.

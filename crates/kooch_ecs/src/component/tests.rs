@@ -1,5 +1,7 @@
 use super::*;
 
+// Shape and size are the point; nothing reads these back.
+#[allow(dead_code)]
 struct Tag(String);
 impl Component for Tag {}
 

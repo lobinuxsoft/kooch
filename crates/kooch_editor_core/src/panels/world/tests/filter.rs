@@ -189,7 +189,7 @@ fn the_unsaved_group_offers_a_menu() {
         let mut pinned = std::collections::HashSet::new();
         let mut actions = Vec::new();
         let mut last_clicked = None;
-        ctx.run_ui(input, |ui| {
+        let _ = ctx.run_ui(input, |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 draw_world_content(
                     ui,

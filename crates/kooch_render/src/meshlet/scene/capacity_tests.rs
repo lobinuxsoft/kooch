@@ -1,5 +1,3 @@
-use super::*;
-
 /// The growth policy, without a device. What matters is that it
 /// reaches the requirement and does not creep up one slot at a time.
 fn grown(from: u32, required: u32) -> u32 {

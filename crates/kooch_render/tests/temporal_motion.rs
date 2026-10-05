@@ -12,7 +12,7 @@ fn gpu_lock() -> std::sync::MutexGuard<'static, ()> {
     GPU.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-use common::lit_scene::{SIZE, rig};
+use common::lit_scene::rig;
 use glam::Vec3;
 use kooch_render::ViewCamera;
 use kooch_render::meshlet::ShadingRate;

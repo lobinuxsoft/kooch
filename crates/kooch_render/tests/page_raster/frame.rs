@@ -16,7 +16,9 @@ fn the_clipmap_grid_does_not_slide_with_the_camera() {
     const SIDE: u32 = 128;
     const LEVEL: u32 = 3;
     // One page of level 3, which is what the camera has to stay inside for the grid to hold still.
-    let page = BASE * 8.0 / SIDE as f32;
+    // 🔴 Kept unread on purpose: it is the constraint the camera positions below are chosen under,
+    // and the arithmetic is what makes `SIDE` and `BASE` above mean something to a reader.
+    let _page = BASE * 8.0 / SIDE as f32;
 
     let source = format!(
         "{}\n{}",

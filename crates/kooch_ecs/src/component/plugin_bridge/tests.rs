@@ -12,7 +12,7 @@ fn every_plugin_kind_maps() {
     }
     assert_eq!(
         PluginFieldKind::ALL.len(),
-        20,
+        21,
         "a kind was added to the plugin API without extending ALL, \
              so the mapping above may be missing it"
     );

@@ -93,7 +93,7 @@ fn the_amount_reaches_the_shader() {
     };
     assert!(r.stage.set_compute_shading(true) > 0);
 
-    let mut shot = |percent: u32, r: &mut common::lit_scene::Rig| -> Vec<u8> {
+    let shot = |percent: u32, r: &mut common::lit_scene::Rig| -> Vec<u8> {
         assert!(r.stage.set_sharpening(percent) > 0);
         r.stage
             .render_with_assets_primary(&r.device, &r.queue, &r.resources, &r.camera, 1.0);

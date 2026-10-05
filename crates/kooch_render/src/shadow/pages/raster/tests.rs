@@ -132,7 +132,7 @@ fn every_copied_buffer_can_be_copied_from() {
     let source = source.as_str();
     // The buffers this pass copies out of, by the field name the
     // copy uses.
-    let mut copied = copied_fields(source);
+    let copied = copied_fields(source);
     assert!(
         !copied.is_empty(),
         "the scan found no copies at all; it has stopped matching the source"

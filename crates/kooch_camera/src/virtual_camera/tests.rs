@@ -204,7 +204,7 @@ fn pitch_is_clamped_short_of_the_pole() {
 /// Follow `None` with a look-at is a turret: it tracks and stays put.
 #[test]
 fn follow_none_leaves_the_position_alone() {
-    let (mut r, body) = (vcam(FOLLOW_NONE), shoulder());
+    let r = vcam(FOLLOW_NONE);
     let here = Vec3::new(1.0, 2.0, 3.0);
     let (pos, _) = desired(
         &r,
@@ -277,7 +277,7 @@ fn a_zero_time_is_rigid_on_that_axis_only() {
 /// ship.
 #[test]
 fn look_at_points_the_camera_at_the_target() {
-    let (mut r, body) = (vcam(FOLLOW_NONE), shoulder());
+    let r = vcam(FOLLOW_NONE);
 
     for (eye, target) in [
         (Vec3::ZERO, Vec3::new(0.0, 0.0, -10.0)),
@@ -309,7 +309,7 @@ fn look_at_points_the_camera_at_the_target() {
 /// roll of 180° that a forward-only assertion would let through.
 #[test]
 fn look_at_keeps_the_horizon_upright() {
-    let (mut r, body) = (vcam(FOLLOW_NONE), shoulder());
+    let (r, body) = (vcam(FOLLOW_NONE), shoulder());
     let (_, rot) = desired(
         &r,
         Some(body),
@@ -331,7 +331,7 @@ fn look_at_keeps_the_horizon_upright() {
 /// It was a reflection, which `is_finite()` happily accepted.
 #[test]
 fn the_canonical_look_at_is_the_identity() {
-    let (mut r, body) = (vcam(FOLLOW_NONE), shoulder());
+    let r = vcam(FOLLOW_NONE);
     let (_, rot) = desired(
         &r,
         None,
@@ -353,7 +353,7 @@ fn the_canonical_look_at_is_the_identity() {
 /// which is what `Mimic` is for.
 #[test]
 fn look_at_none_keeps_the_cameras_own_rotation() {
-    let (mut r, body) = (vcam(FOLLOW_SIMPLE), shoulder());
+    let (r, body) = (vcam(FOLLOW_SIMPLE), shoulder());
     let mine = glam::Quat::from_rotation_y(0.7);
     let targets = glam::Quat::from_rotation_x(1.3);
     let (_, rot) = desired(
@@ -470,7 +470,7 @@ fn pitch_raises_the_arm_along_the_local_up() {
 /// normalised zero is `NaN` in every basis downstream.
 #[test]
 fn a_zero_up_falls_back_to_world_instead_of_nan() {
-    let (mut r, body) = (vcam(FOLLOW_ORBITAL), shoulder());
+    let (r, body) = (vcam(FOLLOW_ORBITAL), shoulder());
     let (pos, rot) = desired(
         &r,
         Some(body),
@@ -566,7 +566,7 @@ fn a_disabled_rig_is_inert() {
 
 #[test]
 fn looking_at_where_you_already_are_is_not_a_nan() {
-    let (mut r, body) = (vcam(FOLLOW_GLUED), shoulder());
+    let (r, body) = (vcam(FOLLOW_GLUED), shoulder());
     let (_, rot) = desired(
         &r,
         Some(body),
@@ -584,7 +584,7 @@ fn looking_at_where_you_already_are_is_not_a_nan() {
 /// has to stay finite rather than roll.
 #[test]
 fn looking_straight_down_stays_finite() {
-    let (mut r, body) = (vcam(FOLLOW_NONE), shoulder());
+    let (r, body) = (vcam(FOLLOW_NONE), shoulder());
     let (_, rot) = desired(
         &r,
         Some(body),
@@ -860,7 +860,7 @@ fn the_side_mirrors_the_shoulder() {
 /// only the parallax shifts and the character never leaves centre screen.
 #[test]
 fn an_arm_aim_holds_the_target_off_centre() {
-    let (mut r, mut body) = (vcam(FOLLOW_SHOULDER), shoulder());
+    let (r, mut body) = (vcam(FOLLOW_SHOULDER), shoulder());
     body.camera_distance = 3.0;
     body.shoulder_offset = Vec3::new(0.6, 0.0, 0.0);
 

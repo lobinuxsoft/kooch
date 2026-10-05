@@ -91,28 +91,6 @@ fn local_page(view: u32, level: u32, cell: (u32, u32), lights: u32) -> u32 {
     view * span(lights) + base + cell.1 * side + cell.0
 }
 
-/// A lights buffer the compaction can read a `range` out of.
-fn lights_buffer(device: &wgpu::Device, queue: &wgpu::Queue, ranges: &[f32]) -> wgpu::Buffer {
-    let records: Vec<kooch_lighting::GpuLight> = ranges
-        .iter()
-        .map(|&range| kooch_lighting::GpuLight {
-            range,
-            kind: 1,
-            ..Default::default()
-        })
-        .collect();
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("page_raster_test_lights"),
-        size: (records.len().max(1) * std::mem::size_of::<kooch_lighting::GpuLight>()) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    if !records.is_empty() {
-        queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&records));
-    }
-    buffer
-}
-
 fn read_words(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Vec<u32> {
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("raster_readback"),
@@ -142,17 +120,17 @@ fn lamp_face_page(view: u32, face: u32, level: u32, cell: (u32, u32), lights: u3
     local_page(view, level, cell, lights) + face * PageConfig::default().local_face_pages()
 }
 
-#[path = "page_raster/sizing.rs"]
-mod sizing;
 #[path = "page_raster/compaction.rs"]
 mod compaction;
-#[path = "page_raster/lamp_pages.rs"]
-mod lamp_pages;
-#[path = "page_raster/geometry.rs"]
-mod geometry;
 #[path = "page_raster/frame.rs"]
 mod frame;
+#[path = "page_raster/geometry.rs"]
+mod geometry;
+#[path = "page_raster/lamp_pages.rs"]
+mod lamp_pages;
 #[path = "page_raster/page_table.rs"]
 mod page_table;
 #[path = "page_raster/reader.rs"]
 mod reader;
+#[path = "page_raster/sizing.rs"]
+mod sizing;

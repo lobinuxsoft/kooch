@@ -46,6 +46,8 @@ fn a_contributed_asset_brings_its_loader_and_its_storage() {
 #[test]
 fn every_contributed_asset_survives() {
     #[derive(Debug, Clone)]
+    // Shape and size are the point; nothing reads these back.
+    #[allow(dead_code)]
     struct Other(u8);
     #[derive(Clone)]
     struct OtherLoader;

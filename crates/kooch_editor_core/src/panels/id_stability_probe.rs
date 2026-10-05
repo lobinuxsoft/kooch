@@ -87,7 +87,7 @@ pub(crate) fn drawing_with(
         let mut produced = Frame::default();
         // `run_ui` gives the root `Ui` the editor's own render loop uses,
         // so the probe draws through the same path egui 0.35 expects.
-        ctx.run_ui(input, |ui| {
+        let _ = ctx.run_ui(input, |ui| {
             egui::CentralPanel::default().show(ui, |ui| produced = draw(ui, frame));
         });
         next = produced;
