@@ -1,6 +1,7 @@
 //! Game panel — the scene through the gameplay camera.
 
 mod resolution;
+pub(crate) mod rig_overlay;
 
 pub(crate) use resolution::{GameResolution, sizes as display_sizes};
 
@@ -14,7 +15,7 @@ pub(crate) fn draw_game_content(
     size_request: &mut Option<(u32, u32)>,
     resolution: &mut GameResolution,
     has_camera: bool,
-    framing: Option<FramingView>,
+    rig: Option<rig_overlay::RigView>,
     perf_stats: crate::perf::EditorPerfStats,
     meshlet_stats: kooch_render::meshlet::MeshletRenderStats,
     meshlet_debug_mode: &mut kooch_render::meshlet::MeshletDebugMode,
@@ -66,8 +67,10 @@ pub(crate) fn draw_game_content(
     } else {
         image_rect = Some(ui.add(egui::Image::new((texture_id, available))).rect);
     }
-    if let (Some(framing), Some(rect)) = (framing, image_rect) {
-        draw_framing(ui.painter(), rect, &framing);
+    if let (Some(rig), Some(rect)) = (&rig, image_rect)
+        && hud_visibility.rig_overlay
+    {
+        rig_overlay::draw(ui.painter(), rect, rig);
     }
     // Registered before the overlays, so a card drawn on top takes its own clicks.
     let clicked = image_rect.is_some_and(|rect| {
@@ -100,94 +103,6 @@ pub(crate) fn draw_game_content(
     clicked
 }
 
-/// A vcam's zones over the image, and where its target actually is (#1334).
-///
-/// 🔴 The zones are settings and were already drawn. What could not be seen is the **state**: the
-/// point the target is held at — which a lookahead moves — and where the target sits right now.
-/// Every framing bug of the last three days was one of those two being somewhere unexpected, and
-/// neither was on screen.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct FramingView {
-    pub framing: kooch_camera::RotationComposer,
-    /// Where the target is held, in screen fractions: `screen` plus whatever the lead adds.
-    pub held: glam::Vec2,
-    /// Where the target actually sits, when it is in front of the camera at all.
-    pub target: Option<glam::Vec2>,
-}
-
-/// A vcam's zones over the image: the soft zone tinted, the dead zone clear, the framing point
-/// marked — Phantom Camera's viewfinder, since the numbers are chosen by looking.
-fn draw_framing(painter: &egui::Painter, image: egui::Rect, view: &FramingView) {
-    let framing = &view.framing;
-    let at = |point: glam::Vec2| {
-        image.center() + egui::vec2(point.x * image.width(), -point.y * image.height())
-    };
-    let centre = at(view.held);
-    let zone = |size: glam::Vec2| {
-        egui::Rect::from_center_size(
-            centre,
-            egui::vec2(size.x * image.width(), size.y * image.height()),
-        )
-        .intersect(image)
-    };
-    let soft = zone(framing.soft_zone.max(framing.dead_zone));
-    let dead = zone(framing.dead_zone);
-    let tint = egui::Color32::from_rgba_unmultiplied(220, 60, 60, 40);
-    // The tint surrounds the dead zone: four bands of the soft zone, so the dead zone stays clear.
-    for band in [
-        egui::Rect::from_min_max(soft.min, egui::pos2(soft.max.x, dead.min.y)),
-        egui::Rect::from_min_max(egui::pos2(soft.min.x, dead.max.y), soft.max),
-        egui::Rect::from_min_max(
-            egui::pos2(soft.min.x, dead.min.y),
-            egui::pos2(dead.min.x, dead.max.y),
-        ),
-        egui::Rect::from_min_max(
-            egui::pos2(dead.max.x, dead.min.y),
-            egui::pos2(soft.max.x, dead.max.y),
-        ),
-    ] {
-        painter.rect_filled(band, 0.0, tint);
-    }
-    let stroke = |colour| egui::Stroke::new(1.0, colour);
-    painter.rect_stroke(
-        soft,
-        0.0,
-        stroke(egui::Color32::from_rgb(220, 60, 60)),
-        egui::StrokeKind::Inside,
-    );
-    painter.rect_stroke(
-        dead,
-        0.0,
-        stroke(egui::Color32::from_rgb(90, 180, 255)),
-        egui::StrokeKind::Inside,
-    );
-    painter.circle_filled(centre, 3.0, egui::Color32::from_rgb(255, 210, 60));
-
-    // 🔴 Where the lead has moved the held point, when it has. A line back to the authored
-    // `screen` says how much of what you see is the lookahead rather than the setting.
-    let authored = at(framing.screen);
-    if (authored - centre).length() > 1.0 {
-        painter.line_segment(
-            [authored, centre],
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 210, 60)),
-        );
-        painter.circle_stroke(
-            authored,
-            3.0,
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 125, 40)),
-        );
-    }
-
-    // And where the target really is. Inside the dead zone this sits still while the camera does;
-    // outside it, the gap to the held point is what the frame is busy closing.
-    if let Some(target) = view.target {
-        let point = at(target);
-        let green = egui::Color32::from_rgb(120, 230, 140);
-        painter.circle_stroke(point, 5.0, egui::Stroke::new(1.5, green));
-        painter.line_segment([point, centre], egui::Stroke::new(1.0, green));
-    }
-}
-
 /// The viewport's View menu — Godot's top-left button. Every overlay
 /// is a toggle here: the two small cards, and each section of the
 /// performance readout, all stacking on the right edge.
@@ -211,6 +126,11 @@ fn view_menu(ui: &mut egui::Ui, origin: egui::Pos2, hud: &mut crate::perf::HudVi
                         .on_hover_text("FPS, CPU and GPU time.");
                     ui.checkbox(&mut hud.info_card, "View Information")
                         .on_hover_text("Resolution, draw calls and memory.");
+                    ui.checkbox(&mut hud.rig_overlay, "View Camera Rig")
+                        .on_hover_text(
+                            "What the selected virtual camera's components do to the picture: \
+                             zones, the target, the lead and the shoulder.",
+                        );
                     ui.separator();
                     let pins = &mut hud.pinned;
                     for (flag, label) in [

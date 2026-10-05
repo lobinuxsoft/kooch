@@ -242,7 +242,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<crate::install::Installing>()
         .map(crate::install::Installing::progress);
 
-    let game_framing = selected_framing(resources, &taken.overlay.selected_entities);
+    let game_rig = rig_view::selected_rig(resources, &taken.overlay.selected_entities, vcam_lens);
     let ui_start = std::time::Instant::now();
     let (full_output, mut actions) = run_editor_ui(
         &mut taken.overlay,
@@ -264,7 +264,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
                 .unwrap_or_default(),
             game_request: &mut requests.game,
             game_has_camera: taken.game_view.as_ref().is_some_and(|g| g.has_camera),
-            game_framing,
+            game_rig,
             preview_texture_id: taken
                 .shader_preview
                 .as_ref()
@@ -410,71 +410,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
 }
 
 mod helpers;
+mod rig_view;
 
 use helpers::*;
-
-/// The framing of the one selected vcam, while it is on: the zones are drawn only while authored.
-fn selected_framing(
-    resources: &Resources,
-    selected: &[kooch_ecs::entity::Entity],
-) -> Option<crate::panels::game::FramingView> {
-    let [entity] = selected else {
-        return None;
-    };
-    let registry = resources.get::<kooch_ecs::component::ComponentRegistry>()?;
-    let framing = *registry
-        .get_cpu::<kooch_camera::RotationComposer>()?
-        .get(*entity)
-        .filter(|framing| framing.enabled)?;
-
-    // 🔴 The state beside the settings: where the lead has moved the held point, and where the
-    // target actually sits. Both are what the zones are about, and neither was drawn (#1334).
-    let lead = resources
-        .get::<kooch_camera::RigMemory>()
-        .and_then(|memory| memory.leads.of(*entity))
-        .map(|lead| lead.offset())
-        .unwrap_or(glam::Vec3::ZERO);
-
-    let pose = registry
-        .get_cpu::<kooch_ecs::hierarchy::GlobalTransform>()
-        .and_then(|globals| globals.get(*entity))
-        .map(|global| global.matrix.to_scale_rotation_translation());
-    let target = camera_target_point(resources, *entity);
-
-    let (held, seen) = match (pose, target) {
-        (Some((_, rotation, at)), Some(target)) => {
-            let (right, above, forward) = (
-                rotation * glam::Vec3::X,
-                rotation * glam::Vec3::Y,
-                rotation * -glam::Vec3::Z,
-            );
-            let offset = target - at;
-            let depth = offset.dot(forward);
-            match depth > 0.0 {
-                true => {
-                    // 🔴 The lens this vcam actually frames through, not a guess. It was
-                    // `Lens::new(60.0, 16.0 / 9.0)` hardcoded, so the target's mark and the held
-                    // point were drawn in the wrong place on any camera that is not 60° in 16:9 —
-                    // in the overlay whose whole job is finding framing bugs (#1254).
-                    let lens = vcam_lens(resources, *entity);
-                    let span = lens.span(depth);
-                    let on = |v: glam::Vec3| {
-                        glam::Vec2::new(v.dot(right) / span.x, v.dot(above) / span.y)
-                    };
-                    (framing.screen - on(lead), Some(on(offset)))
-                }
-                false => (framing.screen, None),
-            }
-        }
-        _ => (framing.screen, None),
-    };
-
-    Some(crate::panels::game::FramingView {
-        framing,
-        held,
-        target: seen,
-    })
-}
 
 /// The lens a vcam frames through: what it asks for, or the active camera's, over the rendered
 /// aspect.
