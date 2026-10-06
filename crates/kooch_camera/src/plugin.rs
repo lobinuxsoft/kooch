@@ -116,6 +116,7 @@ impl Plugin for CameraPlugin {
         // `PostPhysics`: after the solver moves the target, before transforms propagate, so the
         // pose shows the same frame. `dt` is the fixed step, which keeps damping deterministic.
         app.insert_resource(CameraBlend::default());
+        app.insert_resource(CameraStates::default());
         app.insert_resource(RigMemory::default());
         app.insert_resource(CameraRig::standard());
         // Before anything reads a duration, and before an author can edit a field a switch overrode.
@@ -125,35 +126,56 @@ impl Plugin for CameraPlugin {
         app.add_system(Stage::First, crate::rig::report_orphans);
         // Declared, not left to registration order: the orbit writes the `yaw` the rig's Body
         // swings the arm by, so a rig that ran first would swing last frame's angle (#392).
+        // 🔴 The whole camera pass runs ONCE PER FRAME, at the head of `PostUpdate` — not on the
+        // fixed step (#1413). Two reasons, and the second is the one that was visible:
+        //
+        // 1. Input arrives per frame. Reading the stick on the fixed step dropped it on two frames
+        //    out of three at 199 fps, so turning the camera advanced in 1/60 jumps.
+        // 2. A pose computed at 60 Hz and drawn at 199 is a step, however smooth the easing is.
+        //
+        // `before("transform_propagation_system")`, because the renderer reads the camera's
+        // `GlobalTransform` and a write after propagation renders a frame late — the defect #1316
+        // removed. Stated rather than left to registration order, since `EcsPlugin` may be added
+        // before or after this one.
         #[cfg(feature = "input")]
         {
             app.add_ordered(
-                Stage::PostPhysics,
+                Stage::PostUpdate,
                 Order::before("orbit_cameras"),
                 run_if_playing(crate::orbit::input::read_orbit_input),
             );
             app.add_ordered(
-                Stage::PostPhysics,
+                Stage::PostUpdate,
                 Order::before("step_camera_whens"),
                 run_if_playing(crate::when::input::read_when_input),
             );
         }
-        // Before the plan the election reads, and after whoever wrote the condition.
+        // Before the states the election reads, and after whoever wrote the condition.
         app.add_ordered(
-            Stage::PostPhysics,
-            Order::before("drive_virtual_cameras"),
+            Stage::PostUpdate,
+            Order::before("update_camera_states"),
             run_if_playing(crate::when::step_camera_whens),
         );
         app.add_ordered(
-            Stage::PostPhysics,
-            Order::before("drive_virtual_cameras"),
+            Stage::PostUpdate,
+            Order::before("update_camera_states"),
             run_if_playing(crate::orbit::orbit_cameras),
         );
-        app.add_system(Stage::PostPhysics, run_if_playing(drive_virtual_cameras));
+        app.add_ordered(
+            Stage::PostUpdate,
+            Order::before("brain_transposes"),
+            run_if_playing(update_camera_states),
+        );
+        // The brain, last of the rig and first of nothing: it alone writes the camera.
+        app.add_ordered(
+            Stage::PostUpdate,
+            Order::before("transform_propagation_system"),
+            run_if_playing(brain_transposes),
+        );
         // After the rig: what the camera aims at is read off where the rig left it, walls included.
         app.add_ordered(
-            Stage::PostPhysics,
-            Order::after("drive_virtual_cameras"),
+            Stage::PostUpdate,
+            Order::after("brain_transposes"),
             run_if_playing(crate::third_person_aim::resolve_aims),
         );
     }
@@ -203,31 +225,56 @@ impl CameraBlend {
     }
 }
 
-/// Advances every live virtual camera, then hands the winner's pose to the camera. Keeping vcam
-/// poses separate is what lets a blend interpolate between two.
-pub fn drive_virtual_cameras(resources: &mut Resources) {
-    let (plan, memory) = plan_vcam_poses(resources);
+/// Advances every live virtual camera and leaves what each computed in [`CameraStates`].
+///
+/// 🔴 It writes each vcam's OWN transform — that is the rig's persistent state, read back as
+/// `current` next frame and as the deoccluder's fallback — and **never the render camera**.
+/// Transposing onto the camera is [`brain_transposes`], and splitting the two is what lets them run
+/// at different cadences, as Cinemachine's `UpdateMethod` and `BlendUpdateMethod` do (#1413).
+pub fn update_camera_states(resources: &mut Resources) {
+    let (states, memory) = plan_vcam_poses(resources);
     resources.insert(memory);
-    if plan.is_empty() {
-        return;
+    if !states.is_empty() {
+        let poses: Vec<Pose> = states
+            .iter()
+            .map(|state| Pose {
+                entity: state.vcam,
+                position: state.position,
+                rotation: state.rotation,
+            })
+            .collect();
+        apply_poses(resources, &poses);
     }
-    apply_poses(resources, &plan);
+    resources.insert(states);
+}
 
-    let Some((winner, pose)) = elect(&plan) else {
+/// Elects a vcam, runs the handover, and writes the render camera. The only thing that does.
+///
+/// 🔴 Once per frame, on `Time::delta_secs()`. It used to ride the fixed step with the rig, so at
+/// 199 fps against a 60 Hz step the camera held still for two frames and jumped on the third — the
+/// damping was smooth and was being SAMPLED at a third of the rate it was drawn. Nothing is lost by
+/// the change of clock: exponential damping is frame-rate independent by construction, since
+/// `0.01^(dt/2T) · 0.01^(dt/2T)` is `0.01^(dt/T)`. Cinemachine's blend is never on the fixed step
+/// either (#1413).
+pub fn brain_transposes(resources: &mut Resources) {
+    let Some(states) = resources.get::<CameraStates>().cloned() else {
+        return;
+    };
+    let Some((winner, state)) = elect(&states) else {
         return;
     };
     let Some(camera) = rendering_camera(resources, winner) else {
         return;
     };
-    let (target_pos, target_rot) = (pose.position, pose.rotation);
+    let (target_pos, target_rot) = (state.position, state.rotation);
     // 🔴 The brain's, not the incoming vcam's. A blend is between two of them, and asking one only
     // raises "which?" — the answer used to be "whichever is arriving", a convention (#1339).
     let (duration, curve, ease) = blend_settings(resources, camera);
 
-    let dt = fixed_dt(resources);
+    let dt = frame_dt(resources);
     let mut blend = resources.get::<CameraBlend>().copied().unwrap_or_default();
 
-    let target_lens = pose.lens;
+    let target_lens = state.lens;
     let (position, rotation, lens) = if blend.active == Some(winner) {
         blend.elapsed += dt;
         if blend.running() {
@@ -270,8 +317,6 @@ pub fn drive_virtual_cameras(resources: &mut Resources) {
             // second writer to it is the bug this rig keeps having (#1361). Around the camera's
             // own forward axis, so it rolls the horizon rather than steering.
             rotation: rotation * glam::Quat::from_rotation_z(-lens.dutch.to_radians()),
-            priority: 0,
-            lens,
         }],
     );
     apply_lens(resources, camera, lens);
@@ -328,12 +373,26 @@ fn apply_lens(resources: &mut Resources, camera: Entity, lens: LensOverride) {
     cam.far = lens.far;
 }
 
-/// The fixed step, or a 60 Hz stand-in when there is no clock.
-pub(crate) fn fixed_dt(resources: &Resources) -> f32 {
+/// One camera frame: the rig computes, then the brain transposes. 🔴 Two calls because they are two
+/// jobs — a test that called only the first would move the vcams and never the camera (#1413).
+#[cfg(test)]
+pub(crate) fn drive_virtual_cameras(resources: &mut Resources) {
+    update_camera_states(resources);
+    brain_transposes(resources);
+}
+
+/// This frame's delta, or a 60 Hz stand-in when there is no clock.
+///
+/// 🔴 What the rig eases on. A camera is presentation, not simulation: determinism is paid for so a
+/// simulation answers the same twice, and with no multiplayer or replay nothing collects on it —
+/// while the cost is a visible step at any frame rate that is not the step rate (#1413).
+pub(crate) fn frame_dt(resources: &Resources) -> f32 {
     resources
         .get::<Time>()
-        .map(|time| time.fixed_delta_secs())
+        .map(|time| time.delta_secs())
         .unwrap_or(1.0 / 60.0)
+        // A stalled frame must not teleport the rig through its easing.
+        .min(0.25)
 }
 
 /// Where the render camera is right now.
@@ -371,13 +430,41 @@ fn blend_settings(resources: &Resources, camera: Entity) -> (f32, u32, u32) {
 }
 
 /// A vcam and where it decided to be this frame.
+/// What one vcam computed this frame — Cinemachine's `CameraState`.
+///
+/// 🔴 A value, not a write. The vcam moves its own transform (its GameObject does too, in
+/// Cinemachine) but **never the render camera**: that is the brain's one job, and a second writer to
+/// it is how a camera ends up with two owners.
+#[derive(Debug, Clone, Copy)]
+pub struct CameraState {
+    pub vcam: Entity,
+    pub position: Vec3,
+    pub rotation: glam::Quat,
+    /// The authored number plus whatever a condition adds, never the condition's own (#1352).
+    pub priority: i32,
+    /// What this vcam ends up asking of the lens: its own [`LensOverride`], or the camera's.
+    pub lens: LensOverride,
+}
+
+/// Every live vcam's state, rebuilt each frame for the brain to elect from.
+#[derive(Debug, Clone, Default)]
+pub struct CameraStates(Vec<CameraState>);
+
+impl CameraStates {
+    pub fn iter(&self) -> impl Iterator<Item = &CameraState> {
+        self.0.iter()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// One entity's pose, as `apply_poses` writes it.
 struct Pose {
     entity: Entity,
     position: Vec3,
     rotation: glam::Quat,
-    priority: i32,
-    /// What this vcam ends up asking of the lens: its own [`LensOverride`], or the camera's.
-    lens: LensOverride,
 }
 
 /// Where a vcam's group is this step, or `None` when nothing carries its tag and there is nothing
@@ -424,13 +511,13 @@ pub(crate) fn target_pose(
 /// Runs the rig over every live vcam. Takes `&Resources` because writing a `Transform` needs the
 /// storage mutably while reading the target's pose needs it shared, so the poses are planned first
 /// and written after.
-fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, RigMemory) {
+fn plan_vcam_poses(resources: &Resources) -> (CameraStates, RigMemory) {
     let carried = resources.get::<RigMemory>().cloned().unwrap_or_default();
     let Some(registry) = resources.get::<ComponentRegistry>() else {
-        return (Vec::new(), carried);
+        return (CameraStates::default(), carried);
     };
     let Some(vcams) = registry.get_cpu::<VirtualCamera>() else {
-        return (Vec::new(), carried);
+        return (CameraStates::default(), carried);
     };
     let Some(rig) = resources.get::<CameraRig>() else {
         // Once: a rig with no stages moves nothing, and a rig that says so every frame buries it.
@@ -438,18 +525,18 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, RigMemory) {
         SAID.call_once(|| {
             tracing::warn!("no CameraRig is registered: no virtual camera can move anything");
         });
-        return (Vec::new(), carried);
+        return (CameraStates::default(), carried);
     };
     let camera_lens = authored_lens(resources, registry);
     let aspect = view_aspect(resources);
     let cameras = registry.get_cpu::<PerspectiveCamera>();
     let transforms = registry.get_cpu::<Transform>();
     let targets = registry.get_cpu::<CameraTarget>();
-    let dt = fixed_dt(resources);
+    let dt = frame_dt(resources);
 
     let pose_of = poses(registry);
 
-    let mut plan = Vec::new();
+    let mut plan: Vec<CameraState> = Vec::new();
     let mut memory = RigMemory::default();
     for (&entity, vcam) in vcams.iter() {
         if vcam.is_inert(registry, entity) {
@@ -505,8 +592,8 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, RigMemory) {
         };
         rig.run(&mut step);
 
-        plan.push(Pose {
-            entity,
+        plan.push(CameraState {
+            vcam: entity,
             position: step.frame.position,
             rotation: step.frame.rotation,
             // 🔴 The authored number plus whatever a condition adds, never the condition's own: a
@@ -516,7 +603,7 @@ fn plan_vcam_poses(resources: &Resources) -> (Vec<Pose>, RigMemory) {
             lens: asked,
         });
     }
-    (plan, memory)
+    (CameraStates(plan), memory)
 }
 
 /// A target's world pose. `GlobalTransform` first, so a target parented to something moving is
@@ -571,10 +658,11 @@ fn view_aspect(resources: &Resources) -> f32 {
 
 /// The virtual camera driving the render camera: highest priority, ties to the lower entity index.
 /// Stable on purpose — storage order is not, and an unstable winner reads as jitter.
-fn elect(plan: &[Pose]) -> Option<(Entity, &Pose)> {
-    plan.iter()
-        .min_by_key(|pose| (-pose.priority, pose.entity.index()))
-        .map(|pose| (pose.entity, pose))
+fn elect(states: &CameraStates) -> Option<(Entity, &CameraState)> {
+    states
+        .iter()
+        .min_by_key(|state| (-state.priority, state.vcam.index()))
+        .map(|state| (state.vcam, state))
 }
 
 /// The camera the elected vcam drives: the one carrying a live [`CameraBrain`], and nothing else. A
