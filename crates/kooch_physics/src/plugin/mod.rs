@@ -2,6 +2,7 @@
 
 mod compound;
 pub(super) mod events;
+pub mod interpolation;
 mod joints;
 mod pose;
 pub(super) mod sensors;
@@ -142,6 +143,16 @@ impl Plugin for PhysicsPlugin {
         );
         app.add_system(Stage::Physics, run_if_playing(physics_step_system));
         app.add_system(Stage::PostPhysics, run_if_playing(physics_writeback_system));
+        app.insert_resource(interpolation::StepPoses::default());
+        // 🔴 Once per frame at the head of `PostUpdate`: after the step wrote its poses, before
+        // transform propagation publishes what the renderer reads, and **before the camera rig
+        // looks at its target** — a camera following an un-interpolated target is the stutter this
+        // removes (#1415).
+        app.add_ordered(
+            Stage::PostUpdate,
+            Order::before("update_camera_states").and_before("transform_propagation_system"),
+            interpolation::interpolate_bodies,
+        );
 
         // The solver's reports, delivered after the step rather than during
         // it — see `events`. Registered here so a host that adds physics
