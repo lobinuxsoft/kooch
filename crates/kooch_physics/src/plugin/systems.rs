@@ -490,13 +490,26 @@ pub fn physics_writeback_system(resources: &mut Resources) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
         && let Some(storage) = registry.get_cpu_mut::<Transform>()
     {
-        for (entity, position, rotation) in local {
-            if let Some(transform) = storage.get_mut(entity) {
-                transform.position = position;
-                transform.rotation = rotation;
+        for (entity, position, rotation) in &local {
+            if let Some(transform) = storage.get_mut(*entity) {
+                transform.position = *position;
+                transform.rotation = *rotation;
             }
         }
     }
+
+    // 🔴 The LOCAL pose, because that is what `Transform` holds and what a frame is drawn between.
+    // Kept so `interpolate_bodies` can draw between the last two steps rather than showing this one
+    // until the next arrives (#1415).
+    let mut poses = resources
+        .remove::<super::interpolation::StepPoses>()
+        .unwrap_or_default();
+    for (entity, position, rotation) in &local {
+        poses.stepped(*entity, *position, *rotation);
+    }
+    let alive: Vec<Entity> = local.iter().map(|(entity, _, _)| *entity).collect();
+    poses.retain(&alive);
+    resources.insert(poses);
 
     resources.insert(world);
 }
