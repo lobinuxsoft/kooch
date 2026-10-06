@@ -80,6 +80,10 @@ impl Plugin for CameraComponentsPlugin {
                 registry.register_cpu_reflected::<crate::framing::RotationComposer>();
                 registry.register_cpu_reflected::<crate::lookahead::CameraLookahead>();
                 registry.register_cpu_reflected::<LensOverride>();
+                registry.register_cpu_reflected::<crate::impulse::ImpulseSource>();
+                registry.register_cpu_reflected::<crate::impulse::ImpulseListener>();
+                #[cfg(feature = "physics")]
+                registry.register_cpu_reflected::<crate::impulse::collision::CollisionImpulse>();
                 registry.register_cpu_reflected::<crate::orbit::CameraOrbit>();
                 registry.register_cpu_reflected::<crate::when::CameraWhen>();
                 registry.register_cpu_reflected::<crate::PositionComposer>();
@@ -117,6 +121,7 @@ impl Plugin for CameraPlugin {
         // pose shows the same frame. `dt` is the fixed step, which keeps damping deterministic.
         app.insert_resource(CameraBlend::default());
         app.insert_resource(CameraStates::default());
+        app.insert_resource(crate::impulse::Impulses::default());
         app.insert_resource(RigMemory::default());
         app.insert_resource(CameraRig::standard());
         // Before anything reads a duration, and before an author can edit a field a switch overrode.
@@ -165,6 +170,21 @@ impl Plugin for CameraPlugin {
             Stage::PostUpdate,
             Order::before("brain_transposes"),
             run_if_playing(update_camera_states),
+        );
+        // Advanced before the brain reads them, so a signal is the one for this frame and an
+        // impulse that finished is gone rather than held at its last value.
+        app.add_ordered(
+            Stage::PostUpdate,
+            Order::before("brain_transposes"),
+            run_if_playing(crate::impulse::step_impulses),
+        );
+        // 🔴 Contacts become impulses BEFORE the step advances them, or a hit this frame is read a
+        // frame late — and `read_fixed` would have swapped its list by then.
+        #[cfg(feature = "physics")]
+        app.add_ordered(
+            Stage::PostUpdate,
+            Order::before("step_impulses"),
+            run_if_playing(crate::impulse::collision::impulses_from_contacts),
         );
         // The brain, last of the rig and first of nothing: it alone writes the camera.
         app.add_ordered(
@@ -307,12 +327,17 @@ pub fn brain_transposes(resources: &mut Resources) {
         }
     };
 
+    // 🔴 After the pose and never into it, beside the dutch and for the same reason: a shake fed
+    // back into the rig would be damped — which means remembered — and the camera would drift
+    // toward wherever the last explosion pushed it (#1255).
+    let shake = crate::impulse::offset_for(resources, winner, position, rotation);
+
     resources.insert(blend);
     apply_poses(
         resources,
         &[Pose {
             entity: camera,
-            position,
+            position: position + shake,
             // 🔴 The roll goes on HERE, not in the rig. Aim owns `CameraFrame.rotation` and a
             // second writer to it is the bug this rig keeps having (#1361). Around the camera's
             // own forward axis, so it rolls the horizon rather than steering.

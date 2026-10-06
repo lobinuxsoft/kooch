@@ -40,8 +40,10 @@ pub struct ThirdPersonAim {
     /// reticle.
     ///
     /// 🔴 Cinemachine also re-orients the camera at Finalize to hold that point at centre screen.
-    /// Not here: there is no noise stage yet (#1255), so it would buy nothing and cost a second
-    /// owner of the rotation — the defect this rig has paid for seven times.
+    /// Still not here — but the reason changed. There IS a noise stage now (#1255), and the
+    /// objection about a second owner of the rotation is answered by where the shake lives: the
+    /// brain applies it while transposing, beside the dutch, so cancelling it there is part of the
+    /// same single write rather than a second one. What is missing is only the work. Its own issue.
     pub noise_cancellation: bool,
     /// Where the camera's own view axis lands. Written every step; authoring it does nothing.
     #[reflect(skip)]
