@@ -274,9 +274,23 @@ pub(crate) fn eased(current: f32, desired: f32, time: f32, dt: f32) -> f32 {
 const RESIDUAL: f32 = 0.01;
 
 /// The fraction of a gap to close this step so that after `time` seconds only [`RESIDUAL`] is
-/// left, at any frame rate. `time <= 0` closes it at once.
+/// left, at any frame rate.
+///
+/// 🔴 The two degenerate cases are OPPOSITES and used to share a branch. `time <= 0` is "no easing
+/// asked for", which closes the gap at once. `dt <= 0` is "no time has passed", which closes none
+/// of it — the formula's own limit as `dt` approaches zero is 0, not 1. It never mattered while the
+/// rig rode the fixed step, where `dt` is always 1/60; on the frame clock the FIRST frame has a
+/// delta of zero, and the camera snapped to its target before easing anywhere (#1413).
 pub(crate) fn settled(dt: f32, time: f32) -> f32 {
-    if time <= 0.0 || dt <= 0.0 {
+    // 🔴 `!(x > 0.0)`, not `x <= 0.0`. Every comparison against NaN is false, so `<=` lets one
+    // through — and `0.01^(NaN / time)` is NaN, which reaches the pose and takes the camera
+    // nowhere, with no error anywhere. Inverting the test catches zero, negatives and NaN at once.
+    // A frame delta can come from a clock nobody advanced or from a subtraction that underflowed,
+    // so this is cheaper than finding out later.
+    if !(dt > 0.0) {
+        return 0.0;
+    }
+    if !(time > 0.0) {
         return 1.0;
     }
     1.0 - RESIDUAL.powf(dt / time)

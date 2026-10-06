@@ -1131,3 +1131,57 @@ fn the_named_modes_become_components() {
     assert_eq!(vcams.get(simple).unwrap().was_follow, FOLLOW_NONE);
     assert_eq!(vcams.get(simple).unwrap().was_offset, Vec3::ZERO);
 }
+
+/// 🔴 No time passed, so nothing closes. The two degenerate cases of `settled` are opposites and
+/// shared a branch: `time <= 0` means "no easing asked for" and closes the gap at once, `dt <= 0`
+/// means "no time has passed" and closes none of it. It never showed while the rig rode the fixed
+/// step, where `dt` is always 1/60 — on the frame clock the first frame has a delta of zero, and
+/// the camera arrived before it eased anywhere (#1413).
+#[test]
+fn a_zero_delta_closes_nothing() {
+    assert_eq!(settled(0.0, 0.5), 0.0);
+    assert_eq!(
+        eased(2.0, 10.0, 0.5, 0.0),
+        2.0,
+        "it moved without time passing"
+    );
+}
+
+/// And the other one still closes everything: no damping asked for is a cut.
+#[test]
+fn no_damping_arrives_at_once() {
+    assert_eq!(settled(1.0 / 60.0, 0.0), 1.0);
+}
+
+/// The reason the clock could change at all: splitting a step gives the same answer.
+#[test]
+fn the_easing_is_framerate_independent() {
+    let whole = settled(1.0 / 60.0, 0.5);
+    let half = settled(1.0 / 120.0, 0.5);
+    // Two half-steps leave the same residual as one whole step.
+    let residual_in_two = (1.0 - half) * (1.0 - half);
+    assert!(
+        ((1.0 - whole) - residual_in_two).abs() < 1e-6,
+        "one step leaves {}, two halves leave {residual_in_two}",
+        1.0 - whole,
+    );
+}
+
+/// 🔴 NaN gets through a `<=` test, because every comparison against it is false — and a NaN here
+/// reaches the pose and takes the camera nowhere, with nothing logged.
+///
+/// The two sides land on opposite answers ON PURPOSE. A NaN **delta** closes nothing: no usable
+/// time passed. A NaN **damping** is a cut, the same as no damping asked for — because the other
+/// reading freezes the camera for the rest of the session, and arriving early is a thing you can
+/// see and fix.
+#[test]
+fn a_nan_never_reaches_the_pose() {
+    assert_eq!(settled(f32::NAN, 0.5), 0.0, "a NaN delta moved the rig");
+    assert_eq!(
+        settled(1.0 / 60.0, f32::NAN),
+        1.0,
+        "a NaN damping froze the rig"
+    );
+    assert!(eased(2.0, 10.0, 0.5, f32::NAN).is_finite());
+    assert!(eased(2.0, 10.0, f32::NAN, 1.0 / 60.0).is_finite());
+}

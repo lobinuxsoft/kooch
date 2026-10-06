@@ -254,7 +254,9 @@ fn planned(resources: &Resources) -> Vec<Turn> {
     let Some(vcams) = registry.get_cpu::<VirtualCamera>() else {
         return Vec::new();
     };
-    let dt = crate::plugin::fixed_dt(resources);
+    // Per frame: the stick is read per frame, and integrating it on the fixed step dropped it on
+    // two frames out of three at 199 fps (#1413).
+    let dt = crate::plugin::frame_dt(resources);
     let carried = resources.get::<crate::rig::RigMemory>();
     let targets = registry.get_cpu::<CameraTarget>();
     let pose_of = crate::plugin::poses(registry);

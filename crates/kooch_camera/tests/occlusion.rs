@@ -8,7 +8,8 @@
 use glam::Vec3;
 
 use kooch_camera::{
-    CameraRig, CameraTarget, Deoccluder, HardLookAt, VirtualCamera, drive_virtual_cameras,
+    CameraRig, CameraTarget, Deoccluder, HardLookAt, VirtualCamera, brain_transposes,
+    update_camera_states,
 };
 use kooch_core::resource::Resources;
 use kooch_core::run_state::Playing;
@@ -107,11 +108,19 @@ fn position(resources: &Resources, entity: Entity) -> Vec3 {
         .position
 }
 
-/// A frame: the solver learns what exists, then the rig plans.
+/// A frame: the clock moves, the solver learns what exists, then the rig plans.
+///
+/// 🔴 The clock has to MOVE. The rig eases on `Time::delta_secs()` now, and a `Time::new()` nobody
+/// advanced has a delta of zero — which closes none of the gap, correctly. These tests passed
+/// before because `settled` treated a zero delta as "arrive at once", so they measured a rig that
+/// teleported (#1413).
 fn frame(resources: &mut Resources) {
+    if let Some(time) = resources.get_mut::<Time>() {
+        time.advance(std::time::Duration::from_secs_f32(1.0 / 60.0));
+    }
     physics_sync_system(resources);
     physics_step_system(resources);
-    drive_virtual_cameras(resources);
+    camera_frame(resources);
 }
 
 /// A player-sized body the camera follows, with a body of its own that must never stop the camera,
@@ -258,4 +267,12 @@ fn a_return_takes_its_seconds_with_damping() {
         (back - ARM).abs() < 0.1,
         "0.38 s after the wall left the arm was {back}, not {ARM}"
     );
+}
+
+/// One camera frame. 🔴 Two calls because they are two jobs: the rig computes every vcam's state,
+/// then the brain elects, blends and writes the camera. Calling only the first moves the vcams and
+/// never the camera (#1413).
+fn camera_frame(resources: &mut kooch_core::resource::Resources) {
+    update_camera_states(resources);
+    brain_transposes(resources);
 }

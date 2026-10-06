@@ -38,7 +38,8 @@ pub use occlusion::Deoccluder;
 pub use orbit::{CameraOrbit, orbit_cameras};
 pub use orbital_follow::OrbitalFollow;
 pub use plugin::{
-    CameraBlend, CameraComponentsPlugin, CameraPlugin, drive_virtual_cameras, up_for,
+    CameraBlend, CameraComponentsPlugin, CameraPlugin, CameraState, CameraStates, brain_transposes,
+    up_for, update_camera_states,
 };
 pub use position_composer::PositionComposer;
 pub use rig::{CameraRig, RigMemory, RigStage, RigStep};
