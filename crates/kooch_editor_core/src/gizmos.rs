@@ -13,6 +13,7 @@ mod grounded;
 pub(crate) mod harness;
 mod physics_debug;
 mod post_volume;
+mod screen_scale;
 pub(crate) mod shape_handles;
 mod spline;
 pub(crate) mod spline_handles;
@@ -304,6 +305,8 @@ pub(crate) fn apply_handle_input(
     handle_set.set_origin(target_origin);
     handle_set.set_basis(basis);
     handle_set.set_entity_rotation(entity_rotation);
+    // Sized where the handles are, so the set holds its size on screen at any distance (#1433).
+    handle_set.set_scale(screen_scale::factor(resources, target_origin));
     let modifiers = DragModifiers {
         ctrl: delta.ctrl_held,
         shift: delta.shift_held,

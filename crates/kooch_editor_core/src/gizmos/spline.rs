@@ -5,7 +5,7 @@
 //! carries which way is **down** (#1429). A curve with no frame shown looks right while the thing
 //! riding it rolls over, and the author has nothing to look at.
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Vec4};
 
 use kooch_core::resource::Resources;
 use kooch_ecs::entity::Entity;
@@ -24,7 +24,7 @@ const HANDLE: Vec3 = Vec3::new(1.0, 0.6, 0.15);
 /// A derived tangent, dimmer: `Auto` is not a handle and dragging it does nothing.
 const DERIVED: Vec3 = Vec3::new(0.45, 0.35, 0.2);
 /// Which way is up there — the axis a rail tilts about and spline gravity calls down.
-const UP: Vec3 = Vec3::new(0.4, 0.95, 0.4);
+const UP: Vec4 = Vec4::new(0.4, 0.95, 0.4, 1.0);
 
 #[derive(Default)]
 pub(crate) struct SplineVisualizer;
@@ -60,7 +60,7 @@ impl Visualizer<Spline> for SplineVisualizer {
             previous = sampled;
         }
 
-        frames(spline, world, gizmos);
+        frames(spline, world, resources, gizmos);
         for (index, knot) in spline.points.iter().enumerate() {
             handles(spline, index, knot, world, gizmos);
         }
@@ -74,9 +74,10 @@ impl Visualizer<Spline> for SplineVisualizer {
             .map(|(_, grip)| grip);
         for (grip, local) in spline_handles::grips(spline) {
             let colour = spline_handles::grip_colour(hovered == Some(grip), grip.part);
+            let at = world.transform_point3(local);
             gizmos.filled_aabb(
-                world.transform_point3(local),
-                Vec3::splat(spline_handles::GRIP_SIZE),
+                at,
+                Vec3::splat(spline_handles::grip_size(resources, at)),
                 colour,
             );
         }
@@ -92,25 +93,29 @@ const STEPS_PER_SEGMENT: usize = 16;
 /// editor's frame time ever points here.
 const FRAME_TICKS: usize = 8;
 
-/// How long an up tick is drawn, as a share of the curve's length. Proportional, so the frame stays
-/// legible on a two-metre curve and on a two-hundred-metre one.
-const TICK_SHARE: f32 = 0.04;
+/// How long an up arrow is drawn, in screen-scale reference units — so it reads the same on a
+/// two-metre curve and on a two-hundred-metre one.
+const TICK_UNITS: f32 = 0.35;
 
 /// Which way is up at a few points along the curve.
-fn frames(spline: &Spline, world: &Mat4, gizmos: &mut Gizmos<'_>) {
-    let length = arc::length(&spline.points, spline.closed);
-    // 🔴 `!(length > 0.0)`, not `length <= 0.0`: coincident knots give zero and a NaN would draw a
-    // tick to nowhere, which reads as a corrupt curve rather than as a degenerate one.
-    if !(length > 0.0) {
+fn frames(spline: &Spline, world: &Mat4, resources: &Resources, gizmos: &mut Gizmos<'_>) {
+    // 🔴 `!(length > 0.0)`, not `length <= 0.0`: coincident knots give zero and a NaN would draw an
+    // arrow to nowhere, which reads as a corrupt curve rather than as a degenerate one.
+    if !(arc::length(&spline.points, spline.closed) > 0.0) {
         return;
     }
-    let tick = length * TICK_SHARE;
     for step in 0..=FRAME_TICKS {
         let t = step as f32 / FRAME_TICKS as f32;
         let at = world.transform_point3(eval::at(&spline.points, spline.closed, t));
         let up = world.transform_vector3(eval::up(&spline.points, spline.closed, t));
         if up.length_squared() > 1e-12 {
-            gizmos.line(at, at + up.normalize() * tick, UP);
+            // 🔴 An arrow, not a line: a line says which axis and an arrow says which WAY, and for
+            // spline gravity (#1429) the direction is the whole of the information.
+            //
+            // Sized on screen rather than as a share of the curve's length: a tick proportional to
+            // a two-hundred-metre road is a tick nobody can see the head of.
+            let tick = TICK_UNITS * super::screen_scale::factor(resources, at);
+            gizmos.arrow(at, at + up.normalize() * tick, UP);
         }
     }
 }

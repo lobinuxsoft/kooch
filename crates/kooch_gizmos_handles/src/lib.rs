@@ -165,6 +165,13 @@ pub struct HandleFrame {
     pub origin: Vec3,
     pub basis: Mat3,
     pub entity_world_rotation: Mat3,
+    /// World units one reference unit of handle covers, so a handle holds its size on screen
+    /// however far the camera is (#1433). `1.0` is the world-unit sizing handles had before.
+    ///
+    /// 🔴 Every dimension a handle draws AND picks with is multiplied by this, including the
+    /// `length` that `ScaleHandle` divides a drag by: both sides of that ratio are world units, so
+    /// scaling them together is what keeps a cursor movement worth the same factor at any distance.
+    pub scale: f32,
 }
 
 impl Default for HandleFrame {
@@ -173,6 +180,7 @@ impl Default for HandleFrame {
             origin: Vec3::ZERO,
             basis: Mat3::IDENTITY,
             entity_world_rotation: Mat3::IDENTITY,
+            scale: 1.0,
         }
     }
 }

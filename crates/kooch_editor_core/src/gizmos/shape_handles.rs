@@ -19,8 +19,14 @@ use crate::editor_camera::input::ViewportInputDelta;
 
 /// Smallest value a handle can drag a field to, matching the shapes' own floor.
 const MIN_VALUE: f32 = 0.01;
-/// Half the side of a handle's cube, in world units.
+/// Half the side of a handle's cube, as a share of the screen-scale reference unit, so it holds its
+/// size however far the camera is (#1433).
 const HANDLE_SIZE: f32 = 0.05;
+
+/// The handle's half-size in world units at `at`.
+pub(super) fn handle_size(resources: &Resources, at: Vec3) -> f32 {
+    HANDLE_SIZE * super::screen_scale::factor(resources, at)
+}
 /// How far off the cursor ray a handle still counts as under it, as a fraction of its distance.
 const PICK_SLOPE: f32 = 0.02;
 
@@ -395,7 +401,7 @@ impl Visualizer<BlockShape> for ShapeHandleVisualizer {
                 );
             }
             let at = transform.matrix.transform_point3(handle.at);
-            gizmos.filled_aabb(at, Vec3::splat(HANDLE_SIZE), colour);
+            gizmos.filled_aabb(at, Vec3::splat(handle_size(resources, at)), colour);
         }
     }
 }

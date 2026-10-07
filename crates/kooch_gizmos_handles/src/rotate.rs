@@ -39,8 +39,8 @@ impl Handle for RotateHandle {
         gizmos.filled_torus(
             frame.origin,
             axis,
-            self.major_radius,
-            self.minor_radius,
+            self.major_radius * frame.scale,
+            self.minor_radius * frame.scale,
             Vec4::new(rgb.x, rgb.y, rgb.z, 1.0),
         );
     }
@@ -54,8 +54,8 @@ impl Handle for RotateHandle {
         let hit = ray.at(t);
         let radial = (hit - frame.origin).reject_from(axis);
         let radial_len = radial.length();
-        let inner = self.major_radius - self.minor_radius;
-        let outer = self.major_radius + self.minor_radius;
+        let inner = (self.major_radius - self.minor_radius) * frame.scale;
+        let outer = (self.major_radius + self.minor_radius) * frame.scale;
         if radial_len >= inner && radial_len <= outer {
             Some(t)
         } else {

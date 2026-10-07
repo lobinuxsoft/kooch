@@ -152,8 +152,10 @@ pub(super) fn drive(
             let world = to_world.transform_point3(handle.at);
             let along = (world - origin).dot(direction);
             let off = (world - (origin + direction * along)).length();
-            (along > 0.0 && off <= along * PICK_SLOPE + HANDLE_SIZE)
-                .then_some((along, handle, world))
+            // 🔴 The tolerance scales with the drawn size: a cube drawn ten times bigger with an
+            // unchanged tolerance is visible and ungrabbable (#1433).
+            let reach = super::handle_size(resources, world);
+            (along > 0.0 && off <= along * PICK_SLOPE + reach).then_some((along, handle, world))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0));
     let Some((_, handle, world)) = under else {

@@ -45,10 +45,11 @@ impl PlaneHandle {
         let a = frame.world_axis(self.axis_a);
         let b = frame.world_axis(self.axis_b);
         let normal = a.cross(b).normalize_or(Vec3::Y);
-        let p0 = frame.origin + a * self.offset + b * self.offset;
-        let p1 = p0 + a * self.size;
-        let p2 = p1 + b * self.size;
-        let p3 = p0 + b * self.size;
+        let (offset, size) = (self.offset * frame.scale, self.size * frame.scale);
+        let p0 = frame.origin + a * offset + b * offset;
+        let p1 = p0 + a * size;
+        let p2 = p1 + b * size;
+        let p3 = p0 + b * size;
         ([p0, p1, p2, p3], a, b, normal)
     }
 }

@@ -93,6 +93,15 @@ pub(super) fn action_to_command(
                 )
                 .map(|cmd| Box::new(cmd) as Box<dyn EditorCommand>);
             };
+            // 🔴 A `Spline`'s added knot is placed ahead of the one before it HERE rather than
+            // where the edit is emitted, so every route a knot arrives by is covered and the
+            // placement stays one action — one undo step, one trip over the wire (#1261).
+            let value = match field == "points"
+                && type_id == std::any::TypeId::of::<kooch_ecs::spline::Spline>()
+            {
+                true => crate::spline_edit::placed(value).unwrap_or_else(|| value.clone()),
+                false => value.clone(),
+            };
             if let Some(cmd) =
                 SetFieldCommand::new(resources, *entity, type_id, field.clone(), value.clone())
             {
