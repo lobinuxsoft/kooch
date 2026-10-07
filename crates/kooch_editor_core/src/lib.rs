@@ -72,6 +72,7 @@ const _: () = assert!(
 );
 
 pub(crate) mod shortcuts;
+pub(crate) mod spline_edit;
 pub(crate) mod state;
 pub(crate) mod style;
 pub(crate) mod systems;
