@@ -15,7 +15,7 @@ pub use global_transform::GlobalTransform;
 pub use hierarchy_sync::hierarchy_sync_system;
 pub use parent::Parent;
 pub use reparent::reparent;
-pub use transform_propagation::transform_propagation_system;
+pub use transform_propagation::{propagate_subtrees, transform_propagation_system};
 
 // ---------------------------------------------------------------------------
 // Tests

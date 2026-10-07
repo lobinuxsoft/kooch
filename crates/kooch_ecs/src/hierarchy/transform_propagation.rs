@@ -125,3 +125,89 @@ pub fn transform_propagation_system(resources: &mut kooch_core::resource::Resour
         }
     }
 }
+
+/// Publishes the `GlobalTransform` of `roots` and everything under them, and nothing else.
+///
+/// 🔴 For the case where a handful of entities moved and the world did not: physics interpolation
+/// writes the drawn pose of the dynamic bodies, and whatever reads a target needs that published
+/// before it looks (#1423). A full pass rebuilds two maps over every entity in the scene — 2159 of
+/// them in `dense.scene` — to republish the half-dozen that changed.
+///
+/// A root's own global is its parent's PUBLISHED global times its local: the parent did not move
+/// this step, so that value is current. A root with no parent is its local.
+pub fn propagate_subtrees(resources: &mut kooch_core::resource::Resources, roots: &[Entity]) {
+    use crate::component::ComponentRegistry;
+    use crate::transform::Transform;
+
+    if roots.is_empty() {
+        return;
+    }
+    let Some(mut registry) = resources.remove::<ComponentRegistry>() else {
+        return;
+    };
+
+    let published: Vec<(Entity, GlobalTransform)> = {
+        let (Some(transforms), Some(globals)) = (
+            registry.get_cpu::<Transform>(),
+            registry.get_cpu::<GlobalTransform>(),
+        ) else {
+            resources.insert(registry);
+            return;
+        };
+        let parents = registry.get_cpu::<Parent>();
+        let children = registry.get_cpu::<Children>();
+
+        let mut out = Vec::new();
+        let mut queue: std::collections::VecDeque<(Entity, Mat4)> =
+            std::collections::VecDeque::new();
+
+        for &root in roots {
+            let Some(local) = transforms.get(root) else {
+                continue;
+            };
+            // The parent's published global, not a recomputed one: it did not move this step, and
+            // recomputing it is the full pass this exists to avoid.
+            let above = parents
+                .and_then(|storage| storage.get(root))
+                .map(|parent| parent.entity)
+                .filter(|parent| parent.is_valid() && *parent != root)
+                .and_then(|parent| globals.get(parent))
+                .map(|global| global.matrix)
+                .unwrap_or(Mat4::IDENTITY);
+            queue.push_back((root, above * local.to_matrix()));
+        }
+
+        // 🔴 Bounded by the subtree, not by the scene. A cycle in the hierarchy would still spin
+        // here, so the visited set is what makes that a wasted pass rather than a hang.
+        let mut seen = std::collections::HashSet::new();
+        while let Some((entity, matrix)) = queue.pop_front() {
+            if !seen.insert(entity) {
+                continue;
+            }
+            out.push((entity, GlobalTransform { matrix }));
+            let Some(below) = children.and_then(|storage| storage.get(entity)) else {
+                continue;
+            };
+            for &child in &below.entities {
+                if let Some(local) = transforms.get(child) {
+                    queue.push_back((child, matrix * local.to_matrix()));
+                }
+            }
+        }
+        out
+    };
+
+    if let Some(storage) = registry.get_cpu_mut::<GlobalTransform>() {
+        for (entity, global) in published {
+            // Only entities that already HAVE one: gaining the component needs an archetype move,
+            // and a body that has never been propagated is the full pass's job, not this one's.
+            if let Some(existing) = storage.get_mut(entity) {
+                *existing = global;
+            }
+        }
+    }
+    resources.insert(registry);
+}
+
+#[cfg(test)]
+mod subtree_tests;

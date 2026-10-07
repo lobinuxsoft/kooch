@@ -107,6 +107,7 @@ pub fn interpolate_bodies(resources: &mut Resources) {
     let Some(poses) = resources.remove::<StepPoses>() else {
         return;
     };
+    let mut moved: Vec<Entity> = Vec::new();
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
         && let Some(transforms) = registry.get_cpu_mut::<Transform>()
     {
@@ -117,10 +118,18 @@ pub fn interpolate_bodies(resources: &mut Resources) {
             if let Some(transform) = transforms.get_mut(entity) {
                 transform.position = position;
                 transform.rotation = rotation;
+                moved.push(entity);
             }
         }
     }
     resources.insert(poses);
+    // 🔴 Published before anything reads it. The camera rig follows its target through
+    // `GlobalTransform`, so without this it chased the pose from before the step while the body was
+    // DRAWN interpolated — the body stopped stepping and the camera started (#1423).
+    //
+    // Only these subtrees. A full pass rebuilds two maps over every entity in the scene to
+    // republish the handful that moved.
+    kooch_ecs::hierarchy::propagate_subtrees(resources, &moved);
 }
 
 #[cfg(test)]
