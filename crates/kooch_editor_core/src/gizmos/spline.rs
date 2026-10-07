@@ -7,9 +7,13 @@
 
 use glam::{Mat4, Vec3};
 
+use kooch_core::resource::Resources;
+use kooch_ecs::entity::Entity;
 use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_ecs::spline::{Knot, Spline, TANGENT_AUTO, arc, eval};
 use kooch_gizmos::{Gizmos, Visualizer};
+
+use super::spline_handles;
 
 /// The curve itself.
 const CURVE: Vec3 = Vec3::new(0.25, 0.8, 1.0);
@@ -26,7 +30,17 @@ const UP: Vec3 = Vec3::new(0.4, 0.95, 0.4);
 pub(crate) struct SplineVisualizer;
 
 impl Visualizer<Spline> for SplineVisualizer {
-    fn draw(&self, spline: &Spline, transform: &GlobalTransform, gizmos: &mut Gizmos<'_>) {
+    /// Everything is in `draw_with`, which can see which grip is under the cursor.
+    fn draw(&self, _spline: &Spline, _transform: &GlobalTransform, _gizmos: &mut Gizmos<'_>) {}
+
+    fn draw_with(
+        &self,
+        spline: &Spline,
+        transform: &GlobalTransform,
+        entity: Entity,
+        resources: &Resources,
+        gizmos: &mut Gizmos<'_>,
+    ) {
         let world = &transform.matrix;
         // One knot is a point with no curve; drawing it is still what tells the author the component
         // is there and took their click.
@@ -49,7 +63,22 @@ impl Visualizer<Spline> for SplineVisualizer {
         frames(spline, world, gizmos);
         for (index, knot) in spline.points.iter().enumerate() {
             handles(spline, index, knot, world, gizmos);
-            mark(world.transform_point3(knot.position), KNOT, gizmos);
+        }
+        // 🔴 Grips come from `spline_handles::grips`, the same list the picker tests against. Drawn
+        // from a second derivation they would sit beside what is actually grabbable, and an author
+        // would be clicking a pixel off a cube that looks right.
+        let hovered = resources
+            .get::<spline_handles::SplineHandleState>()
+            .and_then(|state| state.hovered)
+            .filter(|(held, _)| *held == entity)
+            .map(|(_, grip)| grip);
+        for (grip, local) in spline_handles::grips(spline) {
+            let colour = spline_handles::grip_colour(hovered == Some(grip), grip.part);
+            gizmos.filled_aabb(
+                world.transform_point3(local),
+                Vec3::splat(spline_handles::GRIP_SIZE),
+                colour,
+            );
         }
     }
 }
@@ -118,16 +147,12 @@ fn handles(spline: &Spline, index: usize, knot: &Knot, world: &Mat4, gizmos: &mu
         .1
     });
 
+    // The tip's own cube is drawn as a grip, so only the line belongs here.
     for handle in [leaving, arriving].into_iter().flatten() {
-        let tip = at + world.transform_vector3(handle) * HANDLE_SCALE;
+        let tip = at + world.transform_vector3(handle) * spline_handles::HANDLE_SCALE;
         gizmos.line(at, tip, colour);
-        mark(tip, colour, gizmos);
     }
 }
-
-/// A Hermite tangent spans its whole segment, so drawing it full length buries the curve under its
-/// own handles. A third is what every editor draws.
-const HANDLE_SCALE: f32 = 1.0 / 3.0;
 
 /// A small cross, which reads at any distance where a dot would vanish.
 fn mark(at: Vec3, colour: Vec3, gizmos: &mut Gizmos<'_>) {

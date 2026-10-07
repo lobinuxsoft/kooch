@@ -50,6 +50,8 @@ pub(super) fn apply_viewport_edits(
     // Shape handles first: they sit inside the move arrows' reach, and the more specific one wins.
     let handle_active = crate::gizmos::shape_handles::apply_shape_handles(
         delta, resources, &selected, snap, actions,
+    ) || crate::gizmos::spline_handles::apply_spline_handles(
+        delta, resources, &selected, snap, actions,
     ) || crate::gizmos::apply_handle_input(
         delta,
         resources,

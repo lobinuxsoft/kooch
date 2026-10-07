@@ -405,7 +405,7 @@ mod drag;
 use super::active_camera;
 #[cfg(test)]
 use drag::closest_along;
-pub(crate) use drag::{ShapeHandleState, apply_shape_handles};
+pub(crate) use drag::{ShapeHandleState, apply_shape_handles, cursor_ray};
 
 #[cfg(test)]
 mod tests;

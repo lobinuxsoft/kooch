@@ -15,6 +15,7 @@ mod physics_debug;
 mod post_volume;
 pub(crate) mod shape_handles;
 mod spline;
+pub(crate) mod spline_handles;
 
 pub(crate) use physics_debug::PhysicsDebugOverlay;
 mod lights;
