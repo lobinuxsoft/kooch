@@ -80,7 +80,6 @@ impl Plugin for CameraComponentsPlugin {
                 registry.register_cpu_reflected::<crate::framing::RotationComposer>();
                 registry.register_cpu_reflected::<crate::lookahead::CameraLookahead>();
                 registry.register_cpu_reflected::<LensOverride>();
-                registry.register_cpu_reflected::<crate::impulse::ImpulseSource>();
                 registry.register_cpu_reflected::<crate::impulse::ImpulseListener>();
                 #[cfg(feature = "physics")]
                 registry.register_cpu_reflected::<crate::impulse::collision::CollisionImpulse>();
@@ -122,6 +121,7 @@ impl Plugin for CameraPlugin {
         app.insert_resource(CameraBlend::default());
         app.insert_resource(CameraStates::default());
         app.insert_resource(crate::impulse::Impulses::default());
+        app.add_event::<kooch_ecs::impulse::Impulse>();
         app.insert_resource(RigMemory::default());
         app.insert_resource(CameraRig::standard());
         // Before anything reads a duration, and before an author can edit a field a switch overrode.

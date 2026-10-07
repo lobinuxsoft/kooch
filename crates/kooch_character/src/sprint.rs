@@ -6,7 +6,7 @@ use kooch_ecs::component::Component;
 /// Running: [`Walk`](crate::Walk) with its numbers scaled while running — a modifier on an existing
 /// term. Held, it runs while `wanted`; toggled, a press starts it and stopping ends it.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
-#[reflect(category = "Physics")]
+#[reflect(category = "Character")]
 pub struct Sprint {
     /// Written by gameplay every frame, like
     /// [`Facing`](crate::Facing): held is running, released is not.

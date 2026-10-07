@@ -8,7 +8,7 @@ use kooch_ecs::component::Component;
 /// What the controller found under a character this step, written once for jumping, animation,
 /// audio and fall damage so they cannot disagree.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Reflect)]
-#[reflect(category = "Physics")]
+#[reflect(category = "Character")]
 pub struct Grounded {
     /// Ground was found, no steeper than [`max_slope`](crate::CharacterController::max_slope). A
     /// wall is ground with this still false.

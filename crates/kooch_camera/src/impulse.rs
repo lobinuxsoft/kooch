@@ -14,48 +14,21 @@
 
 #[cfg(feature = "physics")]
 pub mod collision;
-pub mod shape;
 
 use glam::Vec3;
 use kooch_core::resource::Resources;
 use kooch_ecs::Reflect;
 use kooch_ecs::component::{Component, ComponentRegistry};
 use kooch_ecs::entity::Entity;
+use kooch_ecs::impulse::{Impulse, shape};
 use kooch_ecs::reflect::FieldRange;
-
-/// What a source emits when something happens to it.
-///
-/// Authored on the entity that generates the shake — the thing that lands, fires or explodes — and
-/// fired with [`Impulses::emit`]. The component is the setting; the call is the event.
-#[derive(Debug, Clone, Copy, PartialEq, Reflect)]
-#[reflect(category = "Camera")]
-pub struct ImpulseSource {
-    /// Which signal: one of [`shape`]'s constants.
-    #[reflect(choices = shape::SHAPE_CHOICES)]
-    pub shape: u32,
-    /// How far the camera is pushed, per axis, in metres at the source.
-    pub amplitude: Vec3,
-    /// How long the whole signal lasts.
-    #[reflect(range = DURATION_RANGE)]
-    pub duration: f32,
-    /// Inside this, full strength. Cinemachine's `ImpactRadius`.
-    #[reflect(range = DISTANCE_RANGE)]
-    pub radius: f32,
-    /// How much further it takes to fade to nothing past the radius. Cinemachine's
-    /// `DissipationDistance`.
-    #[reflect(range = DISTANCE_RANGE)]
-    pub dissipation: f32,
-    /// Which listeners hear it. A listener sharing no bit is not shaken.
-    #[reflect(layers)]
-    pub channels: u32,
-}
 
 /// A vcam that is shaken by impulses it can hear.
 ///
 /// 🔴 Its own component rather than a field on the vcam, because its absence is the statement that
 /// this camera is not shaken — the rule #1397 settled.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
-#[reflect(category = "Camera")]
+#[reflect(category = "Impulse")]
 pub struct ImpulseListener {
     /// Scales everything heard. `0` is deaf without removing the component.
     #[reflect(range = GAIN_RANGE)]
@@ -68,37 +41,11 @@ pub struct ImpulseListener {
     pub camera_space: bool,
 }
 
-const DURATION_RANGE: FieldRange = FieldRange {
-    min: 0.01,
-    max: 10.0,
-    step: 0.01,
-};
-
-const DISTANCE_RANGE: FieldRange = FieldRange {
-    min: 0.0,
-    max: 1000.0,
-    step: 0.5,
-};
-
 const GAIN_RANGE: FieldRange = FieldRange {
     min: 0.0,
     max: 10.0,
     step: 0.05,
 };
-
-impl Default for ImpulseSource {
-    fn default() -> Self {
-        Self {
-            shape: shape::BUMP,
-            // A knock you notice without it reading as a bug the first time it fires.
-            amplitude: Vec3::new(0.0, 0.3, 0.0),
-            duration: 0.2,
-            radius: 5.0,
-            dissipation: 20.0,
-            channels: u32::MAX,
-        }
-    }
-}
 
 impl Default for ImpulseListener {
     fn default() -> Self {
@@ -110,7 +57,6 @@ impl Default for ImpulseListener {
     }
 }
 
-impl Component for ImpulseSource {}
 impl Component for ImpulseListener {}
 
 /// One impulse in flight.
@@ -134,34 +80,21 @@ struct Live {
 pub struct Impulses(Vec<Live>);
 
 impl Impulses {
-    /// Fires `source`'s signal from `at`. The call is the event; the component is the setting.
-    pub fn emit(&mut self, source: ImpulseSource, at: Vec3) {
-        if !(source.duration > 0.0) {
+    /// Takes one impulse off the bus.
+    pub fn hear(&mut self, impulse: Impulse) {
+        if !(impulse.duration > 0.0) {
             return;
         }
         self.0.push(Live {
-            at,
-            amplitude: source.amplitude,
-            shape: source.shape,
-            duration: source.duration,
+            at: impulse.at,
+            amplitude: impulse.amplitude,
+            shape: impulse.shape,
+            duration: impulse.duration,
             elapsed: 0.0,
-            radius: source.radius.max(0.0),
-            dissipation: source.dissipation.max(0.0),
-            channels: source.channels,
+            radius: impulse.radius.max(0.0),
+            dissipation: impulse.dissipation.max(0.0),
+            channels: impulse.channels,
         });
-    }
-
-    /// Fires the impulse `entity` carries, from where it is. Does nothing if it carries none.
-    pub fn emit_from(&mut self, registry: &ComponentRegistry, entity: Entity, at: Vec3) -> bool {
-        let Some(source) = registry
-            .get_cpu::<ImpulseSource>()
-            .and_then(|sources| sources.get(entity))
-            .copied()
-        else {
-            return false;
-        };
-        self.emit(source, at);
-        true
     }
 
     /// What a listener at `at` feels right now, in world space.
@@ -218,10 +151,21 @@ fn dissipated(distance: f32, radius: f32, dissipation: f32) -> f32 {
     fade * fade * (3.0 - 2.0 * fade)
 }
 
-/// Advances the impulses in flight. Runs before the brain reads them.
+/// Takes everything published this frame, then advances what is in flight.
+///
+/// 🔴 The FIXED list. An impulse is fired by whatever noticed the thing that caused it — a solver
+/// contact, a landing — on the fixed cadence, and the frame list loses five arrivals in six at
+/// 360 fps (#1312).
 pub fn step_impulses(resources: &mut Resources) {
+    let arrived: Vec<Impulse> = resources
+        .get::<kooch_core::event::Events<Impulse>>()
+        .map(|events| events.read_fixed().copied().collect())
+        .unwrap_or_default();
     let dt = crate::plugin::frame_dt(resources);
     if let Some(impulses) = resources.get_mut::<Impulses>() {
+        for impulse in arrived {
+            impulses.hear(impulse);
+        }
         impulses.step(dt);
     }
 }

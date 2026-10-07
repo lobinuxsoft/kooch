@@ -6,7 +6,7 @@ use kooch_ecs::component::Component;
 /// Caps a character's fall while pressed against a wall, reading [`Touching`](crate::Touching). A
 /// cap, not friction, so the slide is the same from any height.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
-#[reflect(category = "Physics")]
+#[reflect(category = "Character")]
 pub struct WallSlide {
     /// Fastest it may fall while on a wall, in m/s.
     pub max_fall: f32,

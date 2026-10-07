@@ -7,7 +7,7 @@ use kooch_ecs::component::Component;
 /// [`WallSlide`](crate::WallSlide), which falls slowly when approached head on. A clock ends where
 /// the player saw it coming.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
-#[reflect(category = "Physics")]
+#[reflect(category = "Character")]
 pub struct WallRun {
     /// Least speed **along** the wall that starts a run, in m/s — a slow or head-on arrival is not
     /// one.

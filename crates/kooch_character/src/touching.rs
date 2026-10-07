@@ -9,7 +9,7 @@ use kooch_ecs::component::Component;
 /// [`Grounded`](crate::Grounded), written by the same pass. Too steep to walk and within reach, not
 /// stuck to it.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Reflect)]
-#[reflect(category = "Physics")]
+#[reflect(category = "Character")]
 pub struct Touching {
     /// Something too steep to stand on was found within
     /// [`reach`](crate::CharacterController::reach).

@@ -7,7 +7,7 @@ use kooch_ecs::component::Component;
 /// A goal velocity, not a push: a floating capsule has no friction, so stopping has to be the same
 /// term as starting.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
-#[reflect(category = "Physics")]
+#[reflect(category = "Character")]
 pub struct Walk {
     /// Top speed across the ground, in m/s. The goal never exceeds it,
     /// so nothing has to clamp afterwards.

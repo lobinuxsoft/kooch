@@ -17,20 +17,20 @@ pub const EXPLOSION: u32 = 2;
 pub const RUMBLE: u32 = 3;
 
 /// What the Inspector offers.
-pub static SHAPE_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
-    kooch_ecs::reflect::FieldChoice {
+pub static SHAPE_CHOICES: &[crate::reflect::FieldChoice] = &[
+    crate::reflect::FieldChoice {
         label: "Recoil",
         value: RECOIL as i64,
     },
-    kooch_ecs::reflect::FieldChoice {
+    crate::reflect::FieldChoice {
         label: "Bump",
         value: BUMP as i64,
     },
-    kooch_ecs::reflect::FieldChoice {
+    crate::reflect::FieldChoice {
         label: "Explosion",
         value: EXPLOSION as i64,
     },
-    kooch_ecs::reflect::FieldChoice {
+    crate::reflect::FieldChoice {
         label: "Rumble",
         value: RUMBLE as i64,
     },

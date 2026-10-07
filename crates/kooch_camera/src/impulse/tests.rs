@@ -3,8 +3,9 @@
 
 use super::*;
 
-fn source() -> ImpulseSource {
-    ImpulseSource {
+fn fired() -> Impulse {
+    Impulse {
+        at: Vec3::ZERO,
         shape: shape::RECOIL,
         amplitude: Vec3::new(0.0, 1.0, 0.0),
         duration: 1.0,
@@ -26,7 +27,7 @@ fn listener() -> ImpulseListener {
 #[test]
 fn further_away_is_a_tremor() {
     let mut impulses = Impulses::default();
-    impulses.emit(source(), Vec3::ZERO);
+    impulses.hear(fired());
     let near = impulses.heard(Vec3::new(6.0, 0.0, 0.0), listener()).y.abs();
     let far = impulses
         .heard(Vec3::new(12.0, 0.0, 0.0), listener())
@@ -40,7 +41,7 @@ fn further_away_is_a_tremor() {
 #[test]
 fn the_radius_is_full_and_past_it_is_nothing() {
     let mut impulses = Impulses::default();
-    impulses.emit(source(), Vec3::ZERO);
+    impulses.hear(fired());
     let inside = impulses.heard(Vec3::new(2.0, 0.0, 0.0), listener()).y;
     let at_source = impulses.heard(Vec3::ZERO, listener()).y;
     assert!(
@@ -62,7 +63,7 @@ fn the_radius_is_full_and_past_it_is_nothing() {
 #[test]
 fn the_falloff_has_no_corner_at_the_radius() {
     let mut impulses = Impulses::default();
-    impulses.emit(source(), Vec3::ZERO);
+    impulses.hear(fired());
     let felt = |d: f32| impulses.heard(Vec3::new(d, 0.0, 0.0), listener()).y.abs();
     // Just past the radius the fall has barely begun; a linear one would already be 2 % down.
     let step = felt(5.0) - felt(5.2);
@@ -76,7 +77,7 @@ fn the_falloff_has_no_corner_at_the_radius() {
 #[test]
 fn a_deaf_channel_hears_nothing() {
     let mut impulses = Impulses::default();
-    impulses.emit(source(), Vec3::ZERO);
+    impulses.hear(fired());
     let elsewhere = ImpulseListener {
         channels: 0b10,
         ..listener()
@@ -89,7 +90,7 @@ fn a_deaf_channel_hears_nothing() {
 #[test]
 fn a_finished_impulse_is_dropped() {
     let mut impulses = Impulses::default();
-    impulses.emit(source(), Vec3::ZERO);
+    impulses.hear(fired());
     impulses.step(0.5);
     assert!(!impulses.is_empty(), "it ended halfway through");
     impulses.step(0.6);

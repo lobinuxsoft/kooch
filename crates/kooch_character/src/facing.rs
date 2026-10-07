@@ -9,7 +9,7 @@ use kooch_ecs::component::Component;
 /// body, length is the throttle.
 /// 🔴 Zero means stop — skipping the write left a character walking on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Reflect)]
-#[reflect(category = "Physics")]
+#[reflect(category = "Character")]
 pub struct Facing {
     /// Direction and throttle in one: flattened against the local up,
     /// and its length clamped to `1` before it scales the top speed.

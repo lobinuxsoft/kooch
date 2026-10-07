@@ -39,6 +39,7 @@ fn register_builtin_components(resources: &mut kooch_core::resource::Resources) 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<Transform>();
         registry.register_cpu_reflected::<Name>();
+        registry.register_cpu_reflected::<crate::impulse::ImpulseSource>();
         registry.register_cpu_reflected::<crate::order::Order>();
         registry.register_cpu_reflected::<Parent>();
         registry.register_cpu_reflected::<Children>();
@@ -79,6 +80,8 @@ impl Plugin for EcsPlugin {
 
         // Register built-in components before user startup systems.
         app.add_system(Stage::Startup, register_builtin_components);
+        // The bus anything can fire a shake onto, and anything can listen to (#1419).
+        app.add_event::<crate::impulse::Impulse>();
 
         // Order within a stage is insertion order — these MUST stay in this sequence. 1. Apply
         // deferred commands (spawn/despawn/insert/remove). 2. Clean up despawned entities from

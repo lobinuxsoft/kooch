@@ -40,6 +40,7 @@ impl Plugin for CharacterComponentsPlugin {
                 registry.register_cpu_reflected::<Facing>();
                 registry.register_cpu_reflected::<Grounded>();
                 registry.register_cpu_reflected::<Jump>();
+                registry.register_cpu_reflected::<crate::landing::LandingImpulse>();
                 registry.register_cpu_reflected::<Sprint>();
                 registry.register_cpu_reflected::<WallJump>();
                 registry.register_cpu_reflected::<WallRun>();
@@ -68,6 +69,13 @@ impl Plugin for CharacterPlugin {
         // wall slide and a jump read what `hold_characters` found this
         // step rather than probing for it again.
         app.add_system(Stage::Physics, run_if_playing(cling::cling_and_leap));
+        // 🔴 On the FIXED step, beside the thing it watches: `Grounded` is written by the solver's
+        // own cadence, and an edge read per frame would be seen two frames out of three or missed
+        // entirely between steps (#1419).
+        app.add_system(
+            Stage::PostPhysics,
+            run_if_playing(crate::landing::impulses_from_landings),
+        );
     }
 
     fn name(&self) -> &str {

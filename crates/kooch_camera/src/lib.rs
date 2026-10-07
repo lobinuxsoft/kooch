@@ -33,7 +33,7 @@ pub use bodies::{Follow, HardLockToTarget};
 pub use brain::CameraBrain;
 pub use extensions::{CameraOffset, CameraRecomposer};
 pub use framing::RotationComposer;
-pub use impulse::{ImpulseListener, ImpulseSource, Impulses};
+pub use impulse::{ImpulseListener, Impulses};
 pub use lens_override::LensOverride;
 pub use lookahead::CameraLookahead;
 pub use occlusion::Deoccluder;
