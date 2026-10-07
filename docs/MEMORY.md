@@ -1283,6 +1283,33 @@ falta lo primero.
 
 ## Gotchas activos / lecciones
 
+### ⚠️ `FrameCap` está mergeado en `development` y no pacea nada (2026-10-07, #1425)
+
+`FramePace::Continuous` mapeaba a `ControlFlow::Poll` y el editor presenta **Mailbox, nunca
+FIFO** (`os_windows.rs:210` — dos esperas de vsync en serie partían el framerate del editor), así
+que nada pacea el loop. `FrameCap` se agregó para eso y **no duerme**: `schedule_next_frame` pone
+el `WaitUntil` y después pide el redraw. Fix = pedir el redraw desde
+`StartCause::ResumeTimeReached`. La aritmética de cadencia de `FrameCap` sí está testeada y no era
+el problema.
+
+🟢 La idea **no** está refutada: el ROADMAP la midió el 2026-08-20 en la handheld — capeado a 72,
+el frame máximo baja de **47,09 ms a 15,25**. Falló una implementación, no el concepto.
+
+⚠️ El label del HUD decía `vsync` leyendo el *setting*, que nunca describió lo que paceaba el
+loop. Ahora nombra el cap.
+
+### 🟢 Los bloques SÍ colisionan — #1386 no es una traba (2026-10-07)
+
+Afirmé que #1386 (*"a block collider is asked for as a mesh"*) bloqueaba el slice del blockout.
+**Era inferencia del body de la issue, no del motor corriendo.** La mesh de colisión se construye
+por una ruta aparte y funciona. #1386 es un test que falla y una segunda ruta hacia la misma
+respuesta; si la ruta en uso es la que conviene lo discute **#1091** (geometría que pertenece a la
+entidad, no al asset de mesh), no #1386.
+
+**La first slice de #946 está completa en código** — #1079 (adjacency), #1080 (selección
+vertex/edge/face), #1081 (extrude) y #1106 (primitivas) cerradas. Lo que falta no es código: es
+construir un nivel con la herramienta.
+
 ### Serialización: lo que RON no hace (2026-07-28, #655)
 
 - **RON no lee `#[serde(untagged)]`.** Resuelve por `deserialize_any`, que RON no implementa
@@ -1436,6 +1463,28 @@ Cuatro hipótesis sobre el mismo frame en un día:
 
 **1 de 4 por análisis. 4 de 4 por medición.** El desglose por etapas (#569) estaba último en el
 roadmap y era lo que había que hacer primero.
+
+### 🔴🔴 Y la misma regla vale para DEBUGGEAR, no sólo para optimizar (2026-10-07, #1427)
+
+Cinco hipótesis sobre el mismo temblor de cámara, todas por análisis, **cero aciertos**:
+ordering de sistemas, feedback por `horizons.carry`, dos damps en serie, el `share` binario del
+composer (`STILL` es `1e-5`, demasiado chico para conmutar), y jitter de frame time — de esta
+última hubo suficiente confianza para **mergear un fix**.
+
+El fix no corrió nunca: `FrameCap` pone `WaitUntil(deadline)` y después llama
+`request_redraw()`, que winit entrega en la iteración siguiente sin respetar el deadline
+(#1425). La aritmética estaba bien (`worst 9.23` contra `frame 4.95`, error de velocidad
+aparente `(9.23/4.95)²`) y describía algo real que **no era la causa**.
+
+La única evidencia que se sostuvo la dio el user usando el motor: *"solo sé que el problema es
+con RotationComposer"*.
+
+🔴 **A la SEGUNDA hipótesis fallida sobre un bug visual, parar.** El paso siguiente es un
+instrumento que escupa los números por frame detrás de una env var, no una sexta teoría. Una
+hipótesis es gratis para la IA y cuesta un ciclo de compilar-y-jugar al user.
+
+⚠️ **Y antes de decir "esto arregla X", verificar que el código CORRIÓ.** Bastaba pedir el
+número del HUD (`cap 120` contra `vsync`) antes de mergear.
 
 **Cómo se mide hoy:** HUD → Performance → **CPU frame** — gather / UI / input / viewport /
 present / actions / **unaccounted** / gizmo batch, y gather se abre en intern / entities /
