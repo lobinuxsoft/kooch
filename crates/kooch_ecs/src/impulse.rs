@@ -1,4 +1,4 @@
-//! What shakes the world, and the event that carries it (#1419).
+//! What shakes the world, and the event that carries it (#1419, #1421).
 //!
 //! 🔴 Here rather than in the camera, because an impulse is a fact about the WORLD. A camera is one
 //! listener; a sound, a dust puff and a controller rumble are others, and none of them should have
@@ -10,20 +10,17 @@ pub mod shape;
 use glam::Vec3;
 
 use crate::Reflect;
-use crate::component::Component;
 use crate::reflect::FieldRange;
 
-/// What an entity emits when something happens to it.
+/// The signal a trigger fires: what it feels like, and how far it carries.
 ///
-/// Authored on the thing that shakes the world — what lands, fires or explodes — and turned into an
-/// [`Impulse`] by whatever notices the event.
-///
-/// ⚠️ **The alias is load-bearing.** This lived at `kooch_camera::impulse::ImpulseSource`, and a
-/// scene resolves a component by its type NAME: without it the component would vanish from every
-/// entity that carries one, silently, on the first load after the move.
+/// 🔴 Not a component. It was one — `ImpulseSource` — on the theory that a signal and its trigger
+/// are separate statements, which is #1397's rule about a vcam's body and aim. **That rule is about
+/// alternatives that exclude each other.** A trigger and its signal are not alternatives: they are
+/// always authored together, so splitting them stated nothing and spread one setting across two
+/// components. Each trigger carries one of these inline (#1421).
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
-#[reflect(category = "Impulse", alias = "kooch_camera::impulse::ImpulseSource")]
-pub struct ImpulseSource {
+pub struct ImpulseSignal {
     /// Which signal: one of [`shape`]'s constants.
     #[reflect(choices = shape::SHAPE_CHOICES)]
     pub shape: u32,
@@ -56,7 +53,7 @@ const DISTANCE_RANGE: FieldRange = FieldRange {
     step: 0.5,
 };
 
-impl Default for ImpulseSource {
+impl Default for ImpulseSignal {
     fn default() -> Self {
         Self {
             shape: shape::BUMP,
@@ -69,8 +66,6 @@ impl Default for ImpulseSource {
         }
     }
 }
-
-impl Component for ImpulseSource {}
 
 /// One impulse, fired. Published as an event so anything can hear it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -86,17 +81,17 @@ pub struct Impulse {
 }
 
 impl Impulse {
-    /// `source`'s signal, fired from `at` and scaled by `strength` — how hard the thing that fired
-    /// it was hit, from `0` to `1`.
-    pub fn from_source(source: ImpulseSource, at: Vec3, strength: f32) -> Self {
+    /// `signal`, fired from `at` and scaled by `strength` — how hard the thing that fired it was
+    /// hit, from `0` to `1`.
+    pub fn new(signal: ImpulseSignal, at: Vec3, strength: f32) -> Self {
         Self {
             at,
-            amplitude: source.amplitude * strength.clamp(0.0, 1.0),
-            shape: source.shape,
-            duration: source.duration,
-            radius: source.radius.max(0.0),
-            dissipation: source.dissipation.max(0.0),
-            channels: source.channels,
+            amplitude: signal.amplitude * strength.clamp(0.0, 1.0),
+            shape: signal.shape,
+            duration: signal.duration,
+            radius: signal.radius.max(0.0),
+            dissipation: signal.dissipation.max(0.0),
+            channels: signal.channels,
         }
     }
 }

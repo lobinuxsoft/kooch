@@ -14,12 +14,29 @@ use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::FieldRange;
 use kooch_physics::plugin::ContactForce;
 
-use kooch_ecs::impulse::{Impulse, ImpulseSource};
+use kooch_ecs::impulse::{Impulse, ImpulseSignal};
 
 /// Fires this entity's [`ImpulseSource`] when it is hit hard enough.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Impulse")]
 pub struct CollisionImpulse {
+    /// Which signal: one of `kooch_ecs::impulse::shape`'s constants.
+    #[reflect(choices = kooch_ecs::impulse::shape::SHAPE_CHOICES)]
+    pub shape: u32,
+    /// How far a listener is pushed, per axis, in metres at the source.
+    pub amplitude: glam::Vec3,
+    /// How long the whole signal lasts.
+    #[reflect(range = DURATION_RANGE)]
+    pub duration: f32,
+    /// Inside this, full strength.
+    #[reflect(range = DISTANCE_RANGE)]
+    pub radius: f32,
+    /// How much further it takes to fade to nothing past the radius.
+    #[reflect(range = DISTANCE_RANGE)]
+    pub dissipation: f32,
+    /// Which listeners hear it.
+    #[reflect(layers)]
+    pub channels: u32,
     /// Below this, nothing. Keeps a body resting on the floor from shaking the camera forever.
     #[reflect(range = FORCE_RANGE)]
     pub min_force: f32,
@@ -35,9 +52,41 @@ const FORCE_RANGE: FieldRange = FieldRange {
     step: 10.0,
 };
 
+const DURATION_RANGE: FieldRange = FieldRange {
+    min: 0.01,
+    max: 10.0,
+    step: 0.01,
+};
+
+const DISTANCE_RANGE: FieldRange = FieldRange {
+    min: 0.0,
+    max: 1000.0,
+    step: 0.5,
+};
+
+impl CollisionImpulse {
+    /// The flat fields as the signal the bus carries — reflection takes primitives only.
+    fn signal(&self) -> ImpulseSignal {
+        ImpulseSignal {
+            shape: self.shape,
+            amplitude: self.amplitude,
+            duration: self.duration,
+            radius: self.radius,
+            dissipation: self.dissipation,
+            channels: self.channels,
+        }
+    }
+}
+
 impl Default for CollisionImpulse {
     fn default() -> Self {
         Self {
+            shape: kooch_ecs::impulse::shape::BUMP,
+            amplitude: glam::Vec3::new(0.0, 0.3, 0.0),
+            duration: 0.2,
+            radius: 5.0,
+            dissipation: 20.0,
+            channels: u32::MAX,
             // A body at rest reports a contact force equal to its weight, so the floor is the thing
             // being filtered out here.
             min_force: 500.0,
@@ -84,18 +133,11 @@ fn planned(resources: &Resources) -> Vec<Impulse> {
             if contact.max_force_magnitude < collision.min_force {
                 continue;
             }
-            let Some(source) = registry
-                .get_cpu::<ImpulseSource>()
-                .and_then(|storage| storage.get(entity))
-                .copied()
-            else {
-                continue;
-            };
             let Some(at) = where_it_is(registry, entity) else {
                 continue;
             };
-            fired.push(Impulse::from_source(
-                source,
+            fired.push(Impulse::new(
+                collision.signal(),
                 at,
                 strength(contact.max_force_magnitude, *collision),
             ));

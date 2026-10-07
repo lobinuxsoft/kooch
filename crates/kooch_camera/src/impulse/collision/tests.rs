@@ -7,6 +7,7 @@ fn collision() -> CollisionImpulse {
     CollisionImpulse {
         min_force: 100.0,
         full_force: 1_100.0,
+        ..Default::default()
     }
 }
 
@@ -34,6 +35,7 @@ fn a_zero_span_is_always_full() {
     let flat = CollisionImpulse {
         min_force: 100.0,
         full_force: 100.0,
+        ..Default::default()
     };
     assert!((strength(200.0, flat) - 1.0).abs() < 1e-5);
 }

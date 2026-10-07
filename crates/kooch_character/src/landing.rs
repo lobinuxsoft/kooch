@@ -13,17 +13,37 @@ use kooch_core::resource::Resources;
 use kooch_ecs::Reflect;
 use kooch_ecs::component::{Component, ComponentRegistry};
 use kooch_ecs::entity::Entity;
-use kooch_ecs::impulse::{Impulse, ImpulseSource};
+use kooch_ecs::impulse::{Impulse, ImpulseSignal};
 use kooch_ecs::reflect::FieldRange;
 use kooch_physics::PhysicsWorld;
 use kooch_physics::SolverBody;
 
 use crate::grounded::Grounded;
 
-/// Fires this character's [`ImpulseSource`] when it lands, scaled by how fast it was falling.
+/// Shakes listeners when this character lands, scaled by how fast it was falling.
+///
+/// 🔴 Carries its own signal. It took a separate `ImpulseSource` beside it, which stated nothing —
+/// the two are always authored together — and made the common case three components (#1421).
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(category = "Impulse")]
 pub struct LandingImpulse {
+    /// Which signal: one of `kooch_ecs::impulse::shape`'s constants.
+    #[reflect(choices = kooch_ecs::impulse::shape::SHAPE_CHOICES)]
+    pub shape: u32,
+    /// How far a listener is pushed, per axis, in metres at the source.
+    pub amplitude: glam::Vec3,
+    /// How long the whole signal lasts.
+    #[reflect(range = DURATION_RANGE)]
+    pub duration: f32,
+    /// Inside this, full strength.
+    #[reflect(range = DISTANCE_RANGE)]
+    pub radius: f32,
+    /// How much further it takes to fade to nothing past the radius.
+    #[reflect(range = DISTANCE_RANGE)]
+    pub dissipation: f32,
+    /// Which listeners hear it. One sharing no bit is not shaken.
+    #[reflect(layers)]
+    pub channels: u32,
     /// Below this fall speed, nothing. Keeps walking down a ramp from shaking the camera.
     #[reflect(range = SPEED_RANGE)]
     pub min_speed: f32,
@@ -38,9 +58,15 @@ pub struct LandingImpulse {
     /// measures the spring and not the fall.
     #[reflect(skip)]
     pub fall_speed: f32,
-    /// Last step's `standing`, so a landing is an edge rather than a state.
+    /// Whether there was ground under the character last step, so a landing is an edge rather than
+    /// a state.
+    ///
+    /// 🔴 Having GROUND, not standing on it. `Footing::stands()` is `Ground` only — a step is
+    /// something you are getting over, in its own words — so walking a staircase flips `standing`
+    /// false and true repeatedly and every flip read as a landing. The scene this was smoke-tested
+    /// in is built out of steps and ramps, so the camera never stopped shaking (#1421).
     #[reflect(skip)]
-    pub was_standing: bool,
+    pub was_supported: bool,
 }
 
 const SPEED_RANGE: FieldRange = FieldRange {
@@ -49,24 +75,69 @@ const SPEED_RANGE: FieldRange = FieldRange {
     step: 0.1,
 };
 
+const DURATION_RANGE: FieldRange = FieldRange {
+    min: 0.01,
+    max: 10.0,
+    step: 0.01,
+};
+
+const DISTANCE_RANGE: FieldRange = FieldRange {
+    min: 0.0,
+    max: 1000.0,
+    step: 0.5,
+};
+
+impl LandingImpulse {
+    /// 🔴 The fields are flat because reflection takes primitives only, so the Inspector shows them
+    /// without a level of nesting — which is the better reading anyway. This is where they become
+    /// the signal the bus carries.
+    fn signal(&self) -> ImpulseSignal {
+        ImpulseSignal {
+            shape: self.shape,
+            amplitude: self.amplitude,
+            duration: self.duration,
+            radius: self.radius,
+            dissipation: self.dissipation,
+            channels: self.channels,
+        }
+    }
+}
+
 impl Default for LandingImpulse {
     fn default() -> Self {
         Self {
             // Stepping off a kerb is about 2 m/s; a jump lands around 7.
             min_speed: 3.0,
             full_speed: 15.0,
+            shape: kooch_ecs::impulse::shape::BUMP,
+            amplitude: glam::Vec3::new(0.0, 0.3, 0.0),
+            duration: 0.2,
+            radius: 5.0,
+            dissipation: 20.0,
+            channels: u32::MAX,
             fall_speed: 0.0,
-            was_standing: true,
+            was_supported: true,
         }
     }
 }
 
 impl Component for LandingImpulse {}
 
+/// Whether there is ground under the character at all.
+///
+/// 🔴 Not whether it can STAND on it. `Footing::stands()` is `Ground` only — a step is something
+/// you are getting over, in its own words — so a staircase flips `standing` false and true
+/// repeatedly, and reading that field made every flip a landing (#1421). A step or a ramp has a
+/// normal; only the air has none.
+fn supported(ground: &Grounded) -> bool {
+    ground.normal.length_squared() > 1e-6
+}
+
 /// What one character's landing is worth, planned before anything is written.
 struct Landed {
     entity: Entity,
     strength: f32,
+    signal: ImpulseSignal,
 }
 
 /// Watches every character for the moment it arrives, and fires its impulse.
@@ -106,6 +177,7 @@ fn planned(resources: &Resources) -> (Vec<Landed>, Vec<(Entity, f32, bool)>) {
         let Some(ground) = grounded.get(entity) else {
             continue;
         };
+        let supported = supported(ground);
         let down = bodies
             .get(entity)
             .and_then(|body| world.handle(body.slot()))
@@ -115,21 +187,25 @@ fn planned(resources: &Resources) -> (Vec<Landed>, Vec<(Entity, f32, bool)>) {
             .map(|velocity| -velocity.dot(ground.normal.normalize_or(glam::Vec3::Y)))
             .unwrap_or(0.0);
 
-        let peak = match ground.standing {
-            // On the ground the record resets, so the next fall starts from nothing.
+        let peak = match supported {
+            // With ground under it the record resets, so the next fall starts from nothing.
             true => 0.0,
             false => landing.fall_speed.max(down),
         };
-        falling.push((entity, peak, ground.standing));
+        falling.push((entity, peak, supported));
 
-        if ground.standing && !landing.was_standing {
+        if supported && !landing.was_supported {
             let span = landing.full_speed - landing.min_speed;
             let strength = match span > 0.0 {
                 true => ((landing.fall_speed - landing.min_speed) / span).clamp(0.0, 1.0),
                 false => 1.0,
             };
             if strength > 0.0 {
-                landed.push(Landed { entity, strength });
+                landed.push(Landed {
+                    entity,
+                    strength,
+                    signal: landing.signal(),
+                });
             }
         }
     }
@@ -144,15 +220,15 @@ fn remember(resources: &mut Resources, falling: &[(Entity, f32, bool)]) {
     let Some(landings) = registry.get_cpu_mut::<LandingImpulse>() else {
         return;
     };
-    for (entity, peak, standing) in falling {
+    for (entity, peak, supported) in falling {
         if let Some(landing) = landings.get_mut(*entity) {
             landing.fall_speed = *peak;
-            landing.was_standing = *standing;
+            landing.was_supported = *supported;
         }
     }
 }
 
-/// Turns each landing into the impulse its source describes.
+/// Turns each landing into the impulse its trigger describes, from where the character is.
 fn sourced(resources: &Resources, landed: &[Landed]) -> Vec<Impulse> {
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Vec::new();
@@ -160,15 +236,11 @@ fn sourced(resources: &Resources, landed: &[Landed]) -> Vec<Impulse> {
     landed
         .iter()
         .filter_map(|one| {
-            let source = registry
-                .get_cpu::<ImpulseSource>()
-                .and_then(|sources| sources.get(one.entity))
-                .copied()?;
             let at = registry
                 .get_cpu::<kooch_ecs::hierarchy::GlobalTransform>()?
                 .get(one.entity)
                 .map(|global| global.matrix.to_scale_rotation_translation().2)?;
-            Some(Impulse::from_source(source, at, one.strength))
+            Some(Impulse::new(one.signal, at, one.strength))
         })
         .collect()
 }
