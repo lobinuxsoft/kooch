@@ -85,3 +85,82 @@ fn coincident_knots_still_step() {
     assert!(after[2].position.length() > 0.5, "{}", after[2].position);
     assert!(after[2].position.is_finite());
 }
+
+/// 🔴 The placement has to run where the edit is DISPATCHED, and the first version did not: it sat
+/// after the local/dynamic split and compared `TypeId`, so with a project connected — where a
+/// mirrored world resolves components by name — it never ran at all. Every added knot kept landing
+/// on the origin, and the unit tests above could not see it because the function itself was right.
+#[test]
+fn the_dispatch_places_an_added_knot() {
+    use kooch_core::resource::Resources;
+    use kooch_ecs::allocator::EntityAllocator;
+    use kooch_ecs::archetype_registry::ArchetypeRegistry;
+    use kooch_ecs::commands::Commands;
+    use kooch_ecs::component::{ComponentNames, ComponentRegistry};
+    use kooch_ecs::dynamic_components::DynamicComponents;
+    use kooch_ecs::query::AccessTracker;
+    use kooch_ecs::spline::Spline;
+
+    let mut resources = Resources::new();
+    let mut allocator = EntityAllocator::new();
+    let entity = allocator.spawn();
+    resources.insert(allocator);
+    let mut archetypes = ArchetypeRegistry::new();
+    let empty = archetypes.get_or_create(Default::default());
+    archetypes.register_entity(entity, empty);
+    resources.insert(archetypes);
+    resources.insert(AccessTracker::new());
+    resources.insert(Commands::new());
+    resources.insert(DynamicComponents::new());
+    resources.insert(ComponentNames::new());
+    resources.insert(crate::undo::UndoStack::new());
+
+    let mut registry = ComponentRegistry::new();
+    registry.register_cpu_reflected::<Spline>();
+    if let Some(storage) = registry.get_cpu_mut::<Spline>() {
+        storage.insert(
+            entity,
+            Spline {
+                points: vec![Knot::at(Vec3::ZERO), Knot::at(Vec3::new(3.0, 0.0, 0.0))],
+                closed: false,
+            },
+        );
+    }
+    resources.insert(registry);
+    crate::queries::intern_registry_names(&mut resources);
+
+    let component = resources
+        .get::<ComponentNames>()
+        .and_then(|names| names.id(std::any::type_name::<Spline>()))
+        .expect("Spline is interned");
+
+    // What the Inspector's add button produces: the list with one more `Knot::default()`.
+    let added = listed(&[
+        Knot::at(Vec3::ZERO),
+        Knot::at(Vec3::new(3.0, 0.0, 0.0)),
+        Knot::default(),
+    ]);
+    let mut undo = resources.remove::<crate::undo::UndoStack>().unwrap();
+    crate::actions::apply_actions(
+        &mut resources,
+        &[crate::actions::EditorAction::SetField {
+            entity,
+            component,
+            field: "points".into(),
+            value: added,
+        }],
+        &mut undo,
+    );
+    resources.insert(undo);
+
+    let stored = resources
+        .get::<ComponentRegistry>()
+        .and_then(|registry| registry.get_cpu::<Spline>()?.get(entity).cloned())
+        .expect("the spline is still there");
+    assert_eq!(stored.points.len(), 3);
+    assert_ne!(
+        stored.points[2].position,
+        Vec3::ZERO,
+        "the added knot was left on the origin — the dispatch hook did not run"
+    );
+}

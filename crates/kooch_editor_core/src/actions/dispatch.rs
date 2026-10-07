@@ -80,27 +80,32 @@ pub(super) fn action_to_command(
             field,
             value,
         } => {
+            // 🔴 A `Spline`'s added knot is placed ahead of the one before it HERE rather than
+            // where the edit is emitted, so every route a knot arrives by is covered and the
+            // placement stays one action — one undo step, one trip over the wire (#1261).
+            //
+            // 🔴 BEFORE the local/dynamic split, and matched by NAME. The first version sat after
+            // it and compared `TypeId`, so it never ran while a project was connected: a mirrored
+            // world resolves its components by name and leaves down the dynamic path above.
+            let named = component_name(resources, *component);
+            let value = match field == "points"
+                && named.as_deref() == Some(std::any::type_name::<kooch_ecs::spline::Spline>())
+            {
+                true => crate::spline_edit::placed(value).unwrap_or_else(|| value.clone()),
+                false => value.clone(),
+            };
             // A plugin's component has no local TypeId, so it is edited
             // by name against DynamicComponents instead.
             let Some(type_id) = resolve_component(resources, *component) else {
-                let name = component_name(resources, *component)?;
+                let name = named?;
                 return SetDynamicFieldCommand::new(
                     resources,
                     *entity,
                     &name,
                     field.clone(),
-                    value.clone(),
+                    value,
                 )
                 .map(|cmd| Box::new(cmd) as Box<dyn EditorCommand>);
-            };
-            // 🔴 A `Spline`'s added knot is placed ahead of the one before it HERE rather than
-            // where the edit is emitted, so every route a knot arrives by is covered and the
-            // placement stays one action — one undo step, one trip over the wire (#1261).
-            let value = match field == "points"
-                && type_id == std::any::TypeId::of::<kooch_ecs::spline::Spline>()
-            {
-                true => crate::spline_edit::placed(value).unwrap_or_else(|| value.clone()),
-                false => value.clone(),
             };
             if let Some(cmd) =
                 SetFieldCommand::new(resources, *entity, type_id, field.clone(), value.clone())
