@@ -12,7 +12,7 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 use kooch_core::app::App;
 use kooch_core::event::{AppExit, Events};
-use kooch_core::frame_pacing::{FramePace, FrameRequest, FrameWaker};
+use kooch_core::frame_pacing::{FrameCap, FramePace, FrameRequest, FrameWaker};
 use kooch_core::gpu::GpuContext;
 use kooch_core::raw_event::RawEventHandlers;
 use kooch_core::time::Time;
@@ -91,7 +91,17 @@ impl WinitApp {
 
         match pace {
             FramePace::Continuous => {
-                event_loop.set_control_flow(ControlFlow::Poll);
+                // Capped, the loop still redraws every frame — it just stops starting the next one
+                // early, which is what keeps the gap between presentations even (#1425).
+                match self
+                    .app
+                    .resources
+                    .get_mut::<FrameCap>()
+                    .and_then(|cap| cap.deadline(Instant::now()))
+                {
+                    Some(deadline) => event_loop.set_control_flow(ControlFlow::WaitUntil(deadline)),
+                    None => event_loop.set_control_flow(ControlFlow::Poll),
+                }
                 self.request_redraw();
             }
             // A deadline far enough out to overflow the clock is a

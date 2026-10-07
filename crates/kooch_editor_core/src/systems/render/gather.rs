@@ -49,7 +49,11 @@ pub(super) fn publish_gpu_stats(
         .or(meshlet_stats.gpu_frame_ms);
     // Off the surface: `.rendersettings` describes the project's window, not the editor's.
     let vsync = gpu.vsync();
+    let cap_hz = resources
+        .get::<kooch_core::frame_pacing::FrameCap>()
+        .and_then(kooch_core::frame_pacing::FrameCap::hz);
     if let Some(stats) = resources.get_mut::<crate::perf::EditorPerfStats>() {
+        stats.cap_hz = cap_hz;
         stats.gpu_frame_ms = gpu_ms;
         stats.vsync = vsync;
         stats.vram_tracked_bytes = vram_bytes;

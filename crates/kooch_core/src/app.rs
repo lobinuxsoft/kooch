@@ -73,6 +73,7 @@ impl App {
         // a worker thread — the remote server spawns its listener there
         // and needs a way back to a loop that may be asleep (#656).
         app.insert_resource(crate::frame_pacing::FrameWaker::default());
+        app.insert_resource(crate::frame_pacing::FrameCap::default());
 
         app
     }
