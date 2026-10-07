@@ -37,7 +37,7 @@ impl Handle for TranslateHandle {
             HandleState::Dragging => Vec3::new(1.0, 0.85, 0.2), // selection-yellow while dragging
         };
         let dir = frame.world_axis(self.axis);
-        let tip = frame.origin + dir * self.length;
+        let tip = frame.origin + dir * self.length * frame.scale;
         // Solid mesh arrow with full alpha — translates read better as
         // opaque shapes, unlike the translucent plane handles.
         gizmos.arrow(frame.origin, tip, Vec4::new(rgb.x, rgb.y, rgb.z, 1.0));
@@ -46,7 +46,7 @@ impl Handle for TranslateHandle {
     fn pick(&self, ray: Ray, frame: HandleFrame) -> Option<f32> {
         let dir = frame.world_axis(self.axis);
         let p1 = frame.origin;
-        let p2 = frame.origin + dir * self.length;
+        let p2 = frame.origin + dir * self.length * frame.scale;
         ray_vs_segment(ray, p1, p2, self.pick_thickness)
     }
 

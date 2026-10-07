@@ -40,16 +40,16 @@ impl ScaleHandle {
 
     /// Local-space cube center (before applying frame.basis). For axis
     /// handles it's `axis * length`; for the center cube it's the origin.
-    fn local_cube_center(&self) -> Vec3 {
+    fn local_cube_center(&self, scale: f32) -> Vec3 {
         match self.axis {
-            Some(axis) => axis.vec() * self.length,
+            Some(axis) => axis.vec() * self.length * scale,
             None => Vec3::ZERO,
         }
     }
 
     /// World-space cube center (after applying frame.basis).
     fn cube_center(&self, frame: HandleFrame) -> Vec3 {
-        frame.origin + frame.basis * self.local_cube_center()
+        frame.origin + frame.basis * self.local_cube_center(frame.scale)
     }
 }
 
@@ -69,7 +69,7 @@ impl Handle for ScaleHandle {
         gizmos.filled_obb(
             self.cube_center(frame),
             frame.basis,
-            Vec3::splat(self.cube_half_size),
+            Vec3::splat(self.cube_half_size * frame.scale),
             Vec4::new(rgb.x, rgb.y, rgb.z, 1.0),
         );
     }
@@ -80,8 +80,8 @@ impl Handle for ScaleHandle {
         let basis_inv = frame.basis.transpose();
         let local_origin = basis_inv * (ray.origin - frame.origin);
         let local_dir = basis_inv * ray.direction;
-        let center = self.local_cube_center();
-        let half = Vec3::splat(self.cube_half_size);
+        let center = self.local_cube_center(frame.scale);
+        let half = Vec3::splat(self.cube_half_size * frame.scale);
         ray_vs_aabb(local_origin, local_dir, center - half, center + half)
     }
 
@@ -98,7 +98,11 @@ impl Handle for ScaleHandle {
         let last_s = project_ray_to_axis(drag.last_ray, frame.origin, direction);
         let current_s = project_ray_to_axis(drag.current_ray, frame.origin, direction);
         let distance = current_s - last_s;
-        let factor = (1.0 + distance / self.length.max(0.001)).max(0.01);
+        // 🔴 Scaled like the drawing, because both terms are world units: the cursor's `distance`
+        // grows with the camera too, so scaling the divisor together is what keeps a given cursor
+        // movement worth the same factor near and far.
+        let reach = (self.length * frame.scale).max(0.001);
+        let factor = (1.0 + distance / reach).max(0.01);
 
         if self.axis.is_none() {
             // Uniform scale: f * I, identical in any rotation frame.

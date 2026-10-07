@@ -20,9 +20,19 @@ use kooch_gizmos_handles::SnapSettings;
 use crate::actions::EditorAction;
 use crate::editor_camera::input::ViewportInputDelta;
 
-/// Half the side of a grip's cube, in world units. Matches `shape_handles` so one viewport does not
-/// have two sizes of the same affordance.
+/// Half the side of a grip's cube, as a share of the screen-scale reference unit — so it holds its
+/// size however far the camera is (#1433). Matches `shape_handles` so one viewport does not have two
+/// sizes of the same affordance.
+///
+/// ⚠️ This sizes the cube and the pick tolerance, never [`HANDLE_SCALE`], which is **where** a
+/// tangent grip sits: that offset is the value being edited, and scaling it by camera distance
+/// would make a drag from far away change the tangent by a different amount.
 pub(super) const GRIP_SIZE: f32 = 0.05;
+
+/// The grip's half-size in world units at `at`.
+pub(super) fn grip_size(resources: &Resources, at: Vec3) -> f32 {
+    GRIP_SIZE * super::screen_scale::factor(resources, at)
+}
 
 /// How far off the cursor ray a grip still counts as under it, as a fraction of its distance.
 const PICK_SLOPE: f32 = 0.02;
@@ -264,8 +274,10 @@ fn drive(
                 let world = to_world.transform_point3(local);
                 let along = (world - origin).dot(direction);
                 let off = (world - (origin + direction * along)).length();
-                (along > 0.0 && off <= along * PICK_SLOPE + GRIP_SIZE)
-                    .then_some((along, grip, world))
+                // 🔴 The tolerance scales with the drawn size, or the fix makes picking worse: a
+                // cube drawn ten times bigger with an unchanged tolerance is visible and ungrabbable.
+                let reach = grip_size(resources, world);
+                (along > 0.0 && off <= along * PICK_SLOPE + reach).then_some((along, grip, world))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0));
         let Some((_, grip, world)) = under else {
