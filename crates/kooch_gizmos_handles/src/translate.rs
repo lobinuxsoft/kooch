@@ -47,7 +47,9 @@ impl Handle for TranslateHandle {
         let dir = frame.world_axis(self.axis);
         let p1 = frame.origin;
         let p2 = frame.origin + dir * self.length * frame.scale;
-        ray_vs_segment(ray, p1, p2, self.pick_thickness)
+        // 🔴 Scaled like the arrow it picks. Drawn longer with an unchanged thickness, the margin
+        // thins on screen with distance until the handle is visible and cannot be clicked (#1433).
+        ray_vs_segment(ray, p1, p2, self.pick_thickness * frame.scale)
     }
 
     fn drag(&self, drag: DragInfo, frame: HandleFrame) -> TransformDelta {
