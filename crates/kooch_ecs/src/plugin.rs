@@ -50,6 +50,7 @@ fn register_builtin_components(resources: &mut kooch_core::resource::Resources) 
         registry.register_cpu_reflected::<SpotLight>();
         registry.register_cpu_reflected::<SkyRenderer>();
         registry.register_cpu_reflected::<MeshRenderer>();
+        registry.register_cpu_reflected::<crate::spline::Spline>();
         registry.register_cpu_reflected::<crate::post_process::PostProcess>();
         registry.register_cpu_reflected::<crate::post_process_volume::PostProcessVolume>();
         // Ordinary scene data despite being an editor concept: the link

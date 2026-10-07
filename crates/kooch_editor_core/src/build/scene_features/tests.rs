@@ -105,4 +105,3 @@ fn ensure_fixes_a_project_once() {
     assert!(game.contains("\"kooch/blockmesh\""), "{game}");
     assert_eq!(once, twice);
 }
-

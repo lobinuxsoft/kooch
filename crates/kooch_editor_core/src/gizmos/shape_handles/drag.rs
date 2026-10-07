@@ -226,7 +226,7 @@ pub(super) fn write_shape(resources: &mut Resources, entity: Entity, shape: Bloc
     }
 }
 
-pub(super) fn cursor_ray(resources: &Resources, delta: ViewportInputDelta) -> Option<(Vec3, Vec3)> {
+pub(crate) fn cursor_ray(resources: &Resources, delta: ViewportInputDelta) -> Option<(Vec3, Vec3)> {
     let cursor = delta.cursor_local?;
     let (camera, transform) = super::active_camera(resources)?;
     let ray = kooch_render::projection::viewport_cursor_to_ray(

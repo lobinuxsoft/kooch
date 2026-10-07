@@ -34,6 +34,7 @@ pub mod scene_manager;
 pub mod scene_member;
 pub mod sensor_occupancy;
 pub mod sky_renderer;
+pub mod spline;
 pub mod spot_light;
 pub mod storage;
 pub mod streamed;
