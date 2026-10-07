@@ -14,11 +14,11 @@ use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::FieldRange;
 use kooch_physics::plugin::ContactForce;
 
-use super::{ImpulseSource, Impulses};
+use kooch_ecs::impulse::{Impulse, ImpulseSource};
 
 /// Fires this entity's [`ImpulseSource`] when it is hit hard enough.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
-#[reflect(category = "Camera")]
+#[reflect(category = "Impulse")]
 pub struct CollisionImpulse {
     /// Below this, nothing. Keeps a body resting on the floor from shaking the camera forever.
     #[reflect(range = FORCE_RANGE)]
@@ -48,23 +48,21 @@ impl Default for CollisionImpulse {
 
 impl Component for CollisionImpulse {}
 
-/// Turns contacts into impulses.
+/// Turns contacts into impulses, published for anything to hear.
 pub fn impulses_from_contacts(resources: &mut Resources) {
     let fired = planned(resources);
     if fired.is_empty() {
         return;
     }
-    let Some(mut impulses) = resources.remove::<Impulses>() else {
-        return;
-    };
-    for (source, at) in fired {
-        impulses.emit(source, at);
+    if let Some(events) = resources.get_mut::<kooch_core::event::Events<Impulse>>() {
+        for impulse in fired {
+            events.send(impulse);
+        }
     }
-    resources.insert(impulses);
 }
 
 /// What each contact asks for, read before anything is emitted.
-fn planned(resources: &Resources) -> Vec<(ImpulseSource, glam::Vec3)> {
+fn planned(resources: &Resources) -> Vec<Impulse> {
     let Some(events) = resources.get::<kooch_core::event::Events<ContactForce>>() else {
         return Vec::new();
     };
@@ -96,23 +94,25 @@ fn planned(resources: &Resources) -> Vec<(ImpulseSource, glam::Vec3)> {
             let Some(at) = where_it_is(registry, entity) else {
                 continue;
             };
-            fired.push((scaled(source, contact.max_force_magnitude, *collision), at));
+            fired.push(Impulse::from_source(
+                source,
+                at,
+                strength(contact.max_force_magnitude, *collision),
+            ));
         }
     }
     fired
 }
 
-/// The source's amplitude scaled by how hard the hit was, clamped at `full_force`.
-fn scaled(mut source: ImpulseSource, force: f32, collision: CollisionImpulse) -> ImpulseSource {
+/// How much of the source's amplitude a hit of `force` is worth, clamped at `full_force`.
+fn strength(force: f32, collision: CollisionImpulse) -> f32 {
     let span = collision.full_force - collision.min_force;
-    let strength = match span > 0.0 {
+    match span > 0.0 {
         true => ((force - collision.min_force) / span).clamp(0.0, 1.0),
         // A zero span is "anything over the floor is a full hit", which is a legitimate setting
         // rather than a division to guard against.
         false => 1.0,
-    };
-    source.amplitude *= strength;
-    source
+    }
 }
 
 fn where_it_is(registry: &ComponentRegistry, entity: Entity) -> Option<glam::Vec3> {

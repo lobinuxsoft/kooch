@@ -13,6 +13,7 @@ pub mod dynamic_components;
 pub mod entity;
 pub mod ephemeral;
 pub mod hierarchy;
+pub mod impulse;
 pub mod light_consts;
 pub mod lod_force_level;
 pub mod mesh_renderer;
@@ -55,6 +56,7 @@ pub use directional_light::DirectionalLight;
 pub use entity::Entity;
 pub use ephemeral::EphemeralComponents;
 pub use hierarchy::{Children, GlobalTransform, Parent};
+pub use impulse::{Impulse, ImpulseSource};
 pub use kooch_ecs_macros::Reflect;
 /// Declares a system's stage. Inert at compile time — read by the
 /// editor's codegen. See the macro's own docs.

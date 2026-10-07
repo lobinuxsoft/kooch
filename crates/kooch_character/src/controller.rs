@@ -7,7 +7,7 @@ use kooch_ecs::component::Component;
 /// `PhysicsBody` and a `Collider`, which is its shape. Tuned for a two-metre capsule floating a
 /// quarter metre.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
-#[reflect(category = "Physics")]
+#[reflect(category = "Character")]
 pub struct CharacterController {
     /// How high the body's **origin** rides above the ground, in metres.
     /// It must exceed the collider's reach below the origin (`r + h` for a capsule), or the capsule

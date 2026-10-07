@@ -10,17 +10,10 @@ fn collision() -> CollisionImpulse {
     }
 }
 
-fn source() -> ImpulseSource {
-    ImpulseSource {
-        amplitude: glam::Vec3::new(0.0, 1.0, 0.0),
-        ..Default::default()
-    }
-}
-
 #[test]
 fn a_harder_hit_shakes_more() {
-    let soft = scaled(source(), 350.0, collision()).amplitude.y;
-    let hard = scaled(source(), 850.0, collision()).amplitude.y;
+    let soft = strength(350.0, collision());
+    let hard = strength(850.0, collision());
     assert!(
         (soft - 0.25).abs() < 1e-5,
         "a quarter of the way up read as {soft}"
@@ -31,7 +24,7 @@ fn a_harder_hit_shakes_more() {
 /// 🔴 Clamped, or a fall off the map throws the camera into the next county.
 #[test]
 fn past_full_force_is_clamped() {
-    let huge = scaled(source(), 50_000.0, collision()).amplitude.y;
+    let huge = strength(50_000.0, collision());
     assert!((huge - 1.0).abs() < 1e-5, "a 50 kN hit scaled to {huge}");
 }
 
@@ -42,5 +35,5 @@ fn a_zero_span_is_always_full() {
         min_force: 100.0,
         full_force: 100.0,
     };
-    assert!((scaled(source(), 200.0, flat).amplitude.y - 1.0).abs() < 1e-5);
+    assert!((strength(200.0, flat) - 1.0).abs() < 1e-5);
 }

@@ -6,7 +6,7 @@ use kooch_ecs::component::Component;
 /// Jumping as a launch speed, not an impulse: an impulse jumps a heavy character lower, while
 /// `speed² / 2g` is a height a designer can aim at.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
-#[reflect(category = "Physics")]
+#[reflect(category = "Character")]
 pub struct Jump {
     /// Written by gameplay on the frame the button goes down, and
     /// cleared here once it is spent.
@@ -42,7 +42,7 @@ impl Component for Jump {}
 /// Jumping off a wall — a separate component because it takes the button when a jump would be
 /// refused and sends the character away, not up.
 #[derive(Debug, Clone, Copy, PartialEq, Reflect)]
-#[reflect(category = "Physics")]
+#[reflect(category = "Character")]
 pub struct WallJump {
     /// Speed away from the wall, in m/s. This is what carries the
     /// character across a gap.
