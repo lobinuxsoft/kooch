@@ -46,6 +46,8 @@ pub struct EditorPerfStats {
     pub gpu_frame_ms: Option<f32>,
     /// Whether the editor's own surface is presenting with vsync.
     pub vsync: bool,
+    /// The cadence `Continuous` frames are held to, or `None` while uncapped (#1425).
+    pub cap_hz: Option<f64>,
     /// Sum of bytes the engine knows it has allocated through wgpu (vertex / index / uniform /
     /// storage buffers + textures we own, including the GlobalMeshPool, vis-buffer, deferred
     /// targets).

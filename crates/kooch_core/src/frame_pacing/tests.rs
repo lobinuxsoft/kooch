@@ -94,3 +94,49 @@ fn wake_reaches_the_installed_notify_from_another_thread() {
     assert_eq!(hits.load(Ordering::SeqCst), 1);
     assert!(waker.take_pending());
 }
+
+/// 🔴 The deadline advances by whole budgets, not from the moment it is asked. Pacing from `now`
+/// would make the gap `frame_time + budget`, which is uneven by exactly the thing being removed.
+#[test]
+fn a_cap_paces_evenly() {
+    let budget = Duration::from_millis(10);
+    let mut cap = FrameCap::new(100.0);
+    let start = Instant::now();
+
+    let first = cap.deadline(start).unwrap();
+    // The next frame asks late, having spent 4 ms of work after waking on `first`.
+    let second = cap.deadline(first + Duration::from_millis(4)).unwrap();
+
+    assert_eq!(first, start + budget);
+    assert_eq!(second - first, budget);
+}
+
+/// An overrun owes time it can never repay, and catching up would spend the next frames in a burst.
+#[test]
+fn an_overrun_restarts_the_cap() {
+    let mut cap = FrameCap::new(100.0);
+    let start = Instant::now();
+    let first = cap.deadline(start).unwrap();
+
+    let late = first + Duration::from_millis(50);
+    assert_eq!(
+        cap.deadline(late).unwrap(),
+        late + Duration::from_millis(10)
+    );
+}
+
+/// 🔴 `from_secs_f64` panics on a non-finite argument, and `hz <= 0.0` is false for NaN.
+#[test]
+fn an_unusable_rate_uncaps() {
+    for hz in [0.0, -60.0, f64::NAN, f64::INFINITY] {
+        assert_eq!(FrameCap::new(hz).hz(), None, "{hz}");
+    }
+}
+
+#[test]
+fn a_cap_reads_off_as_none() {
+    assert_eq!(cap_from(Some("off")), Some(0.0));
+    assert_eq!(cap_from(Some(" 72 ")), Some(72.0));
+    assert_eq!(cap_from(Some("nonsense")), None);
+    assert_eq!(cap_from(None), None);
+}

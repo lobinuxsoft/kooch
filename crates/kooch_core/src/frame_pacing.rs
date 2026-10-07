@@ -1,7 +1,7 @@
 //! How hard the main loop should spin — and how to wake it once it stops.
 
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// What the next frame needs, in order of urgency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -35,6 +35,82 @@ impl FramePace {
         } else {
             Self::After(delay)
         }
+    }
+}
+
+/// An even cadence for [`FramePace::Continuous`] frames.
+///
+/// Nothing paces the loop otherwise: the editor presents Mailbox and never FIFO, so a frame lasts
+/// whatever it costs. What the eye reads as shake is the gap between presentations changing, not the
+/// frame time itself (#1425).
+#[derive(Debug)]
+pub struct FrameCap {
+    /// Zero runs uncapped.
+    budget: Duration,
+    /// When the next frame may start. Absent until the first one asks.
+    next: Option<Instant>,
+}
+
+impl Default for FrameCap {
+    fn default() -> Self {
+        Self::new(cap_override().unwrap_or(DEFAULT_CAP_HZ))
+    }
+}
+
+impl FrameCap {
+    /// A cap at `hz`. Zero or less — or a rate too fine to represent — runs uncapped.
+    pub fn new(hz: f64) -> Self {
+        // 🔴 `!(hz > 0.0)`, not `hz <= 0.0`: every comparison against NaN is false, and `<=` would
+        // let it through into `from_secs_f64`, which panics on a non-finite argument.
+        let budget = match !(hz > 0.0) || !hz.is_finite() {
+            true => Duration::ZERO,
+            false => Duration::from_secs_f64(1.0 / hz),
+        };
+        Self { budget, next: None }
+    }
+
+    /// Frames per second, or `None` while uncapped.
+    pub fn hz(&self) -> Option<f64> {
+        match self.budget.is_zero() {
+            true => None,
+            false => Some(1.0 / self.budget.as_secs_f64()),
+        }
+    }
+
+    /// When the next frame may start, advancing the cadence. `None` runs uncapped.
+    ///
+    /// The deadline advances by whole budgets rather than from `now`, so the gap between
+    /// presentations is the budget instead of `frame_time + budget`.
+    pub fn deadline(&mut self, now: Instant) -> Option<Instant> {
+        if self.budget.is_zero() {
+            return None;
+        }
+        // A frame that overran owes time it can never repay, and catching up would spend the next
+        // frames in a burst — exactly the uneven gap the cap exists to remove. Restart instead.
+        let next = match self.next {
+            Some(next) if next.checked_add(self.budget).is_some_and(|due| due > now) => next,
+            _ => now,
+        };
+        let next = next.checked_add(self.budget)?;
+        self.next = Some(next);
+        Some(next)
+    }
+}
+
+/// Where the cap lands with nothing said. 120 Hz leaves 8.3 ms, well past the 4.95 ms a frame
+/// measured at, and matches the handhelds' native rate.
+const DEFAULT_CAP_HZ: f64 = 120.0;
+
+/// Reads `KOOCH_FRAME_CAP`, mirroring `KOOCH_PRESENT_MODE`. `off` uncaps.
+pub fn cap_override() -> Option<f64> {
+    cap_from(std::env::var("KOOCH_FRAME_CAP").ok().as_deref())
+}
+
+/// Parses a cap: a rate in Hz, or `off` for none.
+pub(crate) fn cap_from(raw: Option<&str>) -> Option<f64> {
+    match raw?.trim() {
+        "off" | "none" => Some(0.0),
+        hz => hz.parse().ok().filter(|hz: &f64| hz.is_finite()),
     }
 }
 

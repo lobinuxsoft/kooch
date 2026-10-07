@@ -252,11 +252,13 @@ fn frame_time_card(ui: &mut egui::Ui, perf: &crate::perf::EditorPerfStats) {
             .map(|ms| format!("GPU:      {ms:.2} ms"))
             .unwrap_or_else(|| "GPU:      n/a".to_owned());
         ui.label(egui::RichText::new(gpu).color(green).monospace().size(12.0));
-        // Amber when vsync is on: every number above is then capped by
-        // the display and the reader has to know before trusting them.
-        let (mode, mode_colour) = match perf.vsync {
-            true => ("vsync", amber),
-            false => ("novsync", green),
+        // Amber when something caps the numbers above — vsync or the frame cap — because the
+        // reader has to know they are a ceiling and not a cost before trusting them. The cap wins
+        // the label: it is what actually paces the loop, and the editor never presents FIFO.
+        let (mode, mode_colour) = match (perf.cap_hz, perf.vsync) {
+            (Some(hz), _) => (format!("cap {hz:.0}"), amber),
+            (None, true) => ("vsync".to_owned(), amber),
+            (None, false) => ("novsync".to_owned(), green),
         };
         ui.label(
             egui::RichText::new(format!("FPS:      {:.0}  {mode}", perf.fps_avg))

@@ -2,7 +2,7 @@
 
 use crate::app::App;
 use crate::event::{AppExit, Events};
-use crate::frame_pacing::{FramePace, FrameRequest, FrameWaker};
+use crate::frame_pacing::{FrameCap, FramePace, FrameRequest, FrameWaker};
 use crate::time::Time;
 
 /// A function that takes ownership of the app and runs it.
@@ -96,6 +96,9 @@ fn sleep_until_the_next_frame_is_wanted(app: &mut App, waker: Option<&FrameWaker
             // were going to run anyway is already satisfied, and leaving
             // it set would waste the next chance to sleep.
             waker.take_pending();
+            if let Some(remaining) = cap_remaining(&mut app.resources) {
+                waker.wait(Some(remaining));
+            }
         }
         FramePace::After(delay) => {
             waker.wait(Some(delay));
@@ -167,3 +170,12 @@ pub fn run_for_frames(mut app: App, frame_count: u32) {
 
 #[cfg(test)]
 mod tests;
+
+/// How long the cap still owes this frame, or `None` while uncapped or already past due.
+fn cap_remaining(resources: &mut crate::resource::Resources) -> Option<std::time::Duration> {
+    let now = std::time::Instant::now();
+    resources
+        .get_mut::<FrameCap>()?
+        .deadline(now)?
+        .checked_duration_since(now)
+}
