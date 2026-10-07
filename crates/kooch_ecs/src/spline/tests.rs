@@ -109,3 +109,88 @@ fn a_zero_length_spline_is_safe() {
     assert!(arc::at_distance(&stalled, false, 1.0).is_finite());
     assert!(eval::up(&stalled, false, 0.5).is_finite());
 }
+
+/// The three modes have to differ, or authoring a tangent does nothing and the field is a lie.
+///
+/// 🔴 Read on the FIRST segment, where the middle knot contributes its `arriving` — on the second it
+/// contributes `leaving` alone and `Aligned` and `Broken` cannot differ. And `arriving` is not the
+/// mirror of `leaving` here: a mirror is what `Aligned` means, so mirroring it would compare a mode
+/// against itself and prove nothing.
+#[test]
+fn the_tangent_modes_differ() {
+    let bent = |mode: u32| {
+        vec![
+            Knot::at(Vec3::ZERO),
+            Knot {
+                position: Vec3::new(1.0, 0.0, 0.0),
+                mode,
+                leaving: Vec3::new(0.0, 2.0, 0.0),
+                arriving: Vec3::new(-1.0, -1.0, 0.0),
+                ..Knot::default()
+            },
+            Knot::at(Vec3::new(2.0, 0.0, 0.0)),
+        ]
+    };
+    let sample = |points: &[Knot]| eval::at(points, false, 0.25);
+
+    let auto = sample(&bent(TANGENT_AUTO));
+    let aligned = sample(&bent(TANGENT_ALIGNED));
+    let broken = sample(&bent(TANGENT_BROKEN));
+
+    // Auto derives from the neighbours and ignores both authored handles.
+    assert!(
+        auto.distance(aligned) > 0.1,
+        "auto={auto} aligned={aligned}"
+    );
+    // Broken reads `arriving` on its own, so it arrives differently from the mirrored case.
+    assert!(
+        broken.distance(aligned) > 0.1,
+        "broken={broken} aligned={aligned}"
+    );
+    assert!(broken.distance(auto) > 0.1, "broken={broken} auto={auto}");
+}
+
+/// 🔴 Broken is the only mode that can put a corner in the curve — the others are smooth through the
+/// knot by construction. A rail or a swept mesh across a corner is a different thing to handle.
+#[test]
+fn only_broken_makes_a_corner() {
+    let corner = |mode: u32| {
+        vec![
+            Knot::at(Vec3::ZERO),
+            Knot {
+                position: Vec3::new(1.0, 0.0, 0.0),
+                mode,
+                leaving: Vec3::new(0.0, 1.0, 0.0),
+                arriving: Vec3::new(1.0, 0.0, 0.0),
+                ..Knot::default()
+            },
+            Knot::at(Vec3::new(2.0, 0.0, 0.0)),
+        ]
+    };
+    // Either side of the middle knot, which sits at t = 0.5 of two segments.
+    let across = |points: &[Knot]| {
+        eval::tangent(points, false, 0.49).dot(eval::tangent(points, false, 0.51))
+    };
+    assert!(across(&corner(TANGENT_ALIGNED)) > 0.99, "aligned bent");
+    assert!(
+        across(&corner(TANGENT_BROKEN)) < 0.9,
+        "broken stayed smooth"
+    );
+}
+
+/// Closed adds the segment back to the first knot, which is what a circuit of rails needs.
+#[test]
+fn closing_adds_a_segment() {
+    let triangle = vec![
+        Knot::at(Vec3::ZERO),
+        Knot::at(Vec3::new(1.0, 0.0, 0.0)),
+        Knot::at(Vec3::new(0.5, 0.0, 1.0)),
+    ];
+    assert_eq!(eval::segments(&triangle, false), 2);
+    assert_eq!(eval::segments(&triangle, true), 3);
+
+    // The closing segment ends where the curve started, so there is no seam to fall through.
+    let ended = eval::at(&triangle, true, 1.0);
+    assert!(ended.distance(Vec3::ZERO) < 1e-3, "{ended}");
+    assert!(arc::length(&triangle, true) > arc::length(&triangle, false));
+}
