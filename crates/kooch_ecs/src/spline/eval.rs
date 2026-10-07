@@ -158,7 +158,10 @@ pub(crate) fn segment_at(points: &[Knot], closed: bool, t: f32) -> Option<(usize
 /// 🔴 Authored handles point **away** from their knot, as every editor draws them, so the tangent
 /// arriving at `b` is `-b.arriving`. `Aligned` needs no mirroring here for the same reason: two
 /// handles pointing opposite ways already are one straight line through the point.
-pub(crate) fn tangents(points: &[Knot], closed: bool, a: usize, b: usize) -> (Vec3, Vec3) {
+///
+/// Public because a gizmo draws these: a handle derived a second time in the editor is a second
+/// answer, free to disagree with the curve it is drawn over (#1387's lesson, on another axis).
+pub fn tangents(points: &[Knot], closed: bool, a: usize, b: usize) -> (Vec3, Vec3) {
     let leaving = match points[a].mode {
         TANGENT_AUTO => auto(points, closed, a),
         _ => points[a].leaving,

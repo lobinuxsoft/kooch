@@ -14,6 +14,7 @@ pub(crate) mod harness;
 mod physics_debug;
 mod post_volume;
 pub(crate) mod shape_handles;
+mod spline;
 
 pub(crate) use physics_debug::PhysicsDebugOverlay;
 mod lights;
@@ -84,6 +85,7 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     registry.register::<kooch_ecs::spot_light::SpotLight, lights::SpotLightVisualizer>();
     // A collider is authored as numbers and is otherwise invisible; the outline is the only way to
     // see whether the shape wraps the model. Which faces of a block are selected.
+    registry.register::<kooch_ecs::spline::Spline, spline::SplineVisualizer>();
     registry.register::<kooch_blockmesh::Block, block::BlockVisualizer>();
     // A shaped block's parameters, dragged rather than typed (#1150).
     registry.register::<kooch_blockmesh::BlockShape, shape_handles::ShapeHandleVisualizer>();
