@@ -275,6 +275,10 @@ impl MeshBatch {
 
     /// Pushes a solid 3D arrow from `base` to `tip`: an octagonal shaft and cone head, with no
     /// outline.
+    /// Smallest head a long arrow gets, so a shaft does not end in an invisible point. A short
+    /// arrow takes a proportional head instead — a floor that cannot fit is not a floor.
+    const HEAD_FLOOR: f32 = 0.05;
+
     pub fn filled_arrow(&mut self, base: Vec3, tip: Vec3, color: Vec4) {
         let length_vec = tip - base;
         let length = length_vec.length();
@@ -283,7 +287,11 @@ impl MeshBatch {
         }
         self.arrows.push((base, tip));
         let dir = length_vec / length;
-        let head_len = (length * 0.25).clamp(0.05, length * 0.4);
+        // 🔴 `clamp` PANICS when min > max, and a 5 cm floor is above `length * 0.4` for any arrow
+        // shorter than 12.5 cm — the guard above only rejects sub-0.1 mm. Cap the head at 40 % of
+        // the arrow first, and let the floor apply only where it fits under that cap.
+        let cap = length * 0.4;
+        let head_len = (length * 0.25).clamp(Self::HEAD_FLOOR.min(cap), cap);
         let head_radius = head_len * 0.4;
         let shaft_radius = head_radius * 0.3;
         let shaft_end = tip - dir * head_len;
@@ -407,3 +415,6 @@ fn push_cone(
         indices.extend_from_slice(&[center_idx, ring_start + next, ring_start + i]);
     }
 }
+
+#[cfg(test)]
+mod tests;
