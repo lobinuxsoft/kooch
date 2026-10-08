@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-10-07 — 🎯 **The rig stopped stuttering, and a shake that five hypotheses did not find.** Ten issues closed: #1316 gave the loop a `PrePhysics` stage so hierarchy, transforms and collider geometry resolve **before** the step rather than a frame behind it; #1254 put the lens on the vcam as a `LensOverride`, because a vcam is not a camera — it asks for a lens; #1402 made every camera component draw what it does to the picture in the Game view; #1415 drew a body where the last step left it instead of where the frame is, and #1423 published those interpolated poses before the rig reads them; #1255 landed impulse and shake with Cinemachine's four keyframe curves. 🔴 **The pattern that named itself: a defect that another defect was hiding.** The rig on the fixed clock hid that bodies step; fixing the clock exposed the bodies; moving the clock exposed two bugs in `settled`. Each fix was a smoke test away from the next one, and none of them could have been found in the order a plan would have guessed. 🔴 **And the lesson that cost the most: five hypotheses failed on one shake, and the sixth was not a hypothesis.** The camera trembles when rotating *while* moving — the whole image, worst at the start of a turn, settling after a while. I ruled out system ordering, a feedback loop through `horizons.carry`, two damps in series, the composer's binary `share`, and frame-time jitter, the last of which I was confident enough about to merge a fix for. **The fix never ran**: `FrameCap` sets `WaitUntil` and then calls `request_redraw()`, which winit delivers without honouring the deadline (#1425, reopened). The arithmetic I had checked on paper — `worst 9.23` against `frame 4.95`, an apparent-speed error of `(9.23/4.95)²` — described something real and was not the cause. The one piece of evidence that held came from the owner using the thing: *"solo sé que el problema es con RotationComposer"*. 🔴 **Two failed hypotheses mean the mental model is wrong, and a third does not fix it — an instrument does** (#1427). Closing with the splines, because a level needs them: #1261 is the base nothing in this engine has, and #1428 and #1429 were filed from the owner's own description of what a path should be able to do.
+Last updated 2026-10-08 — 🎯 **The spline exists, and four ordering bugs taught more than the feature did.** #1261 shipped the curve nothing in this engine had — Hermite evaluation, three tangent modes, arc length, nearest point, and a frame built by **parallel transport (Wang's double reflection), never Frenet**, because the Frenet normal inverts through an inflection and that up is which way is DOWN for #1429. Five features were waiting on it. The dependency rule ran first and settled it: `bevy_math` needs `glam ^0.32` against this workspace's 0.33, so two incompatible `Vec3` types, and none of `bevy_math`, `splines`, `stroke` or `kurbo` (2D) has arc-length, nearest-point and a rotation-minimising frame — study the source, write it here. Then #1433, after the owner found handles unusable at distance: everything was sized in world units, falling off as `1/distance`, so a 5 cm grip is sub-pixel at 50 m and fills the view at 50 cm. And #1441, a selected knot taking the transform gizmo for axis and plane constraints. 🔴 **But the lesson is the four bugs, which were one bug wearing four coats: two systems reading one piece of state, where only one of them knows what it means.** The placement hook sat in the sink that does not run with a project connected — `apply_actions` has two and the remote one `return`s — and I put it there TWICE. The pick threshold was scaled in three pickers and not the fourth. The plane handle drew with the scaled extent and picked against the raw one. A click on a gizmo axis was consumed by `spline_handles`, which runs first and cannot tell it from clicking empty space. **Not one was visible from a unit test**, because every function was correct in isolation — my tests stayed green through all four while the feature was broken, which is the signature and which I ignored four times. What finds them is reading the call order, and I reached for it after the smoke test every time. Also: `filled_arrow` panicked on any arrow under 12.5 cm (`clamp` with min above max), latent since it was written and fatal the moment screen-scaled arrows got short enough — it took the whole editor down.
 
 ---
 
@@ -206,6 +206,56 @@ what the engine did before any of this existed, for the reason
 `settings.rs:510` argues at length: a serde default is not a
 recommendation, it is what an old file silently becomes. A project that
 wants these values sets them.
+
+---
+
+## 🎯 2026-10-08 — the spline exists, and four ordering bugs taught more than the feature
+
+### What shipped
+
+- **#1261** — a `Spline` component and its evaluation. Cubic Hermite, three tangent modes (`Auto` Catmull-Rom, `Aligned`, `Broken`), **arc length** (the half `t` cannot answer: equal steps of the parameter are not equal steps along the path), **nearest point** (coarse samples then golden-section — the derivative of a distance to a cubic is a quintic), and the frame.
+- **#1433** — every gizmo affordance holds its size on screen. Measured **along the view axis**, not straight-line: a handle at the edge of the frame is further from the eye, and sizing by that grows it as the camera turns.
+- **#1441** — a selected knot takes the transform gizmo, for axis and plane constraints a camera-plane drag cannot give.
+
+### The dependency rule, run first and worth recording
+
+| Crate | Evaluation | arc-length | nearest-point | RMF | glam |
+|---|---|---|---|---|---|
+| `bevy_math` 0.19.1 | Bézier, Hermite, Catmull-Rom, B-spline, NURBS | ❌ | ❌ | ❌ | **^0.32** |
+| `splines` 4.3.1 | keys + per-segment interpolation | ❌ | ❌ | ❌ | ❌ |
+| `stroke` 0.3.0 | Bézier/B-spline const-generic | ~ | ❌ | ❌ | ❌ |
+| `kurbo` | complete, **2D** | ✅ | ✅ | n/a | ❌ |
+
+🔴 **`bevy_math` requires `glam ^0.32` and this workspace is on 0.33** — two incompatible `Vec3` types and conversion at every boundary. Not drop-in, and not ours to fix. Verdict: study the source, write it here.
+
+### 🔴 Two things that are not preferences
+
+**The frame is parallel transport, never Frenet.** The Frenet normal is the curvature direction and **inverts through an inflection**. For a swept mesh that is a glitch; for #1429, where that up *is* which way is down, it throws a character off the road in one frame. Sabotaging one for the other inverts the up mid-curve, `[-0.83, 0, 0.55]` → `[0.83, 0, -0.55]`, and the test catches it.
+
+**AoS for the knots, against the SoA default**, and the rule is the justification: evaluating a segment reads one knot and the next *in full*, so parallel arrays would turn one cache line into four. The layout follows the access pattern, which is what the rule says rather than "SoA always".
+
+### 🔴🔴 What it actually taught: four bugs, one shape
+
+Every one found by the owner's smoke test, none by me.
+
+| Bug | Two systems, one state |
+|---|---|
+| Added knots kept landing on the origin | The hook sat in the sink that does not run with a project connected. `apply_actions` has **two** and the remote one `return`s. **I put it there twice.** |
+| Transform handles unclickable at distance | Pick threshold scaled in three pickers, not the fourth |
+| Plane handles unclickable | Drawn with the scaled extent, picked against the raw one |
+| Gizmo axis deselected the knot | `spline_handles` runs first and cannot tell a gizmo click from an empty one |
+
+**Not one was visible from a unit test.** Every function was correct in isolation; my tests stayed green through all four while the feature was broken. **That is the signature** — a green suite against a failing smoke means the bug is in the integration — and I ignored it four times. What finds these is reading the call order, which I reached for *after* the smoke test every time.
+
+### Also fixed
+
+- **`filled_arrow` panicked on any arrow under 12.5 cm.** `clamp(0.05, length * 0.4)` puts min above max below that length, and the guard above only rejected sub-0.1 mm. Latent since the function was written; screen-scaled arrows were the first caller short enough to reach it, and it **took the whole editor down** on any scene holding a spline.
+- **`Broken` with an unfilled `arriving` flattened the segment** and buried its grip under the knot's, where the picker could never give it to you. An authored vector left at zero is a field nobody filled in, so it falls through to the mirror.
+- **The guide grid faded around the camera**, not the pivot: its reach is `step * 100` from the *eye*, so past that it was gone before reaching the point it was drawn for.
+
+### Next
+
+**#1435** — snap a drag to the surface under it, for transforms and knots, labelled `next-session`. It is the depth a camera-plane drag cannot give, taken from the scene instead of from orbiting. Then **#1436**, the Edit View showing a tool's commands: the editor already has `E`, `W`/`E`/`R`, `F` and `Ctrl`-snap and nothing on screen says so.
 
 ---
 
@@ -1512,7 +1562,17 @@ validated by screenshots and unit tests, not by that suite.
 
 ---
 
-## Next — #1261, the spline five features wait on
+## Next — #1435, so a drag can reach the ground
+
+**2026-10-08:** the spline exists — **#1261**, **#1433** (gizmos hold their size on screen) and **#1441** (a knot takes the transform gizmo) closed, plus the `filled_arrow` panic that took the editor down on any scene holding one.
+
+**Next is #1435**, snap a drag to the surface under it, for transforms *and* knots. A knot drags in the plane facing the camera and has no depth of its own; surface snapping takes it from the scene rather than from orbiting the view. Then **#1436** — the Edit View showing a tool's commands, since `E`, `W`/`E`/`R`, `F` and `Ctrl`-snap all exist and nothing on screen says so, and it is where adding a knot from the viewport becomes discoverable.
+
+After those, the splines have consumers waiting: **#1428** (collectibles along a path — roll-a-ball's phase 1), **#1152** (profile and steps along a path), **#1262** (rails), **#1429** (a path that carries its own down), **#1092** (pipes and roads).
+
+🔴 **Read `feedback` on call order before touching an editor system.** Four bugs in one feature on 2026-10-08, all the same shape: two systems reading one piece of state where only one knows what it means. None visible from a unit test — the suite stayed green through every one of them.
+
+⚠️ Still open and mine: **#1425** (`FrameCap` is merged and paces nothing — `request_redraw()` after `WaitUntil`) and **#1427** (the camera shake, five failed hypotheses, next step is an instrument and not a sixth theory).
 
 **2026-10-07:** #1316 closed, and with it the camera rig's feel — #1254, #1402, #1407, #1413, #1415, #1255, #1419, #1421 and #1423. The rig no longer stutters: the brain transposes and bodies are interpolated to the frame.
 

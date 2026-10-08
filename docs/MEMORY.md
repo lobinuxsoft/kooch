@@ -1464,6 +1464,28 @@ Cuatro hipótesis sobre el mismo frame en un día:
 **1 de 4 por análisis. 4 de 4 por medición.** El desglose por etapas (#569) estaba último en el
 roadmap y era lo que había que hacer primero.
 
+### 🔴🔴 Antes de tocar un sistema del editor: leer el ORDEN DE LLAMADAS (2026-10-08)
+
+Cuatro bugs en una sola feature (spline handles + screen scaling), **los cuatro encontrados por el smoke del dueño y ninguno por mí**:
+
+| Bug | Dos sistemas, un estado |
+|---|---|
+| Los knots agregados caían en el origen | El hook quedó en el sink que NO corre con proyecto conectado. `apply_actions` tiene dos y el remoto hace `return`. **Lo puse ahí dos veces.** |
+| Handles de transform no clickeables de lejos | Umbral de pick escalado en 3 pickers y no en el 4º |
+| Handles de plano no clickeables | Dibujados con la medida escalada, pickeados contra la cruda |
+| Click en un eje del gizmo deseleccionaba el knot | `spline_handles` corre primero y no distingue ese click de uno al vacío |
+
+**Todos la misma forma: dos sistemas leyendo un mismo estado, donde sólo uno sabe qué significa.**
+
+🔴 **Ninguno era visible desde un test unitario** — cada función era correcta aislada. La suite quedó verde durante los cuatro mientras la feature estaba rota.
+
+**La señal:** suite verde + smoke que falla = el bug está en la integración, no en la función. Ir directo al orden de ejecución.
+
+**La práctica:**
+- Antes de meter lógica en un sistema del editor, seguir el camino de llamadas completo hasta donde el valor se usa, y buscar `return` tempranos que salteen ramas. Un `grep` de la función no alcanza.
+- Al escalar o cambiar una medida, buscar **todos** sus usos (grep del campo, no del archivo) y clasificar cada uno: dibujo, pick, o matemática. Se mueven juntos o ninguno.
+- Dos sistemas que leen el mismo gesto: el que corre primero **no sabe** para qué era. Pregunta al otro, o no decide.
+
 ### 🔴🔴 Y la misma regla vale para DEBUGGEAR, no sólo para optimizar (2026-10-07, #1427)
 
 Cinco hipótesis sobre el mismo temblor de cámara, todas por análisis, **cero aciertos**:
