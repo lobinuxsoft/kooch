@@ -15,7 +15,7 @@ use kooch_ecs::component::{ComponentNames, ComponentRegistry};
 use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::Reflect;
 use kooch_ecs::spline::{Knot, Spline, TANGENT_ALIGNED, TANGENT_AUTO, TANGENT_BROKEN, eval};
-use kooch_gizmos_handles::SnapSettings;
+use kooch_gizmos_handles::{HandleSet, SnapSettings};
 
 use crate::actions::EditorAction;
 use crate::editor_camera::input::ViewportInputDelta;
@@ -315,10 +315,23 @@ fn drive(
     // Reached only when no grip was under the cursor — the loop returns as soon as one is. A click
     // out here gives the gizmo back to the entity; without it a knot stays selected for ever and the
     // entity itself can never be moved again.
-    if delta.lmb_pressed {
+    //
+    // 🔴 Unless the transform gizmo is the thing being clicked. This runs BEFORE the gizmo in
+    // `edits.rs`, and a gizmo handle sits far from the knot it moves, so grabbing an axis looks
+    // exactly like clicking empty space from here — it cleared the selection, and the gizmo found
+    // nothing to move by the time it ran. Its hover is last frame's, which is enough: the cursor
+    // reaches a handle before the button goes down.
+    if delta.lmb_pressed && !gizmo_under_cursor(resources) {
         state.selected = None;
     }
     false
+}
+
+/// Whether the transform gizmo is hovered or being dragged.
+fn gizmo_under_cursor(resources: &Resources) -> bool {
+    resources
+        .get::<HandleSet>()
+        .is_some_and(HandleSet::is_active)
 }
 
 /// Where a ray meets the plane through `at` with normal `normal`.
