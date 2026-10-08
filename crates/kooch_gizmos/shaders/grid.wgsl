@@ -18,9 +18,11 @@ struct GridUniforms {
     // Height of the plane. Zero for the ground.
     plane_y: f32,
     axis_z_color: vec3<f32>,
-    // Where the fade reaches nothing, from the camera's own position.
+    // Where the fade reaches nothing, measured from `flags.yz`.
     fade_distance: f32,
     // x: 1 when the world axes should be drawn, 0 for a guide.
+    // yz: where the distance fade is measured from, on the plane. The camera for the ground, the
+    //     pivot for a guide — a guide faded around the eye never reaches what it is measuring.
     // A vec4, not a scalar plus padding: WGSL aligns a trailing vec3 to 16, Rust's [f32; 3] to 4.
     flags: vec4<f32>,
 }
@@ -91,8 +93,10 @@ fn fs_main(in: Fragment) -> Shaded {
 
     // From the camera's own place on the plane. A grid that faded from
     // a fixed origin would be gone the moment you walked away from it.
-    let eye_on_plane = vec2<f32>(grid.camera_position.x, grid.camera_position.z);
-    let reach = 1.0 - min(distance(world.xz, eye_on_plane) / grid.fade_distance, 1.0);
+    // 🔴 From `flags.yz`, not from the camera. A guide belongs to the pivot it was drawn for, and
+    // fading it around the eye left it short of that pivot once the camera pulled back.
+    let fade_centre = vec2<f32>(grid.flags.y, grid.flags.z);
+    let reach = 1.0 - min(distance(world.xz, fade_centre) / grid.fade_distance, 1.0);
     let distance_fade = smoothstep(0.02, 0.3, reach);
 
     // Looking ALONG the plane turns a grid into a solid sheet at the

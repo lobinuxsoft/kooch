@@ -44,6 +44,13 @@ pub struct GridPlane {
     /// Whether the cell size follows the camera. Off for a guide, whose
     /// whole job is to show the scale a drag moves in.
     pub scales: bool,
+    /// Where the fade is measured from. `None` follows the camera, which is what an endless ground
+    /// wants.
+    ///
+    /// 🔴 A guide gives the point it belongs to. Measured from the camera, a guide fades out at
+    /// `step * 100` from the EYE — so pulling back far enough left it short of the pivot it was
+    /// drawn for, and it read as the grid sliding away from the thing it was measuring.
+    pub centre: Option<Vec3>,
 }
 
 /// Draws one horizontal plane of grid, per pixel.
@@ -158,6 +165,8 @@ impl GridPass {
         // A scaling grid keeps its cells about one size on screen at
         // every zoom; a fixed one keeps them the size of the step, and
         // fades over a hundred of those rather than a horizon.
+        // A guide measures from where it belongs; the ground follows the eye.
+        let centre = plane.centre.unwrap_or(camera);
         let (level, fade_distance) = match plane.scales {
             true => {
                 let level = GridLevel::at(camera.y - plane.height, plane.step);
@@ -186,8 +195,8 @@ impl GridPass {
                         true => 1.0,
                         false => 0.0,
                     },
-                    0.0,
-                    0.0,
+                    centre.x,
+                    centre.z,
                     0.0,
                 ],
             }),
