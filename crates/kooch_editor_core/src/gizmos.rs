@@ -285,7 +285,13 @@ pub(crate) fn apply_handle_input(
         true => crate::block_edit::selection_origin(resources, target),
         false => None,
     };
-    let target_origin = match editing.or_else(|| entity_world_position(resources, target)) {
+    // A selected knot takes the gizmo the same way a face selection does: a gizmo at the entity
+    // while the thing you grabbed is metres away reads as a gizmo for something else (#1441).
+    let knot = spline_handles::selected_origin(resources, target);
+    let target_origin = match knot
+        .or(editing)
+        .or_else(|| entity_world_position(resources, target))
+    {
         Some(p) => p,
         None => return false,
     };
@@ -334,6 +340,9 @@ pub(crate) fn apply_handle_input(
         {
             *shape_start = Some(corners);
         }
+        if knot.is_some() {
+            spline_handles::began_gizmo_drag(resources);
+        }
     }
 
     // Apply the per-frame delta to the entity's local Transform.
@@ -348,6 +357,16 @@ pub(crate) fn apply_handle_input(
         // transform is left alone. Applying both would move the block
         // and reshape it by the same amount in one drag.
         if editing.is_some() && crate::block_edit::edit_selection(resources, target, delta_out) {
+            return true;
+        }
+
+        // 🔴 Same rule as the faces above: the delta moves the KNOT and the entity's transform is
+        // left alone. A knot is a position, so only a translation means anything — a rotation or a
+        // scale falling through would turn the whole spline while the gizmo sat on one point of it.
+        if knot.is_some() {
+            if let TransformDelta::Translation(v) = delta_out {
+                spline_handles::translate_selected(resources, target, v);
+            }
             return true;
         }
 
@@ -395,6 +414,10 @@ pub(crate) fn apply_handle_input(
 
     // Drag end while editing faces: write the shape back. The asset IS the shape, and an edit that
     // lives only in `Assets` is one the next load throws away.
+    if was_dragging && !dragging {
+        spline_handles::ended_gizmo_drag(resources, actions);
+    }
+
     if was_dragging
         && !dragging
         && let Some(before) = shape_start.take()

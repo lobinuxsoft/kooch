@@ -72,8 +72,10 @@ impl Visualizer<Spline> for SplineVisualizer {
             .and_then(|state| state.hovered)
             .filter(|(held, _)| *held == entity)
             .map(|(_, grip)| grip);
+        let chosen = spline_handles::selected_index(resources, entity);
         for (grip, local) in spline_handles::grips(spline) {
-            let colour = spline_handles::grip_colour(hovered == Some(grip), grip.part);
+            let selected = grip.part == spline_handles::Part::Knot && chosen == Some(grip.index);
+            let colour = spline_handles::grip_colour(hovered == Some(grip), selected, grip.part);
             let at = world.transform_point3(local);
             gizmos.filled_aabb(
                 at,
