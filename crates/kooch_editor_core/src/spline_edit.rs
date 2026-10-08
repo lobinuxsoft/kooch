@@ -69,3 +69,11 @@ const DEFAULT_STEP: f32 = 1.0;
 
 #[cfg(test)]
 mod tests;
+
+/// Whether a field edit is a `Spline`'s knot list, by component NAME.
+///
+/// 🔴 By name, not `TypeId`: a mirrored world has no local type for what it holds, so the name is
+/// the only identity the local and the remote sink share.
+pub(crate) fn is_knot_list(name: &str, field: &str) -> bool {
+    field == "points" && name == std::any::type_name::<kooch_ecs::spline::Spline>()
+}

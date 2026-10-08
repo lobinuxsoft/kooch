@@ -35,14 +35,25 @@ pub(super) fn send(
             component,
             field,
             value,
-        } => client
-            .set_field(
-                remote(entity)?,
-                &name(component)?,
-                field,
-                to_remote_value(value.clone(), mirror)?,
-            )
-            .map_err(map_err),
+        } => {
+            let component = name(component)?;
+            // 🔴 Placed on BOTH sinks, and this is the one that matters: with a project connected
+            // the local dispatch never runs, so a placement done only there never happens at all
+            // (#1261). The two calls share one function; what is duplicated is the call, not the
+            // rule.
+            let value = match crate::spline_edit::is_knot_list(&component, field) {
+                true => crate::spline_edit::placed(value).unwrap_or_else(|| value.clone()),
+                false => value.clone(),
+            };
+            client
+                .set_field(
+                    remote(entity)?,
+                    &component,
+                    field,
+                    to_remote_value(value, mirror)?,
+                )
+                .map_err(map_err)
+        }
         Edit::AddComponent { entity, component } => client
             .add_component(remote(entity)?, &name(component)?)
             .map_err(map_err),
