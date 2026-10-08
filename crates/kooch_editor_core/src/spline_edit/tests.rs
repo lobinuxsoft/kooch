@@ -164,3 +164,18 @@ fn the_dispatch_places_an_added_knot() {
         "the added knot was left on the origin — the dispatch hook did not run"
     );
 }
+
+/// 🔴 The predicate both sinks share. It is matched by NAME because a mirrored world has no local
+/// `TypeId` for what it holds — the mistake that kept this broken through two fixes.
+#[test]
+fn only_a_splines_points_are_placed() {
+    let spline = std::any::type_name::<kooch_ecs::spline::Spline>();
+    assert!(is_knot_list(spline, "points"));
+    assert!(!is_knot_list(spline, "closed"));
+    assert!(!is_knot_list(
+        "kooch_ecs::post_process::PostProcess",
+        "points"
+    ));
+    // The short name is not the interned one; matching on it would silently never fire.
+    assert!(!is_knot_list("Spline", "points"));
+}

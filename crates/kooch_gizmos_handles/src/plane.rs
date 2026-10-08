@@ -41,11 +41,19 @@ impl PlaneHandle {
     /// Returns the four corners of the square in world space, plus the
     /// frame-rotated axis vectors and plane normal — all the geometry
     /// needed by `pick` / `drag` / `draw`.
+    /// The quad's near corner and its side, screen-scaled.
+    ///
+    /// 🔴 One source for both, because the drawing and the picking MUST agree: scaling only the
+    /// drawing put the quad where the hit test was not, and the handle became unclickable (#1433).
+    fn extent(&self, scale: f32) -> (f32, f32) {
+        (self.offset * scale, self.size * scale)
+    }
+
     fn corners(&self, frame: HandleFrame) -> ([Vec3; 4], Vec3, Vec3, Vec3) {
         let a = frame.world_axis(self.axis_a);
         let b = frame.world_axis(self.axis_b);
         let normal = a.cross(b).normalize_or(Vec3::Y);
-        let (offset, size) = (self.offset * frame.scale, self.size * frame.scale);
+        let (offset, size) = self.extent(frame.scale);
         let p0 = frame.origin + a * offset + b * offset;
         let p1 = p0 + a * size;
         let p2 = p1 + b * size;
@@ -80,10 +88,8 @@ impl Handle for PlaneHandle {
         let local = hit - frame.origin;
         let s_a = local.dot(axis_a);
         let s_b = local.dot(axis_b);
-        let inside = s_a >= self.offset
-            && s_a <= self.offset + self.size
-            && s_b >= self.offset
-            && s_b <= self.offset + self.size;
+        let (offset, size) = self.extent(frame.scale);
+        let inside = s_a >= offset && s_a <= offset + size && s_b >= offset && s_b <= offset + size;
         if inside { Some(t) } else { None }
     }
 

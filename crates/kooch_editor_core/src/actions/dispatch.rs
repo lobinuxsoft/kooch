@@ -80,16 +80,12 @@ pub(super) fn action_to_command(
             field,
             value,
         } => {
-            // 🔴 A `Spline`'s added knot is placed ahead of the one before it HERE rather than
-            // where the edit is emitted, so every route a knot arrives by is covered and the
-            // placement stays one action — one undo step, one trip over the wire (#1261).
-            //
-            // 🔴 BEFORE the local/dynamic split, and matched by NAME. The first version sat after
-            // it and compared `TypeId`, so it never ran while a project was connected: a mirrored
-            // world resolves its components by name and leaves down the dynamic path above.
+            // The other sink. See the note in `remote_edit::send` — this one runs when no
+            // project is connected, and before the local/dynamic split so both reach it.
             let named = component_name(resources, *component);
-            let value = match field == "points"
-                && named.as_deref() == Some(std::any::type_name::<kooch_ecs::spline::Spline>())
+            let value = match named
+                .as_deref()
+                .is_some_and(|name| crate::spline_edit::is_knot_list(name, field))
             {
                 true => crate::spline_edit::placed(value).unwrap_or_else(|| value.clone()),
                 false => value.clone(),
