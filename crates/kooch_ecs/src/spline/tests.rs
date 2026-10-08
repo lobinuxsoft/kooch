@@ -194,3 +194,30 @@ fn closing_adds_a_segment() {
     assert!(ended.distance(Vec3::ZERO) < 1e-3, "{ended}");
     assert!(arc::length(&triangle, true) > arc::length(&triangle, false));
 }
+
+/// 🔴 Switching a knot to `Broken` must not change the curve, and must not drop its arriving grip
+/// on top of the knot where the picker can never give it to you. An unfilled `arriving` inherits the
+/// mirror that `Aligned` implied.
+#[test]
+fn broken_inherits_the_mirror() {
+    let bent = |mode: u32| {
+        vec![
+            Knot::at(Vec3::ZERO),
+            Knot {
+                position: Vec3::new(1.0, 0.0, 0.0),
+                mode,
+                leaving: Vec3::new(0.0, 2.0, 0.0),
+                arriving: Vec3::ZERO,
+                ..Knot::default()
+            },
+            Knot::at(Vec3::new(2.0, 0.0, 0.0)),
+        ]
+    };
+    let aligned = eval::at(&bent(TANGENT_ALIGNED), false, 0.25);
+    let broken = eval::at(&bent(TANGENT_BROKEN), false, 0.25);
+    assert!(aligned.distance(broken) < 1e-4, "{aligned} vs {broken}");
+
+    // And the tangent is not zero, so the grip sits off the knot.
+    let arriving = eval::tangents(&bent(TANGENT_BROKEN), false, 0, 1).1;
+    assert!(arriving.length() > 0.1, "{arriving}");
+}

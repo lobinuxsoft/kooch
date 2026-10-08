@@ -162,18 +162,31 @@ pub(crate) fn segment_at(points: &[Knot], closed: bool, t: f32) -> Option<(usize
 /// Public because a gizmo draws these: a handle derived a second time in the editor is a second
 /// answer, free to disagree with the curve it is drawn over (#1387's lesson, on another axis).
 pub fn tangents(points: &[Knot], closed: bool, a: usize, b: usize) -> (Vec3, Vec3) {
+    // 🔴 An authored vector left at zero is not a tangent, it is a field nobody filled in. Falling
+    // through keeps switching a knot's mode from CHANGING THE CURVE: `Broken` inherits the mirror
+    // `Aligned` implied, and an unfilled `leaving` inherits what `Auto` would have derived. Without
+    // this, choosing `Broken` flattened the segment to a straight line and dropped the arriving grip
+    // exactly on top of the knot's, where the picker could never give it to you.
+    let derived = || auto(points, closed, a);
     let leaving = match points[a].mode {
-        TANGENT_AUTO => auto(points, closed, a),
-        _ => points[a].leaving,
+        TANGENT_AUTO => derived(),
+        _ => usable(points[a].leaving).unwrap_or_else(derived),
     };
     let arriving = match points[b].mode {
         TANGENT_AUTO => auto(points, closed, b),
-        TANGENT_BROKEN => -points[b].arriving,
+        TANGENT_BROKEN => usable(-points[b].arriving)
+            .or_else(|| usable(points[b].leaving))
+            .unwrap_or_else(|| auto(points, closed, b)),
         // Aligned authors `leaving` alone and mirrors it, so `-arriving` is `leaving` again. Storing
         // the mirror would be a second copy of one direction, free to disagree with itself.
-        _ => points[b].leaving,
+        _ => usable(points[b].leaving).unwrap_or_else(|| auto(points, closed, b)),
     };
     (leaving, arriving)
+}
+
+/// A tangent long enough to point somewhere, or `None`.
+fn usable(tangent: Vec3) -> Option<Vec3> {
+    (tangent.length_squared() > 1e-12).then_some(tangent)
 }
 
 /// Catmull-Rom: half the span between the neighbours. An end with no neighbour leans on itself, so
