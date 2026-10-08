@@ -39,6 +39,8 @@ pub(crate) fn grid_planes(resources: &Resources) -> Vec<GridPlane> {
         counting: COUNTING,
         axes: true,
         scales: true,
+        // The ground has no centre to belong to; it follows the eye.
+        centre: None,
     }];
 
     if let Some(origin) = resources
@@ -61,6 +63,10 @@ pub(crate) fn grid_planes(resources: &Resources) -> Vec<GridPlane> {
             // the snap step — one that coarsened as you pulled the camera back would be showing a
             // distance the handle cannot land on.
             scales: false,
+            // 🔴 And centred on the pivot for the same reason: it exists to show where THAT point
+            // moves. Faded around the camera it stopped short of the pivot once the view pulled
+            // back, which read as the grid sliding away from what it was measuring.
+            centre: Some(origin),
         });
     }
     planes
