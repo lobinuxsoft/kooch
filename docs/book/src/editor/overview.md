@@ -87,6 +87,36 @@ field: Ctrl+C in the Console copies a log line, and in the Inspector it copies t
 command is also in the **Edit** menu and in the World panel's toolbar, with its chord written
 beside it — a greyed-out Paste means the clipboard is empty.
 
+### Moving things in the View
+
+| Chord | What it does |
+|---|---|
+| **W** / **E** / **R** | Translate, rotate, scale. The gizmo keeps its size on screen, so the arrows are the same length a metre away and two hundred metres away. |
+| **Ctrl** *during a drag* | Snaps to the grid step in the toolbar — half a metre by default, fifteen degrees for a rotation. |
+| **Ctrl+Shift** *during a drag* | Snaps to the **surface under the cursor**. |
+
+Surface snapping is the gesture a blockout is built with: hold it and the thing you are dragging
+lands *on* the geometry the cursor is over, rather than sliding along an axis until it looks right.
+It moves the entity, a selected block face, or a spline knot — the same chord in all three, because
+it is the same gesture.
+
+It answers from **rendered meshes, not from colliders**. A block you just drew has no collider yet,
+and a snap that only worked on things with physics would fail in exactly the scene it is for. The
+price is the precision picking already lives with: a block answers from its own faces, every other
+mesh from its bounding box.
+
+Three details worth knowing:
+
+- The thing being dragged is **excluded**, along with its children. Otherwise it snaps to itself and
+  sticks there.
+- With nothing under the cursor — open sky — the drag carries on as an ordinary one. It does not
+  jump.
+- Grid snapping is **off** while the surface answers, even though the chord includes Ctrl. Rounding
+  a point that is on the floor to the nearest half metre would lift it back off.
+
+A cross marks where the drag would land, with an arrow out of the surface showing which way it
+faces, so a mark on a wall and a mark on the floor are not the same dot.
+
 ### Undo follows the document, not the panel
 
 **Ctrl+Z undoes an edit to the thing you are looking at.** The editor holds several documents
