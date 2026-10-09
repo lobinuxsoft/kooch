@@ -75,6 +75,7 @@ pub(crate) mod shortcuts;
 pub(crate) mod spline_edit;
 pub(crate) mod state;
 pub(crate) mod style;
+pub(crate) mod surface_snap;
 pub(crate) mod systems;
 pub(crate) mod undo;
 pub(crate) mod viewport;

@@ -13,7 +13,7 @@ mod grounded;
 pub(crate) mod harness;
 mod physics_debug;
 mod post_volume;
-mod screen_scale;
+pub(crate) mod screen_scale;
 pub(crate) mod shape_handles;
 mod spline;
 pub(crate) mod spline_handles;
@@ -47,6 +47,7 @@ use kooch_gizmos_handles::{
 use crate::actions::EditorAction;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta};
 use crate::state::{EditorOverlay, RotationDisplayMode};
+use crate::surface_snap;
 
 pub(crate) use grid::grid_planes;
 pub(crate) use visibility::{
@@ -232,6 +233,12 @@ fn build_gizmo_batch(resources: &mut Resources) {
         handle_set.draw(&mut gizmos);
     }
 
+    // Pass 6: where a snapping drag would land. Last, so it reads over the handle it overrides.
+    {
+        let mut gizmos = Gizmos::new(&mut line_batch, &mut mesh_batch);
+        surface_snap::draw(resources, &mut gizmos);
+    }
+
     resources.insert(line_batch);
     resources.insert(mesh_batch);
     resources.insert(registry);
@@ -344,6 +351,22 @@ pub(crate) fn apply_handle_input(
             spline_handles::began_gizmo_drag(resources);
         }
     }
+
+    // 🔴 A surface snap REPLACES the handle's delta, it does not compose with it. The handle
+    // answers "how far along this axis did the cursor move" and the snap answers "where is the
+    // geometry" — adding the two moves the thing twice. Translate only: there is no surface
+    // reading of a rotation or a scale.
+    //
+    // One override here serves all three consumers below — entity, block face and spline knot —
+    // because each of them takes a world-space translation from `target_origin`, which is where
+    // the gizmo already sits.
+    let delta_out = match dragging && mode == HandleMode::Translate {
+        true => match surface_snap::target(resources, delta, target) {
+            Some(point) => TransformDelta::Translation(point - target_origin),
+            None => delta_out,
+        },
+        false => delta_out,
+    };
 
     // Apply the per-frame delta to the entity's local Transform.
     // `transform_propagation_system` re-derives the world matrix

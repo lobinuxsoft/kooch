@@ -219,15 +219,25 @@ fn drive(
     if let Some(drag) = state.drag.as_ref() {
         let entity = drag.entity;
         if delta.lmb_held {
-            if let Some((origin, direction)) = ray
-                && let Some(hit) = on_plane(drag.grab, drag.plane, origin, direction)
-            {
+            // 🔴 This is the drag the snap was asked for: a grip moves in the plane facing the
+            // camera, which has no depth at all, and the scene is the only thing that can supply
+            // one (#1435). Absolute — the grip goes TO the surface, it does not move BY the cursor.
+            let onto_surface = crate::surface_snap::target(resources, delta, entity);
+            let dragged_to = onto_surface.or_else(|| {
+                let (origin, direction) = ray?;
+                // The grip moves by what the cursor moved, not to where the cursor is.
+                on_plane(drag.grab, drag.plane, origin, direction)
+                    .map(|hit| drag.origin + (hit - drag.grab))
+            });
+            if let Some(world) = dragged_to {
                 let Some(to_local) = inverse_of(resources, entity) else {
                     return true;
                 };
-                // The grip moves by what the cursor moved, not to where the cursor is.
-                let local = to_local.transform_point3(drag.origin + (hit - drag.grab));
-                let local = match delta.ctrl_held {
+                let local = to_local.transform_point3(world);
+                // 🔴 No grid snap on top of a surface snap: rounding a point that is ON the floor
+                // to the nearest half metre lifts it back off. The modifier includes Ctrl, so
+                // without this the two snaps fight every frame.
+                let local = match delta.ctrl_held && onto_surface.is_none() {
                     true => snapped(local, snap.translate),
                     false => local,
                 };

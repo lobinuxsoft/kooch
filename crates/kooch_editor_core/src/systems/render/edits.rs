@@ -24,6 +24,10 @@ pub(super) fn apply_viewport_edits(
     if let Some(mode) = input.and_then(|delta| delta.element_request) {
         overlay.element_mode = mode;
     }
+    // 🔴 One clear, here, before any handle runs. The three handle systems below are chained with
+    // `||` and short-circuit each other, so clearing inside any of them leaves a path where the
+    // mark survives the drag that drew it.
+    crate::surface_snap::clear(resources);
     let playing = resources
         .get::<crate::remote_session::RemoteState>()
         .is_some_and(|state| state.playing);
