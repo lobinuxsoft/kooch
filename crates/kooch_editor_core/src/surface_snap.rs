@@ -46,6 +46,14 @@ pub(crate) fn engaged(delta: ViewportInputDelta) -> bool {
     delta.ctrl_held && delta.shift_held
 }
 
+/// Where the cursor lands on the scene, and which way that surface faces.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SnapHit {
+    pub(crate) point: Vec3,
+    /// Unit world-space normal of the surface struck.
+    pub(crate) normal: Vec3,
+}
+
 /// Where the cursor lands on the scene this frame, ignoring `dragged`.
 ///
 /// Returns `None` when the modifier is not held, the cursor is off the viewport, or nothing is
@@ -55,22 +63,77 @@ pub(crate) fn target(
     resources: &mut Resources,
     delta: ViewportInputDelta,
     dragged: Entity,
-) -> Option<Vec3> {
+) -> Option<SnapHit> {
     if !engaged(delta) {
         return None;
     }
     let Some(cursor) = delta.cursor_local else {
         return None;
     };
-    // The dragged entity AND its children: a model's mesh usually sits on a child, and a snap
-    // that can see its own geometry sticks to it.
-    let skip = match resources.get::<kooch_ecs::component::ComponentRegistry>() {
-        Some(registry) => kooch_ecs::hierarchy::collect_descendants(dragged, registry),
-        None => vec![dragged],
-    };
+    // The dragged entity AND its children: a model's mesh usually sits on a child, and a snap that
+    // can see its own geometry sticks to it. The same walk `rest_on` measures, so what is excluded
+    // and what is weighed are the same set.
+    let skip = subtree(resources, dragged);
     let hit = crate::picking::surface_at(resources, cursor, delta.viewport_size, &skip);
     record(resources, hit.map(|hit| (hit.point, hit.normal)));
-    hit.map(|hit| hit.point)
+    hit.map(|hit| SnapHit {
+        point: hit.point,
+        normal: hit.normal,
+    })
+}
+
+/// Where `entity`'s pivot goes so the model RESTS on the surface instead of sinking into it.
+///
+/// 🔴 A pivot on the floor is not a model on the floor. Put a sphere's centre on the ground and
+/// half the sphere is underground — which is the whole of what makes a snap feel wrong even when
+/// the hit is exact.
+///
+/// The measure is the entity's world bounding box: how far its deepest corner reaches past the
+/// pivot, against the surface normal. Cheap and never wrong in the direction that matters — the
+/// box contains the model, so resting the box never buries the model. On a slope it rests on a
+/// corner and leaves a gap, which is the price of a box and the right price for a blockout.
+///
+/// No mesh, no volume, no lift: a spline's entity or an empty gets its pivot on the surface,
+/// which for a thing with no extent is the same answer.
+///
+/// 🔴 Children count. An imported model usually carries its mesh on a child, and the raycast
+/// already skips the whole subtree — measuring only the parent would leave the two halves of one
+/// gesture disagreeing about what is being dragged, and a glTF prop would never lift at all.
+pub(crate) fn rest_on(resources: &mut Resources, entity: Entity, hit: SnapHit) -> Vec3 {
+    let Some(pivot) = crate::gizmos::entity_world_position(resources, entity) else {
+        return hit.point;
+    };
+
+    let mut deepest = 0.0f32;
+    let mut found = false;
+    for part in subtree(resources, entity) {
+        let Some((min, max)) = crate::picking::entity_bounds(resources, part) else {
+            continue;
+        };
+        found = true;
+        for index in 0..8u32 {
+            let corner = Vec3::new(
+                if index & 1 == 0 { min.x } else { max.x },
+                if index & 2 == 0 { min.y } else { max.y },
+                if index & 4 == 0 { min.z } else { max.z },
+            );
+            // How far this corner hangs below the pivot, measured along the normal. Negative for
+            // every corner above it, so a pivot already at the model's base lifts by nothing.
+            deepest = deepest.max((pivot - corner).dot(hit.normal));
+        }
+    }
+    match found {
+        true => hit.point + hit.normal * deepest,
+        false => hit.point,
+    }
+}
+
+/// An entity and everything parented under it.
+fn subtree(resources: &Resources, entity: Entity) -> Vec<Entity> {
+    match resources.get::<kooch_ecs::component::ComponentRegistry>() {
+        Some(registry) => kooch_ecs::hierarchy::collect_descendants(entity, registry),
+        None => vec![entity],
+    }
 }
 
 /// Forgets the last hit.

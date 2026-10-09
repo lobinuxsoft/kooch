@@ -222,7 +222,8 @@ fn drive(
             // 🔴 This is the drag the snap was asked for: a grip moves in the plane facing the
             // camera, which has no depth at all, and the scene is the only thing that can supply
             // one (#1435). Absolute — the grip goes TO the surface, it does not move BY the cursor.
-            let onto_surface = crate::surface_snap::target(resources, delta, entity);
+            let onto_surface =
+                crate::surface_snap::target(resources, delta, entity).map(|hit| hit.point);
             let dragged_to = onto_surface.or_else(|| {
                 let (origin, direction) = ray?;
                 // The grip moves by what the cursor moved, not to where the cursor is.

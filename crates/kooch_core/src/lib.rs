@@ -69,6 +69,7 @@ pub mod plugin;
 pub mod prelude;
 pub mod profiler;
 pub mod raw_event;
+pub mod ray;
 pub mod resource;
 pub mod run_state;
 pub mod runner;
