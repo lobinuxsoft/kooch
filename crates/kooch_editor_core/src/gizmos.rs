@@ -362,7 +362,15 @@ pub(crate) fn apply_handle_input(
     // the gizmo already sits.
     let delta_out = match dragging && mode == HandleMode::Translate {
         true => match surface_snap::target(resources, delta, target) {
-            Some(point) => TransformDelta::Translation(point - target_origin),
+            // 🔴 A face and a knot ARE points, so their pivot goes on the surface. An entity has a
+            // volume, and putting its pivot there buries half the model in the floor.
+            Some(hit) => {
+                let point = match editing.is_some() || knot.is_some() {
+                    true => hit.point,
+                    false => surface_snap::rest_on(resources, target, hit),
+                };
+                TransformDelta::Translation(point - target_origin)
+            }
             None => delta_out,
         },
         false => delta_out,
@@ -552,7 +560,7 @@ fn handle_mode_for_request(req: HandleModeRequest) -> HandleMode {
     }
 }
 
-fn entity_world_position(resources: &Resources, entity: Entity) -> Option<Vec3> {
+pub(crate) fn entity_world_position(resources: &Resources, entity: Entity) -> Option<Vec3> {
     let registry = resources.get::<ComponentRegistry>()?;
     let storage = registry.get_cpu::<GlobalTransform>()?;
     let gt = storage.get(entity)?;

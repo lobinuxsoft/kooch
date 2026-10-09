@@ -101,14 +101,29 @@ It moves the entity, a selected block face, or a spline knot — the same chord 
 it is the same gesture.
 
 It answers from **rendered meshes, not from colliders**. A block you just drew has no collider yet,
-and a snap that only worked on things with physics would fail in exactly the scene it is for. The
-price is the precision picking already lives with: a block answers from its own faces, every other
-mesh from its bounding box.
+and a snap that only worked on things with physics would fail in exactly the scene it is for.
 
-Three details worth knowing:
+It answers from **triangles, not from bounding boxes** — a block from its own faces, an imported
+mesh from LOD 0 of its meshlets. A box would put a sphere's surface a long way from where the
+sphere is, and the snap would land things in mid air. The boxes are still the first test, because
+they reject most of the scene for the price of six comparisons; the triangles decide what survives.
+
+### What rests where
+
+An entity is **set down on** the surface, not pinned to it by its pivot: put a sphere's centre on
+the floor and half the sphere is underground. The measure is the entity's world bounding box —
+its own and its children's — so the box rests and the model inside it never sinks. On a slope it
+rests on a corner and leaves a gap; that is what a box costs, and for a blockout it is the right
+price.
+
+A **block face** and a **spline knot** are different: those genuinely *are* points, so their pivot
+goes exactly on the surface.
+
+### Three details worth knowing
 
 - The thing being dragged is **excluded**, along with its children. Otherwise it snaps to itself and
-  sticks there.
+  sticks there. The same subtree is what gets weighed for the resting height, so the two halves of
+  the gesture agree on what is being dragged.
 - With nothing under the cursor — open sky — the drag carries on as an ordinary one. It does not
   jump.
 - Grid snapping is **off** while the surface answers, even though the chord includes Ctrl. Rounding
