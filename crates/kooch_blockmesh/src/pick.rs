@@ -143,7 +143,7 @@ pub fn face_at(mesh: &BlockMesh, origin: Vec3, direction: Vec3) -> Option<Hit> {
         for corner in 1..corners.len() - 1 {
             let b = mesh.positions()[corners[corner] as usize];
             let c = mesh.positions()[corners[corner + 1] as usize];
-            let Some(distance) = triangle_at(origin, direction, anchor, b, c) else {
+            let Some(distance) = kooch_core::ray::triangle(origin, direction, anchor, b, c) else {
                 continue;
             };
             if nearest.is_none_or(|hit| distance < hit.distance) {
@@ -156,42 +156,6 @@ pub fn face_at(mesh: &BlockMesh, origin: Vec3, direction: Vec3) -> Option<Hit> {
     }
 
     nearest
-}
-
-/// Distance along the ray to a triangle, or `None` on a miss. Möller–Trumbore, two-sided: culling
-/// back faces would hide faces from the author's own side.
-fn triangle_at(origin: Vec3, direction: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
-    const EDGE: f32 = 1e-7;
-
-    let ab = b - a;
-    let ac = c - a;
-    let pvec = direction.cross(ac);
-    let determinant = ab.dot(pvec);
-    // Parallel to the triangle's plane: no crossing, or every point of
-    // one. Both answer "not this triangle".
-    if determinant.abs() < EDGE {
-        return None;
-    }
-
-    let inverse = 1.0 / determinant;
-    let tvec = origin - a;
-    let u = tvec.dot(pvec) * inverse;
-    if !(-EDGE..=1.0 + EDGE).contains(&u) {
-        return None;
-    }
-
-    let qvec = tvec.cross(ab);
-    let v = direction.dot(qvec) * inverse;
-    if v < -EDGE || u + v > 1.0 + EDGE {
-        return None;
-    }
-
-    let distance = ac.dot(qvec) * inverse;
-    // Behind the eye. A click selects what is in front of it.
-    match distance > EDGE {
-        true => Some(distance),
-        false => None,
-    }
 }
 
 #[cfg(test)]
