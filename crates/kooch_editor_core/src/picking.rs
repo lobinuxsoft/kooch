@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Mat3, Mat4, Vec2, Vec3};
 use kooch_core::Guid;
 use kooch_core::aabb::Aabb;
 use kooch_core::resource::Resources;
@@ -27,6 +27,38 @@ pub(crate) fn entity_hit_at(
     cursor: Vec2,
     viewport_size: Vec2,
 ) -> Option<(Entity, f32)> {
+    surface_at(resources, cursor, viewport_size, &[]).map(|hit| (hit.entity, hit.distance))
+}
+
+/// Where the cursor ray meets rendered geometry: what it struck, where, and which way that surface
+/// faces.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SurfaceHit {
+    pub(crate) entity: Entity,
+    /// Distance along the cursor ray, in world units.
+    pub(crate) distance: f32,
+    pub(crate) point: Vec3,
+    /// Unit world-space normal of the surface struck.
+    pub(crate) normal: Vec3,
+}
+
+/// The nearest rendered surface under `cursor`, skipping `exclude`.
+///
+/// 🔴 **Rendered meshes, not colliders.** A blockout entity need not have a collider yet, and a
+/// snap that only worked on things with physics would be a trap in the exact scene it is for
+/// (#1435). The cost is the approximation picking already lives with: a block answers from its
+/// triangles, every other mesh from its box.
+///
+/// 🔴 `exclude` is not optional in practice — a drag that raycasts the thing it is moving snaps it
+/// to itself and sticks there. It is a list because an imported model's mesh usually hangs off a
+/// CHILD of the entity being dragged, and excluding the parent alone leaves the drag snapping to
+/// its own geometry.
+pub(crate) fn surface_at(
+    resources: &mut Resources,
+    cursor: Vec2,
+    viewport_size: Vec2,
+    exclude: &[Entity],
+) -> Option<SurfaceHit> {
     let (camera, transform) = crate::gizmos::active_camera(resources)?;
     let ray = kooch_render::projection::viewport_cursor_to_ray(
         cursor,
@@ -46,42 +78,108 @@ pub(crate) fn entity_hit_at(
     // One lookup per distinct mesh rather than per entity — a hundred
     // instances of one tree share a box.
     let mut bounds: HashMap<Guid, Option<Aabb>> = HashMap::new();
-    let mut nearest: Option<(f32, Entity)> = None;
+    let mut nearest: Option<SurfaceHit> = None;
 
     for (entity, mesh, to_world) in candidates {
+        if exclude.contains(&entity) {
+            continue;
+        }
         let aabb = *bounds
             .entry(mesh)
             .or_insert_with(|| local_bounds(resources, mesh));
         let Some(aabb) = aabb else {
             continue;
         };
-        let Some(mut distance) = hit_distance(aabb, to_world, ray.origin, ray.direction) else {
+        let Some(distance) = hit_distance(aabb, to_world, ray.origin, ray.direction) else {
             continue;
         };
         // 🔴 A block's box is not its shape (#1118): a hollow or L-shaped block's box swallows
         // whatever stands inside it, so its triangles decide.
-        if let Some(exact) = block_hit(resources, mesh, to_world, ray.origin, ray.direction) {
-            let Some(exact) = exact else {
-                continue;
+        let (distance, local_normal) =
+            match block_hit(resources, mesh, to_world, ray.origin, ray.direction) {
+                Some(Some(hit)) => hit,
+                Some(None) => continue,
+                None => (
+                    distance,
+                    box_normal(aabb, to_world, ray.origin + ray.direction * distance),
+                ),
             };
-            distance = exact;
+        if nearest.is_some_and(|best| best.distance <= distance) {
+            continue;
         }
-        if nearest.is_none_or(|(best, _)| distance < best) {
-            nearest = Some((distance, entity));
-        }
+        nearest = Some(SurfaceHit {
+            entity,
+            distance,
+            point: ray.origin + ray.direction * distance,
+            // The inverse transpose, because a normal is a covector: under a non-uniform scale the
+            // matrix that moves the surface tilts its normal the wrong way.
+            normal: (normal_matrix(to_world) * local_normal).normalize_or(Vec3::Y),
+        });
     }
-    nearest.map(|(distance, entity)| (entity, distance))
+    nearest
 }
 
-/// The ray's distance to a block's triangles: `None` when `mesh` is not a block, `Some(None)`
-/// when the ray misses it.
+/// World matrix for normals: the inverse transpose of the upper 3x3, falling back to the basis
+/// itself where it cannot be inverted.
+fn normal_matrix(to_world: Mat4) -> Mat3 {
+    let basis = Mat3::from_mat4(to_world);
+    match basis.determinant().abs() > 1e-12 {
+        true => basis.inverse().transpose(),
+        false => basis,
+    }
+}
+
+/// Which face of `aabb` a world-space hit landed on, in the box's own space.
+///
+/// The dominant axis of the hit measured from the centre in half-extents: on a face that axis
+/// reads ±1 while the other two are still inside the box.
+fn box_normal(aabb: Aabb, to_world: Mat4, world: Vec3) -> Vec3 {
+    let to_local = to_world.inverse();
+    if !to_local.is_finite() {
+        return Vec3::Y;
+    }
+    let offset = to_local.transform_point3(world) - aabb.center();
+    let half = (aabb.max - aabb.min) * 0.5;
+    let share = Vec3::new(
+        axis_share(offset.x, half.x),
+        axis_share(offset.y, half.y),
+        axis_share(offset.z, half.z),
+    );
+    let (x, y, z) = (share.x.abs(), share.y.abs(), share.z.abs());
+    match (x >= y && x >= z, y >= z) {
+        (true, _) => Vec3::X * sign(share.x),
+        (false, true) => Vec3::Y * sign(share.y),
+        (false, false) => Vec3::Z * sign(share.z),
+    }
+}
+
+/// How far out of the box one axis is, in half-extents. Zero where the extent is too flat to say,
+/// which would otherwise divide to infinity and win every comparison.
+fn axis_share(offset: f32, half: f32) -> f32 {
+    match half > 1e-6 {
+        true => offset / half,
+        false => 0.0,
+    }
+}
+
+/// `signum` without its zero case: `0.0_f32.signum()` is `1.0`, but a hit dead on the centre plane
+/// has no side, and reading it as positive points the normal into the box half the time.
+fn sign(value: f32) -> f32 {
+    match value < 0.0 {
+        true => -1.0,
+        false => 1.0,
+    }
+}
+
+/// The ray's distance to a block's triangles and the local normal of the face it struck: `None`
+/// when `mesh` is not a block, `Some(None)` when the ray misses it.
 fn block_hit(
     resources: &Resources,
     mesh: Guid,
     to_world: Mat4,
     origin: Vec3,
     direction: Vec3,
-) -> Option<Option<f32>> {
+) -> Option<Option<(f32, Vec3)>> {
     let handle = resources
         .get::<kooch_blockmesh::BuiltBlocks>()?
         .handle(mesh)?;
@@ -94,7 +192,14 @@ fn block_hit(
     // Unnormalised local direction, so `t` stays comparable with the world-space box distances.
     let origin = to_local.transform_point3(origin);
     let direction = to_local.transform_vector3(direction);
-    Some(kooch_blockmesh::face_at(block, origin, direction).map(|hit| hit.distance))
+    Some(
+        kooch_blockmesh::face_at(block, origin, direction).map(|hit| {
+            (
+                hit.distance,
+                block.face_normal(hit.element as usize).unwrap_or(Vec3::Y),
+            )
+        }),
+    )
 }
 
 /// Every entity the render pass would draw, with its mesh and its world
