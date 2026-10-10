@@ -4,8 +4,8 @@ use super::*;
 /// a position — that would move every prefab dropped in the World panel.
 #[test]
 fn an_authored_drop_resolves_to_nothing() {
-    let resources = Resources::new();
-    assert_eq!(resolve(&resources, DropPoint::Authored), None);
+    let mut resources = Resources::new();
+    assert_eq!(resolve(&mut resources, DropPoint::Authored), None);
 }
 
 /// A queryable world with nothing in it. `Query::new` requires the
@@ -27,5 +27,5 @@ fn a_viewport_drop_with_no_camera_resolves_to_nothing() {
         cursor: Vec2::new(10.0, 10.0),
         viewport_size: Vec2::new(800.0, 600.0),
     };
-    assert_eq!(resolve(&empty_world(), point), None);
+    assert_eq!(resolve(&mut empty_world(), point), None);
 }

@@ -17,7 +17,12 @@ pub(crate) enum DropPoint {
 const FALLBACK_DISTANCE: f32 = 10.0;
 
 /// Resolves a [`DropPoint`] to a world position.
-pub(crate) fn resolve(resources: &Resources, point: DropPoint) -> Option<Vec3> {
+///
+/// 🔴 The geometry first, then the ground, then a guess. A drop that only knew the plane at
+/// `y = 0` put a prefab released over a hillside at sea level, through the hill (#1459).
+///
+/// `&mut` because resolving a mesh may load it — the same reason [`crate::picking`] takes one.
+pub(crate) fn resolve(resources: &mut Resources, point: DropPoint) -> Option<Vec3> {
     let DropPoint::Viewport {
         cursor,
         viewport_size,
@@ -25,6 +30,10 @@ pub(crate) fn resolve(resources: &Resources, point: DropPoint) -> Option<Vec3> {
     else {
         return None;
     };
+
+    if let Some(hit) = crate::picking::surface_at(resources, cursor, viewport_size, &[]) {
+        return Some(hit.point);
+    }
 
     let (camera, transform) = crate::gizmos::active_camera(resources)?;
     let ray = kooch_render::projection::viewport_cursor_to_ray(

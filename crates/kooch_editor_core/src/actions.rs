@@ -72,6 +72,8 @@ pub(crate) enum EditorAction {
         name: Option<String>,
         /// Which scene the new entity is authored into, and what it hangs off.
         into: SpawnTarget,
+        /// Where in the world it lands. `Authored` from any menu with no cursor to name.
+        at: crate::viewport_pick::DropPoint,
     },
     /// Spawn an entity bound to a meshlet asset. The asset path is resolved through the AssetServer
     /// (auto-generates a `.meta` sidecar at first import, registers the GUID in `AssetDatabase`)
@@ -79,12 +81,14 @@ pub(crate) enum EditorAction {
     SpawnMesh {
         path: PathBuf,
         name: String,
+        at: crate::viewport_pick::DropPoint,
     },
     /// Spawn a block: writes a fresh `.block` holding `shape` into the project's assets and spawns
     /// an entity pointing at it.
     SpawnBlock {
         into: SpawnTarget,
         shape: kooch_blockmesh::Shape,
+        at: crate::viewport_pick::DropPoint,
     },
     /// One block's shape, before and after an edit.
     BlockEdit {

@@ -20,7 +20,7 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     // Spawning a mesh is the one edit that cannot be reduced to a single protocol call: the editor
     // has to load the asset to learn its GUID, and loading mutates the `AssetServer`, which `send`
     // cannot do from an immutable world. Handled here, before `classify`.
-    if let EditorAction::SpawnMesh { path, name } = action {
+    if let EditorAction::SpawnMesh { path, name, .. } = action {
         spawn_mesh(resources, path, name);
         return true;
     }
@@ -387,7 +387,7 @@ enum Edit<'a> {
 }
 
 /// Reduces an action to an [`Edit`], or `None` if remote mode does not own it.
-fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<'a>> {
+fn classify<'a>(action: &'a EditorAction, resources: &mut Resources) -> Option<Edit<'a>> {
     match action {
         EditorAction::SetField {
             entity,
@@ -432,7 +432,9 @@ fn classify<'a>(action: &'a EditorAction, resources: &Resources) -> Option<Edit<
                 }),
             }
         }
-        EditorAction::Spawn { name, extra, into } => Some(Edit::Spawn {
+        EditorAction::Spawn {
+            name, extra, into, ..
+        } => Some(Edit::Spawn {
             into: *into,
             name: name.clone(),
             extra: extra.clone(),

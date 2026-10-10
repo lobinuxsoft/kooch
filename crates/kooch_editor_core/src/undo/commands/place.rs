@@ -81,3 +81,53 @@ pub(super) fn disown(resources: &mut Resources, entity: Entity) {
         archetypes.register_entity(entity, next);
     }
 }
+
+/// Puts a freshly spawned entity where the cursor asked for, in its parent's space.
+///
+/// 🔴 Resolved ONCE and remembered. A redo re-raycasts nothing: the camera has moved since, and a
+/// spawn that answered the cursor's question again would put the entity somewhere the author never
+/// pointed (#1459).
+///
+/// The pivot goes ON the surface. A fresh entity's mesh is not resolved in the same frame for
+/// every path — a block's is generated later by `sync_blocks` — and setting down only the ones
+/// that happen to be ready would make two menu entries behave differently for no visible reason.
+pub(super) fn drop_at(
+    resources: &mut Resources,
+    entity: Entity,
+    at: crate::viewport_pick::DropPoint,
+    placed: &mut Option<glam::Vec3>,
+) {
+    if placed.is_none() {
+        *placed = crate::viewport_pick::resolve(resources, at);
+    }
+    let Some(world) = *placed else {
+        return;
+    };
+
+    // A child's Transform is in its parent's space, and `place` has already reparented by now.
+    let local = match parent_matrix(resources, entity) {
+        Some(matrix) => matrix.inverse().transform_point3(world),
+        None => world,
+    };
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+        && let Some(storage) = registry.get_cpu_mut::<kooch_ecs::Transform>()
+        && let Some(transform) = storage.get_mut(entity)
+    {
+        transform.position = local;
+    }
+}
+
+/// The world matrix of `entity`'s parent, if it has one.
+fn parent_matrix(resources: &Resources, entity: Entity) -> Option<glam::Mat4> {
+    let registry = resources.get::<ComponentRegistry>()?;
+    let parent = registry
+        .get_cpu::<kooch_ecs::hierarchy::Parent>()?
+        .get(entity)?
+        .entity;
+    Some(
+        registry
+            .get_cpu::<kooch_ecs::GlobalTransform>()?
+            .get(parent)?
+            .matrix,
+    )
+}

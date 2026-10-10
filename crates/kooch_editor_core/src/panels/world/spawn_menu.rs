@@ -50,15 +50,17 @@ pub(crate) fn shoulder_rig() -> Vec<TypeId> {
 }
 
 /// The spawn entries, shared by every menu that offers them.
-pub(super) fn spawn_entries(
+pub(crate) fn spawn_entries(
     ui: &mut egui::Ui,
     actions: &mut Vec<EditorAction>,
     into: crate::actions::SpawnTarget,
+    at: crate::viewport_pick::DropPoint,
 ) {
     {
         if ui.button(format!("{} Entity", icons::CUBE)).clicked() {
             actions.push(EditorAction::Spawn {
                 into,
+                at,
                 extra: vec![],
                 name: None,
             });
@@ -69,6 +71,7 @@ pub(super) fn spawn_entries(
             if ui.button("Perspective Camera").clicked() {
                 actions.push(EditorAction::Spawn {
                     into,
+                    at,
                     extra: vec![TypeId::of::<PerspectiveCamera>()],
                     name: Some("Perspective Camera".to_owned()),
                 });
@@ -77,6 +80,7 @@ pub(super) fn spawn_entries(
             if ui.button("Orthographic Camera").clicked() {
                 actions.push(EditorAction::Spawn {
                     into,
+                    at,
                     extra: vec![TypeId::of::<OrthographicCamera>()],
                     name: Some("Orthographic Camera".to_owned()),
                 });
@@ -92,6 +96,7 @@ pub(super) fn spawn_entries(
             if ui.button("Orbital Follow Camera").clicked() {
                 actions.push(EditorAction::Spawn {
                     into,
+                    at,
                     extra: orbital_rig(),
                     name: Some("Orbital Follow Camera".to_owned()),
                 });
@@ -102,6 +107,7 @@ pub(super) fn spawn_entries(
             if ui.button("Third Person Follow Camera").clicked() {
                 actions.push(EditorAction::Spawn {
                     into,
+                    at,
                     extra: shoulder_rig(),
                     name: Some("Third Person Follow Camera".to_owned()),
                 });
@@ -112,6 +118,7 @@ pub(super) fn spawn_entries(
             if ui.button("Virtual Camera (bare)").clicked() {
                 actions.push(EditorAction::Spawn {
                     into,
+                    at,
                     extra: vec![TypeId::of::<VirtualCamera>()],
                     name: Some("Virtual Camera".to_owned()),
                 });
@@ -121,6 +128,7 @@ pub(super) fn spawn_entries(
         if ui.button("Mesh Renderer").clicked() {
             actions.push(EditorAction::Spawn {
                 into,
+                at,
                 extra: vec![TypeId::of::<MeshRenderer>()],
                 name: Some("Mesh".to_owned()),
             });
@@ -132,6 +140,7 @@ pub(super) fn spawn_entries(
             for (name, _) in kooch_render::mesh::Primitive::CANONICAL {
                 if ui.button(display_name(name)).clicked() {
                     actions.push(EditorAction::SpawnMesh {
+                        at,
                         path: std::path::PathBuf::from(format!("meshes/primitives/{name}.glb")),
                         name: display_name(name),
                     });
@@ -141,6 +150,7 @@ pub(super) fn spawn_entries(
             ui.separator();
             if ui.button("Suzanne (demo)").clicked() {
                 actions.push(EditorAction::SpawnMesh {
+                    at,
                     path: std::path::PathBuf::from("meshes/suzanne.glb"),
                     name: "Suzanne".to_owned(),
                 });
@@ -150,10 +160,11 @@ pub(super) fn spawn_entries(
         // Its own entry rather than a row under "3D Object": those are
         // baked `.glb` files that cannot be edited, and this is the one
         // shape the editor can still change afterwards (#946).
-        block_menu(ui, actions, into);
+        block_menu(ui, actions, into, at);
         if ui.button("Sky").clicked() {
             actions.push(EditorAction::Spawn {
                 into,
+                at,
                 extra: vec![TypeId::of::<SkyRenderer>()],
                 name: Some("Sky".to_owned()),
             });
@@ -163,6 +174,7 @@ pub(super) fn spawn_entries(
             if ui.button("Directional Light").clicked() {
                 actions.push(EditorAction::Spawn {
                     into,
+                    at,
                     extra: vec![TypeId::of::<DirectionalLight>()],
                     name: Some("Directional Light".to_owned()),
                 });
@@ -171,6 +183,7 @@ pub(super) fn spawn_entries(
             if ui.button("Point Light").clicked() {
                 actions.push(EditorAction::Spawn {
                     into,
+                    at,
                     extra: vec![TypeId::of::<PointLight>()],
                     name: Some("Point Light".to_owned()),
                 });
@@ -179,6 +192,7 @@ pub(super) fn spawn_entries(
             if ui.button("Spot Light").clicked() {
                 actions.push(EditorAction::Spawn {
                     into,
+                    at,
                     extra: vec![TypeId::of::<SpotLight>()],
                     name: Some("Spot Light".to_owned()),
                 });
@@ -194,11 +208,12 @@ fn block_menu(
     ui: &mut egui::Ui,
     actions: &mut Vec<EditorAction>,
     into: crate::actions::SpawnTarget,
+    at: crate::viewport_pick::DropPoint,
 ) {
     ui.menu_button(format!("{} Block", icons::CUBE), |ui| {
         for shape in kooch_blockmesh::Shape::DEFAULTS {
             if ui.button(shape.label()).clicked() {
-                actions.push(EditorAction::SpawnBlock { into, shape });
+                actions.push(EditorAction::SpawnBlock { into, shape, at });
                 ui.close();
             }
         }

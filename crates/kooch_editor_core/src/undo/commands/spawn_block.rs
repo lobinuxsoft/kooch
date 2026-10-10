@@ -26,13 +26,23 @@ pub(crate) struct SpawnBlockCommand {
     /// Where that file went, for the log and for undo to say so.
     path: Option<PathBuf>,
     spawned_component_types: Vec<TypeId>,
+    /// Where in the world it lands.
+    at: crate::viewport_pick::DropPoint,
+    /// The resolved world point, kept so a redo lands where the first spawn did.
+    placed: Option<glam::Vec3>,
 }
 
 impl SpawnBlockCommand {
-    pub fn new(into: crate::actions::SpawnTarget, shape: kooch_blockmesh::Shape) -> Self {
+    pub fn new(
+        into: crate::actions::SpawnTarget,
+        shape: kooch_blockmesh::Shape,
+        at: crate::viewport_pick::DropPoint,
+    ) -> Self {
         Self {
             into,
             shape,
+            at,
+            placed: None,
             entity: None,
             source: None,
             path: None,
@@ -139,6 +149,7 @@ impl SpawnBlockCommand {
         }
 
         self.place(resources, entity);
+        super::place::drop_at(resources, entity, self.at, &mut self.placed);
     }
 
     /// Puts the block where the menu asked for it, rather than in

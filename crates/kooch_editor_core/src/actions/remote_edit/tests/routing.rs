@@ -158,10 +158,10 @@ fn non_ecs_action_falls_through() {
 /// Saving one scene is the project's business, and carries which scene.
 #[test]
 fn saving_one_scene_names_it() {
-    let editor = ecs();
+    let mut editor = ecs();
     let id = kooch_core::Guid::new_v4();
 
-    let named = |action| match super::classify(&action, &editor) {
+    let mut named = |action| match super::classify(&action, &mut editor) {
         Some(super::Edit::SaveOneScene { scene, as_new }) => (scene, as_new),
         _ => panic!("a per-scene save did not classify as one"),
     };
@@ -190,6 +190,7 @@ fn every_unclassified_world_edit_is_routed() {
         (
             "SpawnMesh",
             EditorAction::SpawnMesh {
+                at: crate::viewport_pick::DropPoint::Authored,
                 path: std::path::PathBuf::from("meshes/primitives/cube.glb"),
                 name: "Cube".to_owned(),
             },
@@ -197,6 +198,7 @@ fn every_unclassified_world_edit_is_routed() {
         (
             "SpawnBlock",
             EditorAction::SpawnBlock {
+                at: crate::viewport_pick::DropPoint::Authored,
                 into: SpawnTarget::Active,
                 shape: kooch_blockmesh::Shape::DEFAULTS[0],
             },

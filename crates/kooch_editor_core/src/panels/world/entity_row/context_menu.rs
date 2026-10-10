@@ -101,6 +101,7 @@ pub(super) fn handle_context_menu(
                 ui,
                 actions,
                 crate::actions::SpawnTarget::ChildOf(info.entity),
+                crate::viewport_pick::DropPoint::Authored,
             );
         });
         // 🔴 Offered even with no scene, where it used to be hidden — and
@@ -108,7 +109,7 @@ pub(super) fn handle_context_menu(
         // entity in no scene could only ever be nested under (#1033).
         let (label, root) = root_target(info.scene);
         ui.menu_button(label, |ui| {
-            super::spawn_entries(ui, actions, root);
+            super::spawn_entries(ui, actions, root, crate::viewport_pick::DropPoint::Authored);
         });
         ui.separator();
 
