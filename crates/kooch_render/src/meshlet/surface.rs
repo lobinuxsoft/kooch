@@ -73,3 +73,33 @@ pub fn ray_hit(mesh: &MeshletMesh, origin: Vec3, direction: Vec3) -> Option<Surf
     }
     nearest
 }
+
+/// How far the surface reaches along `direction`, in the mesh's own space: `max(v · direction)`
+/// over every LOD-0 vertex.
+///
+/// 🔴 A box's reach is not a mesh's reach. Along an axis the two agree, which is exactly why this
+/// was invisible until something was set down on a slope: in a diagonal direction a cube's answer
+/// is its CORNER, `√3` times a sphere's true radius, and whatever is being placed floats by the
+/// difference (#1455).
+///
+/// `direction` need not be unit length — the result scales with it, which is what lets a caller
+/// pass a direction already pushed through a transform.
+pub fn support(mesh: &MeshletMesh, direction: Vec3) -> Option<f32> {
+    let mut best = f32::NEG_INFINITY;
+    for meshlet in mesh.meshlets.iter().filter(|m| m.lod_level == 0) {
+        // The meshlet's box reaches at least as far as its vertices do, so a box that cannot beat
+        // the running best holds no vertex that can either.
+        let min = Vec3::from(meshlet.aabb_min);
+        let max = Vec3::from(meshlet.aabb_max);
+        let bound = (min + max).dot(direction) * 0.5 + (max - min).abs().dot(direction.abs()) * 0.5;
+        if bound <= best {
+            continue;
+        }
+        let first = meshlet.vertex_offset as usize;
+        for &pooled in &mesh.meshlet_vertices[first..first + meshlet.vertex_count as usize] {
+            let reach = Vec3::from(mesh.vertices[pooled as usize].position).dot(direction);
+            best = best.max(reach);
+        }
+    }
+    best.is_finite().then_some(best)
+}

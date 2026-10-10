@@ -111,10 +111,10 @@ they reject most of the scene for the price of six comparisons; the triangles de
 ### What rests where
 
 An entity is **set down on** the surface, not pinned to it by its pivot: put a sphere's centre on
-the floor and half the sphere is underground. The measure is the entity's world bounding box —
-its own and its children's — so the box rests and the model inside it never sinks. On a slope it
-rests on a corner and leaves a gap; that is what a box costs, and for a blockout it is the right
-price.
+the floor and half the sphere is underground. The measure is the mesh itself — its own and its
+children's — so what touches the surface is the geometry's lowest point along the normal, whatever
+direction that normal points. A sphere set on the flank of a planet touches it there, not a
+bounding box's corner away from it.
 
 A **block face** and a **spline knot** are different: those genuinely *are* points, so their pivot
 goes exactly on the surface.
@@ -128,6 +128,12 @@ goes exactly on the surface.
   jump.
 - Grid snapping is **off** while the surface answers, even though the chord includes Ctrl. Rounding
   a point that is on the floor to the nearest half metre would lift it back off.
+
+### Seeing the volume
+
+An entity selected with a **Mesh Renderer** that names a mesh draws a wireframe box around what
+that mesh occupies, in the model's own axes. It is the volume a collider is meant to wrap and the
+one a snap sets down. Like every other gizmo it can be switched off from the **Gizmos** menu.
 
 A cross marks where the drag would land, with an arrow out of the surface showing which way it
 faces, so a mark on a wall and a mark on the floor are not the same dot.

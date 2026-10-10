@@ -1,6 +1,7 @@
 //! Editor gizmo system — populates [`GizmoBatch`] from selection state.
 
 mod block;
+mod bounds;
 mod camera_rig;
 mod center_of_mass;
 mod character;
@@ -89,6 +90,9 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     // A collider is authored as numbers and is otherwise invisible; the outline is the only way to
     // see whether the shape wraps the model. Which faces of a block are selected.
     registry.register::<kooch_ecs::spline::Spline, spline::SplineVisualizer>();
+    // What the model occupies, which until now was only inferable by dragging something into it:
+    // the volume is what a snap rests on and what a collider is supposed to wrap (#1455).
+    registry.register::<kooch_ecs::mesh_renderer::MeshRenderer, bounds::MeshBoundsVisualizer>();
     registry.register::<kooch_blockmesh::Block, block::BlockVisualizer>();
     // A shaped block's parameters, dragged rather than typed (#1150).
     registry.register::<kooch_blockmesh::BlockShape, shape_handles::ShapeHandleVisualizer>();
