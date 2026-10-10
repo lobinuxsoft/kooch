@@ -302,6 +302,69 @@ pub(crate) fn entity_bounds(resources: &mut Resources, entity: Entity) -> Option
     Some((min, max))
 }
 
+/// How far `entity`'s geometry reaches along world `direction`: `max(p · direction)` over its
+/// surface, measured from the world origin.
+///
+/// 🔴 The mesh, not its box. Along an axis the two agree; in a diagonal direction a box answers
+/// with its corner, and anything resting on that answer floats (#1455).
+pub(crate) fn surface_support(
+    resources: &mut Resources,
+    entity: Entity,
+    direction: Vec3,
+) -> Option<f32> {
+    let (mesh, to_world) = visible_meshes(resources)
+        .into_iter()
+        .find(|(candidate, _, _)| *candidate == entity)
+        .map(|(_, mesh, to_world)| (mesh, to_world))?;
+    let shape = resolve_shape(resources, mesh)?;
+
+    // `(M v + t) · d == v · (Mᵀ d) + t · d`, so the whole walk stays in the mesh's own space for
+    // the price of one matrix-vector product instead of a transform per vertex.
+    let local = Mat3::from_mat4(to_world).transpose() * direction;
+    let origin = to_world.w_axis.truncate().dot(direction);
+
+    let reach = match shape.triangles {
+        Triangles::Block(handle) => {
+            let assets =
+                resources.get::<kooch_core::assets::Assets<kooch_blockmesh::BlockMesh>>()?;
+            assets
+                .get(handle)?
+                .positions()
+                .iter()
+                .map(|corner| corner.dot(local))
+                .fold(f32::NEG_INFINITY, f32::max)
+        }
+        Triangles::Meshlet(handle) => {
+            let assets = resources.get::<kooch_core::assets::Assets<MeshletMesh>>()?;
+            kooch_render::meshlet::support(assets.get(handle)?, local)?
+        }
+    };
+    reach.is_finite().then_some(origin + reach)
+}
+
+/// The mesh's local-space box, for a reader that holds `&Resources` and cannot load.
+///
+/// Nothing loaded, nothing drawn: a visualizer runs while the asset may still be in flight, and a
+/// box around the origin is worse than no box at all.
+pub(crate) fn mesh_bounds(resources: &Resources, mesh: Guid) -> Option<Aabb> {
+    if let Some(bounds) = block_bounds(resources, mesh) {
+        return Some(bounds);
+    }
+    let path = resources
+        .get::<kooch_core::asset_database::AssetDatabase>()?
+        .entry(mesh)?
+        .path
+        .clone();
+    let handle = resources
+        .get::<kooch_core::asset_loader::AssetServer>()?
+        .get_cached::<MeshletMesh>(path)?;
+    let aabb = resources
+        .get::<kooch_core::assets::Assets<MeshletMesh>>()?
+        .get(handle)?
+        .aabb;
+    Some(Aabb::new(aabb.min, aabb.max))
+}
+
 /// The bounds of a block's authoring mesh, if this GUID names one.
 fn block_bounds(resources: &Resources, mesh: Guid) -> Option<Aabb> {
     let handle = resources

@@ -88,10 +88,10 @@ pub(crate) fn target(
 /// half the sphere is underground — which is the whole of what makes a snap feel wrong even when
 /// the hit is exact.
 ///
-/// The measure is the entity's world bounding box: how far its deepest corner reaches past the
-/// pivot, against the surface normal. Cheap and never wrong in the direction that matters — the
-/// box contains the model, so resting the box never buries the model. On a slope it rests on a
-/// corner and leaves a gap, which is the price of a box and the right price for a blockout.
+/// The measure is the mesh's own reach: how far its surface extends past the pivot, against the
+/// normal. The geometry answers, not its box — a box agrees only when the normal hits it square
+/// on, and on a sphere's flank its corner answers `√3` radii and leaves the model in the air
+/// (#1455).
 ///
 /// No mesh, no volume, no lift: a spline's entity or an empty gets its pivot on the surface,
 /// which for a thing with no extent is the same answer.
@@ -105,27 +105,15 @@ pub(crate) fn rest_on(resources: &mut Resources, entity: Entity, hit: SnapHit) -
     };
 
     let mut deepest = 0.0f32;
-    let mut found = false;
     for part in subtree(resources, entity) {
-        let Some((min, max)) = crate::picking::entity_bounds(resources, part) else {
+        let Some(reach) = crate::picking::surface_support(resources, part, -hit.normal) else {
             continue;
         };
-        found = true;
-        for index in 0..8u32 {
-            let corner = Vec3::new(
-                if index & 1 == 0 { min.x } else { max.x },
-                if index & 2 == 0 { min.y } else { max.y },
-                if index & 4 == 0 { min.z } else { max.z },
-            );
-            // How far this corner hangs below the pivot, measured along the normal. Negative for
-            // every corner above it, so a pivot already at the model's base lifts by nothing.
-            deepest = deepest.max((pivot - corner).dot(hit.normal));
-        }
+        // How far the surface hangs below the pivot along the normal. Negative for a model
+        // entirely above it, so a pivot already at the base lifts by nothing.
+        deepest = deepest.max(pivot.dot(hit.normal) + reach);
     }
-    match found {
-        true => hit.point + hit.normal * deepest,
-        false => hit.point,
-    }
+    hit.point + hit.normal * deepest
 }
 
 /// An entity and everything parented under it.

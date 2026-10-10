@@ -75,7 +75,7 @@ pub use scene::{
     MeshInstance, MeshletScene, SceneCullParams, decode_scene_visible_id, encode_scene_visible_id,
 };
 pub use stage_counters::{CullStageCounts, MeshletStageCounters};
-pub use surface::{SurfaceHit, ray_hit};
+pub use surface::{SurfaceHit, ray_hit, support};
 pub use system::{MeshletPipeline, instance_at_origin};
 pub use trim::{AlphaTrim, TRIM_SIDE};
 pub(crate) use vbuf64_stage::ShaderPipelines;
