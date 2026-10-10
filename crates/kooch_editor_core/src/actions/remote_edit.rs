@@ -20,8 +20,9 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     // Spawning a mesh is the one edit that cannot be reduced to a single protocol call: the editor
     // has to load the asset to learn its GUID, and loading mutates the `AssetServer`, which `send`
     // cannot do from an immutable world. Handled here, before `classify`.
-    if let EditorAction::SpawnMesh { path, name, .. } = action {
-        spawn_mesh(resources, path, name);
+    if let EditorAction::SpawnMesh { path, name, at } = action {
+        let at = crate::viewport_pick::resolve(resources, *at);
+        spawn_mesh(resources, path, name, at);
         return true;
     }
 
@@ -39,8 +40,9 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
         return true;
     }
 
-    if let EditorAction::SpawnBlock { shape, .. } = action {
-        spawn_block(resources, *shape);
+    if let EditorAction::SpawnBlock { shape, at, .. } = action {
+        let at = crate::viewport_pick::resolve(resources, *at);
+        spawn_block(resources, *shape, at);
         return true;
     }
 
@@ -314,6 +316,9 @@ enum Edit<'a> {
         extra: Vec<std::any::TypeId>,
         /// Where it goes — the scene, and what it hangs off.
         into: crate::actions::SpawnTarget,
+        /// Resolved HERE, not sent as a drop point: unprojecting a cursor needs the editor's
+        /// camera, which the project does not have.
+        at: Option<glam::Vec3>,
     },
     /// Every field of a `Transform`, from a gizmo drag.
     TransformEdit {
@@ -433,11 +438,15 @@ fn classify<'a>(action: &'a EditorAction, resources: &mut Resources) -> Option<E
             }
         }
         EditorAction::Spawn {
-            name, extra, into, ..
+            name,
+            extra,
+            into,
+            at,
         } => Some(Edit::Spawn {
             into: *into,
             name: name.clone(),
             extra: extra.clone(),
+            at: crate::viewport_pick::resolve(resources, *at),
         }),
         // SpawnMesh is reduced in `dispatch`, not here: resolving its
         // asset mutates the AssetServer, and an `Edit` has to be

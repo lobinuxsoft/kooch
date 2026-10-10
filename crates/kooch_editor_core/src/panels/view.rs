@@ -86,14 +86,18 @@ pub(crate) fn draw_view_content(
 
     // Spawning where the author is looking, with the entries the World panel already offers.
     //
-    // 🔴 The cursor is remembered at the click, not read when an entry is picked: the menu
-    // outlives the frame that opened it, and by then the pointer is on the entry rather than on
-    // the place that was meant (#1459).
+    // 🔴 The cursor is remembered when the button goes down, not read when an entry is picked:
+    // the menu outlives the frame that opened it, and by then the pointer is on the entry rather
+    // than on the place that was meant (#1459).
     //
     // Right-mouse is also fly mode. egui opens this on a CLICK, and a fly is a drag — so holding
     // right to look around ends without a menu, and only a tap on the spot asks for one.
     let spawn_at = ui.id().with("spawn_at");
-    if response.secondary_clicked() {
+    // 🔴 The PRESS, not the click. A click is reported after the button comes back up, by which
+    // point egui may already have opened the menu — and a capture that depends on the click
+    // firing is a capture that silently records nothing. The press always precedes the menu.
+    let pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary));
+    if pressed && response.hovered() {
         let at = match delta.cursor_local {
             Some(cursor) => crate::viewport_pick::DropPoint::Viewport {
                 cursor,
