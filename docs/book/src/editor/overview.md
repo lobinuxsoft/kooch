@@ -116,8 +116,15 @@ children's — so what touches the surface is the geometry's lowest point along 
 direction that normal points. A sphere set on the flank of a planet touches it there, not a
 bounding box's corner away from it.
 
+It is also **turned** to face the surface: its own up axis swings to the surface normal by the
+shortest arc, so a crate dropped on a ramp sits flat on the ramp instead of upright on one corner.
+The shortest arc and not a fresh orientation — the heading you already gave the prop survives, and
+only its tilt changes. Dropping something on a ceiling tips it over its own right axis, since
+upside down every arc is equally short.
+
 A **block face** and a **spline knot** are different: those genuinely *are* points, so their pivot
-goes exactly on the surface.
+goes exactly on the surface and neither is turned. A face has an orientation of its own in the mesh
+and a knot's roll is authored data.
 
 ### Three details worth knowing
 

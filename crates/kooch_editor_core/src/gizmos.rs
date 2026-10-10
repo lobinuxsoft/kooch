@@ -30,7 +30,7 @@ mod walk;
 
 use std::any::TypeId;
 
-use glam::{Mat3, Vec3};
+use glam::{Mat3, Quat, Vec3};
 use kooch_core::resource::Resources;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::directional_light::DirectionalLight;
@@ -371,7 +371,14 @@ pub(crate) fn apply_handle_input(
             Some(hit) => {
                 let point = match editing.is_some() || knot.is_some() {
                     true => hit.point,
-                    false => surface_snap::rest_on(resources, target, hit),
+                    false => {
+                        // 🔴 Turn first, measure second. `rest_on` reads the mesh through the
+                        // entity's world matrix, so a prop measured before it tips reports the
+                        // reach of a pose it no longer has — and lands tilted but at the old
+                        // height (#1457).
+                        align_to(resources, target, hit.normal);
+                        surface_snap::rest_on(resources, target, hit)
+                    }
                 };
                 TransformDelta::Translation(point - target_origin)
             }
@@ -574,6 +581,55 @@ pub(crate) fn entity_world_position(resources: &Resources, entity: Entity) -> Op
 /// Reads the entity's world-space rotation from `GlobalTransform`. Used as both the Local-mode
 /// display basis and the `entity_world_rotation` always-on field used by `ScaleHandle` to convert
 /// World-space drag intent into local-space scale factors.
+/// Turns `entity` so its local +Y points along `normal`, by the shortest arc.
+///
+/// 🔴 The shortest arc, not a fresh orientation: whatever heading the author gave the prop
+/// survives and only its tilt changes. Building a basis from the normal would throw that away
+/// every frame of the drag.
+///
+/// Only an entity turns. A block face has an orientation of its own in the mesh and a knot's roll
+/// is authored data, and writing either from a drag gesture is a different decision (#1429).
+fn align_to(resources: &mut Resources, entity: Entity, normal: Vec3) {
+    let normal = normal.normalize_or_zero();
+    // A zero or non-finite normal means the surface answered with nothing usable; turning by a
+    // NaN quaternion would leave the entity unrecoverable.
+    if !(normal.length_squared() > 0.5) {
+        return;
+    }
+    let basis = entity_world_rotation(resources, entity);
+    let up = (basis * Vec3::Y).normalize_or(Vec3::Y);
+
+    let turn = match up.dot(normal) < -0.999_999 {
+        // Upside down: every arc is equally short, so the entity tips over its OWN right axis
+        // rather than over whichever one the maths happens to pick.
+        true => Quat::from_axis_angle(
+            (basis * Vec3::X).normalize_or(Vec3::X),
+            std::f32::consts::PI,
+        ),
+        false => Quat::from_rotation_arc(up, normal),
+    };
+    if turn.abs_diff_eq(Quat::IDENTITY, 1e-6) {
+        return;
+    }
+
+    let turn = match parent_space::parent_world_to_local(resources, entity) {
+        Some(m) => parent_space::rotation_to_parent_space(m, turn),
+        None => turn,
+    };
+    let mut turned = false;
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+        && let Some(storage) = registry.get_cpu_mut::<Transform>()
+        && let Some(t) = storage.get_mut(entity)
+    {
+        t.rotation = (turn * t.rotation).normalize();
+        turned = true;
+    }
+    if turned {
+        // The lift measured next reads `GlobalTransform`, which is stale until this runs.
+        transform_propagation_system(resources);
+    }
+}
+
 fn entity_world_rotation(resources: &Resources, entity: Entity) -> Mat3 {
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Mat3::IDENTITY;
