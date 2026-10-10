@@ -115,6 +115,7 @@ pub(super) fn send(
             name: entity_name,
             extra,
             into,
+            at,
         } => {
             // Asked for, not inferred. A menu opened on a scene or an entity that is not the active
             // one means *there*, and a spawn that lands in the active scene instead shows up as a
@@ -165,7 +166,16 @@ pub(super) fn send(
                     .add_component(entity, component_name)
                     .map_err(map_err)?;
             }
-            Ok(())
+
+            // Placing it is a `SetField` on the entity that just came back rather than a parameter
+            // on the call — the same route `InstantiatePrefab` takes, which keeps spatial types
+            // out of the wire format (#1461).
+            let Some(at) = at else {
+                return Ok(());
+            };
+            client
+                .set_field(entity, transform, "position", ReflectValue::Vec3(at))
+                .map_err(map_err)
         }
         Edit::TransformEdit { entity, transform } => {
             let id = remote(entity)?;

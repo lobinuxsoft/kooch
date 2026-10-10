@@ -3,7 +3,12 @@
 use super::*;
 
 /// Builds a mesh-bound entity on the project's side.
-pub(super) fn spawn_mesh(resources: &mut Resources, path: &std::path::Path, name: &str) {
+pub(super) fn spawn_mesh(
+    resources: &mut Resources,
+    path: &std::path::Path,
+    name: &str,
+    at: Option<glam::Vec3>,
+) {
     const TARGET: &str = "kooch_editor_core::remote_edit::spawn_mesh";
 
     let Some((guid, asset_type)) = resolve_mesh_asset(resources, path) else {
@@ -46,6 +51,7 @@ pub(super) fn spawn_mesh(resources: &mut Resources, path: &std::path::Path, name
         tracing::warn!(target: TARGET, error = %e, "could not write the mesh reference");
         return;
     }
+    place(client, entity, transform_ty, at);
 
     tracing::info!(
         target: TARGET,
@@ -54,6 +60,8 @@ pub(super) fn spawn_mesh(resources: &mut Resources, path: &std::path::Path, name
         %guid,
         "spawned a mesh entity on the project",
     );
+
+    remember(resources, "Spawn Mesh Entity", entity);
 
     // Set here rather than through `created`: this arm never reaches
     // `send`, because resolving the asset needs a mutable world and an
@@ -64,7 +72,11 @@ pub(super) fn spawn_mesh(resources: &mut Resources, path: &std::path::Path, name
 }
 
 /// Builds a block on the project's side.
-pub(super) fn spawn_block(resources: &mut Resources, shape: kooch_blockmesh::Shape) {
+pub(super) fn spawn_block(
+    resources: &mut Resources,
+    shape: kooch_blockmesh::Shape,
+    at: Option<glam::Vec3>,
+) {
     const TARGET: &str = "kooch_editor_core::remote_edit::spawn_block";
     use crate::undo::prototype_material;
 
@@ -129,6 +141,7 @@ pub(super) fn spawn_block(resources: &mut Resources, shape: kooch_blockmesh::Sha
         tracing::warn!(target: TARGET, error = %e, "could not write the block source");
         return;
     }
+    place(client, entity, transform_ty, at);
 
     // The engine's prototype grid, so the block shows its size. Its
     // UVs are one repeat per world unit, and on flat white a wall
@@ -161,9 +174,51 @@ pub(super) fn spawn_block(resources: &mut Resources, shape: kooch_blockmesh::Sha
         "spawned a block on the project",
     );
 
+    remember(resources, "Spawn Block", entity);
+
     if let Some(state) = resources.get_mut::<RemoteState>() {
         state.pending_selection = vec![entity];
     }
+}
+
+/// Puts a freshly spawned entity where the cursor asked for.
+///
+/// A failure is logged and swallowed: the entity exists either way, and an author who sees it at
+/// the origin can drag it. Refusing the spawn over a misplaced one would be worse.
+fn place(
+    client: &kooch_remote::RemoteClient,
+    entity: kooch_remote::protocol::EntityId,
+    transform_ty: &str,
+    at: Option<glam::Vec3>,
+) {
+    let Some(at) = at else {
+        return;
+    };
+    let value = kooch_ecs::reflect::ReflectValue::Vec3(at);
+    if let Err(e) = client.set_field(entity, transform_ty, "position", value) {
+        tracing::warn!(
+            target: "kooch_editor_core::remote_edit::place",
+            error = %e,
+            "could not place the new entity",
+        );
+    }
+}
+
+/// Puts the spawn in the remote history.
+///
+/// 🔴 These two arms return from `dispatch` before it reaches `remote_undo::record`, so until this
+/// neither a mesh nor a block spawned against a connected project could be undone at all (#1461).
+fn remember(resources: &mut Resources, label: &str, entity: kooch_remote::protocol::EntityId) {
+    crate::actions::remote_undo::record_step(
+        resources,
+        label,
+        crate::actions::remote_undo::Inverse::Despawn(vec![entity]),
+    );
+    // 🔴 Undoing reads the MIRROR to capture what it is about to despawn, so a redo can rebuild
+    // it. These arms skip the `sent` path that normally asks for a refresh, and a Ctrl+Z pressed
+    // before the half-second poll would undo an entity the mirror has never seen — and redo
+    // nothing.
+    super::pull_soon(resources);
 }
 
 /// Loads a mesh asset locally and returns its GUID and asset type name.
