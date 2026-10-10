@@ -31,13 +31,19 @@ pub(crate) struct SpawnMeshCommand {
     guid: Option<Guid>,
     /// Component types added during spawn — drives undo cleanup.
     spawned_component_types: Vec<TypeId>,
+    /// Where in the world it lands.
+    at: crate::viewport_pick::DropPoint,
+    /// The resolved world point, kept so a redo lands where the first spawn did.
+    placed: Option<glam::Vec3>,
 }
 
 impl SpawnMeshCommand {
-    pub fn new(path: PathBuf, display_name: String) -> Self {
+    pub fn new(path: PathBuf, display_name: String, at: crate::viewport_pick::DropPoint) -> Self {
         Self {
             path,
             display_name,
+            at,
+            placed: None,
             entity: None,
             guid: None,
             spawned_component_types: Vec::new(),
@@ -181,6 +187,8 @@ impl SpawnMeshCommand {
                 }
             }
         }
+
+        super::place::drop_at(resources, entity, self.at, &mut self.placed);
     }
 }
 

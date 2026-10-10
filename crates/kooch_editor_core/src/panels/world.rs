@@ -3,7 +3,7 @@
 pub(crate) mod entity_row;
 mod filter;
 mod scene_bar;
-mod spawn_menu;
+pub(crate) mod spawn_menu;
 
 use kooch_ecs::entity::Entity;
 
@@ -162,7 +162,12 @@ pub(crate) fn draw_world_content(
         ui.set_min_width(240.0);
         ui.label("New scene");
         ui.separator();
-        spawn_entries(ui, actions, crate::actions::SpawnTarget::NewScene);
+        spawn_entries(
+            ui,
+            actions,
+            crate::actions::SpawnTarget::NewScene,
+            crate::viewport_pick::DropPoint::Authored,
+        );
         if ui
             .add_enabled(
                 clipboard_has_entities,
@@ -221,7 +226,12 @@ fn unowned_entries(
     actions: &mut Vec<EditorAction>,
 ) {
     ui.menu_button("New", |ui| {
-        spawn_entries(ui, actions, crate::actions::SpawnTarget::Active);
+        spawn_entries(
+            ui,
+            actions,
+            crate::actions::SpawnTarget::Active,
+            crate::viewport_pick::DropPoint::Authored,
+        );
     });
     if ui
         .add_enabled(
@@ -311,7 +321,12 @@ fn scene_context_menu(
         // active one, which with several open is routinely not the scene
         // somebody just right-clicked.
         ui.menu_button("New", |ui| {
-            spawn_entries(ui, actions, crate::actions::SpawnTarget::Scene(scene));
+            spawn_entries(
+                ui,
+                actions,
+                crate::actions::SpawnTarget::Scene(scene),
+                crate::viewport_pick::DropPoint::Authored,
+            );
         });
 
         // Into *this* scene, for the same reason. Copying out of one

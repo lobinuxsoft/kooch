@@ -40,13 +40,19 @@ pub(super) fn action_to_command(
     resources: &Resources,
 ) -> Option<Box<dyn EditorCommand>> {
     match action {
-        EditorAction::Spawn { extra, name, into } => Some(Box::new(SpawnCommand::new(
+        EditorAction::Spawn {
+            extra,
+            name,
+            into,
+            at,
+        } => Some(Box::new(SpawnCommand::new(
             extra.clone(),
             name.clone(),
             *into,
+            *at,
         ))),
-        EditorAction::SpawnBlock { into, shape } => {
-            Some(Box::new(SpawnBlockCommand::new(*into, *shape)))
+        EditorAction::SpawnBlock { into, shape, at } => {
+            Some(Box::new(SpawnBlockCommand::new(*into, *shape, *at)))
         }
         EditorAction::BlockEdit {
             entity,
@@ -59,9 +65,11 @@ pub(super) fn action_to_command(
             (**before).clone(),
             (**after).clone(),
         ))),
-        EditorAction::SpawnMesh { path, name } => {
-            Some(Box::new(SpawnMeshCommand::new(path.clone(), name.clone())))
-        }
+        EditorAction::SpawnMesh { path, name, at } => Some(Box::new(SpawnMeshCommand::new(
+            path.clone(),
+            name.clone(),
+            *at,
+        ))),
         EditorAction::Despawn(entity) => Some(Box::new(DespawnCommand::new(resources, *entity))),
         EditorAction::Duplicate(entity) => {
             Some(Box::new(DuplicateCommand::new(resources, *entity)))

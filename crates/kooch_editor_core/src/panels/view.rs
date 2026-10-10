@@ -84,6 +84,38 @@ pub(crate) fn draw_view_content(
         }
     }
 
+    // Spawning where the author is looking, with the entries the World panel already offers.
+    //
+    // 🔴 The cursor is remembered at the click, not read when an entry is picked: the menu
+    // outlives the frame that opened it, and by then the pointer is on the entry rather than on
+    // the place that was meant (#1459).
+    //
+    // Right-mouse is also fly mode. egui opens this on a CLICK, and a fly is a drag — so holding
+    // right to look around ends without a menu, and only a tap on the spot asks for one.
+    let spawn_at = ui.id().with("spawn_at");
+    if response.secondary_clicked() {
+        let at = match delta.cursor_local {
+            Some(cursor) => crate::viewport_pick::DropPoint::Viewport {
+                cursor,
+                viewport_size: delta.viewport_size,
+            },
+            None => crate::viewport_pick::DropPoint::Authored,
+        };
+        ui.ctx().data_mut(|data| data.insert_temp(spawn_at, at));
+    }
+    response.context_menu(|ui| {
+        let at = ui
+            .ctx()
+            .data(|data| data.get_temp(spawn_at))
+            .unwrap_or(crate::viewport_pick::DropPoint::Authored);
+        crate::panels::world::spawn_menu::spawn_entries(
+            ui,
+            actions,
+            crate::actions::SpawnTarget::Active,
+            at,
+        );
+    });
+
     // Horizontal toolbar at the top edge of the viewport. Hosts only gizmo controls (mode + basis +
     // snap), shown when a Transform is actually selected.
     if selection_has_transform {

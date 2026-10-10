@@ -42,6 +42,7 @@ fn spawn_mesh_builds_the_entity_on_the_project() {
     editor.insert(state);
 
     let action = EditorAction::SpawnMesh {
+        at: crate::viewport_pick::DropPoint::Authored,
         path: std::path::PathBuf::from("meshes/suzanne.glb"),
         name: "Suzanne".to_owned(),
     };
@@ -101,6 +102,7 @@ fn an_unresolvable_mesh_is_still_owned_by_the_remote_sink() {
     editor.insert(RemoteState::new());
 
     let action = EditorAction::SpawnMesh {
+        at: crate::viewport_pick::DropPoint::Authored,
         path: std::path::PathBuf::from("meshes/does_not_exist.glb"),
         name: "Ghost".to_owned(),
     };
@@ -149,6 +151,7 @@ fn spawn_carries_its_extra_components_over_the_wire() {
     editor.insert(state);
 
     let action = EditorAction::Spawn {
+        at: crate::viewport_pick::DropPoint::Authored,
         extra: vec![std::any::TypeId::of::<DirectionalLight>()],
         name: Some("Directional Light".to_owned()),
         into: crate::actions::SpawnTarget::Active,

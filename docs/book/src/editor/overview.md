@@ -145,6 +145,24 @@ one a snap sets down. Like every other gizmo it can be switched off from the **G
 A cross marks where the drag would land, with an arrow out of the surface showing which way it
 faces, so a mark on a wall and a mark on the floor are not the same dot.
 
+### Spawning where you are looking
+
+Right-click empty space in the **Edit View** for the same spawn entries the World panel offers.
+What you pick appears where the cursor pointed — on the geometry under it, not at the world
+origin and not at sea level.
+
+Right-mouse is also fly mode. The menu opens on a *click*, and flying is a drag, so holding right
+to look around never opens it.
+
+With nothing under the cursor the point falls back to the ground plane at `y = 0`, and failing
+that to a point at the camera's own distance. A prefab dragged from the Assets panel into the
+viewport lands by the same rule — it used to know only the ground plane, so one dropped over a
+hillside went through the hill.
+
+The pivot goes **on** the surface; the entity is not set down by its volume the way a dragged one
+is, because a freshly spawned entity's mesh is not resolved yet on every path. Ctrl+Shift-drag it
+afterwards and it rests properly.
+
 ### Undo follows the document, not the panel
 
 **Ctrl+Z undoes an edit to the thing you are looking at.** The editor holds several documents

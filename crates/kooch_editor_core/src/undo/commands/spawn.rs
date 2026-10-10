@@ -24,6 +24,10 @@ pub(crate) struct SpawnCommand {
     spawned_component_types: Vec<TypeId>,
     /// Where the entity goes: which scene, and what it hangs off.
     into: crate::actions::SpawnTarget,
+    /// Where in the world it lands.
+    at: crate::viewport_pick::DropPoint,
+    /// The resolved world point, kept so a redo lands where the first spawn did.
+    placed: Option<glam::Vec3>,
 }
 
 impl SpawnCommand {
@@ -31,6 +35,7 @@ impl SpawnCommand {
         extra_component_types: Vec<TypeId>,
         name: Option<String>,
         into: crate::actions::SpawnTarget,
+        at: crate::viewport_pick::DropPoint,
     ) -> Self {
         Self {
             entity: None,
@@ -38,6 +43,8 @@ impl SpawnCommand {
             name,
             spawned_component_types: Vec::new(),
             into,
+            at,
+            placed: None,
         }
     }
 
@@ -124,6 +131,9 @@ impl SpawnCommand {
         }
 
         self.place(resources, entity);
+        // After `place`: a child's Transform is in its parent's space, and it has no parent until
+        // that has run.
+        super::place::drop_at(resources, entity, self.at, &mut self.placed);
     }
 
     /// Puts the new entity where it was asked for: under a parent, in a named scene, or in one
