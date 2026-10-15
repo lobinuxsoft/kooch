@@ -239,6 +239,11 @@ The copies are **not rows in the World tree** — a run of four thousand would b
 curve's entity says how many it laid instead, as a line under it reading *"12 generated — not
 saved"*. Both halves matter: they exist, and hand-editing one would not survive the next rebuild.
 
+If the prefab has not finished loading, the run lays **nothing** and says so once in the console,
+then retries every frame until the asset arrives. A placement is never left half-built, and never
+quietly gives up — which is what it used to do when a scene load beat its own prefab to the first
+frame.
+
 Moving a knot **moves** the run; it does not rebuild it. Only changing the prefab or how many
 spawns anything, which keeps a drag from burning an entity generation per copy per frame.
 
