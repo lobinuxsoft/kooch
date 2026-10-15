@@ -192,6 +192,24 @@ never had one.
 With a knot selected, **F** frames the knot rather than the whole curve, the same way it frames a
 block's selected faces.
 
+### Laying entities along a curve
+
+Add a **Spline Placement** beside a `Spline` and name a prefab, and the curve fills with copies —
+a fixed **Count** spread evenly, one every so many units of **Distance**, or one **At knots**.
+`Align` turns each to the curve's tangent, with the knots' roll in its up, and `Offset` moves it in
+its own axes so a lamp holds its side of the path around a corner.
+
+🔴 **The copies are not saved.** They carry no scene membership, so none of them reaches the scene
+file: the curve is the only description of where they are. That is the trade — move a knot and the
+whole run follows, but no single copy can be hand-edited. Change the curve or the numbers instead.
+
+🔴 **A run is rebuilt only when its description changes**, never once a frame. A collectible the
+player picks up despawns itself, and a placement that rebuilt continuously would put it straight
+back. Moving a knot rebuilds; taking an instance away does not.
+
+Delete the curve, remove the component, or load another scene and the copies go with it — nothing
+else would ever come back for them.
+
 ### Undo follows the document, not the panel
 
 **Ctrl+Z undoes an edit to the thing you are looking at.** The editor holds several documents

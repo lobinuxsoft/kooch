@@ -3,7 +3,7 @@
 mod document;
 mod entity_refs;
 mod error;
-mod sync;
+pub(crate) mod sync;
 
 #[cfg(test)]
 mod tests;
