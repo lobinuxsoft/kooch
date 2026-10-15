@@ -45,6 +45,8 @@ pub struct ViewportInputDelta {
     /// E with faces selected: pull them out along their averaged
     /// normal. The letter ProBuilder and Blender both use.
     pub extrude_pressed: bool,
+    /// `A` with a spline selected: put a knot where the cursor points.
+    pub add_knot_pressed: bool,
     /// `Some(mode)` when the user pressed W / E / R this frame inside
     /// the viewport. Forwarded to `HandleSet::set_mode`.
     pub mode_request: Option<HandleModeRequest>,

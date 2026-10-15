@@ -49,6 +49,15 @@ pub(super) fn apply_viewport_edits(
         extrude(resources, *entity, overlay.snap_settings.translate, actions);
     }
 
+    // Beside the extrude above and for the same reason: a key press is not a drag, and running it
+    // inside the `||` chain below would make it compete with handles it has nothing to do with.
+    if delta.add_knot_pressed
+        && !playing
+        && let [entity] = overlay.selected_entities.as_slice()
+    {
+        crate::gizmos::spline_handles::add_knot(resources, delta, *entity, actions);
+    }
+
     let selected = overlay.selected_entities.to_vec();
     let snap = overlay.snap_settings;
     // Shape handles first: they sit inside the move arrows' reach, and the more specific one wins.

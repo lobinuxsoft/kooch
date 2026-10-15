@@ -28,6 +28,8 @@ pub(crate) fn draw_gizmo_menu(
     // COMPONENT draws, and the grid belongs to no entity.
     ui.checkbox(&mut visibility.grid, "Grid")
         .on_hover_text("The ground grid, and the guide while a handle is dragged");
+    ui.checkbox(&mut visibility.commands, "Commands")
+        .on_hover_text("What the viewport responds to right now, in the bottom-left corner");
     ui.separator();
     ui.separator();
 
