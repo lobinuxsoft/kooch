@@ -135,8 +135,13 @@ pub enum Method {
         #[serde(default)]
         payload: serde_json::Value,
     },
-    /// Every non-ephemeral entity with its components. With a matching `since` the reply holds only
-    /// changes; otherwise everything, with `full` — the server decides and says which.
+    /// Every entity with its components, **ephemeral ones included** (#1482). With a matching
+    /// `since` the reply holds only changes; otherwise everything, with `full` — the server decides
+    /// and says which.
+    ///
+    /// 🔴 Ephemeral means "not written to a scene file", not "not shown". A watching editor has to
+    /// see the world the project is actually running, or Play shows the editor's guess instead of
+    /// the game. Entities the editor derives for itself are suppressed on its side instead.
     ListEntities {
         #[serde(default)]
         since: Option<u64>,

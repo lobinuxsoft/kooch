@@ -331,11 +331,12 @@ fn entities_are_listed_in_authored_order() {
     );
 }
 
-/// 🔴 The contract `Method::ListEntities` has always declared — "every non-ephemeral entity" — and
-/// did not keep (#1474). A spline placement's copies are regenerated on both sides, so shipping
-/// them laid a second run in the editor on top of the one it had already built itself.
+/// 🔴 Ephemeral means "not written to a scene file", not "not shown" (#1482). A watching editor
+/// has to see the world the project is running, or Play shows the editor's own guess instead of
+/// the game. The duplicate run that #1474 chased is prevented on the editor's side, by not
+/// deriving one while mirroring — not by hiding the project's.
 #[test]
-fn an_ephemeral_entity_is_withheld() {
+fn an_ephemeral_entity_is_listed() {
     let mut resources = ecs();
     call(
         &mut resources,
@@ -345,7 +346,7 @@ fn an_ephemeral_entity_is_withheld() {
             parent: None,
         },
     );
-    let hidden = match call(
+    let ephemeral_one = match call(
         &mut resources,
         Method::Spawn {
             name: Some("Hidden".to_owned()),
@@ -359,7 +360,7 @@ fn an_ephemeral_entity_is_withheld() {
 
     // The marker, in its storage AND in the archetype: ephemeral is decided per archetype, so one
     // written only into its own column is one nothing that matters ever sees.
-    let entity = kooch_ecs::entity::Entity::from(hidden);
+    let entity = kooch_ecs::entity::Entity::from(ephemeral_one);
     let mut ephemeral = kooch_ecs::EphemeralComponents::new();
     ephemeral.insert(std::any::TypeId::of::<kooch_ecs::spline::placement::Placed>());
     resources.insert(ephemeral);
@@ -388,5 +389,8 @@ fn an_ephemeral_entity_is_withheld() {
         .map(|e| e.name.clone().unwrap_or_default())
         .collect();
     assert!(listed.contains(&"Kept".to_owned()), "listed: {listed:?}");
-    assert!(!listed.contains(&"Hidden".to_owned()), "listed: {listed:?}");
+    assert!(
+        listed.contains(&"Hidden".to_owned()),
+        "an ephemeral entity was withheld, so the editor cannot show the running game: {listed:?}"
+    );
 }

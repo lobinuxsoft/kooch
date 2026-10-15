@@ -205,6 +205,9 @@ impl Plugin for EditorPlugin {
         // world into the local mirror. PreUpdate so the panels and the
         // viewport see a snapshot that is at most one frame stale.
         app.add_system(Stage::PreUpdate, systems::remote_sync_system);
+        // 🔴 Right after the pull and before `Update`, where the systems that would derive a
+        // second answer run: a mirrored world shows the project's, never its own (#1482).
+        app.add_system(Stage::PreUpdate, mark_mirrored_world);
         // After the pull, so a snapshot describes the frame the editor is
         // about to draw rather than the one it just finished.
         app.add_system(Stage::PreUpdate, remote_input::send_input_to_host);
@@ -252,3 +255,15 @@ impl Plugin for EditorPlugin {
 
 #[cfg(test)]
 mod engine_component_registration_tests;
+
+/// Tells the world whether it is a mirror of a connected project, every frame.
+///
+/// 🔴 A fact about the world, not about the editor, which is why it lives in `kooch_core` beside
+/// `Playing`: `kooch_ecs` has no idea what a remote session is, and the systems that must not
+/// simulate a mirrored world live there. Idempotent and one lookup wide.
+fn mark_mirrored_world(resources: &mut kooch_core::resource::Resources) {
+    let mirrored = resources
+        .get::<crate::remote_session::RemoteState>()
+        .is_some_and(|state| state.is_connected());
+    kooch_core::run_state::Mirrored::set(resources, mirrored);
+}

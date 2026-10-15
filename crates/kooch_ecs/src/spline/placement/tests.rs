@@ -88,12 +88,8 @@ fn a_broken_tangent_changes_it() {
 /// 🔴 The failure that made the feature look broken (#1481): a prefab that has not loaded yet made
 /// `stamp` fail, and recording the revision anyway marked the run as built. The curve never
 /// changed again, so it was never retried — one unlucky frame at scene load was permanent.
-#[test]
-fn an_unplaced_run_is_retried() {
-    use crate::component::ComponentRegistry;
-    use crate::entity::Entity;
-    use kooch_core::resource::Resources;
-
+/// A world holding one curve with a placement, pointing at a prefab nothing can resolve.
+fn world_with_curve() -> (kooch_core::resource::Resources, crate::entity::Entity) {
     let mut resources = Resources::new();
     resources.insert(crate::allocator::EntityAllocator::new());
     resources.insert(ComponentRegistry::new());
@@ -131,6 +127,12 @@ fn an_unplaced_run_is_retried() {
         archetypes.register_entity(entity, id);
     }
 
+    (resources, entity)
+}
+
+#[test]
+fn an_unplaced_run_is_retried() {
+    let (mut resources, entity) = world_with_curve();
     place_along_splines(&mut resources);
 
     let built = resources
@@ -139,5 +141,35 @@ fn an_unplaced_run_is_retried() {
     assert!(
         !built,
         "a run that placed nothing was recorded as built, so it will never be retried"
+    );
+}
+
+/// 🔴 The rule Play rests on (#1482): a mirrored world shows the project's run, never one of its
+/// own, or the author watches the editor's answer while the game runs a different one.
+#[test]
+fn a_mirrored_world_lays_nothing() {
+    // 🔴 A count of zero, so the run is one this function would otherwise RECORD: it asks for no
+    // instances, places none, and that counts as complete. Asserting on a run that fails to place
+    // would pass for the wrong reason — #1481 clears those anyway — and prove nothing about the
+    // mirror.
+    let (mut resources, entity) = world_with_curve();
+    if let Some(storage) = resources
+        .get_mut::<crate::component::ComponentRegistry>()
+        .and_then(|r| r.get_cpu_mut::<SplinePlacement>())
+        && let Some(placement) = storage.get_mut(entity)
+    {
+        placement.count = 0;
+    }
+
+    // Without the mirror this records a run; the assertion below is only true because of it.
+    kooch_core::run_state::Mirrored::set(&mut resources, true);
+    place_along_splines(&mut resources);
+
+    let standing = resources
+        .get::<PlacedRuns>()
+        .is_some_and(|runs| !runs.runs.is_empty());
+    assert!(
+        !standing,
+        "a mirrored world laid its own run beside the project's"
     );
 }

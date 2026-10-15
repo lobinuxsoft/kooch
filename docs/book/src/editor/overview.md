@@ -226,9 +226,13 @@ connected project sends the editor**: the curve is the only description of where
 the trade — move a knot and the whole run follows, but no single copy can be hand-edited. Change
 the curve or the numbers instead.
 
-That last one matters while playing. Both sides of a remote connection run the placement on their
-own world, so a project that shipped its copies would lay a second run in the editor on top of the
-one already there — twice the crates, none of them wrong.
+Connected to a project, the editor does **not** lay a run of its own: the project's is the one you
+see, stopped and playing alike. Both sides run the same system, and two answers to one question is
+one answer too many — during Play you would be watching the editor's, not the game's.
+
+**Play shows the game.** Not an approximation of it, and with no exceptions for being the editor:
+pick up a collectible and it disappears on screen, because what is on screen is the world the
+project is running.
 
 Each copy is a real **prefab instance**, linked to what it came from, so it reads in the World
 panel as what it is. Editing the prefab does **not** propagate into them, though: a copy is
