@@ -15,6 +15,7 @@ use crate::Reflect;
 pub mod arc;
 pub mod eval;
 pub mod nearest;
+pub mod placement;
 
 /// A cubic curve through its points, in the entity's own space.
 ///

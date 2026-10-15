@@ -398,7 +398,7 @@ fn despawn_all(resources: &mut Resources) {
 }
 
 /// Removes `entities` from every store that knows about them.
-fn despawn_entities(resources: &mut Resources, entities: &[crate::entity::Entity]) {
+pub(crate) fn despawn_entities(resources: &mut Resources, entities: &[crate::entity::Entity]) {
     for &entity in entities {
         if let Some(alloc) = resources.get_mut::<EntityAllocator>() {
             alloc.despawn(entity);

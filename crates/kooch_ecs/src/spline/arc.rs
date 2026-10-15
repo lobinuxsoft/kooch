@@ -89,4 +89,4 @@ fn parameter(table: &[f32], distance: f32) -> Option<f32> {
 
 /// Samples each segment is walked in to measure it. The error of a chord against its arc falls with
 /// the square of this, so 16 puts a 90° turn of a one-metre segment inside a millimetre.
-const STEPS_PER_SEGMENT: u32 = 16;
+pub const STEPS_PER_SEGMENT: u32 = 16;

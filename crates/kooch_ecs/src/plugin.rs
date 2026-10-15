@@ -51,6 +51,7 @@ fn register_builtin_components(resources: &mut kooch_core::resource::Resources) 
         registry.register_cpu_reflected::<SkyRenderer>();
         registry.register_cpu_reflected::<MeshRenderer>();
         registry.register_cpu_reflected::<crate::spline::Spline>();
+        registry.register_cpu_reflected::<crate::spline::placement::SplinePlacement>();
         registry.register_cpu_reflected::<crate::post_process::PostProcess>();
         registry.register_cpu_reflected::<crate::post_process_volume::PostProcessVolume>();
         // Ordinary scene data despite being an editor concept: the link
@@ -87,6 +88,9 @@ impl Plugin for EcsPlugin {
         // deferred commands (spawn/despawn/insert/remove). 2. Clean up despawned entities from
         // component storages. Hierarchy sync and transform propagation run before GPU sync.
         app.add_system(Stage::Update, crate::testing::spin::spin_pivots);
+        // Before PostUpdate's propagation, so a run laid down this frame has world transforms by
+        // the time anything draws it.
+        app.add_system(Stage::Update, crate::spline::placement::place_along_splines);
         // Before anything reads a mask: a legacy field the author cannot see must not outrank the
         // one they can (#1320).
         app.add_system(Stage::First, crate::mesh_renderer::migrate_renderer_layers);

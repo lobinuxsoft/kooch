@@ -1,0 +1,357 @@
+//! Laying entities along a curve (#1428).
+//!
+//! Unity's `Spline Instantiate`, and the half of #1092 that is not geometry: this writes
+//! transforms, never meshes, which is why it is the cheap one and the one a level needs first.
+//!
+//! 🔴 **The instances are regenerated, not saved.** They carry no [`SceneMember`], which is what
+//! the scene writer walks, so none of them reaches the file and the curve is the only description
+//! of where they are. The cost the author pays is that no single instance can be hand-edited —
+//! move the curve or change the numbers instead.
+//!
+//! 🔴 **A run is rebuilt only when its description changes.** Not once a frame: a collectible the
+//! player picks up despawns itself, and a placement that rebuilt continuously would put it
+//! straight back. The revision below is what tells "the author moved a knot" apart from "the game
+//! took one away".
+
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+
+use glam::{Quat, Vec3};
+
+use kooch_core::Guid;
+use kooch_core::resource::Resources;
+
+use crate::component::{Component, ComponentRegistry};
+use crate::entity::Entity;
+use crate::query::Query;
+use crate::transform::Transform;
+
+use super::Knot;
+
+/// Spread `count` evenly along the whole curve.
+pub const SPACING_COUNT: u32 = 0;
+/// One every `spacing` units of arc length.
+pub const SPACING_DISTANCE: u32 = 1;
+/// One at each control point, ignoring both numbers.
+pub const SPACING_KNOTS: u32 = 2;
+
+/// What the Inspector offers for `mode`.
+pub static SPACING_CHOICES: &[crate::reflect::FieldChoice] = &[
+    crate::reflect::FieldChoice {
+        label: "Count",
+        value: SPACING_COUNT as i64,
+    },
+    crate::reflect::FieldChoice {
+        label: "Distance",
+        value: SPACING_DISTANCE as i64,
+    },
+    crate::reflect::FieldChoice {
+        label: "At knots",
+        value: SPACING_KNOTS as i64,
+    },
+];
+
+/// Lower bound on `spacing`, so a zero never divides a curve into infinite instances.
+const MIN_SPACING: f32 = 0.01;
+
+/// Ceiling on one run, so a spacing typed as `0.001` cannot hang the editor before the author
+/// finishes typing the rest of the number.
+const MAX_INSTANCES: usize = 4096;
+
+/// What to lay along the [`Spline`](super::Spline) on the same entity, and how often.
+#[derive(Debug, Clone, Default, crate::Reflect)]
+pub struct SplinePlacement {
+    /// The prefab stamped at each step. Nothing is placed until this names one.
+    #[reflect(asset = "kooch_ecs::scene::document::SceneDocument")]
+    pub prefab: Option<Guid>,
+    #[reflect(choices = SPACING_CHOICES)]
+    pub mode: u32,
+    /// How many, when `mode` is `Count`.
+    pub count: u32,
+    /// Units of arc length between instances, when `mode` is `Distance`.
+    pub spacing: f32,
+    /// Turn each instance to the curve's tangent, with the knots' roll in its up.
+    pub align: bool,
+    /// Moved from the curve, in the instance's own axes once aligned — so a lamp sits beside the
+    /// path rather than on it, and keeps doing so around a corner.
+    pub offset: Vec3,
+}
+
+impl Component for SplinePlacement {}
+
+/// An entity laid down by a placement, so the next rebuild knows what to take away.
+///
+/// ⚠️ Holds an `Entity`, which a scene file cannot carry across a reload (#712). Harmless here
+/// precisely because this is never written to one.
+#[derive(Debug, Clone, Default, crate::Reflect)]
+pub struct Placed {
+    pub source: Entity,
+}
+
+impl Component for Placed {}
+
+/// One run, and the description it was built from.
+struct Run {
+    revision: u64,
+    placed: Vec<Entity>,
+}
+
+/// What each placement has already laid down.
+///
+/// A `HashMap` keyed by the source entity: this is CPU-only bookkeeping that runs when an author
+/// edits, not a per-frame walk, so the rule against maps in hot paths does not reach it.
+#[derive(Default)]
+pub struct PlacedRuns {
+    runs: HashMap<Entity, Run>,
+}
+
+/// Rebuilds every placement whose description changed.
+pub fn place_along_splines(resources: &mut Resources) {
+    let wanted = gather(resources);
+
+    // 🔴 A run whose placement is gone has to go with it. The spline may have been deleted, the
+    // component removed, or the whole scene replaced — in every case the instances are still
+    // standing there with nothing describing them, and nothing else will ever come back for them.
+    let orphans: Vec<Entity> = match resources.get::<PlacedRuns>() {
+        Some(runs) => runs
+            .runs
+            .keys()
+            .copied()
+            .filter(|source| !wanted.iter().any(|(entity, ..)| entity == source))
+            .collect(),
+        None => Vec::new(),
+    };
+    for source in orphans {
+        clear_run(resources, source);
+    }
+
+    for (source, revision, prefab) in wanted {
+        let built = resources
+            .get::<PlacedRuns>()
+            .and_then(|runs| runs.runs.get(&source))
+            .map(|run| run.revision);
+        if built == Some(revision) {
+            continue;
+        }
+        let poses = poses_of(resources, source);
+        clear_run(resources, source);
+        let mut placed = Vec::with_capacity(poses.len());
+        for pose in poses {
+            if let Some(entity) = stamp(resources, prefab, source, pose) {
+                placed.push(entity);
+            }
+        }
+        if let Some(runs) = resources.get_mut::<PlacedRuns>() {
+            runs.runs.insert(source, Run { revision, placed });
+        } else {
+            let mut runs = PlacedRuns::default();
+            runs.runs.insert(source, Run { revision, placed });
+            resources.insert(runs);
+        }
+    }
+}
+
+/// Every placement that has a curve to lay along, and what it is currently asking for.
+///
+/// ⚠️ Deliberately does NOT compute the poses. This runs every frame and almost every frame the
+/// answer is "nothing changed" — laying out a curve to find that out is work thrown away.
+fn gather(resources: &Resources) -> Vec<(Entity, u64, Guid)> {
+    let query = Query::<(&super::Spline, &SplinePlacement)>::new(resources);
+    let mut out = Vec::new();
+    query.for_each_entity(|entity, (spline, placement)| {
+        let Some(prefab) = placement.prefab else {
+            return;
+        };
+        out.push((entity, revision(spline, placement), prefab));
+    });
+    out
+}
+
+/// The poses one placement asks for, read when its revision says it changed.
+fn poses_of(resources: &Resources, source: Entity) -> Vec<Transform> {
+    let query = Query::<(&super::Spline, &SplinePlacement)>::new(resources);
+    let mut out = Vec::new();
+    query.for_each_entity(|entity, (spline, placement)| {
+        if entity == source {
+            out = poses(spline, placement);
+        }
+    });
+    out
+}
+
+/// Where each instance goes, in the spline entity's own space.
+fn poses(spline: &super::Spline, placement: &SplinePlacement) -> Vec<Transform> {
+    let points = &spline.points;
+    if points.len() < 2 {
+        return Vec::new();
+    }
+    let total = super::arc::length(points, spline.closed);
+
+    let distances: Vec<f32> = match placement.mode {
+        SPACING_KNOTS => knot_distances(points, spline.closed),
+        SPACING_DISTANCE => {
+            let step = placement.spacing.max(MIN_SPACING);
+            // `!(total > 0.0)` rather than `<= 0.0`: a NaN length must take this branch, and every
+            // comparison against NaN is false.
+            if !(total > 0.0) {
+                return Vec::new();
+            }
+            let many = ((total / step).floor() as usize + 1).min(MAX_INSTANCES);
+            (0..many).map(|i| i as f32 * step).collect()
+        }
+        _ => {
+            let many = (placement.count as usize).min(MAX_INSTANCES);
+            match many {
+                0 => Vec::new(),
+                1 => vec![0.0],
+                // A closed curve's last instance would land on its first, so the step divides by
+                // the count rather than by the gaps between them.
+                _ => {
+                    let gaps = match spline.closed {
+                        true => many,
+                        false => many - 1,
+                    };
+                    (0..many).map(|i| total * i as f32 / gaps as f32).collect()
+                }
+            }
+        }
+    };
+
+    distances
+        .into_iter()
+        .map(|distance| pose_at(spline, placement, distance))
+        .collect()
+}
+
+/// The arc length each control point sits at.
+fn knot_distances(points: &[Knot], closed: bool) -> Vec<f32> {
+    let walked = super::arc::walked(points, closed);
+    if walked.is_empty() {
+        return Vec::new();
+    }
+    let per_segment = super::arc::STEPS_PER_SEGMENT as usize;
+    walked
+        .iter()
+        .copied()
+        .step_by(per_segment)
+        .take(MAX_INSTANCES)
+        .collect()
+}
+
+/// One instance's local pose.
+fn pose_at(spline: &super::Spline, placement: &SplinePlacement, distance: f32) -> Transform {
+    let points = &spline.points;
+    let t = super::arc::parameter_at(points, spline.closed, distance);
+    let position = super::eval::at(points, spline.closed, t);
+
+    let rotation = match placement.align {
+        true => {
+            let forward = super::eval::tangent(points, spline.closed, t).normalize_or(Vec3::Z);
+            let up = super::eval::up(points, spline.closed, t).normalize_or(Vec3::Y);
+            look_along(forward, up)
+        }
+        false => Quat::IDENTITY,
+    };
+
+    Transform {
+        // In the instance's own axes, so an offset holds its side of the path around a corner
+        // instead of swinging across it.
+        position: position + rotation * placement.offset,
+        rotation,
+        scale: Vec3::ONE,
+    }
+}
+
+/// A rotation whose -Z looks along `forward`, the engine's convention for facing.
+fn look_along(forward: Vec3, up: Vec3) -> Quat {
+    let right = forward.cross(up);
+    // Parallel forward and up leave no right to build a basis from; the curve's own up is the one
+    // thing guaranteed not to be parallel to its tangent, so this only fires on a degenerate frame.
+    if !(right.length_squared() > 1e-12) {
+        return Quat::IDENTITY;
+    }
+    let right = right.normalize();
+    let up = right.cross(forward).normalize();
+    Quat::from_mat3(&glam::Mat3::from_cols(right, up, -forward))
+}
+
+/// What the run was built from, as one number.
+///
+/// 🔴 This is the whole mechanism that keeps a pickup picked up. It covers the curve and the
+/// numbers and nothing else: despawning an instance does not change it, so the run is not rebuilt.
+fn revision(spline: &super::Spline, placement: &SplinePlacement) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    spline.closed.hash(&mut hasher);
+    for knot in &spline.points {
+        for value in [knot.position.x, knot.position.y, knot.position.z, knot.roll] {
+            value.to_bits().hash(&mut hasher);
+        }
+        knot.mode.hash(&mut hasher);
+    }
+    placement.prefab.hash(&mut hasher);
+    placement.mode.hash(&mut hasher);
+    placement.count.hash(&mut hasher);
+    placement.spacing.to_bits().hash(&mut hasher);
+    placement.align.hash(&mut hasher);
+    for value in [placement.offset.x, placement.offset.y, placement.offset.z] {
+        value.to_bits().hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Takes away what a placement laid down last time.
+fn clear_run(resources: &mut Resources, source: Entity) {
+    let Some(run) = resources
+        .get_mut::<PlacedRuns>()
+        .and_then(|runs| runs.runs.remove(&source))
+    else {
+        return;
+    };
+    // The whole subtree, through the one despawn that knows every store an entity is in — a
+    // second removal path is a second chance to leave a dangling row behind.
+    let doomed: Vec<Entity> = match resources.get::<ComponentRegistry>() {
+        Some(registry) => run
+            .placed
+            .iter()
+            .flat_map(|entity| crate::hierarchy::collect_descendants(*entity, registry))
+            .collect(),
+        None => run.placed,
+    };
+    crate::scene::sync::despawn_entities(resources, &doomed);
+}
+
+/// Stamps one instance and marks it as this placement's.
+fn stamp(
+    resources: &mut Resources,
+    prefab: Guid,
+    source: Entity,
+    pose: Transform,
+) -> Option<Entity> {
+    let (root, _) = crate::scene::spawn_prefab_members(prefab, resources).ok()?;
+    // Parented to the curve, so the whole run moves with the entity that describes it and the
+    // pose above stays in the space it was computed in.
+    crate::hierarchy::reparent(resources, root, Some(source));
+
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+        && let Some(storage) = registry.get_cpu_mut::<Transform>()
+        && let Some(held) = storage.get_mut(root)
+    {
+        *held = pose;
+    }
+    mark(resources, root, source);
+    Some(root)
+}
+
+/// Adds the [`Placed`] marker, registering its storage on first use.
+fn mark(resources: &mut Resources, entity: Entity, source: Entity) {
+    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
+        return;
+    };
+    registry.register_cpu_reflected::<Placed>();
+    if let Some(storage) = registry.get_cpu_mut::<Placed>() {
+        storage.insert(entity, Placed { source });
+    }
+}
+
+#[cfg(test)]
+mod tests;
