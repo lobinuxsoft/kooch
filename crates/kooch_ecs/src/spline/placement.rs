@@ -325,7 +325,21 @@ fn revision(spline: &super::Spline, placement: &SplinePlacement) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     spline.closed.hash(&mut hasher);
     for knot in &spline.points {
-        for value in [knot.position.x, knot.position.y, knot.position.z, knot.roll] {
+        // Every field that can bend the curve, including the authored tangents. They are ignored
+        // while a knot is `Auto` — `eval` derives both — but a run must follow an `Aligned` or
+        // `Broken` knot whose grips were dragged.
+        for value in [
+            knot.position.x,
+            knot.position.y,
+            knot.position.z,
+            knot.roll,
+            knot.arriving.x,
+            knot.arriving.y,
+            knot.arriving.z,
+            knot.leaving.x,
+            knot.leaving.y,
+            knot.leaving.z,
+        ] {
             value.to_bits().hash(&mut hasher);
         }
         knot.mode.hash(&mut hasher);

@@ -54,3 +54,34 @@ fn a_zero_spacing_is_bounded() {
     placement.spacing = 0.0;
     assert!(poses(&straight(10.0), &placement).len() <= MAX_INSTANCES);
 }
+
+/// Which half is broken: does a roll reach the pose at all?
+#[test]
+fn a_roll_turns_the_instances() {
+    let mut placement = placing(SPACING_COUNT);
+    placement.align = true;
+
+    let flat = straight(10.0);
+    let mut banked = straight(10.0);
+    for knot in &mut banked.points {
+        knot.roll = 45.0;
+    }
+
+    let a = poses(&flat, &placement);
+    let b = poses(&banked, &placement);
+    assert_ne!(a[2].rotation, b[2].rotation, "roll never reached the pose");
+    assert_ne!(revision(&flat, &placement), revision(&banked, &placement));
+}
+
+/// A dragged tangent grip bends the curve, so the run has to follow it.
+#[test]
+fn a_broken_tangent_changes_it() {
+    let placement = placing(SPACING_COUNT);
+    let mut bent = straight(10.0);
+    bent.points[0].mode = crate::spline::TANGENT_BROKEN;
+    bent.points[0].leaving = Vec3::new(0.0, 4.0, 0.0);
+    assert_ne!(
+        revision(&straight(10.0), &placement),
+        revision(&bent, &placement)
+    );
+}
