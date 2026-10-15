@@ -190,3 +190,15 @@ fn refreshing_a_world_with_no_instances_is_a_noop() {
     resources.insert(crate::query::AccessTracker::new());
     refresh_all(&mut resources);
 }
+
+/// 🔴 Taking `Placed` off a copy un-ephemerals it, and every rule that kept a run out of the scene
+/// file and off the wire stops holding at once (#1478). It holds the copy inside its run; it does
+/// not describe it, so a prefab that lacks it is not a prefab that dropped it.
+#[test]
+fn placed_counts_as_bookkeeping() {
+    assert!(is_bookkeeping("kooch_ecs::spline::placement::Placed"));
+    // The real call passes a full path, and the matcher works on the last segment.
+    assert!(is_bookkeeping("Placed"));
+    // Something the prefab genuinely dropped still goes.
+    assert!(!is_bookkeeping("test::Health"));
+}

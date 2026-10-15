@@ -231,7 +231,9 @@ own world, so a project that shipped its copies would lay a second run in the ed
 one already there — twice the crates, none of them wrong.
 
 Each copy is a real **prefab instance**, linked to what it came from, so it reads in the World
-panel as what it is.
+panel as what it is. Editing the prefab does **not** propagate into them, though: a copy is
+regenerated from the curve rather than edited, so the next rebuild would overwrite anything written
+into it. Change the prefab and the run picks it up the next time it is laid.
 
 The copies are **not rows in the World tree** — a run of four thousand would bury the scene. The
 curve's entity says how many it laid instead, as a line under it reading *"12 generated — not
