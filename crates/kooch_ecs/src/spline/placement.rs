@@ -104,6 +104,9 @@ struct Run {
 #[derive(Default)]
 pub struct PlacedRuns {
     runs: HashMap<Entity, Run>,
+    /// Sources already reported as unable to lay their prefab, so the per-frame retry does not
+    /// become a per-frame log.
+    failed: std::collections::HashSet<Entity>,
 }
 
 /// Rebuilds every placement whose description changed.
@@ -126,34 +129,70 @@ pub fn place_along_splines(resources: &mut Resources) {
         clear_run(resources, source);
     }
 
-    for (source, revision, prefab) in wanted {
-        let standing = resources
-            .get::<PlacedRuns>()
-            .and_then(|runs| runs.runs.get(&source))
-            .map(|run| (run.revision, run.prefab, run.placed.len()));
-        if standing.is_some_and(|(built, ..)| built == revision) {
-            continue;
-        }
-        let poses = poses_of(resources, source);
+    // What actually changed, decided before any curve is laid out. 🔴 One pass for all of them
+    // afterwards: asking per placement walked the whole query each time, which is quadratic in the
+    // number of curves in the scene — and a scene load changes every one of them at once, which is
+    // exactly when the quadratic bites.
+    let changing: Vec<(Entity, u64, Guid, Option<(u64, Guid, usize)>)> = wanted
+        .into_iter()
+        .filter_map(|(source, revision, prefab)| {
+            let standing = resources
+                .get::<PlacedRuns>()
+                .and_then(|runs| runs.runs.get(&source))
+                .map(|run| (run.revision, run.prefab, run.placed.len()));
+            match standing.is_some_and(|(built, ..)| built == revision) {
+                true => None,
+                false => Some((source, revision, prefab, standing)),
+            }
+        })
+        .collect();
+    if changing.is_empty() {
+        return;
+    }
+    let mut laid_out = poses_for(
+        resources,
+        &changing.iter().map(|(e, ..)| *e).collect::<Vec<_>>(),
+    );
+
+    for (source, revision, prefab, standing) in changing {
+        let poses = laid_out.remove(&source).unwrap_or_default();
 
         // 🔴 The same run, moved. Despawning and respawning on every edit burns an entity
         // generation per instance per keystroke, and dragging a knot is a hundred edits (#1467,
         // and #1300 is the same climb from the other direction).
+        let wanted_count = poses.len();
         let placed = match standing {
-            Some((_, was, many)) if was == prefab && many == poses.len() => {
+            Some((_, was, many)) if was == prefab && many == wanted_count => {
                 move_run(resources, source, &poses)
             }
             _ => {
                 clear_run(resources, source);
-                let mut placed = Vec::with_capacity(poses.len());
+                let mut placed = Vec::with_capacity(wanted_count);
                 for pose in poses {
-                    if let Some(entity) = stamp(resources, prefab, source, pose) {
-                        placed.push(entity);
+                    match stamp(resources, prefab, source, pose) {
+                        Ok(entity) => placed.push(entity),
+                        Err(detail) => {
+                            report_failure(resources, source, prefab, &detail);
+                            break;
+                        }
                     }
                 }
                 placed
             }
         };
+
+        // 🔴 A run that could not place everything is NOT a built run (#1481). Recording the
+        // revision here is what made the failure permanent: the curve has not changed, so the
+        // guard above skips it forever and the author has no reason to suspect anything.
+        //
+        // A prefab resolves on demand, and the first `Update` after a scene load is exactly when
+        // it may not have arrived yet. Leaving the run unrecorded costs one retry per frame until
+        // it does, and buys a placement that works on the frame its asset lands.
+        if placed.len() != wanted_count {
+            clear_run(resources, source);
+            continue;
+        }
+        forget_failure(resources, source);
 
         let run = Run {
             revision,
@@ -207,13 +246,17 @@ fn gather(resources: &Resources) -> Vec<(Entity, u64, Guid)> {
     out
 }
 
-/// The poses one placement asks for, read when its revision says it changed.
-fn poses_of(resources: &Resources, source: Entity) -> Vec<Transform> {
+/// The poses every placement in `sources` asks for, in one walk.
+///
+/// 🔴 One walk for all of them, not one walk each. Laying out a curve is the expensive half of
+/// this module — `eval::up` transports a frame from the start of the curve for every instance —
+/// so it happens only for the sources whose revision actually moved.
+fn poses_for(resources: &Resources, sources: &[Entity]) -> HashMap<Entity, Vec<Transform>> {
     let query = Query::<(&super::Spline, &SplinePlacement)>::new(resources);
-    let mut out = Vec::new();
+    let mut out = HashMap::with_capacity(sources.len());
     query.for_each_entity(|entity, (spline, placement)| {
-        if entity == source {
-            out = poses(spline, placement);
+        if sources.contains(&entity) {
+            out.insert(entity, poses(spline, placement));
         }
     });
     out
@@ -352,10 +395,12 @@ fn revision(spline: &super::Spline, placement: &SplinePlacement) -> u64 {
 
 /// Takes away what a placement laid down last time.
 fn clear_run(resources: &mut Resources, source: Entity) {
-    let Some(run) = resources
-        .get_mut::<PlacedRuns>()
-        .and_then(|runs| runs.runs.remove(&source))
-    else {
+    let Some(run) = resources.get_mut::<PlacedRuns>().and_then(|runs| {
+        // Dropped together: a source whose run is gone is a source nothing will report about, and
+        // a set that only ever grows is a leak however small each entry is.
+        runs.failed.remove(&source);
+        runs.runs.remove(&source)
+    }) else {
         return;
     };
     // The whole subtree, through the one despawn that knows every store an entity is in — a
@@ -371,14 +416,19 @@ fn clear_run(resources: &mut Resources, source: Entity) {
     crate::scene::sync::despawn_entities(resources, &doomed);
 }
 
-/// Stamps one instance and marks it as this placement's.
+/// Stamps one instance and marks it as this placement's. `Err` carries why, for the caller to
+/// report once rather than per frame.
+///
+/// 🔴 Never `.ok()?`. Swallowing `PrefabUnavailable` here is what let a placement lay nothing and
+/// say nothing (#1481) — the one failure an author cannot see from the outside.
 fn stamp(
     resources: &mut Resources,
     prefab: Guid,
     source: Entity,
     pose: Transform,
-) -> Option<Entity> {
-    let (root, members) = crate::scene::spawn_prefab_members(prefab, resources).ok()?;
+) -> Result<Entity, String> {
+    let (root, members) =
+        crate::scene::spawn_prefab_members(prefab, resources).map_err(|error| error.to_string())?;
     // 🔴 Spawning builds the entities; attaching is what makes them an INSTANCE of the prefab.
     // Without it a run of prefabs reads as a run of loose copies, with no link back to what they
     // came from (#1467).
@@ -400,7 +450,38 @@ fn stamp(
     for member in members {
         mark(resources, member, source);
     }
-    Some(root)
+    Ok(root)
+}
+
+/// Says why a run could not be laid — once per source, not once per frame.
+///
+/// The retry above runs every frame until the prefab arrives, so an unguarded log would be a
+/// console full of the same line, which is the same as no log at all.
+fn report_failure(resources: &mut Resources, source: Entity, prefab: Guid, detail: &str) {
+    let Some(runs) = resources.get_mut::<PlacedRuns>() else {
+        return;
+    };
+    if !runs.failed.insert(source) {
+        return;
+    }
+    tracing::warn!(
+        target: "kooch_ecs::spline",
+        %prefab,
+        detail,
+        "a placement could not lay its prefab; retrying every frame until it loads",
+    );
+}
+
+/// Clears the reported mark once a run succeeds, so a later failure is heard again.
+fn forget_failure(resources: &mut Resources, source: Entity) {
+    if let Some(runs) = resources.get_mut::<PlacedRuns>()
+        && runs.failed.remove(&source)
+    {
+        tracing::info!(
+            target: "kooch_ecs::spline",
+            "a placement that could not find its prefab has laid its run",
+        );
+    }
 }
 
 /// Adds the [`Placed`] marker, registering its storage on first use.

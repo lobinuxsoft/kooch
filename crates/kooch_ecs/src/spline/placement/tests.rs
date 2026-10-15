@@ -84,3 +84,60 @@ fn a_broken_tangent_changes_it() {
         revision(&bent, &placement)
     );
 }
+
+/// 🔴 The failure that made the feature look broken (#1481): a prefab that has not loaded yet made
+/// `stamp` fail, and recording the revision anyway marked the run as built. The curve never
+/// changed again, so it was never retried — one unlucky frame at scene load was permanent.
+#[test]
+fn an_unplaced_run_is_retried() {
+    use crate::component::ComponentRegistry;
+    use crate::entity::Entity;
+    use kooch_core::resource::Resources;
+
+    let mut resources = Resources::new();
+    resources.insert(crate::allocator::EntityAllocator::new());
+    resources.insert(ComponentRegistry::new());
+    resources.insert(crate::archetype_registry::ArchetypeRegistry::new());
+    resources.insert(crate::AccessTracker::new());
+    resources.insert(crate::commands::Commands::new());
+
+    let entity = resources
+        .get_mut::<crate::allocator::EntityAllocator>()
+        .map(|a| a.spawn())
+        .unwrap_or(Entity::new(0, 0));
+
+    // A curve with a prefab nothing can resolve — the shape of a scene whose asset is still in
+    // flight when the first Update runs.
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.register_cpu_reflected::<Spline>();
+        registry.register_cpu_reflected::<SplinePlacement>();
+        if let Some(storage) = registry.get_cpu_mut::<Spline>() {
+            storage.insert(entity, straight(10.0));
+        }
+        if let Some(storage) = registry.get_cpu_mut::<SplinePlacement>() {
+            storage.insert(entity, placing(SPACING_COUNT));
+        }
+    }
+    // 🔴 The archetype too. A component written only into its own storage is invisible to a
+    // `Query`, and a test whose world the system cannot see passes whatever the code does.
+    if let Some(archetypes) = resources.get_mut::<crate::archetype_registry::ArchetypeRegistry>() {
+        let mut id = archetypes.get_or_create(std::collections::BTreeSet::new());
+        for type_id in [
+            std::any::TypeId::of::<Spline>(),
+            std::any::TypeId::of::<SplinePlacement>(),
+        ] {
+            id = archetypes.archetype_after_add_dynamic(id, type_id);
+        }
+        archetypes.register_entity(entity, id);
+    }
+
+    place_along_splines(&mut resources);
+
+    let built = resources
+        .get::<PlacedRuns>()
+        .is_some_and(|runs| runs.runs.contains_key(&entity));
+    assert!(
+        !built,
+        "a run that placed nothing was recorded as built, so it will never be retried"
+    );
+}
