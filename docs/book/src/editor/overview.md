@@ -185,6 +185,13 @@ a command that sometimes appends and sometimes inserts is one nobody can predict
 list is still the precise path — reorder, remove, edit a tangent — and both emit the *same* single
 write, so undo describes either one the same way.
 
+**One knot is one undo step.** Dragging a knot is also one step, not one per frame — a run of
+edits closes when the gesture does, whether it ended with a mouse release or was a keypress that
+never had one.
+
+With a knot selected, **F** frames the knot rather than the whole curve, the same way it frames a
+block's selected faces.
+
 ### Undo follows the document, not the panel
 
 **Ctrl+Z undoes an edit to the thing you are looking at.** The editor holds several documents

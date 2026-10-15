@@ -380,7 +380,12 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     stages.present_ms = crate::perf::ms_since(present_start);
 
     // Read before the overlay goes back, applied after this frame's edits; see `seal_histories`.
-    let ended = taken.overlay.ctx.input(|i| i.pointer.any_released());
+    //
+    // 🔴 A keyboard command closes a run too. The seal was written for drags — press, move,
+    // release — and a key never releases a pointer, so every `A` merged into the `A` before it
+    // and one Ctrl+Z took every knot added since the last click (#1464).
+    let ended = taken.overlay.ctx.input(|i| i.pointer.any_released())
+        || viewport_input.is_some_and(edits::is_discrete);
     taken.restore(resources);
 
     let actions_start = std::time::Instant::now();

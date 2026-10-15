@@ -15,6 +15,14 @@ pub(super) fn drives_camera(input: Option<ViewportInputDelta>) -> bool {
     })
 }
 
+/// Whether the delta carries a keyboard edit that completes in one frame.
+///
+/// Those have no run to continue, so the history closes after them. Sealing more often is always
+/// safe — it only ever prevents a merge, never forces one.
+pub(super) fn is_discrete(delta: ViewportInputDelta) -> bool {
+    delta.add_knot_pressed || delta.extrude_pressed
+}
+
 pub(super) fn apply_viewport_edits(
     resources: &mut Resources,
     overlay: &mut EditorOverlay,
