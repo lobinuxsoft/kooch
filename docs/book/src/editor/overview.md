@@ -234,6 +234,19 @@ one answer too many — during Play you would be watching the editor's, not the 
 pick up a collectible and it disappears on screen, because what is on screen is the world the
 project is running.
 
+Values keep up too. While playing, the editor asks for **what moved** rather than for the world —
+pulling the world was 38.9 ms of reflection on 2159 entities — so a component gameplay writes
+reaches the Inspector by one of two routes:
+
+- **The entity you have selected answers in full**, every component, with nothing to configure.
+  Reading one entity costs the same in a crowded scene as in an empty one, and it is the only part
+  of the world you can actually read while playing.
+- **A plugin declares a type** it writes during play, and that one is kept up to date on every
+  entity carrying it. Right for a handful of characters, wrong for four thousand crates — which is
+  why the selection route exists beside it rather than instead of it.
+
+A type nobody declares and nobody is looking at costs nothing.
+
 Each copy is a real **prefab instance**, linked to what it came from, so it reads in the World
 panel as what it is. Editing the prefab does **not** propagate into them, though: a copy is
 regenerated from the curve rather than edited, so the next rebuild would overwrite anything written

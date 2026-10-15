@@ -62,6 +62,25 @@ pub struct CharacterPlugin;
 impl Plugin for CharacterPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugin(CharacterComponentsPlugin);
+        // 🔴 Declared beside the systems that write them, not in the components plugin: this says
+        // what GAMEPLAY changes, and the editor loads the components without any of it (#1486).
+        //
+        // Cheap by nature — these ride on characters, of which a scene holds a handful, so the
+        // per-frame read is over a storage with as many rows as there are players and NPCs.
+        app.add_system(Stage::Startup, |resources: &mut Resources| {
+            if !resources.contains::<kooch_ecs::StreamedComponents>() {
+                resources.insert(kooch_ecs::StreamedComponents::new());
+            }
+            if let Some(streamed) = resources.get_mut::<kooch_ecs::StreamedComponents>() {
+                // What the solver found underfoot, and what #1486 was reported against.
+                streamed.add::<Grounded>();
+                streamed.add::<Touching>();
+                // Ability state the author watches to tell a bug from a tuning problem.
+                streamed.add::<Jump>();
+                streamed.add::<Sprint>();
+                streamed.add::<crate::landing::LandingImpulse>();
+            }
+        });
         // Beside the solver and before it steps, so the impulse is for this step — and after
         // `GravityPlugin`, or the spring fights last step's gravity.
         app.add_system(Stage::Physics, run_if_playing(hold_characters));

@@ -30,6 +30,10 @@ struct Inbox {
     running: AtomicBool,
     /// One-way: set at shutdown, never cleared.
     stop: AtomicBool,
+    /// The entities the author has open in the Inspector, for the project to answer about in full
+    /// (#1486). Written by the editor thread, read by the worker — a lock rather than a channel
+    /// because only the latest selection matters and an older one is worth dropping.
+    watching: Mutex<Vec<kooch_remote::protocol::EntityId>>,
 }
 
 /// A worker that keeps the transform delta fresh without the editor
@@ -47,6 +51,7 @@ impl MovedPump {
             room: Condvar::new(),
             running: AtomicBool::new(false),
             stop: AtomicBool::new(false),
+            watching: Mutex::new(Vec::new()),
         });
         let worker = Arc::clone(&inbox);
         std::thread::Builder::new()
@@ -54,6 +59,15 @@ impl MovedPump {
             .spawn(move || pull_loop(&client, &worker))
             .expect("the editor could not start its remote pull thread");
         Self { inbox }
+    }
+
+    /// Names the entities the author is reading, for the next pull to ask about in full.
+    pub fn set_watching(&self, watching: Vec<kooch_remote::protocol::EntityId>) {
+        if let Ok(mut held) = self.inbox.watching.lock()
+            && *held != watching
+        {
+            *held = watching;
+        }
     }
 
     /// Turns the pull on or off.
@@ -95,7 +109,14 @@ fn pull_loop(client: &RemoteClient, inbox: &Inbox) {
     // revision onto the next request without a frame of it going stale.
     let mut since = None;
     while wait_for_turn(inbox) {
-        let pulled = match client.list_moved_since(since) {
+        // Read per pull rather than held: the author's selection changes between them, and the
+        // point is to answer about what they are looking at NOW.
+        let watching = inbox
+            .watching
+            .lock()
+            .map(|held| held.clone())
+            .unwrap_or_default();
+        let pulled = match client.list_moved_watching(since, watching) {
             Ok(update) => {
                 since = Some(update.revision);
                 Pulled::Update(update)
