@@ -62,6 +62,19 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
         return false;
     };
 
+    // 🔴 A Play asked for while the world is still held waits for it (#1480). Sending it now
+    // starts a game that the carry's own `OpenScene` then replaces mid-frame — the author's entity
+    // stops existing and the session cannot be recovered. The carry releases it when the scenes
+    // have landed, so the author plays in their world rather than the project's on-disk one.
+    if matches!(edit, Edit::SetPlaying(true)) && crate::carry::CarriedWorld::pending(resources) {
+        crate::carry::CarriedWorld::play_when_ready(resources);
+        tracing::info!(
+            target: "kooch_editor_core::remote_edit",
+            "play waits for the world to come back across the rebuild",
+        );
+        return true;
+    }
+
     // Lifted out of Resources so the send can borrow the session and the
     // rest of the world at the same time, and record play state after.
     let Some(mut state) = resources.remove::<RemoteState>() else {
