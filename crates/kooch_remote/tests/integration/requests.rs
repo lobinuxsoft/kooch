@@ -330,3 +330,63 @@ fn entities_are_listed_in_authored_order() {
         vec!["First", "Second", "Third"],
     );
 }
+
+/// 🔴 The contract `Method::ListEntities` has always declared — "every non-ephemeral entity" — and
+/// did not keep (#1474). A spline placement's copies are regenerated on both sides, so shipping
+/// them laid a second run in the editor on top of the one it had already built itself.
+#[test]
+fn an_ephemeral_entity_is_withheld() {
+    let mut resources = ecs();
+    call(
+        &mut resources,
+        Method::Spawn {
+            name: Some("Kept".to_owned()),
+            scene: None,
+            parent: None,
+        },
+    );
+    let hidden = match call(
+        &mut resources,
+        Method::Spawn {
+            name: Some("Hidden".to_owned()),
+            scene: None,
+            parent: None,
+        },
+    ) {
+        ResponseData::Spawned { entity } => entity,
+        other => panic!("spawn: {other:?}"),
+    };
+
+    // The marker, in its storage AND in the archetype: ephemeral is decided per archetype, so one
+    // written only into its own column is one nothing that matters ever sees.
+    let entity = kooch_ecs::entity::Entity::from(hidden);
+    let mut ephemeral = kooch_ecs::EphemeralComponents::new();
+    ephemeral.insert(std::any::TypeId::of::<kooch_ecs::spline::placement::Placed>());
+    resources.insert(ephemeral);
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.register_cpu_reflected::<kooch_ecs::spline::placement::Placed>();
+        if let Some(storage) = registry.get_cpu_mut::<kooch_ecs::spline::placement::Placed>() {
+            storage.insert(entity, kooch_ecs::spline::placement::Placed::default());
+        }
+    }
+    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
+        && let Some(current) = archetypes.entity_archetype(entity)
+    {
+        let next = archetypes.archetype_after_add_dynamic(
+            current,
+            std::any::TypeId::of::<kooch_ecs::spline::placement::Placed>(),
+        );
+        archetypes.register_entity(entity, next);
+    }
+
+    let entities = match call(&mut resources, Method::ListEntities { since: None }) {
+        ResponseData::Entities { entities, .. } => entities,
+        other => panic!("list: {other:?}"),
+    };
+    let listed: Vec<String> = entities
+        .iter()
+        .map(|e| e.name.clone().unwrap_or_default())
+        .collect();
+    assert!(listed.contains(&"Kept".to_owned()), "listed: {listed:?}");
+    assert!(!listed.contains(&"Hidden".to_owned()), "listed: {listed:?}");
+}

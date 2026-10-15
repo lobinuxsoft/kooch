@@ -56,5 +56,41 @@ impl EphemeralComponents {
     }
 }
 
+/// Every entity whose archetype carries an ephemeral marker, sorted by index.
+///
+/// 🔴 Walks the ARCHETYPES, not the entities: whether something is ephemeral is decided per
+/// archetype, so this is one test per block instead of one per entity. Sorted so a caller filtering
+/// a long column can binary-search it rather than ask the registry entity by entity — the remote's
+/// moved-transform path walks every `Transform` there is, and that is the one it must not slow.
+///
+/// Empty when nothing is registered, which is the common case and costs one lookup.
+pub fn entities(resources: &kooch_core::resource::Resources) -> Vec<crate::entity::Entity> {
+    let Some(ephemeral) = resources.get::<EphemeralComponents>() else {
+        return Vec::new();
+    };
+    if ephemeral.types().is_empty() {
+        return Vec::new();
+    }
+    let Some(archetypes) = resources.get::<crate::archetype_registry::ArchetypeRegistry>() else {
+        return Vec::new();
+    };
+    let mut out: Vec<crate::entity::Entity> = archetypes
+        .iter_matching(&[])
+        .filter(|archetype| ephemeral.intersects(archetype.components()))
+        .flat_map(|archetype| archetype.entities().iter().copied())
+        .collect();
+    out.sort_unstable_by_key(|entity| (entity.index(), entity.generation()));
+    out
+}
+
+/// Whether `entity` is in a sorted list from [`entities`].
+pub fn listed(sorted: &[crate::entity::Entity], entity: crate::entity::Entity) -> bool {
+    sorted
+        .binary_search_by_key(&(entity.index(), entity.generation()), |held| {
+            (held.index(), held.generation())
+        })
+        .is_ok()
+}
+
 #[cfg(test)]
 mod tests;
