@@ -215,8 +215,10 @@ block's selected faces.
 
 Add a **Spline Placement** beside a `Spline` and name a prefab, and the curve fills with copies —
 a fixed **Count** spread evenly, one every so many units of **Distance**, or one **At knots**.
-`Align` turns each to the curve's tangent, with the knots' roll in its up, and `Offset` moves it in
-its own axes so a lamp holds its side of the path around a corner.
+Each copy is **turned to the curve's tangent**, with the knots' roll in its up — always, with
+nothing to switch on. A knot's `roll` is one number measured about that tangent, so a placement that
+ignored the curve's frame would silently throw the roll away. `Offset` moves each copy in its own
+axes, so a lamp holds its side of the path around a corner.
 
 🔴 **The copies are not saved.** They are marked ephemeral, which keeps them out of the scene file
 and out of the sweep that adopts loose entities into the scene being worked in: the curve is the

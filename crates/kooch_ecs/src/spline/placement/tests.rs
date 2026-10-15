@@ -14,7 +14,6 @@ fn placing(mode: u32) -> SplinePlacement {
         mode,
         count: 5,
         spacing: 2.0,
-        align: false,
         offset: Vec3::ZERO,
     }
 }
@@ -55,11 +54,11 @@ fn a_zero_spacing_is_bounded() {
     assert!(poses(&straight(10.0), &placement).len() <= MAX_INSTANCES);
 }
 
-/// Which half is broken: does a roll reach the pose at all?
+/// 🔴 With nothing configured: the curve's frame is not optional, so banking a knot has to turn
+/// the run on its own (#1472).
 #[test]
 fn a_roll_turns_the_instances() {
-    let mut placement = placing(SPACING_COUNT);
-    placement.align = true;
+    let placement = placing(SPACING_COUNT);
 
     let flat = straight(10.0);
     let mut banked = straight(10.0);
