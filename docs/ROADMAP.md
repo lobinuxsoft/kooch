@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-10-08 — 🎯 **The spline exists, and four ordering bugs taught more than the feature did.** #1261 shipped the curve nothing in this engine had — Hermite evaluation, three tangent modes, arc length, nearest point, and a frame built by **parallel transport (Wang's double reflection), never Frenet**, because the Frenet normal inverts through an inflection and that up is which way is DOWN for #1429. Five features were waiting on it. The dependency rule ran first and settled it: `bevy_math` needs `glam ^0.32` against this workspace's 0.33, so two incompatible `Vec3` types, and none of `bevy_math`, `splines`, `stroke` or `kurbo` (2D) has arc-length, nearest-point and a rotation-minimising frame — study the source, write it here. Then #1433, after the owner found handles unusable at distance: everything was sized in world units, falling off as `1/distance`, so a 5 cm grip is sub-pixel at 50 m and fills the view at 50 cm. And #1441, a selected knot taking the transform gizmo for axis and plane constraints. 🔴 **But the lesson is the four bugs, which were one bug wearing four coats: two systems reading one piece of state, where only one of them knows what it means.** The placement hook sat in the sink that does not run with a project connected — `apply_actions` has two and the remote one `return`s — and I put it there TWICE. The pick threshold was scaled in three pickers and not the fourth. The plane handle drew with the scaled extent and picked against the raw one. A click on a gizmo axis was consumed by `spline_handles`, which runs first and cannot tell it from clicking empty space. **Not one was visible from a unit test**, because every function was correct in isolation — my tests stayed green through all four while the feature was broken, which is the signature and which I ignored four times. What finds them is reading the call order, and I reached for it after the smoke test every time. Also: `filled_arrow` panicked on any arrow under 12.5 cm (`clamp` with min above max), latent since it was written and fatal the moment screen-scaled arrows got short enough — it took the whole editor down.
+Last updated 2026-10-15 — 🎯 **The spline places entities, and the editor stopped lying about what the game is doing.** #1428's placement went from "looks right in the editor, empty in the game" to working, through five faults that were one question wearing five coats: **which of the two worlds is the truth?** The editor adds `EcsPlugin` and runs its own schedule, so it derived its own run beside the project's. I removed the duplicate by hiding **the project's** — exactly backwards — and the owner set the rule that settles it: *Play shows the game, with no exceptions for being the editor*. That is now `Mirrored` in `kooch_core`, beside `Playing`: a world that is a mirror does not simulate. Under it: `stamp` swallowed `PrefabUnavailable` with `.ok()?` and the run was recorded as built having built nothing, so one unlucky frame at scene load was permanent and silent; prefab propagation stripped `Placed` off every copy because `is_bookkeeping` did not list it, which un-ephemeraled twelve entities mid-load; `carry::resume` replayed a held world onto a game already running. 🔴 **And the lesson that cost the most is about tests, not about splines: three of mine passed with the fix removed.** Once because the test entity was never registered in an archetype so the `Query` could not see it, once because another fix already cleared the case, once because an empty list made the function return empty whatever the guard did. A test that goes green the first time it is run has not been verified — it has been written. Every fix here was confirmed red without its guard before it shipped.
 
 ---
 
@@ -206,6 +206,60 @@ what the engine did before any of this existed, for the reason
 `settings.rs:510` argues at length: a serde default is not a
 recommendation, it is what an old file silently becomes. A project that
 wants these values sets them.
+
+---
+
+## 🎯 2026-10-15 — the placement works, and Play stopped showing the editor's guess
+
+### What shipped
+
+- **#1469** — a handle set fits what it is editing. `AxisMask` per mode: a selection declares which axes mean anything to it, and a mode nothing accepts is greyed out rather than drawing three rings that turn nothing. Rotate on a knot is **re-aimed**, not dropped — one ring about the curve's tangent, driving `roll`, because `roll` is one number measured about that axis.
+- **#1472** — a placement always aligns. The `align` field is **gone**, not re-defaulted: a run laid along a curve follows it, and "along the curve but ignoring its direction" is not a mode worth a branch, a checkbox and a hash input. It had defaulted to `false`, which threw the curve's whole frame away — and a knot's `roll` lives only in that frame, so banking a curve rebuilt the run and moved nothing.
+- **#1481** — a placement retries until its prefab loads. The one that made the feature look broken.
+- **#1478** — propagation leaves a placement's copies alone.
+- **#1482** — Play shows the game, not the editor's own copies.
+- **#1486** — the entity you are watching answers in full.
+- **#1474**, **#1475**, **#1480** — the snapshot, the World tree, the held world.
+
+### The question underneath all of it
+
+**Which of the two worlds is the truth?** The editor runs its own schedule; a connected project runs its own. Both ran `place_along_splines`. Every fault in this session is an answer to that question, right or wrong:
+
+| Fault | Which world won, and whether that was right |
+|---|---|
+| Two runs of crates in Play | Both. Nobody had decided. |
+| #1474's filter | The editor's — **wrong**, and it hid the game for a whole session |
+| #1482's `Mirrored` | The project's — right, and now written down |
+| #1486's streaming | The project's, per selected entity |
+
+🔴 **`Mirrored` is the generalisation**, in `kooch_core` beside `Playing`, because it is a fact about the *world* and not about the editor: `kooch_ecs` reads it without knowing what a remote session is.
+
+### Ephemeral means one thing, and it had quietly meant three
+
+`EphemeralComponents` was being read as "not written to a scene file", "not sent over the wire" and "not despawned on load", depending on who asked.
+
+- **Not written to a file** — the original meaning, and the right one.
+- **Not sent over the wire** — #1474's mistake. An editor that cannot see the project's entities cannot show the game.
+- **Not despawned** — what `EditorOnly` wants and `Placed` inherited by accident. Still true, still unwanted; noted, not fixed.
+
+### What streaming costs, and why there are two routes
+
+A declared type is read from **every entity carrying it, every frame**. Right for a dozen characters, wrong for four thousand crates — and the author can read one entity at a time anyway. So #1486 added the selection route: **the entity you have open answers in full**, declared or not, bounded by the selection rather than by the scene. Declaration stays for what is watched without being selected, and `CharacterPlugin` declares the five its systems write — beside the systems, because it describes what *gameplay* changes and the editor loads the components with none of it.
+
+⚠️ **Neither route is measured.** Both went into the Play path this session on reasoning alone. #1450 is the scene that would give the number.
+
+### Performance and leaks, found while fixing the above
+
+- `poses_of` walked the whole query to find **one** placement, inside the loop over placements — quadratic in the number of curves, worst exactly at scene load when every one of them changes at once. Now one walk for all the changed ones.
+- #1474 put a `Vec` allocation and a sort **per frame** inside `list_moved`, the method that exists to avoid 38.9 ms of work. Removed with the filter.
+- The reported-failure set is dropped alongside its run: a set that only grows is a leak however small each entry is.
+- **Noted, not fixed:** `WorldSnapshot::capture` stores a placement's copies in full though they are regenerable from the curve.
+
+### Next
+
+**#1447 — the curve operations everything else is built from.** Chosen over the mesh-deforming half the owner asked about first, because it holds the **per-point radius**, and that unblocks three things already written down: the taper on #1152's sweep, the knot's scale gizmo (#1469 left it waiting on exactly this field), and the tree generator — Blender's is a curve, not a separate system.
+
+#1446 (deform a mesh) is `priority:high` and **needs a decision before anyone writes code**: baked at authoring time, or deformed at runtime through #1180's vertex offset. Two features with one name and costs that are not comparable.
 
 ---
 
