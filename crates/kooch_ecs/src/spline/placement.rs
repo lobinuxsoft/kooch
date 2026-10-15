@@ -70,10 +70,8 @@ pub struct SplinePlacement {
     pub count: u32,
     /// Units of arc length between instances, when `mode` is `Distance`.
     pub spacing: f32,
-    /// Turn each instance to the curve's tangent, with the knots' roll in its up.
-    pub align: bool,
-    /// Moved from the curve, in the instance's own axes once aligned — so a lamp sits beside the
-    /// path rather than on it, and keeps doing so around a corner.
+    /// Moved from the curve, in the instance's own axes — so a lamp sits beside the path rather
+    /// than on it, and keeps doing so around a corner.
     pub offset: Vec3,
 }
 
@@ -286,14 +284,12 @@ fn pose_at(spline: &super::Spline, placement: &SplinePlacement, distance: f32) -
     let t = super::arc::parameter_at(points, spline.closed, distance);
     let position = super::eval::at(points, spline.closed, t);
 
-    let rotation = match placement.align {
-        true => {
-            let forward = super::eval::tangent(points, spline.closed, t).normalize_or(Vec3::Z);
-            let up = super::eval::up(points, spline.closed, t).normalize_or(Vec3::Y);
-            look_along(forward, up)
-        }
-        false => Quat::IDENTITY,
-    };
+    // 🔴 Always turned to the curve (#1472). The knots' `roll` lives only in this frame's up, so a
+    // placement that skipped it threw the roll away and said nothing — the feature's default path
+    // was the one that did not work.
+    let forward = super::eval::tangent(points, spline.closed, t).normalize_or(Vec3::Z);
+    let up = super::eval::up(points, spline.closed, t).normalize_or(Vec3::Y);
+    let rotation = look_along(forward, up);
 
     Transform {
         // In the instance's own axes, so an offset holds its side of the path around a corner
@@ -348,7 +344,6 @@ fn revision(spline: &super::Spline, placement: &SplinePlacement) -> u64 {
     placement.mode.hash(&mut hasher);
     placement.count.hash(&mut hasher);
     placement.spacing.to_bits().hash(&mut hasher);
-    placement.align.hash(&mut hasher);
     for value in [placement.offset.x, placement.offset.y, placement.offset.z] {
         value.to_bits().hash(&mut hasher);
     }
