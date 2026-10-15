@@ -1,5 +1,7 @@
 //! View panel — viewport image + handle-mode toolbar overlay.
 
+mod commands_overlay;
+
 use crate::editor_camera::EditorCameraController;
 use crate::editor_camera::input::{HandleModeRequest, ViewportInputDelta, collect_viewport_input};
 use crate::icons;
@@ -30,6 +32,7 @@ pub(crate) fn draw_view_content(
     camera_rotation: Option<glam::Quat>,
     element_mode: &mut crate::block_edit::ElementMode,
     editing_a_block: bool,
+    editing_a_spline: bool,
 ) {
     let available = ui.available_size();
     let pixels_per_point = ui.ctx().pixels_per_point();
@@ -272,6 +275,18 @@ pub(crate) fn draw_view_content(
     // snaps the camera to that view, keeping focus point and distance.
     if let Some(rotation) = camera_rotation {
         axis_gizmo(ui, panel_origin, available, rotation, &mut delta);
+    }
+
+    // What the viewport responds to right now. Last, so it draws over the image and under
+    // nothing — and after `delta`, which is what the list is describing.
+    if gizmo_visibility.commands {
+        commands_overlay::draw(
+            ui,
+            response.rect,
+            selection_has_transform,
+            editing_a_block,
+            editing_a_spline,
+        );
     }
 
     // The perf sidebar used to live here. It moved to the Game panel:

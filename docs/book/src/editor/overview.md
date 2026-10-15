@@ -87,6 +87,17 @@ field: Ctrl+C in the Console copies a log line, and in the Inspector it copies t
 command is also in the **Edit** menu and in the World panel's toolbar, with its chord written
 beside it — a greyed-out Paste means the clipboard is empty.
 
+### What the View responds to
+
+The bottom-left corner lists the commands the viewport answers right now, growing as the selection
+gains tools: a block adds its element modes and extrude, a spline adds its knot command. Switch it
+off under **Gizmos ▸ Commands**.
+
+🔴 The list is not a written-out copy of the bindings — it *is* the bindings. The code that acts
+on a key and the row that prints it read the same value, so a label announcing a key that no
+longer does that is not a thing that can happen. The pointer gestures are the exception: egui
+reports buttons through a response, not a key, so those five rows are described rather than bound.
+
 ### Moving things in the View
 
 | Chord | What it does |
@@ -162,6 +173,17 @@ hillside went through the hill.
 The pivot goes **on** the surface; the entity is not set down by its volume the way a dragged one
 is, because a freshly spawned entity's mesh is not resolved yet on every path. Ctrl+Shift-drag it
 afterwards and it rests properly.
+
+### Adding a knot where you are pointing
+
+With a spline selected, **A** puts a new knot at the end of the curve, under the cursor — on the
+geometry there, falling back to the ground plane and then to the camera's distance, the same rule a
+spawn and a prefab drop follow.
+
+It appends rather than inserting beside whatever is selected: a path is drawn by extending it, and
+a command that sometimes appends and sometimes inserts is one nobody can predict. The Inspector's
+list is still the precise path — reorder, remove, edit a tangent — and both emit the *same* single
+write, so undo describes either one the same way.
 
 ### Undo follows the document, not the panel
 

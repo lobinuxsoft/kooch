@@ -89,6 +89,7 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Whether the selection is a single block — the only case where
     /// face mode has anything to act on.
     pub(crate) editing_a_block: bool,
+    pub(crate) editing_a_spline: bool,
     /// Which gizmo groups draw. Threaded through so the Gizmos dropdown
     /// can mutate it from the viewport toolbar.
     pub(crate) gizmo_visibility: &'a mut crate::gizmos::GizmoVisibility,
@@ -289,6 +290,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.editor_camera_rotation,
                 self.element_mode,
                 self.editing_a_block,
+                self.editing_a_spline,
             ),
             EditorTab::Console => {
                 crate::panels::console::draw_console(ui, focused, self.log_buffer, self.console)

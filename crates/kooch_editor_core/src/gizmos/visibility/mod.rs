@@ -21,6 +21,10 @@ pub struct GizmoVisibility {
     /// The world grid on the ground plane.
     #[serde(default = "enabled")]
     pub grid: bool,
+    /// The list of what the viewport responds to (#1436). Not a gizmo, but it lives in the same
+    /// menu: one place to turn viewport overlays off beats two.
+    #[serde(default = "enabled")]
+    pub commands: bool,
     /// Categories the user turned off, by their reflected name
     /// (`"Physics"`, `"Rendering"`, …).
     #[serde(default)]
@@ -42,6 +46,7 @@ impl GizmoVisibility {
         Self {
             enabled: true,
             grid: true,
+            commands: true,
             hidden_categories: HashSet::new(),
             hidden_components: HashSet::new(),
         }

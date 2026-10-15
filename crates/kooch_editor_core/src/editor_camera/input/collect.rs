@@ -4,6 +4,7 @@
 
 use glam::Vec2;
 
+use crate::commands;
 use crate::editor_camera::controller::EditorCameraController;
 use crate::editor_camera::fly::FlyKeys;
 
@@ -62,42 +63,41 @@ pub fn collect_viewport_input(
         }
     }
 
-    // --- F key → focus on selection --------------------------------------
+    // --- Keyboard commands ------------------------------------------------
+    // 🔴 Asked of `crate::commands`, not written here: the overlay prints the same values, and a
+    // key spelled twice is a key free to disagree with its own label (#1436).
     if keys_here {
-        delta.focus_pressed = ui.input(|i| i.key_pressed(egui::Key::F));
-        // 🔴 Shift+E, because plain E is the rotate handle and asking one key to mean two things
-        // made every extrude also switch mode. Shift is what Blender and ProBuilder both put in
-        // front of a variant of a letter that is already taken.
-        delta.extrude_pressed = ui.input(|i| i.key_pressed(egui::Key::E) && i.modifiers.shift);
+        delta.focus_pressed = ui.input(|i| commands::FOCUS.pressed(i));
+        delta.extrude_pressed = ui.input(|i| commands::EXTRUDE.pressed(i));
     }
 
-    // --- W / E / R → handle mode switch ----------------------------------
-    if keys_here && !modifiers.any() && !delta.fly_active {
+    // 🔴 Gated on `!fly_active` because `A` is also strafe-left: without this, flying sideways
+    // with a spline selected drops a knot on every press of the key that moves the camera.
+    if keys_here && !delta.fly_active {
+        delta.add_knot_pressed = ui.input(|i| commands::ADD_KNOT.pressed(i));
+    }
+
+    // --- Handle mode switch ----------------------------------------------
+    if keys_here && !delta.fly_active {
         delta.mode_request = ui.input(|i| {
-            if i.key_pressed(egui::Key::W) {
-                Some(HandleModeRequest::Translate)
-            } else if i.key_pressed(egui::Key::E) {
-                Some(HandleModeRequest::Rotate)
-            } else if i.key_pressed(egui::Key::R) {
-                Some(HandleModeRequest::Scale)
-            } else {
-                None
-            }
+            [
+                (commands::MOVE, HandleModeRequest::Translate),
+                (commands::ROTATE, HandleModeRequest::Rotate),
+                (commands::SCALE, HandleModeRequest::Scale),
+            ]
+            .into_iter()
+            .find(|(command, _)| command.pressed(i))
+            .map(|(_, request)| request)
         });
     }
 
-    // --- 1 / 2 / 3 / 4 → what a click selects inside a block --------------
-    if keys_here && !modifiers.any() && !delta.fly_active {
+    // --- What a click selects inside a block ------------------------------
+    if keys_here && !delta.fly_active {
         delta.element_request = ui.input(|i| {
             crate::block_edit::ElementMode::ALL
                 .iter()
-                .zip([
-                    egui::Key::Num1,
-                    egui::Key::Num2,
-                    egui::Key::Num3,
-                    egui::Key::Num4,
-                ])
-                .find(|(_, key)| i.key_pressed(*key))
+                .zip(commands::ELEMENTS)
+                .find(|(_, command)| command.pressed(i))
                 .map(|(mode, _)| *mode)
         });
     }

@@ -502,3 +502,66 @@ pub(crate) fn ended_gizmo_drag(resources: &mut Resources, actions: &mut Vec<Edit
         value,
     });
 }
+
+/// Puts a knot where the cursor points, at the end of the curve (#1436).
+///
+/// 🔴 The SAME `SetField` on `points` the Inspector's list emits. The Inspector is the exhaustive,
+/// precise path and this is the fast one; the moment they write the component by two different
+/// routes, one of them becomes a second source of truth and undo stops describing either.
+///
+/// Appended rather than inserted beside whatever is selected: a path is drawn by extending it, and
+/// one command that sometimes appends and sometimes inserts is one nobody can predict.
+///
+/// Where it lands is [`crate::viewport_pick::resolve`] — the geometry under the cursor, then the
+/// ground plane, then the camera's distance. The same resolver a spawn and a prefab drop use, so
+/// three gestures that mean "here" cannot disagree about where "here" is.
+pub(crate) fn add_knot(
+    resources: &mut Resources,
+    delta: ViewportInputDelta,
+    entity: Entity,
+    actions: &mut Vec<EditorAction>,
+) -> bool {
+    let Some(cursor) = delta.cursor_local else {
+        return false;
+    };
+    let Some(before) = read(resources, entity).map(|(spline, _)| spline) else {
+        return false;
+    };
+    let Some(world) = crate::viewport_pick::resolve(
+        resources,
+        crate::viewport_pick::DropPoint::Viewport {
+            cursor,
+            viewport_size: delta.viewport_size,
+        },
+    ) else {
+        return false;
+    };
+    let Some(to_local) = inverse_of(resources, entity) else {
+        return false;
+    };
+
+    let mut after = before.clone();
+    after.points.push(kooch_ecs::spline::Knot {
+        position: to_local.transform_point3(world),
+        ..Default::default()
+    });
+
+    let Some(component) = resources
+        .get::<ComponentNames>()
+        .and_then(|names| names.id(std::any::type_name::<Spline>()))
+    else {
+        return false;
+    };
+    let Some(value) = after.reflect_get("points") else {
+        return false;
+    };
+    // The component is left holding `before` — never written here — so the command carries the
+    // whole change and one Ctrl+Z takes the knot back off.
+    actions.push(EditorAction::SetField {
+        entity,
+        component,
+        field: "points".to_owned(),
+        value,
+    });
+    true
+}

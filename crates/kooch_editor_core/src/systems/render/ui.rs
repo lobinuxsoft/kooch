@@ -258,6 +258,14 @@ pub(super) fn run_editor_ui(
                 }),
                 _ => false,
             };
+            // Same rule as a block, for the same reason: a knot is an index into one curve.
+            let editing_a_spline = match selected.as_slice() {
+                [entity] => data.entities.iter().any(|info| {
+                    info.entity == *entity
+                        && info.components.iter().any(|c| c.short_name == "Spline")
+                }),
+                _ => false,
+            };
             super::focus::show_opened(
                 ui,
                 &mut overlay.dock_state,
@@ -318,6 +326,7 @@ pub(super) fn run_editor_ui(
                 handle_mode,
                 selection_has_transform,
                 editing_a_block,
+                editing_a_spline,
                 element_mode: &mut overlay.element_mode,
                 asset_catalog,
                 selected_asset: &mut selected_asset,
