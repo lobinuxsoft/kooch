@@ -306,6 +306,12 @@ start running, and simulates in the editor's own viewport. Stop lowers the gate 
 the snapshot, so the world goes back exactly as authored — you do not lose your scene by
 testing it.
 
+**Play right after Rebuild & Run waits its turn.** A rebuild holds the open scenes on disk and
+replays them into the new process, and Play loads no scene of its own — so a world arriving
+mid-game would replace the one gameplay is already running in, and the entity your systems
+resolved would stop existing. The Play is held instead and released the moment the world is back,
+so you play in your scene rather than the project's last saved one.
+
 ```rust
 // kooch_remote::handlers::set_playing, in essence
 if playing {

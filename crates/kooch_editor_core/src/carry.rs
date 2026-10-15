@@ -32,6 +32,23 @@ enum Phase {
 pub struct CarriedWorld {
     scenes: Vec<Held>,
     phase: Phase,
+    /// A Play the author asked for before the world was back. Held rather than sent, and released
+    /// once the scenes have landed (#1480).
+    play_pending: bool,
+}
+
+impl CarriedWorld {
+    /// Whether a world is still waiting to be put back.
+    pub(crate) fn pending(resources: &Resources) -> bool {
+        resources.get::<CarriedWorld>().is_some()
+    }
+
+    /// Remembers that the author pressed Play while the world was still held.
+    pub(crate) fn play_when_ready(resources: &mut Resources) {
+        if let Some(carried) = resources.get_mut::<CarriedWorld>() {
+            carried.play_pending = true;
+        }
+    }
 }
 
 /// Where held scenes live. Cleared on every capture, so at most one
@@ -121,6 +138,7 @@ fn hold(resources: &mut Resources) -> usize {
         resources.insert(CarriedWorld {
             scenes,
             phase: Phase::Waiting,
+            play_pending: false,
         });
     }
     count
@@ -133,14 +151,19 @@ pub(crate) fn resume(resources: &mut Resources) -> Vec<EditorAction> {
     };
     match carried.phase {
         Phase::Sent => {
+            // Taken before `finish` drops the resource it lives on.
+            let play = carried.play_pending;
             finish(resources);
-            Vec::new()
+            match play {
+                true => vec![EditorAction::Play],
+                false => Vec::new(),
+            }
         }
         Phase::Waiting => {
-            let connected = resources
-                .get::<crate::remote_session::RemoteState>()
-                .is_some_and(|state| state.is_connected());
-            if !connected {
+            let state = resources.get::<crate::remote_session::RemoteState>();
+            let connected = state.is_some_and(|state| state.is_connected());
+            let playing = state.is_some_and(|state| state.playing);
+            if !may_resume(connected, playing) {
                 return Vec::new();
             }
             let actions = loads(&carried.scenes);
@@ -150,6 +173,16 @@ pub(crate) fn resume(resources: &mut Resources) -> Vec<EditorAction> {
             actions
         }
     }
+}
+
+/// Whether the held world may be put back this frame.
+///
+/// 🔴 Never onto a running game (#1480). `set_playing` loads no scene, so a world arriving
+/// mid-play is a replacement the author did not ask for: the entity their systems resolved stops
+/// existing, and the session cannot be recovered without reopening the project. The Play that
+/// raced it is held instead, and released once the world is back.
+fn may_resume(connected: bool, playing: bool) -> bool {
+    connected && !playing
 }
 
 /// The first scene replaces the world, the rest join it — which is what

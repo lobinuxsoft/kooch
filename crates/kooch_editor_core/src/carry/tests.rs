@@ -127,6 +127,7 @@ fn a_disconnected_project_waits() {
     resources.insert(CarriedWorld {
         scenes: Vec::new(),
         phase: Phase::Waiting,
+        play_pending: false,
     });
 
     let actions = resume(&mut resources);
@@ -159,6 +160,7 @@ fn a_restored_scene_keeps_its_file_and_stays_dirty() {
             held: std::env::temp_dir().join("kooch_carried_world/x.scene"),
         }],
         phase: Phase::Sent,
+        play_pending: false,
     });
 
     let actions = resume(&mut resources);
@@ -177,5 +179,47 @@ fn a_restored_scene_keeps_its_file_and_stays_dirty() {
     assert!(
         resources.get::<CarriedWorld>().is_none(),
         "the carry outlived the restore and would fire again",
+    );
+}
+
+/// 🔴 Never onto a running game (#1480). `set_playing` loads no scene, so a held world arriving
+/// mid-play replaces the one the project's systems already resolved — the player entity stops
+/// existing and the session cannot be recovered without reopening the project.
+#[test]
+fn a_playing_project_is_not_replaced() {
+    assert!(
+        super::may_resume(true, false),
+        "a connected idle project is exactly when to resume"
+    );
+    assert!(
+        !super::may_resume(true, true),
+        "the world was put back on top of a running game"
+    );
+    assert!(
+        !super::may_resume(false, false),
+        "a project that is not there cannot be loaded into"
+    );
+}
+
+/// A Play pressed while the world was still held is released once it lands, so the author plays in
+/// their own world rather than the project's on-disk scene.
+#[test]
+fn a_held_play_is_released() {
+    let mut resources = Resources::new();
+    resources.insert(kooch_ecs::SceneManager::new());
+    resources.insert(crate::remote_session::RemoteState::new());
+    resources.insert(CarriedWorld {
+        scenes: Vec::new(),
+        phase: Phase::Sent,
+        play_pending: true,
+    });
+
+    let actions = resume(&mut resources);
+
+    assert!(
+        actions
+            .iter()
+            .any(|action| matches!(action, crate::actions::EditorAction::Play)),
+        "the play the author asked for was swallowed by the rebuild"
     );
 }
