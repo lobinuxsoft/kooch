@@ -273,6 +273,14 @@ impl RemoteSession {
             .set_running(pulling);
     }
 
+    /// Names the entities the author is reading, so the next pull asks about them in full (#1486).
+    /// No-op before the pump exists — the full snapshot covers that frame anyway.
+    pub fn set_watching(&self, watching: Vec<kooch_remote::protocol::EntityId>) {
+        if let Some(pump) = self.pump.as_ref() {
+            pump.set_watching(watching);
+        }
+    }
+
     /// The play-mode pull: what moved, and nothing else (#1012).
     pub fn refresh_moved(&mut self) -> Option<MovedThisFrame> {
         if self.state != ConnectionState::Connected {

@@ -142,7 +142,17 @@ impl RemoteClient {
     /// What moved since `since`, the play-mode pull (#1012). A `full` reply is the host declining,
     /// not an error: ask [`Self::list_entities_since`] that frame.
     pub fn list_moved_since(&self, since: Option<u64>) -> Result<MovedUpdate, ClientError> {
-        match self.call(Method::ListMoved { since })? {
+        self.list_moved_watching(since, Vec::new())
+    }
+
+    /// [`Self::list_moved_since`], naming the entities the author is reading. Every component of
+    /// those comes back whether or not its type was declared (#1486).
+    pub fn list_moved_watching(
+        &self,
+        since: Option<u64>,
+        watching: Vec<crate::protocol::EntityId>,
+    ) -> Result<MovedUpdate, ClientError> {
+        match self.call(Method::ListMoved { since, watching })? {
             ResponseData::Moved {
                 moved,
                 components,

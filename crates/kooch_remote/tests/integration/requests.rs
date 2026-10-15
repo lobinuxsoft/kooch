@@ -394,3 +394,64 @@ fn an_ephemeral_entity_is_listed() {
         "an ephemeral entity was withheld, so the editor cannot show the running game: {listed:?}"
     );
 }
+
+/// 🔴 The half of "Play shows the game" that declaring types cannot reach (#1486): the author has
+/// one entity open, and every component of it comes back without anybody declaring anything.
+/// Bounded by the selection rather than by the scene, so it costs the same in a full world.
+#[test]
+fn a_watched_entity_answers_in_full() {
+    let mut resources = ecs();
+    let watched = match call(
+        &mut resources,
+        Method::Spawn {
+            name: Some("Watched".to_owned()),
+            scene: None,
+            parent: None,
+        },
+    ) {
+        ResponseData::Spawned { entity } => entity,
+        other => panic!("spawn: {other:?}"),
+    };
+
+    // 🔴 Chained on the revision. A `since` the host does not recognise is a FULL reply, and a
+    // full reply carries no components on purpose — the caller is pulling the whole world through
+    // `ListEntities` that frame anyway. The diff path is the one this feature lives on.
+    let revision = match call(
+        &mut resources,
+        Method::ListMoved {
+            since: None,
+            watching: Vec::new(),
+        },
+    ) {
+        ResponseData::Moved {
+            revision,
+            components,
+            ..
+        } => {
+            assert!(
+                components.is_empty(),
+                "nothing was declared and nothing watched, so nothing should stream"
+            );
+            revision
+        }
+        other => panic!("moved: {other:?}"),
+    };
+
+    let watched_names: Vec<String> = match call(
+        &mut resources,
+        Method::ListMoved {
+            since: Some(revision),
+            watching: vec![watched],
+        },
+    ) {
+        ResponseData::Moved { components, .. } => components
+            .iter()
+            .map(|c| c.component.type_name.clone())
+            .collect(),
+        other => panic!("moved: {other:?}"),
+    };
+    assert!(
+        watched_names.iter().any(|n| n.contains("Name")),
+        "a watched entity did not answer with its own components: {watched_names:?}"
+    );
+}

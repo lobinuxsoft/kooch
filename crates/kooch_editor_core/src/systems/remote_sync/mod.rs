@@ -67,6 +67,23 @@ pub(crate) fn remote_sync_system(resources: &mut Resources) {
     resources.insert(state);
 }
 
+/// The remote ids of the entities the author has open in the Inspector.
+///
+/// Empty when nothing is selected, which is the common case and asks the project for nothing.
+fn watched_ids(
+    resources: &Resources,
+    mirror: &crate::remote_mirror::RemoteMirror,
+) -> Vec<kooch_remote::protocol::EntityId> {
+    let Some(overlay) = resources.get::<crate::state::EditorOverlay>() else {
+        return Vec::new();
+    };
+    overlay
+        .selected_entities
+        .iter()
+        .filter_map(|entity| mirror.remote_of(*entity))
+        .collect()
+}
+
 /// The body of [`remote_sync_system`], with both resources in hand.
 fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &mut Resources) {
     let RemoteState {
@@ -120,6 +137,11 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
     // The background pull follows Play, not the frame: it costs a
     // project frame slice per pull and only play mode reads it (#1014).
     session.set_pulling(*playing);
+    // 🔴 What the author has open comes back in full, declared or not (#1486). Bounded by the
+    // selection rather than by the scene, so an Inspector that is up to date costs the same in a
+    // full world as in an empty one — and it is the half of "Play shows the game" that declaring
+    // component types cannot reach without reading the world every frame.
+    session.set_watching(watched_ids(resources, mirror));
 
     // A gizmo drag is an edit the project has not been told about yet — it only goes over the wire
     // when the user lets go.

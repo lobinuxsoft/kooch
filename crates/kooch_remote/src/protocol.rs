@@ -148,9 +148,17 @@ pub enum Method {
     },
     /// The transforms that moved since `since` (#1012) — a separate method because it reads one
     /// component instead of reflecting the world (38.9 ms on 2159 entities). Used while playing.
+    ///
+    /// `watching` names the entities the author has open in the Inspector. **Every** component of
+    /// those comes back, declared or not (#1486): reading one entity in full costs the same
+    /// whatever the scene holds, and it is the only part of the world the author can actually read
+    /// during Play. Declaring a type instead reads it from every entity that carries it, which is
+    /// the right trade for a dozen characters and the wrong one for four thousand crates.
     ListMoved {
         #[serde(default)]
         since: Option<u64>,
+        #[serde(default)]
+        watching: Vec<EntityId>,
     },
     /// Every registered component type with its field schema.
     GetSchema,

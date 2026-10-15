@@ -46,7 +46,7 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             }
         }
         Method::ListEntities { since } => list_entities(id, resources, *since),
-        Method::ListMoved { since } => list_moved(id, resources, *since),
+        Method::ListMoved { since, watching } => list_moved(id, resources, *since, watching),
         Method::GetSchema => get_schema(id, resources),
         Method::SetField {
             entity,
@@ -297,7 +297,12 @@ fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Resp
 /// What moved since the caller's revision (#1012). 🔴 No reflection: one Transform column and
 /// sixteen floats, where reflecting everything took 38.9 ms on 2159 entities. `full` means the
 /// entity set changed.
-fn list_moved(id: u64, resources: &mut Resources, since: Option<u64>) -> Response {
+fn list_moved(
+    id: u64,
+    resources: &mut Resources,
+    since: Option<u64>,
+    watching: &[EntityId],
+) -> Response {
     let current = {
         let Some(registry) = resources.get::<ComponentRegistry>() else {
             return Response::err(
@@ -337,7 +342,11 @@ fn list_moved(id: u64, resources: &mut Resources, since: Option<u64>) -> Respons
     // 🔴 The declared components, and ONLY those (#1407). Reflecting the world here is the 38.9 ms
     // this method exists to avoid; reflecting one type on the few entities that carry it is a walk
     // over one storage. A project that declares nothing pays nothing.
-    let components = streamed_components(resources);
+    let mut components = streamed_components(resources);
+    // Plus everything on the entities the author has open (#1486). Bounded by what a person can
+    // read at once, so it costs the same in an empty scene and a full one — and it is the half of
+    // the rule declaring types cannot reach without reading the whole world.
+    components.extend(watched_components(resources, watching));
 
     let mut cache = resources
         .remove::<crate::moved_cache::MovedCache>()
@@ -537,6 +546,71 @@ mod tests;
 /// 🔴 Walks the component's own storage rather than the entity list: the types declared here are
 /// ones a handful of entities carry — a camera's lens, not every mesh — so the cost is the length of
 /// that storage and not of the world.
+/// Every component of the entities the author is reading, declared or not (#1486).
+///
+/// 🔴 Bounded by the selection, not by the scene. Reading one entity in full is the same work
+/// whatever the world holds, which is what makes this affordable where declaring a type is not:
+/// `PhysicsBody` declared is a read per body per frame, and the author can only look at one at a
+/// time anyway.
+///
+/// Skips `Transform`, which has its own cheaper path beside this one, and the hierarchy types,
+/// which travel as structure rather than as components.
+fn watched_components(
+    resources: &Resources,
+    watching: &[EntityId],
+) -> Vec<crate::protocol::MovedComponent> {
+    if watching.is_empty() {
+        return Vec::new();
+    }
+    let (Some(registry), Some(archetypes)) = (
+        resources.get::<ComponentRegistry>(),
+        resources.get::<ArchetypeRegistry>(),
+    ) else {
+        return Vec::new();
+    };
+    let alive = resources.get::<EntityAllocator>();
+    let skip = [
+        TypeId::of::<Transform>(),
+        TypeId::of::<Parent>(),
+        TypeId::of::<kooch_ecs::hierarchy::Children>(),
+        TypeId::of::<kooch_ecs::hierarchy::GlobalTransform>(),
+        TypeId::of::<kooch_ecs::SceneMember>(),
+    ];
+
+    let mut out = Vec::new();
+    for id in watching {
+        let entity = Entity::from(*id);
+        if alive.is_some_and(|a| !a.is_alive(entity)) {
+            continue;
+        }
+        let Some(archetype) = archetypes
+            .entity_archetype(entity)
+            .and_then(|at| archetypes.get(at))
+        else {
+            continue;
+        };
+        for type_id in archetype.components() {
+            if skip.contains(type_id) || !registry.has_reflector(type_id) {
+                continue;
+            }
+            let (Some(type_name), Some(fields)) = (
+                registry.component_name(type_id),
+                registry.reflect_get_fields(type_id, entity),
+            ) else {
+                continue;
+            };
+            out.push(crate::protocol::MovedComponent {
+                id: *id,
+                component: ComponentSnapshot {
+                    type_name: type_name.to_owned(),
+                    fields,
+                },
+            });
+        }
+    }
+    out
+}
+
 fn streamed_components(resources: &Resources) -> Vec<crate::protocol::MovedComponent> {
     let Some(streamed) = resources.get::<kooch_ecs::StreamedComponents>() else {
         return Vec::new();
