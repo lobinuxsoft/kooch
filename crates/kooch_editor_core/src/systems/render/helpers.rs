@@ -195,6 +195,18 @@ pub(super) fn focus_target(
         });
     }
 
+    // The selected knot, for the same reason the block's faces come first: a sub-part is selected
+    // and framing the whole entity instead looks like F did nothing (#1464). It is the point the
+    // transform gizmo already stands on.
+    if let Some(point) = crate::gizmos::spline_handles::selected_origin(resources, entity) {
+        // A knot is a point and has no size of its own, which is the fallback distance an entity
+        // with no mesh already gets.
+        return Some(FocusTarget {
+            point,
+            radius: None,
+        });
+    }
+
     let point = entity_world_position(resources, entity)?;
     let radius = crate::picking::entity_bounds(resources, entity)
         .map(|(min, max)| radius_around(point, min, max));
