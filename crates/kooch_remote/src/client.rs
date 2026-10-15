@@ -133,7 +133,7 @@ impl RemoteClient {
         }
     }
 
-    /// Every non-ephemeral entity with its components — for tests and one-shot inspection; a mirror
+    /// Every entity with its components — for tests and one-shot inspection; a mirror
     /// wants [`RemoteClient::list_entities_since`].
     pub fn list_entities(&self) -> Result<Vec<EntitySnapshot>, ClientError> {
         Ok(self.list_entities_since(None)?.entities)

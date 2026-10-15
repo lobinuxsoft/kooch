@@ -111,6 +111,18 @@ pub struct PlacedRuns {
 
 /// Rebuilds every placement whose description changed.
 pub fn place_along_splines(resources: &mut Resources) {
+    // 🔴 A mirrored world does not lay its own run (#1482). The editor shows a connected project
+    // by copying its entities, and the project runs this very system on its own world — deriving a
+    // second run here puts the editor's answer on screen beside the game's, and during Play the
+    // author would be watching the one that is not the game.
+    //
+    // Clearing rather than returning: the run standing from before the connection is this
+    // function's to take away, and nothing else knows it is there.
+    if kooch_core::run_state::Mirrored::is_mirrored(resources) {
+        clear_all_runs(resources);
+        return;
+    }
+
     let wanted = gather(resources);
 
     // 🔴 A run whose placement is gone has to go with it. The spline may have been deleted, the
@@ -391,6 +403,19 @@ fn revision(spline: &super::Spline, placement: &SplinePlacement) -> u64 {
         value.to_bits().hash(&mut hasher);
     }
     hasher.finish()
+}
+
+/// Takes away every run, for a world that has stopped being the one that describes them.
+///
+/// Cheap after the first call: the map is empty and the loop does not run.
+fn clear_all_runs(resources: &mut Resources) {
+    let sources: Vec<Entity> = match resources.get::<PlacedRuns>() {
+        Some(runs) => runs.runs.keys().copied().collect(),
+        None => return,
+    };
+    for source in sources {
+        clear_run(resources, source);
+    }
 }
 
 /// Takes away what a placement laid down last time.

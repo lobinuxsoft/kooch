@@ -9,7 +9,6 @@ use kooch_ecs::archetype_registry::ArchetypeRegistry;
 use kooch_ecs::commands::Commands;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
-use kooch_ecs::ephemeral::EphemeralComponents;
 use kooch_ecs::hierarchy::Parent;
 use kooch_ecs::name::Name;
 use kooch_ecs::scene::{SceneDocument, sync_scene_to_ecs};
@@ -227,21 +226,10 @@ fn list_entities(id: u64, resources: &mut Resources, since: Option<u64>) -> Resp
     let parents = registry.get_cpu::<Parent>();
     let members = registry.get_cpu::<kooch_ecs::SceneMember>();
 
-    // 🔴 What this method's own doc promises and never kept (#1474). A placement's copies are
-    // regenerated on both sides of the connection, so shipping the project's set put a second run
-    // in the editor on top of the one it had already laid down itself.
-    //
-    // Per archetype, which is where the decision already lives: one test for a block of four
-    // thousand entities rather than four thousand tests.
-    let ephemeral = resources.get::<EphemeralComponents>();
-
     // Ascending index is authored order, since entities are allocated in scene order — archetype
     // iteration scrambles it.
     let mut entities = Vec::new();
     for archetype in archetypes.iter_matching(&[]) {
-        if ephemeral.is_some_and(|marked| marked.intersects(archetype.components())) {
-            continue;
-        }
         for &entity in archetype.entities() {
             let mut components = Vec::new();
             for &type_id in archetype.components() {
@@ -331,15 +319,9 @@ fn list_moved(id: u64, resources: &mut Resources, since: Option<u64>) -> Respons
         // filters entities already gone.
         let alive = resources.get::<EntityAllocator>();
         let live = |entity: Entity| alive.is_none_or(|a| a.is_alive(entity));
-        // The entities the listing leaves out, so their poses are not streamed to a mirror that
-        // has nothing to put them on (#1474). Gathered once, from the archetypes rather than per
-        // entity: this walk is the 38.9 ms the whole method exists to avoid, and asking the
-        // archetype registry for each of a few thousand transforms would put it back.
-        let ephemeral = kooch_ecs::ephemeral::entities(resources);
         let mut current: Vec<MovedTransform> = transforms
             .iter()
             .filter(|(entity, _)| live(**entity))
-            .filter(|(entity, _)| !kooch_ecs::ephemeral::listed(&ephemeral, **entity))
             .map(|(&entity, transform)| MovedTransform {
                 id: entity.into(),
                 matrix: transform.to_matrix().to_cols_array(),
@@ -572,21 +554,15 @@ fn streamed_components(resources: &Resources) -> Vec<crate::protocol::MovedCompo
     else {
         return Vec::new();
     };
-    let ephemeral = resources.get::<EphemeralComponents>();
-
     let mut out = Vec::new();
     for type_id in streamed.iter() {
         let Some(type_name) = registry.component_name(type_id) else {
             continue;
         };
         // The archetypes carrying it, so the walk is over the entities that HAVE the component
-        // rather than over the world. Ephemeral ones are left out for the same reason the listing
-        // leaves them out (#1474): the editor has no entity to put them on.
+        // rather than over the world.
         let carriers = archetypes
             .iter_matching(std::slice::from_ref(type_id))
-            .filter(|archetype| {
-                !ephemeral.is_some_and(|marked| marked.intersects(archetype.components()))
-            })
             .flat_map(|archetype| archetype.entities().iter().copied());
         for entity in carriers {
             if !live(entity) {

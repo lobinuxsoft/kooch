@@ -51,3 +51,31 @@ where
 
 #[cfg(test)]
 mod tests;
+
+/// Whether this world is a **mirror of another process** rather than a simulation of its own.
+///
+/// 🔴 A mirrored world must not simulate. The editor shows a connected project by copying its
+/// entities, and anything the editor derives locally competes with what the project derived — two
+/// answers to one question, with the author watching the wrong one. The rule the owner set is that
+/// Play shows the game exactly, with no exceptions for being the editor.
+///
+/// Set by the editor around a remote session; never set in a game.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Mirrored(pub bool);
+
+impl Mirrored {
+    /// Reads the flag out of `Resources`, defaulting to a world of its own.
+    pub fn is_mirrored(resources: &Resources) -> bool {
+        resources.get::<Mirrored>().is_some_and(|m| m.0)
+    }
+
+    /// Writes the flag, inserting the resource if it is missing.
+    pub fn set(resources: &mut Resources, mirrored: bool) {
+        match resources.get_mut::<Mirrored>() {
+            Some(state) => state.0 = mirrored,
+            None => {
+                resources.insert(Mirrored(mirrored));
+            }
+        }
+    }
+}
