@@ -93,6 +93,9 @@ impl Component for Placed {}
 /// One run, and the description it was built from.
 struct Run {
     revision: u64,
+    /// What each instance was stamped from, so a rebuild can tell "the same run, moved" from "a
+    /// different run".
+    prefab: Guid,
     placed: Vec<Entity>,
 }
 
@@ -126,29 +129,68 @@ pub fn place_along_splines(resources: &mut Resources) {
     }
 
     for (source, revision, prefab) in wanted {
-        let built = resources
+        let standing = resources
             .get::<PlacedRuns>()
             .and_then(|runs| runs.runs.get(&source))
-            .map(|run| run.revision);
-        if built == Some(revision) {
+            .map(|run| (run.revision, run.prefab, run.placed.len()));
+        if standing.is_some_and(|(built, ..)| built == revision) {
             continue;
         }
         let poses = poses_of(resources, source);
-        clear_run(resources, source);
-        let mut placed = Vec::with_capacity(poses.len());
-        for pose in poses {
-            if let Some(entity) = stamp(resources, prefab, source, pose) {
-                placed.push(entity);
+
+        // 🔴 The same run, moved. Despawning and respawning on every edit burns an entity
+        // generation per instance per keystroke, and dragging a knot is a hundred edits (#1467,
+        // and #1300 is the same climb from the other direction).
+        let placed = match standing {
+            Some((_, was, many)) if was == prefab && many == poses.len() => {
+                move_run(resources, source, &poses)
             }
-        }
+            _ => {
+                clear_run(resources, source);
+                let mut placed = Vec::with_capacity(poses.len());
+                for pose in poses {
+                    if let Some(entity) = stamp(resources, prefab, source, pose) {
+                        placed.push(entity);
+                    }
+                }
+                placed
+            }
+        };
+
+        let run = Run {
+            revision,
+            prefab,
+            placed,
+        };
         if let Some(runs) = resources.get_mut::<PlacedRuns>() {
-            runs.runs.insert(source, Run { revision, placed });
+            runs.runs.insert(source, run);
         } else {
             let mut runs = PlacedRuns::default();
-            runs.runs.insert(source, Run { revision, placed });
+            runs.runs.insert(source, run);
             resources.insert(runs);
         }
     }
+}
+
+/// Rewrites a standing run's transforms, keeping every entity it already has.
+fn move_run(resources: &mut Resources, source: Entity, poses: &[Transform]) -> Vec<Entity> {
+    let standing = match resources
+        .get::<PlacedRuns>()
+        .and_then(|r| r.runs.get(&source))
+    {
+        Some(run) => run.placed.clone(),
+        None => return Vec::new(),
+    };
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+        && let Some(storage) = registry.get_cpu_mut::<Transform>()
+    {
+        for (entity, pose) in standing.iter().zip(poses) {
+            if let Some(held) = storage.get_mut(*entity) {
+                *held = *pose;
+            }
+        }
+    }
+    standing
 }
 
 /// Every placement that has a curve to lay along, and what it is currently asking for.
@@ -327,7 +369,11 @@ fn stamp(
     source: Entity,
     pose: Transform,
 ) -> Option<Entity> {
-    let (root, _) = crate::scene::spawn_prefab_members(prefab, resources).ok()?;
+    let (root, members) = crate::scene::spawn_prefab_members(prefab, resources).ok()?;
+    // 🔴 Spawning builds the entities; attaching is what makes them an INSTANCE of the prefab.
+    // Without it a run of prefabs reads as a run of loose copies, with no link back to what they
+    // came from (#1467).
+    crate::prefab_instance::attach(resources, root, &members, prefab);
     // Parented to the curve, so the whole run moves with the entity that describes it and the
     // pose above stays in the space it was computed in.
     crate::hierarchy::reparent(resources, root, Some(source));
@@ -338,18 +384,34 @@ fn stamp(
     {
         *held = pose;
     }
+    // 🔴 Every member, not just the root. The marker is what makes an archetype ephemeral, and a
+    // prefab of several entities would otherwise have its children adopted and written to the
+    // scene while the root stayed out — half a run in the file is worse than all of it.
     mark(resources, root, source);
+    for member in members {
+        mark(resources, member, source);
+    }
     Some(root)
 }
 
 /// Adds the [`Placed`] marker, registering its storage on first use.
+///
+/// 🔴 The ARCHETYPE too, not just the storage. Whether something is ephemeral is decided per
+/// archetype — `ephemeral.intersects(archetype.components())` — so a marker written only into its
+/// own column is a marker nothing that matters ever sees.
 fn mark(resources: &mut Resources, entity: Entity, source: Entity) {
-    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
-        return;
-    };
-    registry.register_cpu_reflected::<Placed>();
-    if let Some(storage) = registry.get_cpu_mut::<Placed>() {
-        storage.insert(entity, Placed { source });
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        registry.register_cpu_reflected::<Placed>();
+        if let Some(storage) = registry.get_cpu_mut::<Placed>() {
+            storage.insert(entity, Placed { source });
+        }
+    }
+    if let Some(archetypes) = resources.get_mut::<crate::archetype_registry::ArchetypeRegistry>()
+        && let Some(current) = archetypes.entity_archetype(entity)
+    {
+        let next =
+            archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<Placed>());
+        archetypes.register_entity(entity, next);
     }
 }
 

@@ -73,7 +73,14 @@ impl Plugin for EcsPlugin {
         app.insert_resource(ArchetypeRegistry::new());
         app.insert_resource(AccessTracker::new());
         app.insert_resource(Commands::new());
-        app.insert_resource(EphemeralComponents::new());
+        app.insert_resource({
+            let mut ephemeral = EphemeralComponents::new();
+            // 🔴 What a spline laid down is described by the curve, not by the file. Without this
+            // `adopt_unowned` gives every one of them the active scene on save, and the next load
+            // brings them back beside a freshly laid run (#1467).
+            ephemeral.insert(std::any::TypeId::of::<crate::spline::placement::Placed>());
+            ephemeral
+        });
         app.insert_resource(DynamicComponents::new());
         app.insert_resource(ComponentNames::new());
         app.insert_resource(PersistentIdAllocator::new());

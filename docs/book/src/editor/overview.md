@@ -199,9 +199,16 @@ a fixed **Count** spread evenly, one every so many units of **Distance**, or one
 `Align` turns each to the curve's tangent, with the knots' roll in its up, and `Offset` moves it in
 its own axes so a lamp holds its side of the path around a corner.
 
-🔴 **The copies are not saved.** They carry no scene membership, so none of them reaches the scene
-file: the curve is the only description of where they are. That is the trade — move a knot and the
-whole run follows, but no single copy can be hand-edited. Change the curve or the numbers instead.
+🔴 **The copies are not saved.** They are marked ephemeral, which keeps them out of the scene file
+and out of the sweep that adopts loose entities into the scene being worked in: the curve is the
+only description of where they are. That is the trade — move a knot and the whole run follows, but
+no single copy can be hand-edited. Change the curve or the numbers instead.
+
+Each copy is a real **prefab instance**, linked to what it came from, so it reads in the World
+panel as what it is.
+
+Moving a knot **moves** the run; it does not rebuild it. Only changing the prefab or how many
+spawns anything, which keeps a drag from burning an entity generation per copy per frame.
 
 🔴 **A run is rebuilt only when its description changes**, never once a frame. A collectible the
 player picks up despawns itself, and a placement that rebuilt continuously would put it straight
