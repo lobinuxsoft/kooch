@@ -45,9 +45,20 @@ pub fn plan(resources: &Resources, prefab: Guid) -> (Vec<PlannedWrite>, Vec<Plan
         "propagating",
     );
 
+    // 🔴 The copies a spline placement laid down are instances too (`stamp` attaches them), and
+    // propagating into one is wrong in both directions (#1478): the writes are thrown away by the
+    // next rebuild, and the removals take `Placed` off — which is the only thing making the copy
+    // ephemeral, so the run silently becomes twelve ordinary entities the scene file will keep.
+    //
+    // A regenerated copy is not edited. It is rebuilt.
+    let ephemeral = crate::ephemeral::entities(resources);
+
     let mut writes = Vec::new();
     let mut removals = Vec::new();
     for (root, instance) in instances {
+        if crate::ephemeral::listed(&ephemeral, root) {
+            continue;
+        }
         for (entity, index) in members_of(resources, root) {
             let Some(described) = document.entities.get(index) else {
                 // The prefab lost an entity this instance still has. Its fields simply stop being
@@ -132,6 +143,9 @@ fn is_bookkeeping(type_name: &str) -> bool {
             | "Children"
             | "GlobalTransform"
             | "SceneMember"
+            // Holds the copy inside the run that laid it, rather than describing it — the same
+            // kind of fact as `SceneMember`, and taking it off un-ephemerals the copy (#1478).
+            | "Placed"
             // Where an instance sits among its siblings is the scene's business, not the prefab's —
             // a prefab has no siblings. Propagating over it would reshuffle every instance of a
             // prefab the moment somebody edited it (#961).
