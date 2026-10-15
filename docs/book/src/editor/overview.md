@@ -220,10 +220,15 @@ nothing to switch on. A knot's `roll` is one number measured about that tangent,
 ignored the curve's frame would silently throw the roll away. `Offset` moves each copy in its own
 axes, so a lamp holds its side of the path around a corner.
 
-🔴 **The copies are not saved.** They are marked ephemeral, which keeps them out of the scene file
-and out of the sweep that adopts loose entities into the scene being worked in: the curve is the
-only description of where they are. That is the trade — move a knot and the whole run follows, but
-no single copy can be hand-edited. Change the curve or the numbers instead.
+🔴 **The copies are not saved.** They are marked ephemeral, which keeps them out of the scene file,
+out of the sweep that adopts loose entities into the scene being worked in, and **out of what a
+connected project sends the editor**: the curve is the only description of where they are. That is
+the trade — move a knot and the whole run follows, but no single copy can be hand-edited. Change
+the curve or the numbers instead.
+
+That last one matters while playing. Both sides of a remote connection run the placement on their
+own world, so a project that shipped its copies would lay a second run in the editor on top of the
+one already there — twice the crates, none of them wrong.
 
 Each copy is a real **prefab instance**, linked to what it came from, so it reads in the World
 panel as what it is.
