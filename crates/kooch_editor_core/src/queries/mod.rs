@@ -302,6 +302,7 @@ pub(crate) fn gather_entity_data(
                 components: comps,
                 parent: None,
                 children: Vec::new(),
+                hidden: 0,
                 depth: 0,
                 global_rotation: global_rotations.get(&entity).copied(),
                 scene: scene_of.get(&entity).copied(),
@@ -320,8 +321,15 @@ pub(crate) fn gather_entity_data(
                 flat[child_idx].parent_global_rotation =
                     global_rotations.get(&parent_comp.entity).copied();
             }
+            // 🔴 The CHILD has to be listed too (#1475). The pass above already left the
+            // ephemeral archetypes out; pushing one here anyway gave a spline placement's entity
+            // twelve children it would never draw, so it rendered as a parent with nothing under
+            // it. Counted instead, so the panel can say where they went.
             if let Some(&parent_idx) = entity_idx_map.get(&parent_comp.entity) {
-                flat[parent_idx].children.push(*child_entity);
+                match entity_idx_map.contains_key(child_entity) {
+                    true => flat[parent_idx].children.push(*child_entity),
+                    false => flat[parent_idx].hidden += 1,
+                }
             }
         }
     }
@@ -380,6 +388,7 @@ pub(crate) fn gather_entity_data(
                     components: Vec::new(),
                     parent: None,
                     children: Vec::new(),
+                    hidden: 0,
                     depth: 0,
                     global_rotation: None,
                     parent_global_rotation: None,

@@ -233,6 +233,10 @@ one already there — twice the crates, none of them wrong.
 Each copy is a real **prefab instance**, linked to what it came from, so it reads in the World
 panel as what it is.
 
+The copies are **not rows in the World tree** — a run of four thousand would bury the scene. The
+curve's entity says how many it laid instead, as a line under it reading *"12 generated — not
+saved"*. Both halves matter: they exist, and hand-editing one would not survive the next rebuild.
+
 Moving a knot **moves** the run; it does not rebuild it. Only changing the prefab or how many
 spawns anything, which keeps a drag from burning an entity generation per copy per frame.
 

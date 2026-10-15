@@ -46,6 +46,7 @@ fn entity(
         components,
         parent,
         children: Vec::new(),
+        hidden: 0,
         depth: 0,
         global_rotation: None,
         scene: None,

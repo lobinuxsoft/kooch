@@ -10,6 +10,7 @@ fn entity_info(index: u32, scene: Option<kooch_core::Guid>) -> EntityDisplayInfo
         components: Vec::new(),
         parent: None,
         children: Vec::new(),
+        hidden: 0,
         depth: 0,
         global_rotation: None,
         scene,

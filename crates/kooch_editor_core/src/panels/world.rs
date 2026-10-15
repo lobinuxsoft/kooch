@@ -126,10 +126,11 @@ pub(crate) fn draw_world_content(
                 }
                 WorldRow::Entity(idx) => {
                     let info = &entities[*idx];
-                    // A leaf gets `None` and no triangle. The default
-                    // here has to match `push_members`' or the row would
-                    // point one way while the list hid the other.
-                    let subtree = (!info.children.is_empty())
+                    // A leaf gets `None` and no triangle. `expandable` is the same answer
+                    // `push_members` acts on, so the row cannot point one way while the list hides
+                    // the other.
+                    let subtree = info
+                        .expandable()
                         .then(|| subtree_open(ui, info.entity, !info.is_prefab_instance));
                     draw_entity_row(
                         ui,

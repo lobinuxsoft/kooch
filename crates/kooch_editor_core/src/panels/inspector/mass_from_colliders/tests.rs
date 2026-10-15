@@ -62,6 +62,7 @@ fn entity(
         components,
         parent: None,
         children,
+        hidden: 0,
         depth: 0,
         global_rotation: None,
         scene: None,

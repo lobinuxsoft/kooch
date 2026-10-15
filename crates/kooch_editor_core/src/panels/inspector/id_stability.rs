@@ -32,6 +32,7 @@ fn named(index: u32, name: &str, mut extra: Vec<ComponentDisplayInfo>) -> Entity
         components,
         parent: None,
         children: Vec::new(),
+        hidden: 0,
         depth: 0,
         global_rotation: None,
         scene: None,

@@ -20,6 +20,7 @@ fn entity(index: u32, components: Vec<ComponentDisplayInfo>) -> EntityDisplayInf
         components,
         parent: None,
         children: Vec::new(),
+        hidden: 0,
         depth: 0,
         global_rotation: None,
         scene: None,

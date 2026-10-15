@@ -204,3 +204,37 @@ fn an_unsaved_scene_cannot_discard() {
     info.path = Some(std::path::PathBuf::from("scenes/station.scene"));
     assert!(super::GroupHeader::scene(&info, 1).has_file);
 }
+
+/// 🔴 A spline placement's copies are ephemeral, so the list leaves them out — and the parent used
+/// to get a triangle that opened onto nothing (#1475). The note is what the triangle is now for.
+#[test]
+fn hidden_children_get_a_note() {
+    let id = kooch_core::Guid::new_v4();
+    let mut source = entity_info(0, Some(id));
+    source.hidden = 12;
+    let entities = vec![source];
+    let scenes = vec![scene_info(id, true)];
+
+    let rows = with_ui(|ui| build_rows(ui, &entities, &scenes, &WorldFilter::default()));
+
+    assert_eq!(entity_rows(&rows), 1, "the source itself went missing");
+    let note = rows.iter().find_map(|row| match row {
+        WorldRow::Note(text) if text.contains("12") => Some(text.clone()),
+        _ => None,
+    });
+    assert!(note.is_some(), "the twelve copies are not accounted for");
+}
+
+/// An entity with neither children nor hidden ones is a leaf, and a leaf draws no triangle.
+#[test]
+fn a_leaf_stays_a_leaf() {
+    let id = kooch_core::Guid::new_v4();
+    let entities = vec![entity_info(0, Some(id))];
+    assert!(!entities[0].expandable());
+    let scenes = vec![scene_info(id, true)];
+    let rows = with_ui(|ui| build_rows(ui, &entities, &scenes, &WorldFilter::default()));
+    assert!(
+        !rows.iter().any(|row| matches!(row, WorldRow::Note(_))),
+        "a leaf grew a note"
+    );
+}
