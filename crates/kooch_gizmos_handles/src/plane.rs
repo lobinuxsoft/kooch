@@ -4,7 +4,9 @@
 use glam::{Vec3, Vec4};
 use kooch_gizmos::Gizmos;
 
-use crate::{Axis, DragInfo, Handle, HandleFrame, HandleMode, HandleState, Ray, TransformDelta};
+use crate::{
+    Axis, AxisMask, DragInfo, Handle, HandleFrame, HandleMode, HandleState, Ray, TransformDelta,
+};
 
 /// Two-axis translate handle at the corner between two axes; the drag stays in their plane.
 /// Tinted by the constrained third axis, as in Unity: X-Y blue, X-Z green, Y-Z red.
@@ -65,6 +67,10 @@ impl PlaneHandle {
 impl Handle for PlaneHandle {
     fn mode(&self) -> HandleMode {
         HandleMode::Translate
+    }
+
+    fn axes(&self) -> AxisMask {
+        AxisMask::of(self.axis_a).with(AxisMask::of(self.axis_b))
     }
 
     fn draw(&self, gizmos: &mut Gizmos<'_>, frame: HandleFrame, state: HandleState) {

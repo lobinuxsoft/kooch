@@ -291,6 +291,18 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
                 .get::<kooch_gizmos_handles::HandleSet>()
                 .map(|h| h.mode())
                 .unwrap_or_default(),
+            // Which of the three the selection accepts (#1469), so the toolbar can grey a button
+            // out rather than offer a gizmo that would do nothing.
+            handle_offers: resources.get::<kooch_gizmos_handles::HandleSet>().map_or(
+                [true; 3],
+                |h| {
+                    [
+                        h.offers(kooch_gizmos_handles::HandleMode::Translate),
+                        h.offers(kooch_gizmos_handles::HandleMode::Rotate),
+                        h.offers(kooch_gizmos_handles::HandleMode::Scale),
+                    ]
+                },
+            ),
         },
         &asset_catalog,
         asset_detail.as_ref(),

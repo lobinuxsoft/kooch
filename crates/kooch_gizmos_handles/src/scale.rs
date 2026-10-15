@@ -5,7 +5,9 @@
 use glam::{Mat3, Vec3, Vec4};
 use kooch_gizmos::Gizmos;
 
-use crate::{Axis, DragInfo, Handle, HandleFrame, HandleMode, HandleState, Ray, TransformDelta};
+use crate::{
+    Axis, AxisMask, DragInfo, Handle, HandleFrame, HandleMode, HandleState, Ray, TransformDelta,
+};
 
 /// Axis-aligned or center scale handle. See module docs.
 pub struct ScaleHandle {
@@ -56,6 +58,11 @@ impl ScaleHandle {
 impl Handle for ScaleHandle {
     fn mode(&self) -> HandleMode {
         HandleMode::Scale
+    }
+
+    // The center cube scales all three at once, so it needs all three offered.
+    fn axes(&self) -> AxisMask {
+        self.axis.map_or(AxisMask::ALL, AxisMask::of)
     }
 
     fn draw(&self, gizmos: &mut Gizmos<'_>, frame: HandleFrame, state: HandleState) {

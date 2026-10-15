@@ -7,6 +7,7 @@ use kooch_core::resource::Resources;
 use kooch_ecs::GlobalTransform;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
+use kooch_gizmos_handles::AxisMask;
 
 /// What a click in the viewport is aiming at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -314,6 +315,17 @@ fn screen_of(
         clip: projection * camera_transform.matrix.inverse() * to_world,
         size: viewport_size,
     })
+}
+
+/// What a block element offers the transform gizmo, per mode: Translate, Rotate, Scale (#1469).
+/// `None` when nothing is selected, which leaves the entity's own offer in place.
+///
+/// 🔴 Moving only. A face has an orientation of its own in the mesh and no size apart from the
+/// corners around it, so turning or growing one is a mesh operation and not a transform — the
+/// rings were drawn and `edit_selection` dropped their delta on the floor.
+pub(crate) fn accepts(resources: &Resources, entity: Entity) -> Option<[AxisMask; 3]> {
+    selection_origin(resources, entity)?;
+    Some([AxisMask::ALL, AxisMask::NONE, AxisMask::NONE])
 }
 
 /// Where a handle for the current face selection belongs, in world space.

@@ -81,6 +81,8 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) rotation_display_mode: &'a mut RotationDisplayMode,
     pub(crate) snap_settings: &'a mut SnapSettings,
     pub(crate) handle_mode: HandleMode,
+    /// Translate, Rotate, Scale: whether the selection accepts each.
+    pub(crate) handle_offers: [bool; 3],
     /// `true` when at least one currently-selected entity carries a
     /// `Transform` — gates the viewport's Local/World toggle.
     pub(crate) selection_has_transform: bool,
@@ -280,6 +282,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.viewport_input,
                 self.editor_camera_controller,
                 self.handle_mode,
+                self.handle_offers,
                 self.rotation_display_mode,
                 self.snap_settings,
                 self.selection_has_transform,
