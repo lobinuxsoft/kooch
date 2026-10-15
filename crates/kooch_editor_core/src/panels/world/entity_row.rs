@@ -180,7 +180,7 @@ pub(crate) fn display_name_for(info: &EntityDisplayInfo) -> Option<String> {
 }
 
 fn build_label(info: &EntityDisplayInfo, display_name: Option<&str>) -> String {
-    let has_children = !info.children.is_empty();
+    let has_children = info.expandable();
     let icon = if has_children {
         icons::TREE_STRUCTURE
     } else {

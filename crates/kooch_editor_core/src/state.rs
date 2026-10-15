@@ -349,8 +349,12 @@ pub(crate) struct EntityDisplayInfo {
     pub(crate) components: Vec<ComponentDisplayInfo>,
     /// Parent entity, if any.
     pub(crate) parent: Option<Entity>,
-    /// Direct child entities.
+    /// Direct child entities the panel will list.
     pub(crate) children: Vec<Entity>,
+    /// Direct children left out of `children` because they are ephemeral — a spline placement's
+    /// copies, the editor's own helpers. Counted so the panel can say they exist rather than draw
+    /// a parent with nothing under it (#1475).
+    pub(crate) hidden: usize,
     /// Depth in the hierarchy tree (0 = root).
     pub(crate) depth: usize,
     /// World-space rotation from `GlobalTransform`, if available. Used
@@ -364,6 +368,17 @@ pub(crate) struct EntityDisplayInfo {
     /// parent has a `GlobalTransform`. Used to convert World-space edits back to the local rotation
     /// stored on the entity's own Transform.
     pub(crate) parent_global_rotation: Option<glam::Quat>,
+}
+
+impl EntityDisplayInfo {
+    /// Whether the row draws a triangle: it has children to list, or a note standing in for ones it
+    /// will not.
+    ///
+    /// 🔴 The one answer `push_members`, the triangle and the icon all read. Spelled three times it
+    /// was free to disagree with itself, and it did (#1475).
+    pub(crate) fn expandable(&self) -> bool {
+        !self.children.is_empty() || self.hidden > 0
+    }
 }
 
 /// Display data for a single archetype.

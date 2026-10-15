@@ -34,6 +34,7 @@ fn entity(names: &[&str]) -> Vec<EntityDisplayInfo> {
         components: names.iter().map(|name| component(name)).collect(),
         parent: None,
         children: Vec::new(),
+        hidden: 0,
         depth: 0,
         global_rotation: None,
         scene: None,

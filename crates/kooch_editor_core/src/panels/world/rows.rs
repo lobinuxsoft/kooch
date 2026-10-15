@@ -218,6 +218,16 @@ pub(super) fn subtree_open(ui: &egui::Ui, entity: Entity, default_open: bool) ->
     ui.data_mut(|data| *data.get_persisted_mut_or_insert_with(subtree_id(entity), || default_open))
 }
 
+/// What stands in for children the panel keeps out of the tree. They are regenerated from
+/// something else — a curve, the editor itself — so "not saved" is the fact that matters: it says
+/// both why they are hidden and why hand-editing one would not survive.
+fn hidden_note(many: usize) -> String {
+    match many {
+        1 => "1 generated — not saved".to_owned(),
+        many => format!("{many} generated — not saved"),
+    }
+}
+
 /// Appends a scene's entities, leaving out what a collapsed parent hides.
 pub(super) fn push_members(
     ui: &egui::Ui,
@@ -248,11 +258,18 @@ pub(super) fn push_members(
 
         rows.push(WorldRow::Entity(idx));
 
-        if info.children.is_empty() {
+        // Children the panel will draw, or a note standing in for the ones it will not. An entity
+        // with neither is a leaf — and an entity whose only children are ephemeral used to get a
+        // triangle that opened onto nothing (#1475).
+        if !info.expandable() {
             continue;
         }
         let starts_open = !(info.is_prefab_instance && !under_instance);
-        if !subtree_open(ui, info.entity, starts_open) {
+        let open = subtree_open(ui, info.entity, starts_open);
+        if open && info.hidden > 0 {
+            rows.push(WorldRow::Note(hidden_note(info.hidden)));
+        }
+        if !open {
             hidden_under = Some(info.depth);
         }
     }
