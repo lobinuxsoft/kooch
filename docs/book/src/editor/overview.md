@@ -106,6 +106,25 @@ reports buttons through a response, not a key, so those five rows are described 
 | **Ctrl** *during a drag* | Snaps to the grid step in the toolbar — half a metre by default, fifteen degrees for a rotation. |
 | **Ctrl+Shift** *during a drag* | Snaps to the **surface under the cursor**. |
 
+**The handle set fits what it is editing.** The three modes are not offered to everything: a
+selection says which of them mean anything to it, and a mode nothing accepts is greyed out in the
+toolbar and its key does not switch to it. A control that is visibly there and does nothing reads
+as a broken gizmo.
+
+| Selection | Move | Rotate | Scale |
+|---|---|---|---|
+| An entity | all three axes | all three axes | all three axes |
+| A block face | all three axes | — | — |
+| A spline knot | all three axes | one ring, about the curve's tangent — it drives the knot's `roll` | — |
+
+The knot's rotate ring is the only handle drawn about something other than a world or a local axis:
+`roll` is one number measured about the tangent, so that is where the ring goes. Dragging it writes
+the same `SetField` on `points` that the Inspector's list and a knot drag already emit, so one drag
+is one undo step whichever way the author made it.
+
+A knot has nothing for scale to drive **yet**. The per-point radius that would give a swept mesh
+its taper is still ahead, and until the field exists the mode stays hidden rather than pretending.
+
 Surface snapping is the gesture a blockout is built with: hold it and the thing you are dragging
 lands *on* the geometry the cursor is over, rather than sliding along an axis until it looks right.
 It moves the entity, a selected block face, or a spline knot — the same chord in all three, because

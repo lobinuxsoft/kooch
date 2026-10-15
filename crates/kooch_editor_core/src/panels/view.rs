@@ -22,6 +22,7 @@ pub(crate) fn draw_view_content(
     input: &mut Option<ViewportInputDelta>,
     controller: &EditorCameraController,
     current_mode: HandleMode,
+    offered: [bool; 3],
     rotation_mode: &mut RotationDisplayMode,
     snap_settings: &mut SnapSettings,
     selection_has_transform: bool,
@@ -147,6 +148,7 @@ pub(crate) fn draw_view_content(
                     icons::ARROWS_OUT_CARDINAL,
                     "Move (W)",
                     current_mode == HandleMode::Translate,
+                    offered[0],
                 ) {
                     delta.mode_request = Some(HandleModeRequest::Translate);
                 }
@@ -155,6 +157,7 @@ pub(crate) fn draw_view_content(
                     icons::ARROWS_CLOCKWISE,
                     "Rotate (E)",
                     current_mode == HandleMode::Rotate,
+                    offered[1],
                 ) {
                     delta.mode_request = Some(HandleModeRequest::Rotate);
                 }
@@ -163,6 +166,7 @@ pub(crate) fn draw_view_content(
                     icons::ARROWS_OUT_SIMPLE,
                     "Scale (R)",
                     current_mode == HandleMode::Scale,
+                    offered[2],
                 ) {
                     delta.mode_request = Some(HandleModeRequest::Scale);
                 }
@@ -174,6 +178,7 @@ pub(crate) fn draw_view_content(
                     icons::MAP_PIN_SIMPLE_AREA,
                     "Local — handles follow entity rotation",
                     *rotation_mode == RotationDisplayMode::Local,
+                    true,
                 ) {
                     *rotation_mode = RotationDisplayMode::Local;
                 }
@@ -182,6 +187,7 @@ pub(crate) fn draw_view_content(
                     icons::GLOBE_SIMPLE,
                     "World — handles aligned to world axes",
                     *rotation_mode == RotationDisplayMode::World,
+                    true,
                 ) {
                     *rotation_mode = RotationDisplayMode::World;
                 }
@@ -405,7 +411,9 @@ fn snap_view(axis: glam::Vec3, sign: f32) -> glam::Quat {
 
 /// Renders one toolbar button. Highlights when `active`. Returns
 /// `true` the frame the button is clicked.
-fn mode_button(ui: &mut egui::Ui, icon: &str, tooltip: &str, active: bool) -> bool {
+/// One toolbar button. `offered` false greys it out and swallows the click: a control that is
+/// visibly there and does nothing reads as a broken gizmo (#1469).
+fn mode_button(ui: &mut egui::Ui, icon: &str, tooltip: &str, active: bool, offered: bool) -> bool {
     let visuals = ui.style().visuals.clone();
     let fill = if active {
         visuals.selection.bg_fill
@@ -421,7 +429,13 @@ fn mode_button(ui: &mut egui::Ui, icon: &str, tooltip: &str, active: bool) -> bo
         .min_size(egui::vec2(TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE))
         .fill(fill)
         .stroke(stroke);
-    ui.add(button).on_hover_text(tooltip).clicked()
+    let tooltip = match offered {
+        true => tooltip.to_owned(),
+        false => format!("{tooltip} — not for this selection"),
+    };
+    ui.add_enabled(offered, button)
+        .on_hover_text(tooltip)
+        .clicked()
 }
 
 /// The physics overlay's per-category switches.

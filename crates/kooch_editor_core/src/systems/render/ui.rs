@@ -52,6 +52,8 @@ pub(super) struct ViewportUi<'a> {
     pub(super) input: &'a mut Option<ViewportInputDelta>,
     pub(super) controller: &'a EditorCameraController,
     pub(super) handle_mode: kooch_gizmos_handles::HandleMode,
+    /// Translate, Rotate, Scale: whether the selection accepts each (#1469).
+    pub(super) handle_offers: [bool; 3],
     /// The Game panel's texture + size request. A separate view of the
     /// same stage (#592), so it carries its own size — the two panels
     /// are docked independently and rarely agree on one.
@@ -152,6 +154,7 @@ pub(super) fn run_editor_ui(
         input,
         controller,
         handle_mode,
+        handle_offers,
         game_texture_id,
         game_request,
         game_has_camera,
@@ -324,6 +327,7 @@ pub(super) fn run_editor_ui(
                 rotation_display_mode: &mut overlay.rotation_display_mode,
                 snap_settings: &mut overlay.snap_settings,
                 handle_mode,
+                handle_offers,
                 selection_has_transform,
                 editing_a_block,
                 editing_a_spline,

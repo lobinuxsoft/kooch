@@ -42,7 +42,7 @@ use kooch_ecs::query::Query;
 use kooch_ecs::transform::Transform;
 use kooch_gizmos::{GizmoBatch, Gizmos, MeshBatch, VisualizerRegistry};
 use kooch_gizmos_handles::{
-    DragModifiers, HandleMode, HandleSet, Ray, SnapSettings, TransformDelta,
+    AxisMask, DragModifiers, HandleMode, HandleSet, Ray, SnapSettings, TransformDelta,
 };
 
 use crate::actions::EditorAction;
@@ -262,13 +262,6 @@ pub(crate) fn apply_handle_input(
     actions: &mut Vec<EditorAction>,
     element_mode: crate::block_edit::ElementMode,
 ) -> bool {
-    // Apply W / E / R mode request even when nothing is selected.
-    if let Some(req) = delta.mode_request
-        && let Some(handle_set) = resources.get_mut::<HandleSet>()
-    {
-        handle_set.set_mode(handle_mode_for_request(req));
-    }
-
     // Single-entity v1: handles are suppressed for empty / multi selection.
     let target = match selected {
         [e] => *e,
@@ -285,6 +278,14 @@ pub(crate) fn apply_handle_input(
             }
             // Clear any stale snapshot — selection changed mid-drag.
             *drag_start = None;
+            // Nothing selected offers everything: a W / E / R press with an empty selection still
+            // picks the mode the next click will be edited in.
+            if let Some(handle_set) = resources.get_mut::<HandleSet>() {
+                handle_set.set_allowed(AxisMask::ALL, AxisMask::ALL, AxisMask::ALL);
+                if let Some(req) = delta.mode_request {
+                    handle_set.set_mode(handle_mode_for_request(req));
+                }
+            }
             return false;
         }
     };
@@ -299,6 +300,28 @@ pub(crate) fn apply_handle_input(
     // A selected knot takes the gizmo the same way a face selection does: a gizmo at the entity
     // while the thing you grabbed is metres away reads as a gizmo for something else (#1441).
     let knot = spline_handles::selected_origin(resources, target);
+
+    // 🔴 Each consumer declares what it accepts, next to the code that applies it (#1469). A knot
+    // answers first because it also took the origin below: the two have to describe the same
+    // selection or the gizmo stands on one thing and edits another.
+    //
+    // Above the early return below, and above the mode request it gates: a W / E / R press is
+    // answered whether or not the selection has a transform to put a gizmo on.
+    // Gated on the mode the same way `editing` above is: a face selection left over from an
+    // earlier element mode must not narrow what the whole entity accepts.
+    let offer = spline_handles::accepts(resources, target)
+        .or_else(|| match editing.is_some() {
+            true => crate::block_edit::accepts(resources, target),
+            false => None,
+        })
+        .unwrap_or([AxisMask::ALL; 3]);
+    if let Some(handle_set) = resources.get_mut::<HandleSet>() {
+        handle_set.set_allowed(offer[0], offer[1], offer[2]);
+        if let Some(req) = delta.mode_request {
+            handle_set.set_mode(handle_mode_for_request(req));
+        }
+    }
+
     let target_origin = match knot
         .or(editing)
         .or_else(|| entity_world_position(resources, target))
@@ -308,16 +331,23 @@ pub(crate) fn apply_handle_input(
     };
 
     let entity_rotation = entity_world_rotation(resources, target);
-    let basis = match rotation_mode {
-        RotationDisplayMode::Local => entity_rotation,
-        RotationDisplayMode::World => Mat3::IDENTITY,
-    };
 
     let ray = build_world_ray(resources, delta);
 
     let mut handle_set = match resources.remove::<HandleSet>() {
         Some(h) => h,
         None => return false,
+    };
+    // A knot's rotate ring turns about the curve, so its frame comes from the curve rather than
+    // from the display toggle — there is no world-aligned version of "along this tangent".
+    let basis = match (handle_set.mode(), knot.is_some()) {
+        (HandleMode::Rotate, true) => {
+            spline_handles::selected_basis(resources, target).unwrap_or(Mat3::IDENTITY)
+        }
+        _ => match rotation_mode {
+            RotationDisplayMode::Local => entity_rotation,
+            RotationDisplayMode::World => Mat3::IDENTITY,
+        },
     };
     handle_set.set_origin(target_origin);
     handle_set.set_basis(basis);
@@ -406,8 +436,16 @@ pub(crate) fn apply_handle_input(
         // left alone. A knot is a position, so only a translation means anything — a rotation or a
         // scale falling through would turn the whole spline while the gizmo sat on one point of it.
         if knot.is_some() {
-            if let TransformDelta::Translation(v) = delta_out {
-                spline_handles::translate_selected(resources, target, v);
+            match delta_out {
+                TransformDelta::Translation(v) => {
+                    spline_handles::translate_selected(resources, target, v);
+                }
+                // The one rotational quantity a knot has. Scale never arrives: the offer above
+                // leaves that mode without a single axis, so it draws no handle to drag.
+                TransformDelta::Rotation(q) => {
+                    spline_handles::roll_selected(resources, target, q);
+                }
+                TransformDelta::Scale(_) => {}
             }
             return true;
         }

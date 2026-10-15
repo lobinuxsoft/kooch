@@ -6,8 +6,8 @@ use glam::{Mat3, Vec3};
 use kooch_gizmos::Gizmos;
 
 use crate::{
-    Axis, DragInfo, DragModifiers, Handle, HandleFrame, HandleMode, HandleState, PlaneHandle, Ray,
-    RotateHandle, ScaleHandle, SnapSettings, TransformDelta, TranslateHandle,
+    Axis, AxisMask, DragInfo, DragModifiers, Handle, HandleFrame, HandleMode, HandleState,
+    PlaneHandle, Ray, RotateHandle, ScaleHandle, SnapSettings, TransformDelta, TranslateHandle,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -23,6 +23,10 @@ enum SetState {
     },
 }
 
+/// The modes in the order a selection falls back through them: moving a thing is the one gesture
+/// nearly everything accepts.
+const MODES: [HandleMode; 3] = [HandleMode::Translate, HandleMode::Rotate, HandleMode::Scale];
+
 /// Coordinator for a group of handles: runs `Idle → Hover → Drag`, dispatches input to the right
 /// handle and returns its transform delta.
 pub struct HandleSet {
@@ -30,6 +34,9 @@ pub struct HandleSet {
     state: SetState,
     frame: HandleFrame,
     mode: HandleMode,
+    /// What the current selection offers, per mode: Translate, Rotate, Scale (#1469). All three
+    /// axes everywhere until a consumer narrows it, which is what an entity wants.
+    allowed: [AxisMask; 3],
 }
 
 impl Default for HandleSet {
@@ -53,6 +60,7 @@ impl Default for HandleSet {
             state: SetState::Idle,
             frame: HandleFrame::default(),
             mode: HandleMode::Translate,
+            allowed: [AxisMask::ALL; 3],
         }
     }
 }
@@ -66,6 +74,7 @@ impl HandleSet {
             state: SetState::Idle,
             frame: HandleFrame::default(),
             mode: HandleMode::Translate,
+            allowed: [AxisMask::ALL; 3],
         }
     }
 
@@ -103,13 +112,61 @@ impl HandleSet {
         self.frame.entity_world_rotation = rotation;
     }
 
+    /// Declares what the selection offers, per mode (#1469). Call every frame, before `update`:
+    /// the answer depends on what is selected, and a stale mask edits by a rule the author's last
+    /// click retired.
+    ///
+    /// Drag state is dropped when the offer changes, so a drag cannot survive into a mode that no
+    /// longer accepts it.
+    pub fn set_allowed(&mut self, translate: AxisMask, rotate: AxisMask, scale: AxisMask) {
+        let wanted = [translate, rotate, scale];
+        if self.allowed == wanted {
+            return;
+        }
+        self.allowed = wanted;
+        self.state = SetState::Idle;
+        // 🔴 The mode the author left behind may be one the new selection does not offer, and
+        // staying in it is the very bug this mask exists to remove — a gizmo that draws nothing.
+        if !self.offers(self.mode) {
+            self.mode = MODES
+                .into_iter()
+                .find(|mode| self.offers(*mode))
+                .unwrap_or(HandleMode::Translate);
+        }
+    }
+
+    /// Whether `mode` means anything to the current selection. The toolbar reads this to grey a
+    /// button out, rather than offer a gizmo that would do nothing.
+    pub fn offers(&self, mode: HandleMode) -> bool {
+        !self.mask(mode).is_empty()
+    }
+
     /// Switches the edit mode, resetting hover and drag state when it changes so none bleeds into
     /// the new mode.
+    ///
+    /// A mode the selection does not offer is refused: switching to a gizmo that draws nothing
+    /// leaves the author with no gizmo and no reason why.
     pub fn set_mode(&mut self, mode: HandleMode) {
+        if !self.offers(mode) {
+            return;
+        }
         if self.mode != mode {
             self.mode = mode;
             self.state = SetState::Idle;
         }
+    }
+
+    fn mask(&self, mode: HandleMode) -> AxisMask {
+        match mode {
+            HandleMode::Translate => self.allowed[0],
+            HandleMode::Rotate => self.allowed[1],
+            HandleMode::Scale => self.allowed[2],
+        }
+    }
+
+    /// Whether handle `h` renders, picks and drags right now.
+    fn offered(&self, h: &dyn Handle) -> bool {
+        h.mode() == self.mode && self.mask(self.mode).covers(h.axes())
     }
 
     pub fn mode(&self) -> HandleMode {
@@ -201,7 +258,7 @@ impl HandleSet {
             _ => None,
         };
         for (i, h) in self.handles.iter().enumerate() {
-            if h.mode() != self.mode {
+            if !self.offered(h.as_ref()) {
                 continue;
             }
             if let Some(active) = dragging_idx
@@ -221,7 +278,7 @@ impl HandleSet {
     fn pick_closest(&self, ray: Ray) -> Option<usize> {
         let mut best: Option<(usize, f32)> = None;
         for (i, h) in self.handles.iter().enumerate() {
-            if h.mode() != self.mode {
+            if !self.offered(h.as_ref()) {
                 continue;
             }
             if let Some(t) = h.pick(ray, self.frame) {

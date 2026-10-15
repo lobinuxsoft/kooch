@@ -4,7 +4,9 @@
 use glam::{Quat, Vec3, Vec4};
 use kooch_gizmos::Gizmos;
 
-use crate::{Axis, DragInfo, Handle, HandleFrame, HandleMode, HandleState, Ray, TransformDelta};
+use crate::{
+    Axis, AxisMask, DragInfo, Handle, HandleFrame, HandleMode, HandleState, Ray, TransformDelta,
+};
 
 /// Axis rotate handle: a torus perpendicular to its axis, picked by a ray-plane hit within the
 /// tube, dragged as the signed angle between the two rays' plane hits.
@@ -27,6 +29,10 @@ impl RotateHandle {
 impl Handle for RotateHandle {
     fn mode(&self) -> HandleMode {
         HandleMode::Rotate
+    }
+
+    fn axes(&self) -> AxisMask {
+        AxisMask::of(self.axis)
     }
 
     fn draw(&self, gizmos: &mut Gizmos<'_>, frame: HandleFrame, state: HandleState) {

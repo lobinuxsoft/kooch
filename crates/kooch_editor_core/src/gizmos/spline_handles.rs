@@ -404,104 +404,15 @@ pub(super) fn selected_index(resources: &Resources, entity: Entity) -> Option<us
     (held == entity).then_some(index)
 }
 
+mod gizmo;
+
+pub(crate) use gizmo::{
+    accepts, began_gizmo_drag, ended_gizmo_drag, roll_selected, selected_basis, selected_origin,
+    translate_selected,
+};
+
 #[cfg(test)]
 mod tests;
-
-/// Where the selected knot is, in world space — the point the transform gizmo stands on (#1441).
-///
-/// `None` unless a knot of `entity` is selected and still exists: a knot removed from the list
-/// leaves an index pointing at nothing, and a gizmo floating over a deleted point is a gizmo that
-/// edits whatever took its place.
-pub(crate) fn selected_origin(resources: &Resources, entity: Entity) -> Option<Vec3> {
-    let (held, index) = resources.get::<SplineHandleState>()?.selected?;
-    if held != entity {
-        return None;
-    }
-    let (spline, to_world) = read(resources, entity)?;
-    Some(to_world.transform_point3(spline.points.get(index)?.position))
-}
-
-/// Moves the selected knot by a world-space translation, in the spline's own space.
-///
-/// 🔴 Translation only. A knot is a position: it has no rotation to turn and no scale to grow, and
-/// letting those fall through to the entity would move the whole spline while the gizmo claimed to
-/// be editing one point of it.
-pub(crate) fn translate_selected(resources: &mut Resources, entity: Entity, by: Vec3) -> bool {
-    let Some((held, index)) = resources
-        .get::<SplineHandleState>()
-        .and_then(|state| state.selected)
-    else {
-        return false;
-    };
-    if held != entity {
-        return false;
-    }
-    let Some(to_local) = inverse_of(resources, entity) else {
-        return false;
-    };
-    // A direction, not a point: the entity's own translation must not be added to the delta.
-    let local = to_local.transform_vector3(by);
-    let Some((mut spline, _)) = read(resources, entity) else {
-        return false;
-    };
-    let Some(knot) = spline.points.get_mut(index) else {
-        return false;
-    };
-    knot.position += local;
-    write(resources, entity, spline);
-    true
-}
-
-/// Records what a gizmo drag on the selected knot began from. Call on the frame the drag starts.
-pub(crate) fn began_gizmo_drag(resources: &mut Resources) {
-    let Some(entity) = resources
-        .get::<SplineHandleState>()
-        .and_then(|state| state.selected)
-        .map(|(entity, _)| entity)
-    else {
-        return;
-    };
-    let started = read(resources, entity).map(|(spline, _)| spline);
-    if let Some(state) = resources.get_mut::<SplineHandleState>() {
-        state.gizmo_start = started;
-    }
-}
-
-/// Emits the edit for a finished gizmo drag, if the knot actually moved.
-pub(crate) fn ended_gizmo_drag(resources: &mut Resources, actions: &mut Vec<EditorAction>) {
-    let Some((entity, before)) = resources.get_mut::<SplineHandleState>().and_then(|state| {
-        let entity = state.selected.map(|(entity, _)| entity)?;
-        Some((entity, state.gizmo_start.take()?))
-    }) else {
-        return;
-    };
-    let Some(after) = read(resources, entity).map(|(spline, _)| spline) else {
-        return;
-    };
-    // Clicking a handle without moving it is a click, not an edit, and a history of no-ops is what
-    // makes undo untrustworthy.
-    if after.points == before.points {
-        return;
-    }
-    let Some(component) = resources
-        .get::<ComponentNames>()
-        .and_then(|names| names.id(std::any::type_name::<Spline>()))
-    else {
-        return;
-    };
-    let Some(value) = after.reflect_get("points") else {
-        return;
-    };
-    // Put the start back, so the command records the value the drag began from and the whole
-    // gesture is one undo step — the same shape the grip drag follows.
-    write(resources, entity, before);
-    actions.push(EditorAction::SetField {
-        entity,
-        component,
-        field: "points".to_owned(),
-        value,
-    });
-}
 
 /// Puts a knot where the cursor points, at the end of the curve (#1436).
 ///

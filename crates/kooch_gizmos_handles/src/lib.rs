@@ -2,12 +2,14 @@
 //! [`Handle`] draws, picks and turns rays into a transform delta; [`HandleSet`] runs `Idle → Hover
 //! → Drag`.
 
+mod mask;
 mod plane;
 mod rotate;
 mod scale;
 mod set;
 mod translate;
 
+pub use mask::AxisMask;
 pub use plane::PlaneHandle;
 pub use rotate::RotateHandle;
 pub use scale::ScaleHandle;
@@ -199,6 +201,15 @@ pub trait Handle: Send + Sync + 'static {
     /// handles by their mode each frame so only the active set renders
     /// / picks / drags.
     fn mode(&self) -> HandleMode;
+
+    /// Which axes this handle edits, so a selection that offers only some of them can leave the
+    /// rest out (#1469). Every axis must be offered for the handle to appear.
+    ///
+    /// Defaults to all three, which is "offered wherever its mode is": the behaviour every handle
+    /// had before a selection could narrow a mode.
+    fn axes(&self) -> AxisMask {
+        AxisMask::ALL
+    }
 
     /// Draws the handle into the gizmo batch. `frame` carries the
     /// world-space origin and basis; handles align their geometry to

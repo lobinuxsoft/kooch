@@ -3,7 +3,9 @@
 use glam::{Vec3, Vec4};
 use kooch_gizmos::Gizmos;
 
-use crate::{Axis, DragInfo, Handle, HandleFrame, HandleMode, HandleState, Ray, TransformDelta};
+use crate::{
+    Axis, AxisMask, DragInfo, Handle, HandleFrame, HandleMode, HandleState, Ray, TransformDelta,
+};
 
 /// Axis translate handle: an arrow along its axis, picked by ray-to-segment distance, dragged as
 /// the change in the ray's projection onto the axis line.
@@ -28,6 +30,10 @@ impl TranslateHandle {
 impl Handle for TranslateHandle {
     fn mode(&self) -> HandleMode {
         HandleMode::Translate
+    }
+
+    fn axes(&self) -> AxisMask {
+        AxisMask::of(self.axis)
     }
 
     fn draw(&self, gizmos: &mut Gizmos<'_>, frame: HandleFrame, state: HandleState) {
