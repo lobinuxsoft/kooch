@@ -92,6 +92,40 @@ impl Knot {
     }
 }
 
+/// A number that changes whenever the curve does.
+///
+/// 🔴 Every field that can bend the curve or thicken it, including the authored tangents. They are
+/// ignored while a knot is `Auto` — `eval` derives both — but anything built from the curve has to
+/// follow an `Aligned` or `Broken` knot whose grips were dragged.
+///
+/// Shared, so the two things built from a curve — a run of entities (#1428) and a swept mesh
+/// (#1152) — cannot disagree about whether it moved.
+pub fn curve_revision(points: &[Knot], closed: bool) -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    closed.hash(&mut hasher);
+    for knot in points {
+        for value in [
+            knot.position.x,
+            knot.position.y,
+            knot.position.z,
+            knot.roll,
+            knot.radius,
+            knot.arriving.x,
+            knot.arriving.y,
+            knot.arriving.z,
+            knot.leaving.x,
+            knot.leaving.y,
+            knot.leaving.z,
+        ] {
+            value.to_bits().hash(&mut hasher);
+        }
+        knot.mode.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 /// Tangents from the neighbours, Catmull-Rom. Nothing to author, and a moved point re-smooths the
 /// two beside it.
 pub const TANGENT_AUTO: u32 = 0;

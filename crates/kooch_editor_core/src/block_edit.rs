@@ -587,6 +587,7 @@ pub(crate) fn mesh_of(resources: &Resources, entity: Entity) -> Option<BlockMesh
 }
 
 pub(crate) mod shape_sync;
+pub(crate) mod sweep_sync;
 
 #[cfg(test)]
 mod tests;

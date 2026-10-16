@@ -488,7 +488,7 @@ fn door(out: &mut Builder, width: f32, height: f32, frame: f32, depth: f32) {
 /// Collects faces by position, welding corners that land on the same point so neighbouring faces
 /// share them — an unwelded seam is an open edge.
 #[derive(Default)]
-struct Builder {
+pub(crate) struct Builder {
     positions: Vec<Vec3>,
     faces: Vec<Vec<u32>>,
     known: HashMap<[i64; 3], u32>,
@@ -512,7 +512,7 @@ impl Builder {
 
     /// Adds a face wound so its normal points away from `inside`, a point within the convex piece
     /// the face bounds — for shapes whose winding is easier to derive than to write out.
-    fn face_away(&mut self, points: &[Vec3], inside: Vec3) {
+    pub(crate) fn face_away(&mut self, points: &[Vec3], inside: Vec3) {
         let mut normal = Vec3::ZERO;
         for (index, current) in points.iter().enumerate() {
             let next = points[(index + 1) % points.len()];
@@ -540,7 +540,7 @@ impl Builder {
         );
     }
 
-    fn finish(self) -> BlockMesh {
+    pub(crate) fn finish(self) -> BlockMesh {
         BlockMesh::from_faces(self.positions, &self.faces).unwrap_or_default()
     }
 }

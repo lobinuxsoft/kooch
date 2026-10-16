@@ -453,6 +453,14 @@ pub(super) fn grip_colour(hovered: bool, selected: bool, part: Part) -> Vec4 {
 /// of the two they are about to grab.
 const RING_GRIP: Vec4 = Vec4::new(0.85, 0.72, 0.15, 1.0);
 
+/// Whether a grip is being dragged right now. What tells a live edit from a finished one: a drag
+/// writes the component every frame, and anything expensive hanging off that wants to wait.
+pub(crate) fn is_dragging(resources: &Resources) -> bool {
+    resources
+        .get::<SplineHandleState>()
+        .is_some_and(|state| state.drag.is_some())
+}
+
 /// The knot the gizmo is on, for the visualizer to mark.
 pub(super) fn selected_index(resources: &Resources, entity: Entity) -> Option<usize> {
     let (held, index) = resources.get::<SplineHandleState>()?.selected?;

@@ -374,27 +374,7 @@ fn look_along(forward: Vec3, up: Vec3) -> Quat {
 /// numbers and nothing else: despawning an instance does not change it, so the run is not rebuilt.
 fn revision(spline: &super::Spline, placement: &SplinePlacement) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    spline.closed.hash(&mut hasher);
-    for knot in &spline.points {
-        // Every field that can bend the curve, including the authored tangents. They are ignored
-        // while a knot is `Auto` — `eval` derives both — but a run must follow an `Aligned` or
-        // `Broken` knot whose grips were dragged.
-        for value in [
-            knot.position.x,
-            knot.position.y,
-            knot.position.z,
-            knot.roll,
-            knot.arriving.x,
-            knot.arriving.y,
-            knot.arriving.z,
-            knot.leaving.x,
-            knot.leaving.y,
-            knot.leaving.z,
-        ] {
-            value.to_bits().hash(&mut hasher);
-        }
-        knot.mode.hash(&mut hasher);
-    }
+    super::curve_revision(&spline.points, spline.closed).hash(&mut hasher);
     placement.prefab.hash(&mut hasher);
     placement.mode.hash(&mut hasher);
     placement.count.hash(&mut hasher);

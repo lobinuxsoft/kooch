@@ -112,6 +112,16 @@ pub(crate) fn new_block_asset(
     resources: &mut Resources,
     shape: kooch_blockmesh::Shape,
 ) -> Option<(PathBuf, kooch_core::Guid)> {
+    new_block_asset_from(resources, shape.label(), &shape.build())
+}
+
+/// The same, for a mesh that is not one of the parametric shapes — a sweep builds its own from a
+/// curve (#1152) and has no `Shape` to ask.
+pub(crate) fn new_block_asset_from(
+    resources: &mut Resources,
+    label: &str,
+    mesh: &kooch_blockmesh::BlockMesh,
+) -> Option<(PathBuf, kooch_core::Guid)> {
     let folder = resources
         .get::<crate::project_state::ProjectState>()?
         .active_project
@@ -128,15 +138,14 @@ pub(crate) fn new_block_asset(
         &folder,
         OsStr::new(&format!(
             "{}.{}",
-            shape.label(),
+            label,
             kooch_blockmesh::BLOCK_MESH_EXTENSION
         )),
     );
-    let mesh = kooch_blockmesh::BlockShape::from(shape).build();
-    let text = match ron::ser::to_string_pretty(&mesh, ron::ser::PrettyConfig::default()) {
+    let text = match ron::ser::to_string_pretty(mesh, ron::ser::PrettyConfig::default()) {
         Ok(text) => text,
         Err(error) => {
-            tracing::error!(%error, shape = shape.label(), "cannot serialise a block shape");
+            tracing::error!(%error, shape = label, "cannot serialise a block shape");
             return None;
         }
     };
