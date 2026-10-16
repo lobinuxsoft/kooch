@@ -9,6 +9,7 @@ use crate::Reflect;
 /// Human-readable name for an entity.
 #[derive(Debug, Clone, Default, Reflect)]
 #[reflect(inspector = "hidden")]
+#[reflect(category = "Core")]
 pub struct Name {
     pub value: String,
 }

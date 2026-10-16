@@ -192,7 +192,7 @@ fn stop_tells_the_caller_the_world_moved_back() {
     // A gameplay system moves it, and the editor learns that through the
     // cheap pull — the only one it makes while playing.
     move_to(&mut resources, 9.0);
-    let _ = list_moved(2, &mut resources, None);
+    let _ = list_moved(2, &mut resources, None, &[]);
 
     set_playing(&mut resources, false).expect("stop");
 

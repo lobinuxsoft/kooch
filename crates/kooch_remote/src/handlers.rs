@@ -435,6 +435,8 @@ fn get_schema(id: u64, resources: &Resources) -> Response {
                 type_name: type_name.to_owned(),
                 fields,
                 category: registry.reflect_category(&type_id).map(str::to_owned),
+                hidden: registry.reflect_inspector_visibility(&type_id)
+                    == Some(kooch_ecs::reflect::InspectorVisibility::Hidden),
             }
         })
         .collect();

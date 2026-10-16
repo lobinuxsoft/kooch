@@ -39,6 +39,7 @@ fn schema() -> Vec<ComponentSchema> {
         type_name: PLAYER_INPUT.to_owned(),
         fields: Some(vec![reference("movement"), reference("look")]),
         category: None,
+        hidden: false,
     }]
 }
 

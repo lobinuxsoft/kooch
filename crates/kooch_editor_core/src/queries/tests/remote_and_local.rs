@@ -105,8 +105,11 @@ fn connected_with_schema(components: &[(&str, Option<&str>)]) -> RemoteState {
             .iter()
             .map(|(name, category)| ComponentSchema {
                 type_name: (*name).to_owned(),
-                fields: None,
+                // Empty rather than absent: a marker component reflects no fields, and `None` is
+                // reserved for a type with no reflection at all, which the menu does not offer.
+                fields: Some(Vec::new()),
                 category: category.map(str::to_owned),
+                hidden: false,
             })
             .collect(),
     );
@@ -146,6 +149,48 @@ fn the_menu_lists_the_projects_components_not_the_editors() {
         "the project's component was never interned"
     );
     assert_eq!(spin.category.as_deref(), Some("Gameplay"));
+}
+
+/// 🔴 The menu offers what an author can actually add. Bookkeeping says so itself, with
+/// `#[reflect(inspector = "hidden")]`; a type with no reflection cannot be edited or written to a
+/// scene at all. Over the wire both used to be offered, which is how `SolverBody` — a slot index
+/// the solver owns — ended up in the list.
+#[test]
+fn the_menu_skips_what_cannot_be_authored() {
+    use kooch_remote::protocol::ComponentSchema;
+
+    let mut resources = mirrored_world();
+    let mut state = crate::remote_session::RemoteState::new();
+    let mut session = crate::remote_session::RemoteSession::attach("kooch_test_schema_hidden.sock");
+    session.connected_with_schema_for_test(vec![
+        ComponentSchema {
+            type_name: "game::spin::Spin".to_owned(),
+            fields: Some(Vec::new()),
+            category: Some("Gameplay".to_owned()),
+            hidden: false,
+        },
+        ComponentSchema {
+            type_name: "kooch_ecs::spline::placement::Placed".to_owned(),
+            fields: Some(Vec::new()),
+            category: None,
+            hidden: true,
+        },
+        ComponentSchema {
+            type_name: "kooch_physics::SolverBody".to_owned(),
+            fields: None,
+            category: None,
+            hidden: false,
+        },
+    ]);
+    state.session = Some(session);
+    resources.insert(state);
+
+    intern_registry_names(&mut resources);
+    let names: Vec<String> = gather_reflected_types(&resources)
+        .into_iter()
+        .map(|t| t.short_name)
+        .collect();
+    assert_eq!(names, vec!["Spin".to_owned()], "offered: {names:?}");
 }
 
 /// Local mode is unchanged: no session means the editor's own registry,

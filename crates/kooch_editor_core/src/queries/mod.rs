@@ -509,8 +509,18 @@ pub(crate) fn remote_schema(
 /// The components the add-component menu offers.
 
 /// Whether a component is one the engine writes rather than one a user authors.
+///
+/// 🔴 Only for the ones that are still worth **seeing** in the Inspector. Anything that is not
+/// worth seeing either says so itself, with `#[reflect(inspector = "hidden")]` — which is what a
+/// project's own component uses too, rather than a list in the editor that cannot know about it.
 fn is_engine_owned(type_name: &str) -> bool {
-    const DERIVED: &[&str] = &["Parent", "Children", "GlobalTransform", "PersistentId"];
+    const DERIVED: &[&str] = &[
+        "Parent",
+        "Children",
+        "GlobalTransform",
+        "PersistentId",
+        "PrefabInstance",
+    ];
 
     let Some(short) = type_name.rsplit("::").next() else {
         return false;
@@ -524,6 +534,12 @@ pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedType
     let mut types: Vec<ReflectedTypeInfo> = match remote_schema(resources) {
         Some(schema) => schema
             .iter()
+            // 🔴 Reflected only, which is what the local path has always offered: a component with
+            // no field layout cannot be edited, cannot be written to a scene, and adding one over
+            // the wire gives the author an entry that does nothing. `SolverBody` is the example —
+            // a slot index the solver owns, offered by the remote menu and by nothing else.
+            .filter(|component| component.fields.is_some())
+            .filter(|component| !component.hidden)
             .filter(|component| !is_engine_owned(&component.type_name))
             .map(|component| ReflectedTypeInfo {
                 component: component_id(names, &component.type_name),
@@ -544,6 +560,12 @@ pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedType
                         .reflected_type_names()
                         .into_iter()
                         .filter(|(_, name)| !is_engine_owned(name))
+                        // Declared by the component itself, so one rule covers the engine's
+                        // bookkeeping and a project's own.
+                        .filter(|(tid, _)| {
+                            registry.reflect_inspector_visibility(tid)
+                                != Some(kooch_ecs::reflect::InspectorVisibility::Hidden)
+                        })
                         .map(|(tid, name)| ReflectedTypeInfo {
                             component: component_id(names, name),
                             short_name: name.rsplit("::").next().unwrap_or(name).to_owned(),
