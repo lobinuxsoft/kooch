@@ -15,6 +15,7 @@
 
 mod asset_list;
 mod attrs;
+mod scalar_list;
 mod struct_list;
 mod system_attr;
 mod type_mapping;
@@ -363,6 +364,30 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     }),
                 },
             });
+            continue;
+        }
+
+        // A `Vec` of plain values — numbers, vectors, strings (#1452). Geometry is shaped like
+        // this, which is why a block's mesh had to be an asset before.
+        if let Some(element) = vec_inner(ty)
+            && type_mapping(element).is_some()
+        {
+            let hidden = match crate::attrs::parse_field_hidden(field) {
+                Ok(flag) => flag,
+                Err(e) => return e,
+            };
+            let (meta, get, set) = scalar_list::scalar_list(
+                field_name,
+                &field_name_str,
+                &set_pattern,
+                element,
+                hidden,
+                &field_doc,
+                &field_group,
+            );
+            field_metas.push(meta);
+            get_arms.push(get);
+            set_arms.push(set);
             continue;
         }
 
