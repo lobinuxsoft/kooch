@@ -369,7 +369,15 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     resources.insert(cursor);
 
     let driving_camera = drives_camera(viewport_input);
-    apply_viewport_edits(resources, &mut taken.overlay, viewport_input, &mut actions);
+    // 🔴 Handed in, not read from the table: `Taken` is holding `ProjectState` until this frame
+    // ends, and what runs in between sees a project-less editor (#1499).
+    apply_viewport_edits(
+        resources,
+        &mut taken.overlay,
+        viewport_input,
+        project_crate_root.as_deref(),
+        &mut actions,
+    );
     stages.input_ms = crate::perf::ms_since(input_start);
 
     let viewport_start = std::time::Instant::now();
