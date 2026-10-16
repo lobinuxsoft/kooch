@@ -124,8 +124,15 @@ is one undo step whichever way the author made it.
 
 A knot's scale is **one number**: its `radius`, how thick the curve is at that point. Every scale
 cube writes it, including the axis ones, because a radius has no axes — dragging any of them means
-"thicker here". It is drawn as a ring square to the curve, rolled with the knot's frame, so a taper
-reads as a taper before anything is swept along the path.
+"thicker here". It is drawn as a yellow ring square to the curve, rolled with the knot's frame, so
+a taper reads as a taper before anything is swept along the path.
+
+The ring also carries **its own grip**, sitting on the circle: drag it and the radius becomes the
+distance from the knot, whichever way around the ring you pull. It is the gesture for thickness the
+way a tangent grip is the gesture for a bend — no mode to enter first. The ring spends as many
+segments as its size needs to still read as round, so a fifty-metre one is not a visible polygon
+and a half-metre one does not pay for lines nobody can see. A knot thinned to zero has no ring and
+no grip; the Inspector or the scale gizmo brings it back.
 
 Surface snapping is the gesture a blockout is built with: hold it and the thing you are dragging
 lands *on* the geometry the cursor is over, rather than sliding along an axis until it looks right.

@@ -25,8 +25,8 @@ const HANDLE: Vec3 = Vec3::new(1.0, 0.6, 0.15);
 const DERIVED: Vec3 = Vec3::new(0.45, 0.35, 0.2);
 /// Which way is up there — the axis a rail tilts about and spline gravity calls down.
 const UP: Vec4 = Vec4::new(0.4, 0.95, 0.4, 1.0);
-/// How thick the curve is at a knot. Cool and dim: it is the curve's width, not a thing to grab.
-const RADIUS: Vec3 = Vec3::new(0.3, 0.5, 0.6);
+/// How thick the curve is at a knot, and the grip that sizes it.
+const RADIUS: Vec3 = Vec3::new(0.95, 0.8, 0.15);
 
 #[derive(Default)]
 pub(crate) struct SplineVisualizer;
@@ -63,7 +63,7 @@ impl Visualizer<Spline> for SplineVisualizer {
         }
 
         frames(spline, world, resources, gizmos);
-        rings(spline, world, gizmos);
+        rings(spline, world, resources, gizmos);
         for (index, knot) in spline.points.iter().enumerate() {
             handles(spline, index, knot, world, gizmos);
         }
@@ -128,33 +128,26 @@ fn frames(spline: &Spline, world: &Mat4, resources: &Resources, gizmos: &mut Giz
 /// How thick the curve is at each knot, as a ring square to it — so a taper reads as a taper
 /// before anything is swept along the curve (#1152).
 ///
-/// ⚠️ Costs a transport per knot, the same price `frames` pays per tick. The two together are what
-/// to measure first if the editor's frame time ever points at this file.
-fn rings(spline: &Spline, world: &Mat4, gizmos: &mut Gizmos<'_>) {
-    let segments = eval::segments(&spline.points, spline.closed);
-    if segments == 0 {
-        return;
-    }
+/// 🔴 The plane comes from `spline_handles::ring_frame`, the same function the radius grip is
+/// placed with: derived twice, the circle and the grip that sizes it would drift apart.
+fn rings(spline: &Spline, world: &Mat4, resources: &Resources, gizmos: &mut Gizmos<'_>) {
     for (index, knot) in spline.points.iter().enumerate() {
         // 🔴 `!(radius > 0.0)`: a knot the author thinned to nothing has no ring, and a NaN must
-        // not reach the line below as a circle of garbage.
+        // not reach the lines below as a circle of garbage.
         if !(knot.radius > 0.0) {
             continue;
         }
-        let t = index as f32 / segments as f32;
-        let tangent = eval::tangent(&spline.points, spline.closed, t);
-        let up = eval::up(&spline.points, spline.closed, t);
-        if !(tangent.length_squared() > 1e-12) || !(up.length_squared() > 1e-12) {
+        let Some((up, side)) = spline_handles::ring_frame(spline, index) else {
             continue;
-        }
+        };
         // Drawn in the knot's own frame, rolled with it: the ring a swept profile fills is the one
         // the curve's up and side span, not one lying flat in the world.
-        let across = up * knot.radius;
-        let along = tangent.cross(up).normalize_or_zero() * knot.radius;
+        let (across, along) = (up * knot.radius, side * knot.radius);
         let at = world.transform_point3(knot.position);
+        let steps = ring_steps(knot.radius, super::screen_scale::factor(resources, at));
         let mut previous = at + world.transform_vector3(across);
-        for step in 1..=RING_STEPS {
-            let angle = std::f32::consts::TAU * step as f32 / RING_STEPS as f32;
+        for step in 1..=steps {
+            let angle = std::f32::consts::TAU * step as f32 / steps as f32;
             let point = at + world.transform_vector3(across * angle.cos() + along * angle.sin());
             gizmos.line(previous, point, RADIUS);
             previous = point;
@@ -162,8 +155,39 @@ fn rings(spline: &Spline, world: &Mat4, gizmos: &mut Gizmos<'_>) {
     }
 }
 
-/// Segments a ring is drawn in. Enough that it reads as round at the size a knot's ring is seen.
-const RING_STEPS: usize = 16;
+/// Segments a ring of `radius` needs to still read as round, given what one screen-scale unit is
+/// worth in world units there.
+///
+/// 🔴 A fixed count is a lie at both ends: a half-metre ring wastes lines and a fifty-metre one
+/// draws a visible polygon. The bound is the **sagitta** — how far a chord sags from its arc,
+/// `r(1 - cos(π/n))` — held under a tolerance that scales with the camera, so a ring far away is
+/// allowed to sag by more world units for the same error on screen.
+fn ring_steps(radius: f32, scale: f32) -> usize {
+    let allowed = SMOOTH_UNITS * scale;
+    // `!(x > 0.0)` throughout: a NaN radius or a degenerate camera scale must take the floor rather
+    // than reach `acos` and come back as a step count cast from NaN.
+    if !(radius > 0.0) || !(allowed > 0.0) {
+        return RING_STEPS_MIN;
+    }
+    // Sagitta under `allowed` means `cos(π/n) ≥ 1 - allowed/r`, so `n ≥ π / acos(1 - allowed/r)`.
+    let cosine = 1.0 - (allowed / radius).min(2.0);
+    let angle = cosine.clamp(-1.0, 1.0).acos();
+    if !(angle > 0.0) {
+        return RING_STEPS_MAX;
+    }
+    ((std::f32::consts::PI / angle).ceil() as usize).clamp(RING_STEPS_MIN, RING_STEPS_MAX)
+}
+
+/// How far a ring may sag from its circle, in screen-scale reference units — the same unit the
+/// grips and the up ticks are sized in, so one tolerance covers every distance.
+const SMOOTH_UNITS: f32 = 0.004;
+
+/// Fewest segments a ring is drawn in: a tiny ring is a few pixels across and owes nobody a circle.
+const RING_STEPS_MIN: usize = 12;
+
+/// Most it may spend. A ring is editor furniture, not the scene, and past this the lines are closer
+/// together than the pixels they land on.
+const RING_STEPS_MAX: usize = 128;
 
 /// The two tangent handles of one knot, drawn where the curve actually leaves and arrives.
 ///

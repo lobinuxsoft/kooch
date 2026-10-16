@@ -126,9 +126,14 @@ const ROLL_RANGE: FieldRange = FieldRange {
 pub const DEFAULT_RADIUS: f32 = 0.5;
 
 /// Never negative: a radius is a width, and a negative one turns a swept profile inside out.
+pub const RADIUS_MIN: f32 = 0.0;
+pub const RADIUS_MAX: f32 = 100.0;
+
+/// Public because the gizmo and the viewport handle write this field too, and three copies of a
+/// legal range are three chances for the Inspector's slider to disagree with a drag.
 const RADIUS_RANGE: FieldRange = FieldRange {
-    min: 0.0,
-    max: 100.0,
+    min: RADIUS_MIN as f64,
+    max: RADIUS_MAX as f64,
     step: 0.05,
 };
 
