@@ -115,15 +115,17 @@ as a broken gizmo.
 |---|---|---|---|
 | An entity | all three axes | all three axes | all three axes |
 | A block face | all three axes | — | — |
-| A spline knot | all three axes | one ring, about the curve's tangent — it drives the knot's `roll` | — |
+| A spline knot | all three axes | one ring, about the curve's tangent — it drives the knot's `roll` | one number, the knot's `radius` |
 
 The knot's rotate ring is the only handle drawn about something other than a world or a local axis:
 `roll` is one number measured about the tangent, so that is where the ring goes. Dragging it writes
 the same `SetField` on `points` that the Inspector's list and a knot drag already emit, so one drag
 is one undo step whichever way the author made it.
 
-A knot has nothing for scale to drive **yet**. The per-point radius that would give a swept mesh
-its taper is still ahead, and until the field exists the mode stays hidden rather than pretending.
+A knot's scale is **one number**: its `radius`, how thick the curve is at that point. Every scale
+cube writes it, including the axis ones, because a radius has no axes — dragging any of them means
+"thicker here". It is drawn as a ring square to the curve, rolled with the knot's frame, so a taper
+reads as a taper before anything is swept along the path.
 
 Surface snapping is the gesture a blockout is built with: hold it and the thing you are dragging
 lands *on* the geometry the cursor is over, rather than sliding along an axis until it looks right.
