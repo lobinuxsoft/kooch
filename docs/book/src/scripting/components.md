@@ -78,6 +78,16 @@ unsupported type needs `#[reflect(skip)]` or the derive will not compile.
 pub struct Health { … }
 ```
 
+A component with **no category sits loose** at the top of the Add Component menu, above the groups.
+That is the right place for a handful of a project's own components and the wrong place for a
+hundred, so give yours a category — your own name for it, or one of the engine's (`Gameplay`,
+`Character`, `Physics`, `Rendering`, `Input`, `Level`, `Core`, `Spline`, …) to file it beside them.
+
+`inspector = "hidden"` also takes it **out of the Add Component menu**: bookkeeping an author
+cannot usefully add by hand says so on itself, rather than in a list the editor keeps. The same
+goes for a component with no `Reflect` at all — it cannot be edited or written to a scene, so the
+menu does not offer it.
+
 ### On a field
 
 ```rust

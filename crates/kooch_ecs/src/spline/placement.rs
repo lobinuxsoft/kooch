@@ -60,6 +60,7 @@ const MAX_INSTANCES: usize = 4096;
 
 /// What to lay along the [`Spline`](super::Spline) on the same entity, and how often.
 #[derive(Debug, Clone, Default, crate::Reflect)]
+#[reflect(category = "Spline")]
 pub struct SplinePlacement {
     /// The prefab stamped at each step. Nothing is placed until this names one.
     #[reflect(asset = "kooch_ecs::scene::document::SceneDocument")]
@@ -82,6 +83,7 @@ impl Component for SplinePlacement {}
 /// ⚠️ Holds an `Entity`, which a scene file cannot carry across a reload (#712). Harmless here
 /// precisely because this is never written to one.
 #[derive(Debug, Clone, Default, crate::Reflect)]
+#[reflect(inspector = "hidden")]
 pub struct Placed {
     pub source: Entity,
 }

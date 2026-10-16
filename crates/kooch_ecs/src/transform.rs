@@ -12,6 +12,7 @@ use crate::Reflect;
 
 /// 3D transform with position, rotation, and scale.
 #[derive(Debug, Clone, Copy, Reflect)]
+#[reflect(category = "Core")]
 pub struct Transform {
     /// Position relative to the parent, in world units.
     pub position: Vec3,

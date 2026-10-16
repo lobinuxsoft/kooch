@@ -118,6 +118,11 @@ pub struct ComponentSchema {
     /// Category tag from `#[reflect(category = "...")]`, for grouping in
     /// the Add Component menu.
     pub category: Option<String>,
+    /// `#[reflect(inspector = "hidden")]`: bookkeeping the engine writes, which the Add Component
+    /// menu must not offer. Defaulted, so an older host that does not send it offers everything
+    /// the way it used to rather than hiding the lot.
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 /// A remote method and its parameters, serialised as an internal `method` tag with flattened

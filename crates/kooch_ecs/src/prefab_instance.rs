@@ -251,6 +251,7 @@ being saved — that is what makes it an override.",
 /// Marks one entity of an instance as the prefab entity it was built from.
 #[derive(Debug, Clone, Default, crate::Reflect)]
 #[reflect(inspector = "read_only")]
+#[reflect(inspector = "hidden")]
 pub struct PrefabMember {
     /// The instance this belongs to — the entity carrying [`PrefabInstance`].
     pub root: Entity,
