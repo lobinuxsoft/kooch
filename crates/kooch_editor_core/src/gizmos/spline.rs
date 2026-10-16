@@ -25,6 +25,8 @@ const HANDLE: Vec3 = Vec3::new(1.0, 0.6, 0.15);
 const DERIVED: Vec3 = Vec3::new(0.45, 0.35, 0.2);
 /// Which way is up there — the axis a rail tilts about and spline gravity calls down.
 const UP: Vec4 = Vec4::new(0.4, 0.95, 0.4, 1.0);
+/// How thick the curve is at a knot. Cool and dim: it is the curve's width, not a thing to grab.
+const RADIUS: Vec3 = Vec3::new(0.3, 0.5, 0.6);
 
 #[derive(Default)]
 pub(crate) struct SplineVisualizer;
@@ -61,6 +63,7 @@ impl Visualizer<Spline> for SplineVisualizer {
         }
 
         frames(spline, world, resources, gizmos);
+        rings(spline, world, gizmos);
         for (index, knot) in spline.points.iter().enumerate() {
             handles(spline, index, knot, world, gizmos);
         }
@@ -121,6 +124,46 @@ fn frames(spline: &Spline, world: &Mat4, resources: &Resources, gizmos: &mut Giz
         }
     }
 }
+
+/// How thick the curve is at each knot, as a ring square to it — so a taper reads as a taper
+/// before anything is swept along the curve (#1152).
+///
+/// ⚠️ Costs a transport per knot, the same price `frames` pays per tick. The two together are what
+/// to measure first if the editor's frame time ever points at this file.
+fn rings(spline: &Spline, world: &Mat4, gizmos: &mut Gizmos<'_>) {
+    let segments = eval::segments(&spline.points, spline.closed);
+    if segments == 0 {
+        return;
+    }
+    for (index, knot) in spline.points.iter().enumerate() {
+        // 🔴 `!(radius > 0.0)`: a knot the author thinned to nothing has no ring, and a NaN must
+        // not reach the line below as a circle of garbage.
+        if !(knot.radius > 0.0) {
+            continue;
+        }
+        let t = index as f32 / segments as f32;
+        let tangent = eval::tangent(&spline.points, spline.closed, t);
+        let up = eval::up(&spline.points, spline.closed, t);
+        if !(tangent.length_squared() > 1e-12) || !(up.length_squared() > 1e-12) {
+            continue;
+        }
+        // Drawn in the knot's own frame, rolled with it: the ring a swept profile fills is the one
+        // the curve's up and side span, not one lying flat in the world.
+        let across = up * knot.radius;
+        let along = tangent.cross(up).normalize_or_zero() * knot.radius;
+        let at = world.transform_point3(knot.position);
+        let mut previous = at + world.transform_vector3(across);
+        for step in 1..=RING_STEPS {
+            let angle = std::f32::consts::TAU * step as f32 / RING_STEPS as f32;
+            let point = at + world.transform_vector3(across * angle.cos() + along * angle.sin());
+            gizmos.line(previous, point, RADIUS);
+            previous = point;
+        }
+    }
+}
+
+/// Segments a ring is drawn in. Enough that it reads as round at the size a knot's ring is seen.
+const RING_STEPS: usize = 16;
 
 /// The two tangent handles of one knot, drawn where the curve actually leaves and arrives.
 ///

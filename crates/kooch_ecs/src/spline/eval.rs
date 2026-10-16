@@ -141,6 +141,17 @@ fn roll_at(points: &[Knot], closed: bool, t: f32) -> f32 {
     points[a].roll + (points[b].roll - points[a].roll) * local
 }
 
+/// How thick the curve is at `t`, straight between the two knots of the segment.
+///
+/// The same interpolation as the roll, and for the same reason: a radius authored per point is a
+/// value AT the point, so a segment reads as a cone between its two ends rather than as a step.
+pub fn radius_at(points: &[Knot], closed: bool, t: f32) -> f32 {
+    let Some((a, b, local)) = segment_at(points, closed, t) else {
+        return points.first().map_or(0.0, |knot| knot.radius);
+    };
+    points[a].radius + (points[b].radius - points[a].radius) * local
+}
+
 /// Which segment `t` lands in, and where inside it: `(first knot, second knot, 0..1)`.
 pub(crate) fn segment_at(points: &[Knot], closed: bool, t: f32) -> Option<(usize, usize, f32)> {
     let count = segments(points, closed);

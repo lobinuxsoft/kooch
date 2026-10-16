@@ -407,8 +407,8 @@ pub(super) fn selected_index(resources: &Resources, entity: Entity) -> Option<us
 mod gizmo;
 
 pub(crate) use gizmo::{
-    accepts, began_gizmo_drag, ended_gizmo_drag, roll_selected, selected_basis, selected_origin,
-    translate_selected,
+    accepts, began_gizmo_drag, ended_gizmo_drag, roll_selected, scale_selected, selected_basis,
+    selected_origin, translate_selected,
 };
 
 #[cfg(test)]

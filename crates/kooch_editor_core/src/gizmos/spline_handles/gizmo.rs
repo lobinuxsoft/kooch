@@ -1,10 +1,10 @@
 //! The transform gizmo's side of a knot (#1441, #1469): where it stands, what it offers, and what
 //! a drag on it writes.
 //!
-//! 🔴 A knot accepts a MOVE on all three axes and a ROTATE on exactly one — its `roll`, about the
-//! curve's tangent. Scale it accepts on none: a knot has no size until #1447 gives it a radius.
-//! The declaration lives here, next to the code that applies it, so a capability cannot be
-//! spelled in two places and disagree with itself.
+//! 🔴 A knot accepts a MOVE on all three axes, a ROTATE on exactly one — its `roll`, about the
+//! curve's tangent — and a SCALE that is one number, its `radius` (#1447). The declaration lives
+//! here, next to the code that applies it, so a capability cannot be spelled in two places and
+//! disagree with itself.
 
 use glam::{Mat3, Quat, Vec3};
 
@@ -24,7 +24,11 @@ pub(crate) fn accepts(resources: &Resources, entity: Entity) -> Option<[AxisMask
     selected_origin(resources, entity)?;
     // X alone for the rotate: the basis below puts world X on the tangent, so the one ring the
     // author sees is the one number a knot can turn.
-    Some([AxisMask::ALL, AxisMask::X, AxisMask::NONE])
+    //
+    // ⚠️ The scale offers all three because the uniform cube asks for all three, and a radius is a
+    // scalar: every scale handle writes that same number. None of them is a handle that does
+    // nothing, which is the rule the mask exists for.
+    Some([AxisMask::ALL, AxisMask::X, AxisMask::ALL])
 }
 
 /// The frame the knot's handles are drawn in: world +X along the curve's tangent, +Y along its up.
@@ -97,9 +101,55 @@ pub(crate) fn roll_selected(resources: &mut Resources, entity: Entity, by: Quat)
     true
 }
 
+/// Grows or shrinks the selected knot's `radius` by a gizmo scale. Returns whether it wrote.
+///
+/// A radius is one number and the gizmo hands back three, so the axis that moved furthest from 1
+/// is the factor: dragging any cube means "thicker here", not "thicker along X".
+pub(crate) fn scale_selected(resources: &mut Resources, entity: Entity, by: Vec3) -> bool {
+    let factor = uniform(by);
+    if !((factor - 1.0).abs() > 1e-6) {
+        return false;
+    }
+    let Some((held, index)) = resources
+        .get::<SplineHandleState>()
+        .and_then(|state| state.selected)
+    else {
+        return false;
+    };
+    if held != entity {
+        return false;
+    }
+    let Some((mut spline, _)) = read(resources, entity) else {
+        return false;
+    };
+    let Some(knot) = spline.points.get_mut(index) else {
+        return false;
+    };
+    // 🔴 Off a floor, not off the stored value: scaling is multiplicative, so a radius authored at
+    // zero would stay at zero however far the author dragged.
+    knot.radius = (knot.radius.max(RADIUS_FLOOR) * factor).clamp(RADIUS_MIN, RADIUS_MAX);
+    write(resources, entity, spline);
+    true
+}
+
+/// The one factor a scalar takes from a three-axis delta: whichever axis moved furthest from 1.
+fn uniform(by: Vec3) -> f32 {
+    [by.x, by.y, by.z]
+        .into_iter()
+        .max_by(|a, b| (a - 1.0).abs().total_cmp(&(b - 1.0).abs()))
+        .unwrap_or(1.0)
+}
+
 /// Matches `Knot::roll`'s declared range.
 const ROLL_MIN: f32 = -180.0;
 const ROLL_MAX: f32 = 180.0;
+
+/// Matches `Knot::radius`'s declared range.
+const RADIUS_MIN: f32 = 0.0;
+const RADIUS_MAX: f32 = 100.0;
+
+/// A millimetre: small enough to read as nothing, large enough for a drag to multiply.
+const RADIUS_FLOOR: f32 = 0.001;
 
 /// The signed angle `q` turns about `axis`.
 ///

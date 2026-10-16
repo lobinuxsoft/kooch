@@ -63,6 +63,10 @@ pub struct Knot {
     /// road and what tilts a camera on a rail.
     #[reflect(range = ROLL_RANGE)]
     pub roll: f32,
+    /// How thick the curve is here, in the entity's units, interpolated along the segment. What
+    /// tapers a swept profile (#1152) and what thins a branch towards its tip.
+    #[reflect(range = RADIUS_RANGE)]
+    pub radius: f32,
 }
 
 impl Default for Knot {
@@ -73,6 +77,7 @@ impl Default for Knot {
             arriving: Vec3::ZERO,
             leaving: Vec3::ZERO,
             roll: 0.0,
+            radius: DEFAULT_RADIUS,
         }
     }
 }
@@ -114,6 +119,17 @@ const ROLL_RANGE: FieldRange = FieldRange {
     min: -180.0,
     max: 180.0,
     step: 1.0,
+};
+
+/// Half a metre, so a new knot sweeps something a metre across — the scale of a path, a pipe or a
+/// trunk, which is what a radius is authored for.
+pub const DEFAULT_RADIUS: f32 = 0.5;
+
+/// Never negative: a radius is a width, and a negative one turns a swept profile inside out.
+const RADIUS_RANGE: FieldRange = FieldRange {
+    min: 0.0,
+    max: 100.0,
+    step: 0.05,
 };
 
 #[cfg(test)]

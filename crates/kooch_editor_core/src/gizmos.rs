@@ -433,19 +433,21 @@ pub(crate) fn apply_handle_input(
         }
 
         // 🔴 Same rule as the faces above: the delta moves the KNOT and the entity's transform is
-        // left alone. A knot is a position, so only a translation means anything — a rotation or a
-        // scale falling through would turn the whole spline while the gizmo sat on one point of it.
+        // left alone. Letting any of the three fall through would move, turn or grow the whole
+        // spline while the gizmo sat on one point of it.
         if knot.is_some() {
             match delta_out {
                 TransformDelta::Translation(v) => {
                     spline_handles::translate_selected(resources, target, v);
                 }
-                // The one rotational quantity a knot has. Scale never arrives: the offer above
-                // leaves that mode without a single axis, so it draws no handle to drag.
+                // The one rotational quantity a knot has.
                 TransformDelta::Rotation(q) => {
                     spline_handles::roll_selected(resources, target, q);
                 }
-                TransformDelta::Scale(_) => {}
+                // And the one scalar: its radius (#1447).
+                TransformDelta::Scale(v) => {
+                    spline_handles::scale_selected(resources, target, v);
+                }
             }
             return true;
         }
