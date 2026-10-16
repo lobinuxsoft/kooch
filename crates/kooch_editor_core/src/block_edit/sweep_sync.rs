@@ -29,6 +29,9 @@ pub(crate) struct BuiltSweeps {
     /// the `.block` on each of them is a file rewritten sixty times a second for one gesture. The
     /// mesh still updates live; only the write waits for the hand to come off.
     unsaved: HashSet<Entity>,
+    /// Last reported `(splines, sweeps, both)`, so the count below is said when it changes rather
+    /// than every frame.
+    counted: Option<(usize, usize, usize)>,
 }
 
 /// Rebuilds every sweep whose curve or parameters changed since it was last seen.
@@ -36,6 +39,7 @@ pub(crate) fn sync_sweeps(resources: &mut Resources) {
     // Taken out first: the query below borrows the world, and the record of what was built has to
     // be readable while it runs.
     let mut built = resources.remove::<BuiltSweeps>().unwrap_or_default();
+    count_sweeps(resources, &mut built);
     let mut seen = HashSet::new();
     let mut changed = Vec::new();
 
@@ -83,6 +87,30 @@ pub(crate) fn sync_sweeps(resources: &mut Resources) {
         }
     }
     resources.insert(built);
+}
+
+/// What this system can actually see, said when it changes.
+///
+/// 🔴 A sweep that builds nothing and a sweep the query never found look identical from outside,
+/// and that is the difference between a bug in the mesh and a bug in the world. `splines` without
+/// `sweeps` means the component did not reach this world; `both` at zero with `sweeps` above it
+/// means the two are on different entities.
+fn count_sweeps(resources: &Resources, built: &mut BuiltSweeps) {
+    let mut counts = (0, 0, 0);
+    Query::<&Spline>::new(resources).for_each_entity(|_, _| counts.0 += 1);
+    Query::<&SplineSweep>::new(resources).for_each_entity(|_, _| counts.1 += 1);
+    Query::<(&Spline, &SplineSweep)>::new(resources).for_each_entity(|_, _| counts.2 += 1);
+    if built.counted == Some(counts) {
+        return;
+    }
+    built.counted = Some(counts);
+    tracing::info!(
+        target: "kooch_editor_core::sweep",
+        splines = counts.0,
+        sweeps = counts.1,
+        both = counts.2,
+        "what the sweep sync can see",
+    );
 }
 
 /// Whether the author is mid-gesture on a curve, by a grip or by the transform gizmo.
@@ -140,7 +168,16 @@ fn mint(
     entity: Entity,
     mesh: &kooch_blockmesh::BlockMesh,
 ) -> Option<kooch_core::Guid> {
-    let (path, guid) = crate::actions::asset_ops::new_block_asset_from(resources, "Sweep", mesh)?;
+    let Some((path, guid)) =
+        crate::actions::asset_ops::new_block_asset_from(resources, "Sweep", mesh)
+    else {
+        // The only silent way out of here: no open project to put the file in.
+        tracing::warn!(
+            target: "kooch_editor_core::sweep",
+            "a sweep has nowhere to write its block",
+        );
+        return None;
+    };
     tracing::info!(
         target: "kooch_editor_core::sweep",
         file = %path.display(),
