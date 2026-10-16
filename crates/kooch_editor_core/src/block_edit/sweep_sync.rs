@@ -45,19 +45,34 @@ pub(crate) fn sync_sweeps(resources: &mut Resources) {
         if built.revisions.insert(entity, revision) == Some(revision) {
             return;
         }
-        changed.push((entity, sweep(&spline.points, spline.closed, of)));
+        let mesh = sweep(&spline.points, spline.closed, of);
+        // A curve of fewer than two knots sweeps nothing, which looks exactly like a system that
+        // never ran. Said once per change rather than per frame: the revision was recorded above.
+        if mesh.face_count() == 0 {
+            tracing::warn!(
+                target: "kooch_editor_core::sweep",
+                knots = spline.points.len(),
+                "a sweep has no curve to follow",
+            );
+        }
+        changed.push((entity, mesh));
     });
     // A sweep whose component or entity is gone leaves nothing behind to rebuild.
     built.revisions.retain(|entity, _| seen.contains(entity));
     built.unsaved.retain(|entity| seen.contains(entity));
 
     for (entity, mesh) in changed {
-        let Some(source) = source_of(resources, entity) else {
-            continue;
-        };
-        if super::set_shape(resources, source, &mesh) {
-            super::announce(resources, source);
-            built.unsaved.insert(entity);
+        // 🔴 A rebuild that did not land is NOT a built sweep (#1481's lesson, on another system).
+        // Recording the revision above is what would make a miss permanent: the curve has not
+        // changed, so the guard skips it for ever and the author watches an entity with no mesh.
+        match build(resources, entity, &mesh) {
+            Some(true) => {
+                built.unsaved.insert(entity);
+            }
+            Some(false) => {}
+            None => {
+                built.revisions.remove(&entity);
+            }
         }
     }
 
@@ -78,29 +93,60 @@ fn dragging(resources: &Resources) -> bool {
             .is_some_and(kooch_gizmos_handles::HandleSet::is_active)
 }
 
+/// Puts `mesh` where the entity's block reads it from. `Some(true)` when the loaded asset was
+/// replaced and now owes a write, `Some(false)` when the file itself was just written, `None` when
+/// it could not land and the sweep has to be tried again next frame.
+///
+/// 🔴 A brand new sweep writes its geometry **into the file**, rather than writing an empty one and
+/// patching the loaded copy. `set_shape` can only replace an asset `sync_blocks` has already built,
+/// and a source minted this frame has not been built yet — so the patch silently did nothing, the
+/// revision was recorded anyway, and the entity kept an empty mesh for ever. That was the whole bug.
+fn build(
+    resources: &mut Resources,
+    entity: Entity,
+    mesh: &kooch_blockmesh::BlockMesh,
+) -> Option<bool> {
+    if let Some(source) = source_of(resources, entity) {
+        return match super::set_shape(resources, source, mesh) {
+            true => {
+                super::announce(resources, source);
+                Some(true)
+            }
+            // The source exists but its asset is not loaded yet — a scene that has just opened.
+            // Retried next frame rather than recorded as built.
+            false => None,
+        };
+    }
+    mint(resources, entity, mesh).map(|_| false)
+}
+
+/// The source already on the entity's block, if it has one.
+fn source_of(resources: &Resources, entity: Entity) -> Option<kooch_core::Guid> {
+    resources
+        .get::<ComponentRegistry>()?
+        .get_cpu::<Block>()?
+        .get(entity)?
+        .source
+}
+
 /// The `.block` this entity's sweep writes to, created along with the components that point at it
 /// the first time it is needed.
 ///
 /// ⚠️ Not undoable, unlike a spawned block. Undoing the component that asked for the sweep leaves
 /// the asset on disk — a stray file in `assets/blocks`, which is recoverable, where rolling an
 /// asset back from a system that cannot see the command stack is not.
-fn source_of(resources: &mut Resources, entity: Entity) -> Option<kooch_core::Guid> {
-    if let Some(source) = resources
-        .get::<ComponentRegistry>()
-        .and_then(|registry| registry.get_cpu::<Block>())
-        .and_then(|storage| storage.get(entity))
-        .and_then(|block| block.source)
-    {
-        return Some(source);
-    }
-
-    // Written empty: the mesh the caller just built lands through `set_shape` on the same frame,
-    // and writing it twice would put the curve's geometry in two places that can disagree.
-    let (_, guid) = crate::actions::asset_ops::new_block_asset_from(
-        resources,
-        "Sweep",
-        &kooch_blockmesh::BlockMesh::default(),
-    )?;
+fn mint(
+    resources: &mut Resources,
+    entity: Entity,
+    mesh: &kooch_blockmesh::BlockMesh,
+) -> Option<kooch_core::Guid> {
+    let (path, guid) = crate::actions::asset_ops::new_block_asset_from(resources, "Sweep", mesh)?;
+    tracing::info!(
+        target: "kooch_editor_core::sweep",
+        file = %path.display(),
+        faces = mesh.face_count(),
+        "a sweep took its own block",
+    );
     for (type_id, _) in kooch_blockmesh::block_components() {
         add_component(resources, entity, type_id);
     }
