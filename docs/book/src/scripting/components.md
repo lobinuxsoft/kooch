@@ -88,6 +88,24 @@ cannot usefully add by hand says so on itself, rather than in a list the editor 
 goes for a component with no `Reflect` at all — it cannot be edited or written to a scene, so the
 menu does not offer it.
 
+### Lists
+
+A `Vec` field reflects two ways, and the element type decides which:
+
+```rust
+pub struct Blockout {
+    /// A list of reflected structs: each item has its own fields, and the Inspector edits them.
+    pub knots: Vec<Knot>,
+    /// A list of plain values — numbers, vectors, strings. What geometry is shaped like.
+    #[reflect(hidden)]
+    pub positions: Vec<Vec3>,
+}
+```
+
+⚠️ **Hide a long one.** A list of five thousand vertices is not something anyone edits by hand, and
+drawing it costs a row per item every frame. `#[reflect(hidden)]` keeps it out of the Inspector
+while it still serialises and still travels over the wire.
+
 ### On a field
 
 ```rust

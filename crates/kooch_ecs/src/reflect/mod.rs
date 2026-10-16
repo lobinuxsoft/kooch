@@ -6,6 +6,7 @@ mod entity_ref;
 mod error;
 mod field;
 mod nested;
+mod scalar;
 mod trait_def;
 mod value;
 
@@ -17,6 +18,7 @@ pub use field::{
     FieldChoice, FieldCondition, FieldKind, FieldMeta, FieldRange, InspectorVisibility,
 };
 pub use nested::{list_from, list_value, struct_value};
+pub use scalar::{ReflectScalar, scalar_list, scalar_list_from};
 pub use trait_def::Reflect;
 pub use value::ReflectValue;
 
