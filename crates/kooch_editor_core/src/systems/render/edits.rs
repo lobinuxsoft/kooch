@@ -47,7 +47,7 @@ pub(super) fn apply_viewport_edits(
         crate::block_edit::shape_sync::sync_block_shapes(resources);
         // Beside it and gated the same way: during Play the project's own world is the truth, and
         // an editor rebuilding geometry over it would be showing its own answer (#1482).
-        crate::block_edit::sweep_sync::sync_sweeps(resources);
+        crate::block_edit::sweep_sync::sync_sweeps(resources, actions);
     }
     let Some(delta) = input else {
         return;

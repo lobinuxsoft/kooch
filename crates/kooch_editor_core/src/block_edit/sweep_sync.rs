@@ -10,16 +10,16 @@
 //! placement writes transforms and a sweep writes geometry, and geometry belongs in a file the
 //! game loads.
 
-use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
 use kooch_blockmesh::{Block, SplineSweep, sweep};
 use kooch_core::resource::Resources;
-use kooch_ecs::archetype_registry::ArchetypeRegistry;
-use kooch_ecs::component::ComponentRegistry;
+use kooch_ecs::component::{ComponentId, ComponentRegistry};
 use kooch_ecs::entity::Entity;
 use kooch_ecs::query::Query;
 use kooch_ecs::spline::{Spline, curve_revision};
+
+use crate::actions::EditorAction;
 
 /// What each sweep was last built from, as the curve's own revision mixed with its parameters.
 #[derive(Default)]
@@ -29,13 +29,29 @@ pub(crate) struct BuiltSweeps {
     /// the `.block` on each of them is a file rewritten sixty times a second for one gesture. The
     /// mesh still updates live; only the write waits for the hand to come off.
     unsaved: HashSet<Entity>,
+    /// Sweeps whose block was already minted. 🔴 The components that point at it travel as
+    /// actions, so there are frames where the file exists and the entity has not got it yet.
+    /// Minting again in one of them would leave a second `.block` behind on every knot the author
+    /// drags.
+    minted: HashSet<Entity>,
     /// Last reported `(splines, sweeps, both)`, so the count below is said when it changes rather
     /// than every frame.
     counted: Option<(usize, usize, usize)>,
 }
 
 /// Rebuilds every sweep whose curve or parameters changed since it was last seen.
-pub(crate) fn sync_sweeps(resources: &mut Resources) {
+///
+/// 🔴 **Only where a project is open.** A project's own host — `<project>_editor --remote` — links
+/// this very crate and runs this very system, with no project and so nowhere to write a `.block`.
+/// It filled the log with "nowhere to write its block", once per frame, while the editor that
+/// could have written one was never the process asking.
+pub(crate) fn sync_sweeps(resources: &mut Resources, actions: &mut Vec<EditorAction>) {
+    let authoring = resources
+        .get::<crate::project_state::ProjectState>()
+        .is_some_and(|state| state.active_project.is_some());
+    if !authoring {
+        return;
+    }
     // Taken out first: the query below borrows the world, and the record of what was built has to
     // be readable while it runs.
     let mut built = resources.remove::<BuiltSweeps>().unwrap_or_default();
@@ -64,12 +80,13 @@ pub(crate) fn sync_sweeps(resources: &mut Resources) {
     // A sweep whose component or entity is gone leaves nothing behind to rebuild.
     built.revisions.retain(|entity, _| seen.contains(entity));
     built.unsaved.retain(|entity| seen.contains(entity));
+    built.minted.retain(|entity| seen.contains(entity));
 
     for (entity, mesh) in changed {
         // 🔴 A rebuild that did not land is NOT a built sweep (#1481's lesson, on another system).
         // Recording the revision above is what would make a miss permanent: the curve has not
         // changed, so the guard skips it for ever and the author watches an entity with no mesh.
-        match build(resources, entity, &mesh) {
+        match build(resources, entity, &mesh, actions, &mut built.minted) {
             Some(true) => {
                 built.unsaved.insert(entity);
             }
@@ -133,8 +150,11 @@ fn build(
     resources: &mut Resources,
     entity: Entity,
     mesh: &kooch_blockmesh::BlockMesh,
+    actions: &mut Vec<EditorAction>,
+    minted: &mut HashSet<Entity>,
 ) -> Option<bool> {
     if let Some(source) = source_of(resources, entity) {
+        minted.remove(&entity);
         return match super::set_shape(resources, source, mesh) {
             true => {
                 super::announce(resources, source);
@@ -145,7 +165,14 @@ fn build(
             false => None,
         };
     }
-    mint(resources, entity, mesh).map(|_| false)
+    // Already minted, and the components have not arrived yet. `None` keeps the revision unset,
+    // so the curve is swept again on the frame the block lands rather than being skipped for ever.
+    if minted.contains(&entity) {
+        return None;
+    }
+    mint(resources, entity, mesh, actions)?;
+    minted.insert(entity);
+    Some(false)
 }
 
 /// The source already on the entity's block, if it has one.
@@ -167,6 +194,7 @@ fn mint(
     resources: &mut Resources,
     entity: Entity,
     mesh: &kooch_blockmesh::BlockMesh,
+    actions: &mut Vec<EditorAction>,
 ) -> Option<kooch_core::Guid> {
     let Some((path, guid)) =
         crate::actions::asset_ops::new_block_asset_from(resources, "Sweep", mesh)
@@ -184,35 +212,30 @@ fn mint(
         faces = mesh.face_count(),
         "a sweep took its own block",
     );
-    for (type_id, _) in kooch_blockmesh::block_components() {
-        add_component(resources, entity, type_id);
+    // 🔴 Emitted as actions, never written into this world. In a remote session the world here is
+    // a mirror of the project's, and a component inserted into a mirror is gone at the next
+    // snapshot — while the entity that is actually in the game never got it. An action goes down
+    // whichever path the session is on, and is undoable on both.
+    for (_, type_name) in kooch_blockmesh::block_components() {
+        if let Some(component) = component_id(resources, type_name) {
+            actions.push(EditorAction::AddComponent { entity, component });
+        }
     }
-    // The prototype grid rather than the white default, so a sweep reads the way a block does.
-    if let Some(material) = crate::undo::prototype_material(resources)
-        && let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<kooch_ecs::mesh_renderer::MeshRenderer>()
-        && let Some(renderer) = storage.get_mut(entity)
-    {
-        renderer.material = Some(material);
-    }
-    let registry = resources.get_mut::<ComponentRegistry>()?;
-    let block = registry.get_cpu_mut::<Block>()?.get_mut(entity)?;
-    block.source = Some(guid);
+    let component = component_id(resources, std::any::type_name::<Block>())?;
+    actions.push(EditorAction::SetField {
+        entity,
+        component,
+        field: "source".to_owned(),
+        value: kooch_ecs::reflect::ReflectValue::String(guid.to_string()),
+    });
     Some(guid)
 }
 
-/// Gives `entity` a default-built component, and tells the archetypes it has one.
-fn add_component(resources: &mut Resources, entity: Entity, type_id: TypeId) {
-    let inserted = resources
-        .get_mut::<ComponentRegistry>()
-        .is_some_and(|registry| registry.insert_default_reflected(&type_id, entity));
-    if inserted
-        && let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let after = archetypes.archetype_after_add_dynamic(current, type_id);
-        archetypes.register_entity(entity, after);
-    }
+/// The id the actions above name a component by.
+fn component_id(resources: &Resources, type_name: &str) -> Option<ComponentId> {
+    resources
+        .get::<kooch_ecs::component::ComponentNames>()?
+        .id(type_name)
 }
 
 /// What the sweep was built from, as one number: the curve, and the profile taken through it.
