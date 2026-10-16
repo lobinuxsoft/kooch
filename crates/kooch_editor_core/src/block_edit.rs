@@ -395,15 +395,11 @@ pub(crate) fn edit_selection(
         return false;
     };
 
-    let Some(handle) = resources
-        .get::<BuiltBlocks>()
-        .and_then(|built| built.handle(source))
-    else {
-        return false;
-    };
     let Some(mesh) = resources
-        .get_mut::<Assets<BlockMesh>>()
-        .and_then(|assets| assets.get_mut(handle))
+        .get_mut::<ComponentRegistry>()
+        .and_then(|registry| registry.get_cpu_mut::<Block>())
+        .and_then(|storage| storage.get_mut(entity))
+        .map(|block| &mut block.mesh)
     else {
         return false;
     };
@@ -428,11 +424,10 @@ pub(crate) fn edit_selection(
         }
     }
 
-    // The render mesh and the collider are generated from this, and both are cached under the
-    // source's GUID. Forgetting is what makes the next frame rebuild them; without it the block
-    // keeps the shape it had when it was first built.
+    // The render mesh and the collider are generated from this, and both are cached per entity.
+    // Forgetting is what makes the next frame rebuild them.
     if let Some(built) = resources.get_mut::<BuiltBlocks>() {
-        built.forget(source);
+        built.forget(entity);
     }
     true
 }
@@ -523,45 +518,18 @@ pub(crate) fn shape_of(resources: &Resources, entity: Entity) -> Option<BlockMes
     mesh_of(resources, entity)
 }
 
-/// Every corner of the block behind `source`.
-pub(crate) fn shape_for(resources: &Resources, source: kooch_core::Guid) -> Option<BlockMesh> {
-    let handle = resources.get::<BuiltBlocks>()?.handle(source)?;
-    resources.get::<Assets<BlockMesh>>()?.get(handle).cloned()
-}
-
-/// Writes a block's shape to its own file, found by GUID.
-pub(crate) fn save_source(resources: &mut Resources, source: kooch_core::Guid) {
-    let Some(mesh) = shape_for(resources, source) else {
-        return;
-    };
-    let Some(path) = resources
-        .get::<kooch_core::asset_database::AssetDatabase>()
-        .and_then(|database| database.entry(source).map(|entry| entry.path.clone()))
-    else {
-        return;
-    };
-    write_block(resources, &path, &mesh);
-}
-
 /// Replaces a block's whole shape, answering whether it landed.
-pub(crate) fn set_shape(
-    resources: &mut Resources,
-    source: kooch_core::Guid,
-    shape: &BlockMesh,
-) -> bool {
-    let Some(handle) = resources
-        .get::<BuiltBlocks>()
-        .and_then(|built| built.handle(source))
+pub(crate) fn set_shape(resources: &mut Resources, entity: Entity, shape: &BlockMesh) -> bool {
+    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
+        return false;
+    };
+    let Some(block) = registry
+        .get_cpu_mut::<Block>()
+        .and_then(|storage| storage.get_mut(entity))
     else {
         return false;
     };
-    let Some(mesh) = resources
-        .get_mut::<Assets<BlockMesh>>()
-        .and_then(|assets| assets.get_mut(handle))
-    else {
-        return false;
-    };
-    *mesh = shape.clone();
+    block.mesh = shape.clone();
     true
 }
 
@@ -574,16 +542,20 @@ pub(crate) fn source_of(resources: &Resources, entity: Entity) -> Option<kooch_c
         .source
 }
 
-/// The block mesh an entity is built from, if it has one and it is
-/// built.
+/// The block mesh an entity is built from.
+///
+/// 🔴 Straight off the component (#1452). There is no asset to resolve, no load to wait for and no
+/// handle to go stale: the geometry is in the scene, which is why each block can now diverge from
+/// the one it was copied from.
 pub(crate) fn mesh_of(resources: &Resources, entity: Entity) -> Option<BlockMesh> {
-    let source = resources
-        .get::<ComponentRegistry>()?
-        .get_cpu::<Block>()?
-        .get(entity)?
-        .source?;
-    let handle = resources.get::<BuiltBlocks>()?.handle(source)?;
-    resources.get::<Assets<BlockMesh>>()?.get(handle).cloned()
+    Some(
+        resources
+            .get::<ComponentRegistry>()?
+            .get_cpu::<Block>()?
+            .get(entity)?
+            .mesh
+            .clone(),
+    )
 }
 
 pub(crate) mod shape_sync;

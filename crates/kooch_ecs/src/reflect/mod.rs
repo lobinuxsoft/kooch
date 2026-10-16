@@ -17,7 +17,7 @@ pub use error::ReflectError;
 pub use field::{
     FieldChoice, FieldCondition, FieldKind, FieldMeta, FieldRange, InspectorVisibility,
 };
-pub use nested::{list_from, list_value, struct_value};
+pub use nested::{list_from, list_value, struct_from, struct_value};
 pub use scalar::{ReflectScalar, scalar_list, scalar_list_from};
 pub use trait_def::Reflect;
 pub use value::ReflectValue;

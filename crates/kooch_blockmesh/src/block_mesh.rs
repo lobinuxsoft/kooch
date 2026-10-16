@@ -5,22 +5,30 @@ use serde::{Deserialize, Serialize};
 
 /// An editable polygon mesh: convex faces wound counter-clockwise from outside, stored CSR-style so
 /// face `i` owns `face_corners[face_starts[i]..face_starts[i + 1]]`.
-/// 🔴 These field names are serialised in `.block` files; renaming one silently loads a default.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// 🔴 These field names are serialised in `.block` files **and in the scene** (#1452); renaming one
+/// silently loads a default.
+///
+/// The three lists are hidden from the Inspector: nobody edits five thousand vertices by hand, and
+/// a row per item every frame is what would make a blockout unusable. The gizmos are how they are
+/// edited.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, kooch_ecs::Reflect)]
 pub struct BlockMesh {
     /// Corner positions, shared between the faces that meet there. The
     /// unit of editing: dragging a vertex moves one entry here and every
     /// face using it follows.
     #[serde(default)]
+    #[reflect(hidden)]
     pub(crate) positions: Vec<Vec3>,
     /// Every face's corners, concatenated. Each entry indexes
     /// `positions`.
     #[serde(default)]
+    #[reflect(hidden)]
     pub(crate) face_corners: Vec<u32>,
     /// Where each face begins in `face_corners`, with a trailing
     /// sentinel equal to its length. Length is `face_count() + 1`, and
     /// an empty mesh stores it empty rather than `[0]`.
     #[serde(default)]
+    #[reflect(hidden)]
     pub(crate) face_starts: Vec<u32>,
 }
 
