@@ -122,13 +122,27 @@ pub(crate) fn new_block_asset_from(
     label: &str,
     mesh: &kooch_blockmesh::BlockMesh,
 ) -> Option<(PathBuf, kooch_core::Guid)> {
-    let folder = resources
+    let root = resources
         .get::<crate::project_state::ProjectState>()?
         .active_project
         .as_ref()?
         .root_path
-        .join("assets")
-        .join("blocks");
+        .clone();
+    new_block_asset_in(resources, &root, label, mesh)
+}
+
+/// The same again, for callers that cannot read `ProjectState` because the frame is holding it.
+///
+/// 🔴 The editor's render system lifts `ProjectState` out of `Resources` for its whole frame
+/// (`Taken::take`), and the viewport edits run inside that window. Asking the table there answers
+/// `None` with a project wide open — which is what kept the sweep from ever minting a block (#1499).
+pub(crate) fn new_block_asset_in(
+    resources: &mut Resources,
+    root: &Path,
+    label: &str,
+    mesh: &kooch_blockmesh::BlockMesh,
+) -> Option<(PathBuf, kooch_core::Guid)> {
+    let folder = root.join("assets").join("blocks");
     if let Err(error) = std::fs::create_dir_all(&folder) {
         tracing::error!(folder = %folder.display(), %error, "cannot create the blocks folder");
         return None;

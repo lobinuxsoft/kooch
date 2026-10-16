@@ -11,6 +11,7 @@
 //! game loads.
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use kooch_blockmesh::{Block, SplineSweep, sweep};
 use kooch_core::resource::Resources;
@@ -41,24 +42,22 @@ pub(crate) struct BuiltSweeps {
 
 /// Rebuilds every sweep whose curve or parameters changed since it was last seen.
 ///
-/// 🔴 **Only where a project is open.** A project's own host — `<project>_editor --remote` — links
-/// this very crate and runs this very system, with no project and so nowhere to write a `.block`.
-/// It filled the log with "nowhere to write its block", once per frame, while the editor that
-/// could have written one was never the process asking.
-pub(crate) fn sync_sweeps(resources: &mut Resources, actions: &mut Vec<EditorAction>) {
-    let authoring = resources
-        .get::<crate::project_state::ProjectState>()
-        .is_some_and(|state| state.active_project.is_some());
-
-    // 🔴 Counted BEFORE the gate, and reported whichever side of it this process falls on. Put
-    // after, the gate's own silence looked exactly like a system that never ran — which is the one
-    // thing this log exists to tell apart.
+/// 🔴 **`project` is passed in, never read from `Resources`.** The render system lifts
+/// `ProjectState` out of the table for the whole frame, and this runs inside that frame: asking
+/// there answered `None` with a project open, so the sweep had nowhere to write and said so once
+/// per frame (#1499).
+pub(crate) fn sync_sweeps(
+    resources: &mut Resources,
+    project: Option<&Path>,
+    actions: &mut Vec<EditorAction>,
+) {
+    // Counted before the gate, so a gated frame does not read like a system that never ran.
     let mut built = resources.remove::<BuiltSweeps>().unwrap_or_default();
-    count_sweeps(resources, &mut built, authoring);
-    if !authoring {
+    count_sweeps(resources, &mut built, project.is_some());
+    let Some(project) = project else {
         resources.insert(built);
         return;
-    }
+    };
     let mut seen = HashSet::new();
     let mut changed = Vec::new();
 
@@ -89,7 +88,14 @@ pub(crate) fn sync_sweeps(resources: &mut Resources, actions: &mut Vec<EditorAct
         // 🔴 A rebuild that did not land is NOT a built sweep (#1481's lesson, on another system).
         // Recording the revision above is what would make a miss permanent: the curve has not
         // changed, so the guard skips it for ever and the author watches an entity with no mesh.
-        match build(resources, entity, &mesh, actions, &mut built.minted) {
+        match build(
+            resources,
+            project,
+            entity,
+            &mesh,
+            actions,
+            &mut built.minted,
+        ) {
             Some(true) => {
                 built.unsaved.insert(entity);
             }
@@ -114,7 +120,8 @@ pub(crate) fn sync_sweeps(resources: &mut Resources, actions: &mut Vec<EditorAct
 /// 🔴 A sweep that builds nothing and a sweep the query never found look identical from outside,
 /// and that is the difference between a bug in the mesh and a bug in the world. `splines` without
 /// `sweeps` means the component did not reach this world; `both` at zero with `sweeps` above it
-/// means the two are on different entities.
+/// means the two are on different entities; `both` with `authoring` false is the project missing,
+/// not the geometry.
 fn count_sweeps(resources: &Resources, built: &mut BuiltSweeps, authoring: bool) {
     let mut counts = (0, 0, 0, authoring);
     Query::<&Spline>::new(resources).for_each_entity(|_, _| counts.0 += 1);
@@ -152,6 +159,7 @@ fn dragging(resources: &Resources) -> bool {
 /// revision was recorded anyway, and the entity kept an empty mesh for ever. That was the whole bug.
 fn build(
     resources: &mut Resources,
+    project: &Path,
     entity: Entity,
     mesh: &kooch_blockmesh::BlockMesh,
     actions: &mut Vec<EditorAction>,
@@ -174,7 +182,7 @@ fn build(
     if minted.contains(&entity) {
         return None;
     }
-    mint(resources, entity, mesh, actions)?;
+    mint(resources, project, entity, mesh, actions)?;
     minted.insert(entity);
     Some(false)
 }
@@ -196,17 +204,19 @@ fn source_of(resources: &Resources, entity: Entity) -> Option<kooch_core::Guid> 
 /// asset back from a system that cannot see the command stack is not.
 fn mint(
     resources: &mut Resources,
+    project: &Path,
     entity: Entity,
     mesh: &kooch_blockmesh::BlockMesh,
     actions: &mut Vec<EditorAction>,
 ) -> Option<kooch_core::Guid> {
     let Some((path, guid)) =
-        crate::actions::asset_ops::new_block_asset_from(resources, "Sweep", mesh)
+        crate::actions::asset_ops::new_block_asset_in(resources, project, "Sweep", mesh)
     else {
-        // The only silent way out of here: no open project to put the file in.
+        // Only a write that failed reaches here now that the folder is handed in.
         tracing::warn!(
             target: "kooch_editor_core::sweep",
-            "a sweep has nowhere to write its block",
+            project = %project.display(),
+            "a sweep could not write its block",
         );
         return None;
     };
