@@ -80,9 +80,12 @@ fn an_open_end_has_one_handle() {
             .collect::<Vec<_>>()
     };
 
-    assert_eq!(parts(0), vec![Part::Knot, Part::Leaving]);
-    assert_eq!(parts(2), vec![Part::Knot, Part::Arriving]);
-    assert_eq!(parts(1), vec![Part::Knot, Part::Leaving, Part::Arriving]);
+    assert_eq!(parts(0), vec![Part::Knot, Part::Leaving, Part::Radius]);
+    assert_eq!(parts(2), vec![Part::Knot, Part::Radius, Part::Arriving]);
+    assert_eq!(
+        parts(1),
+        vec![Part::Knot, Part::Leaving, Part::Radius, Part::Arriving]
+    );
 }
 
 /// Closed has no end, so every knot carries both.
@@ -92,7 +95,7 @@ fn a_closed_curve_has_every_handle() {
         closed: true,
         ..curve()
     };
-    assert_eq!(grips(&spline).len(), spline.points.len() * 3);
+    assert_eq!(grips(&spline).len(), spline.points.len() * 4);
 }
 
 /// 🔴 `!(step > 0.0)`: a NaN step passes a `<=` test and divides the position into NaN, which puts

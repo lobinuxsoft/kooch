@@ -14,7 +14,9 @@ use kooch_ecs::GlobalTransform;
 use kooch_ecs::component::{ComponentNames, ComponentRegistry};
 use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::Reflect;
-use kooch_ecs::spline::{Knot, Spline, TANGENT_ALIGNED, TANGENT_AUTO, TANGENT_BROKEN, eval};
+use kooch_ecs::spline::{
+    Knot, RADIUS_MAX, RADIUS_MIN, Spline, TANGENT_ALIGNED, TANGENT_AUTO, TANGENT_BROKEN, eval,
+};
 use kooch_gizmos_handles::{HandleSet, SnapSettings};
 
 use crate::actions::EditorAction;
@@ -50,6 +52,8 @@ pub(super) enum Part {
     Leaving,
     /// The handle pointing back the way it arrived.
     Arriving,
+    /// How thick the curve is here: the grip sits on the knot's ring, a radius out along its up.
+    Radius,
 }
 
 /// One grabbable point: which knot, and which part of it.
@@ -114,6 +118,20 @@ pub(super) fn grips(spline: &Spline) -> Vec<(Grip, Vec3)> {
                 knot.position + leaving * HANDLE_SCALE,
             ));
         }
+        // On the ring the visualizer draws, which is why both read `ring_frame`: a grip derived a
+        // second time would sit beside the circle it is supposed to size.
+        // 🔴 `knot.radius > 0.0`: a ring of nothing puts its grip exactly on the knot's, where
+        // the picker would hand the author whichever it found first. The Inspector and the scale
+        // gizmo are how a radius authored to zero comes back.
+        if let Some((up, _)) = ring_frame(spline, index).filter(|_| knot.radius > 0.0) {
+            found.push((
+                Grip {
+                    index,
+                    part: Part::Radius,
+                },
+                knot.position + up * knot.radius,
+            ));
+        }
         if spline.closed || index != 0 {
             let arriving = -eval::tangents(
                 &spline.points,
@@ -134,6 +152,23 @@ pub(super) fn grips(spline: &Spline) -> Vec<(Grip, Vec3)> {
     found
 }
 
+/// The plane a knot's radius ring lies in, in the spline's own space: the curve's up there, and
+/// the side square to both. `None` where the curve is too degenerate to have a frame.
+///
+/// ⚠️ One rotation-minimising transport per call, and both the grips and the drawing ask per knot.
+/// The first thing to cache if the editor's frame time ever points at splines.
+pub(super) fn ring_frame(spline: &Spline, index: usize) -> Option<(Vec3, Vec3)> {
+    let segments = eval::segments(&spline.points, spline.closed);
+    if segments == 0 {
+        return None;
+    }
+    let t = index as f32 / segments as f32;
+    let tangent = eval::tangent(&spline.points, spline.closed, t);
+    let up = eval::up(&spline.points, spline.closed, t);
+    (tangent.length_squared() > 1e-12 && up.length_squared() > 1e-12)
+        .then(|| (up, tangent.cross(up).normalize_or_zero()))
+}
+
 /// Where a grip moves the knot to, given the local position the cursor dragged it to.
 ///
 /// 🔴 Dragging an `Auto` tangent promotes the knot to `Aligned`, as Blender and Unity both do:
@@ -144,6 +179,14 @@ pub(super) fn moved(knot: Knot, part: Part, to: Vec3) -> Knot {
     match part {
         Part::Knot => Knot {
             position: to,
+            ..knot
+        },
+        // 🔴 The distance from the knot, not a signed offset along the ring's up: the drag runs in
+        // the plane facing the camera, so dragging the grip anywhere around its circle means the
+        // same thickness. Clamped to the field's own range, so a drag and the Inspector's slider
+        // cannot disagree about a legal radius.
+        Part::Radius => Knot {
+            radius: (to - knot.position).length().clamp(RADIUS_MIN, RADIUS_MAX),
             ..knot
         },
         Part::Leaving | Part::Arriving => {
@@ -222,8 +265,13 @@ fn drive(
             // 🔴 This is the drag the snap was asked for: a grip moves in the plane facing the
             // camera, which has no depth at all, and the scene is the only thing that can supply
             // one (#1435). Absolute — the grip goes TO the surface, it does not move BY the cursor.
-            let onto_surface =
-                crate::surface_snap::target(resources, delta, entity).map(|hit| hit.point);
+            let onto_surface = match drag.grip.part {
+                // 🔴 A radius is a length from its own knot, not a place in the scene: landing it
+                // on the geometry under the cursor would set the thickness to however far the wall
+                // behind it happens to be.
+                Part::Radius => None,
+                _ => crate::surface_snap::target(resources, delta, entity).map(|hit| hit.point),
+            };
             let dragged_to = onto_surface.or_else(|| {
                 let (origin, direction) = ray?;
                 // The grip moves by what the cursor moved, not to where the cursor is.
@@ -394,9 +442,16 @@ pub(super) fn grip_colour(hovered: bool, selected: bool, part: Part) -> Vec4 {
         // The one the transform gizmo is standing on, so it is clear which point the axes move.
         (false, true, _) => Vec4::new(0.3, 0.9, 1.0, 1.0),
         (false, false, Part::Knot) => Vec4::new(0.95, 0.95, 0.95, 1.0),
+        // The ring's own yellow, so the grip reads as part of the circle it sizes rather than as a
+        // third tangent handle.
+        (false, false, Part::Radius) => RING_GRIP,
         (false, false, _) => Vec4::new(1.0, 0.6, 0.15, 1.0),
     }
 }
+
+/// The radius grip at rest. Dimmer than the hover yellow above, which is how an author sees which
+/// of the two they are about to grab.
+const RING_GRIP: Vec4 = Vec4::new(0.85, 0.72, 0.15, 1.0);
 
 /// The knot the gizmo is on, for the visualizer to mark.
 pub(super) fn selected_index(resources: &Resources, entity: Entity) -> Option<usize> {
