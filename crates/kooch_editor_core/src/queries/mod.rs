@@ -514,13 +514,7 @@ pub(crate) fn remote_schema(
 /// worth seeing either says so itself, with `#[reflect(inspector = "hidden")]` — which is what a
 /// project's own component uses too, rather than a list in the editor that cannot know about it.
 fn is_engine_owned(type_name: &str) -> bool {
-    const DERIVED: &[&str] = &[
-        "Parent",
-        "Children",
-        "GlobalTransform",
-        "PersistentId",
-        "PrefabInstance",
-    ];
+    const DERIVED: &[&str] = &["Parent", "Children", "GlobalTransform", "PersistentId"];
 
     let Some(short) = type_name.rsplit("::").next() else {
         return false;
