@@ -71,3 +71,23 @@ fn an_empty_mesh_generates_nothing() {
     assert!(mesh.vertices.is_empty());
     assert!(mesh.indices.is_empty());
 }
+
+#[test]
+fn a_swept_tube_shades_smooth() {
+    // Twelve sides put 30° between neighbouring walls, under the crease: the corners of a wall
+    // quad take the averaged normal and stop agreeing with each other.
+    let points = [
+        kooch_ecs::spline::Knot::at(Vec3::new(-2.0, 0.0, 0.0)),
+        kooch_ecs::spline::Knot::at(Vec3::new(2.0, 0.0, 0.0)),
+    ];
+    let of = crate::SplineSweep {
+        sides: 12,
+        ..crate::SplineSweep::default()
+    };
+    let mesh = crate::sweep(&points, false, &of).to_mesh();
+    let wall = &mesh.vertices[..4];
+    assert!(
+        wall.iter().any(|vertex| vertex.normal != wall[0].normal),
+        "a tube's wall carries one normal: {wall:?}"
+    );
+}
