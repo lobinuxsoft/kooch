@@ -134,6 +134,23 @@ segments as its size needs to still read as round, so a fifty-metre one is not a
 and a half-metre one does not pay for lines nobody can see. A knot thinned to zero has no ring and
 no grip; the Inspector or the scale gizmo brings it back.
 
+### Sweeping a profile along the curve
+
+Add a **Spline Sweep** to an entity that has a `Spline` and the curve stops being a guide and
+becomes geometry: a closed profile — round with a chosen number of sides, or square — carried along
+the path and capped at both ends, with **each knot's radius scaling it**. That is the taper. A
+trunk thick at the base and thin at the tip, a pipe that narrows, a kerb that widens into a ramp.
+
+It comes out as an ordinary block: faces to select, faces to extrude, a collider, a `.block` asset
+in the project. The sweep writes that asset itself the first time there is something to sweep, so
+there is nothing to spawn first — the component is the whole gesture.
+
+A knot whose radius is zero contributes a **point** rather than a ring, which is how a branch ends
+in a tip instead of a flat cap.
+
+The rebuild follows the curve live while you drag a knot, but the file is only written when you
+let go: one gesture is one write, not sixty.
+
 Surface snapping is the gesture a blockout is built with: hold it and the thing you are dragging
 lands *on* the geometry the cursor is over, rather than sliding along an axis until it looks right.
 It moves the entity, a selected block face, or a spline knot — the same chord in all three, because

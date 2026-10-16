@@ -38,7 +38,7 @@ pub use kooch_gizmos;
 pub use kooch_gravity;
 
 #[cfg(feature = "blockmesh")]
-pub use kooch_blockmesh::{Block, BlockMesh, BlockPlugin, BuiltBlocks};
+pub use kooch_blockmesh::{Block, BlockMesh, BlockPlugin, BuiltBlocks, SplineSweep};
 #[cfg(feature = "character")]
 pub use kooch_character;
 #[cfg(feature = "input")]
@@ -145,7 +145,7 @@ pub mod prelude {
     // Editor-built level pieces, nameable so a game can read them; `BuiltBlocks` says a shape
     // changed.
     #[cfg(feature = "blockmesh")]
-    pub use kooch_blockmesh::{Block, BlockMesh, BlockPlugin, BuiltBlocks};
+    pub use kooch_blockmesh::{Block, BlockMesh, BlockPlugin, BuiltBlocks, SplineSweep};
 
     // 🔴 Goals, checkpoints and death planes are sensors, and the event type could not be named
     // here. Read with `Events<CollisionStarted>`; ⚠️ one frame late by design, since `Events` is
