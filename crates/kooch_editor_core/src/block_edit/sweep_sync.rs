@@ -34,9 +34,9 @@ pub(crate) struct BuiltSweeps {
     /// Minting again in one of them would leave a second `.block` behind on every knot the author
     /// drags.
     minted: HashSet<Entity>,
-    /// Last reported `(splines, sweeps, both)`, so the count below is said when it changes rather
-    /// than every frame.
-    counted: Option<(usize, usize, usize)>,
+    /// Last reported `(splines, sweeps, both, authoring)`, so the count below is said when it
+    /// changes rather than every frame.
+    counted: Option<(usize, usize, usize, bool)>,
 }
 
 /// Rebuilds every sweep whose curve or parameters changed since it was last seen.
@@ -49,13 +49,16 @@ pub(crate) fn sync_sweeps(resources: &mut Resources, actions: &mut Vec<EditorAct
     let authoring = resources
         .get::<crate::project_state::ProjectState>()
         .is_some_and(|state| state.active_project.is_some());
+
+    // 🔴 Counted BEFORE the gate, and reported whichever side of it this process falls on. Put
+    // after, the gate's own silence looked exactly like a system that never ran — which is the one
+    // thing this log exists to tell apart.
+    let mut built = resources.remove::<BuiltSweeps>().unwrap_or_default();
+    count_sweeps(resources, &mut built, authoring);
     if !authoring {
+        resources.insert(built);
         return;
     }
-    // Taken out first: the query below borrows the world, and the record of what was built has to
-    // be readable while it runs.
-    let mut built = resources.remove::<BuiltSweeps>().unwrap_or_default();
-    count_sweeps(resources, &mut built);
     let mut seen = HashSet::new();
     let mut changed = Vec::new();
 
@@ -112,8 +115,8 @@ pub(crate) fn sync_sweeps(resources: &mut Resources, actions: &mut Vec<EditorAct
 /// and that is the difference between a bug in the mesh and a bug in the world. `splines` without
 /// `sweeps` means the component did not reach this world; `both` at zero with `sweeps` above it
 /// means the two are on different entities.
-fn count_sweeps(resources: &Resources, built: &mut BuiltSweeps) {
-    let mut counts = (0, 0, 0);
+fn count_sweeps(resources: &Resources, built: &mut BuiltSweeps, authoring: bool) {
+    let mut counts = (0, 0, 0, authoring);
     Query::<&Spline>::new(resources).for_each_entity(|_, _| counts.0 += 1);
     Query::<&SplineSweep>::new(resources).for_each_entity(|_, _| counts.1 += 1);
     Query::<(&Spline, &SplineSweep)>::new(resources).for_each_entity(|_, _| counts.2 += 1);
@@ -126,6 +129,7 @@ fn count_sweeps(resources: &Resources, built: &mut BuiltSweeps) {
         splines = counts.0,
         sweeps = counts.1,
         both = counts.2,
+        authoring,
         "what the sweep sync can see",
     );
 }
@@ -216,11 +220,27 @@ fn mint(
     // a mirror of the project's, and a component inserted into a mirror is gone at the next
     // snapshot — while the entity that is actually in the game never got it. An action goes down
     // whichever path the session is on, and is undoable on both.
+    let mut added = 0;
     for (_, type_name) in kooch_blockmesh::block_components() {
-        if let Some(component) = component_id(resources, type_name) {
-            actions.push(EditorAction::AddComponent { entity, component });
+        match component_id(resources, type_name) {
+            Some(component) => {
+                actions.push(EditorAction::AddComponent { entity, component });
+                added += 1;
+            }
+            // A component the editor cannot name is a component the wire cannot carry, and an
+            // action for it would be dropped without a word.
+            None => tracing::warn!(
+                target: "kooch_editor_core::sweep",
+                type_name,
+                "a block component has no id here, so the sweep cannot ask for it",
+            ),
         }
     }
+    tracing::info!(
+        target: "kooch_editor_core::sweep",
+        added,
+        "asked for the components that point at the block",
+    );
     let component = component_id(resources, std::any::type_name::<Block>())?;
     actions.push(EditorAction::SetField {
         entity,
