@@ -1,23 +1,21 @@
 //! Keeping a swept block's geometry in step with the curve it is swept along (#1152).
 //!
 //! 🔴 **The sweep completes its own entity.** What the author adds is a component, not a block, so
-//! there is no spawn command to write the `.block` file the way `SpawnBlockCommand` does. The first
-//! time a curve has something to sweep, this writes the asset and gives the entity the block
-//! components to point at it — after that it is an ordinary block, with ordinary faces, colliders
-//! and extrudes.
+//! the first time a curve has something to sweep this asks for the block components and fills in
+//! the geometry — after that it is an ordinary block, with ordinary faces, colliders and extrudes.
 //!
-//! Baked to the asset rather than rebuilt at runtime, the opposite of #1428's placement: a
-//! placement writes transforms and a sweep writes geometry, and geometry belongs in a file the
-//! game loads.
+//! Since #1452 the geometry is the component: there is no `.block` to mint, no guid to point at
+//! and no file to keep in step. The scene is where a sweep's mesh lives, and saving the scene is
+//! what saves it.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 
 use kooch_blockmesh::{Block, SplineSweep, sweep};
 use kooch_core::resource::Resources;
 use kooch_ecs::component::{ComponentId, ComponentRegistry};
 use kooch_ecs::entity::Entity;
 use kooch_ecs::query::Query;
+use kooch_ecs::reflect::Reflect;
 use kooch_ecs::spline::{Spline, curve_revision};
 
 use crate::actions::EditorAction;
@@ -26,38 +24,20 @@ use crate::actions::EditorAction;
 #[derive(Default)]
 pub(crate) struct BuiltSweeps {
     revisions: HashMap<Entity, u64>,
-    /// Rebuilt but not written yet. 🔴 Dragging a knot changes the curve every frame, and writing
-    /// the `.block` on each of them is a file rewritten sixty times a second for one gesture. The
-    /// mesh still updates live; only the write waits for the hand to come off.
-    unsaved: HashSet<Entity>,
-    /// Sweeps whose block was already minted. 🔴 The components that point at it travel as
-    /// actions, so there are frames where the file exists and the entity has not got it yet.
-    /// Minting again in one of them would leave a second `.block` behind on every knot the author
-    /// drags.
-    minted: HashSet<Entity>,
-    /// Last reported `(splines, sweeps, both, authoring)`, so the count below is said when it
-    /// changes rather than every frame.
-    counted: Option<(usize, usize, usize, bool)>,
+    /// Sweeps whose block components were already asked for. 🔴 Those travel as actions, so there
+    /// are frames where the request is in flight and the entity has not got them yet. Asking again
+    /// in one of them is a second `AddComponent` per frame for as long as the wire takes.
+    asked: HashSet<Entity>,
+    /// Last reported `(splines, sweeps, both)`, so the count below is said when it changes rather
+    /// than every frame.
+    counted: Option<(usize, usize, usize)>,
 }
 
 /// Rebuilds every sweep whose curve or parameters changed since it was last seen.
-///
-/// 🔴 **`project` is passed in, never read from `Resources`.** The render system lifts
-/// `ProjectState` out of the table for the whole frame, and this runs inside that frame: asking
-/// there answered `None` with a project open, so the sweep had nowhere to write and said so once
-/// per frame (#1499).
-pub(crate) fn sync_sweeps(
-    resources: &mut Resources,
-    project: Option<&Path>,
-    actions: &mut Vec<EditorAction>,
-) {
-    // Counted before the gate, so a gated frame does not read like a system that never ran.
+pub(crate) fn sync_sweeps(resources: &mut Resources, actions: &mut Vec<EditorAction>) {
     let mut built = resources.remove::<BuiltSweeps>().unwrap_or_default();
-    count_sweeps(resources, &mut built, project.is_some());
-    let Some(project) = project else {
-        resources.insert(built);
-        return;
-    };
+    count_sweeps(resources, &mut built);
+
     let mut seen = HashSet::new();
     let mut changed = Vec::new();
 
@@ -81,35 +61,14 @@ pub(crate) fn sync_sweeps(
     });
     // A sweep whose component or entity is gone leaves nothing behind to rebuild.
     built.revisions.retain(|entity, _| seen.contains(entity));
-    built.unsaved.retain(|entity| seen.contains(entity));
-    built.minted.retain(|entity| seen.contains(entity));
+    built.asked.retain(|entity| seen.contains(entity));
 
     for (entity, mesh) in changed {
         // 🔴 A rebuild that did not land is NOT a built sweep (#1481's lesson, on another system).
         // Recording the revision above is what would make a miss permanent: the curve has not
         // changed, so the guard skips it for ever and the author watches an entity with no mesh.
-        match build(
-            resources,
-            project,
-            entity,
-            &mesh,
-            actions,
-            &mut built.minted,
-        ) {
-            Some(true) => {
-                built.unsaved.insert(entity);
-            }
-            Some(false) => {}
-            None => {
-                built.revisions.remove(&entity);
-            }
-        }
-    }
-
-    // The hand is still on it: the file waits, the viewport does not.
-    if !built.unsaved.is_empty() && !dragging(resources) {
-        for entity in std::mem::take(&mut built.unsaved) {
-            super::save(resources, entity);
+        if !build(resources, entity, &mesh, actions, &mut built.asked) {
+            built.revisions.remove(&entity);
         }
     }
     resources.insert(built);
@@ -120,10 +79,9 @@ pub(crate) fn sync_sweeps(
 /// 🔴 A sweep that builds nothing and a sweep the query never found look identical from outside,
 /// and that is the difference between a bug in the mesh and a bug in the world. `splines` without
 /// `sweeps` means the component did not reach this world; `both` at zero with `sweeps` above it
-/// means the two are on different entities; `both` with `authoring` false is the project missing,
-/// not the geometry.
-fn count_sweeps(resources: &Resources, built: &mut BuiltSweeps, authoring: bool) {
-    let mut counts = (0, 0, 0, authoring);
+/// means the two are on different entities.
+fn count_sweeps(resources: &Resources, built: &mut BuiltSweeps) {
+    let mut counts = (0, 0, 0);
     Query::<&Spline>::new(resources).for_each_entity(|_, _| counts.0 += 1);
     Query::<&SplineSweep>::new(resources).for_each_entity(|_, _| counts.1 += 1);
     Query::<(&Spline, &SplineSweep)>::new(resources).for_each_entity(|_, _| counts.2 += 1);
@@ -136,107 +94,70 @@ fn count_sweeps(resources: &Resources, built: &mut BuiltSweeps, authoring: bool)
         splines = counts.0,
         sweeps = counts.1,
         both = counts.2,
-        authoring,
         "what the sweep sync can see",
     );
 }
 
-/// Whether the author is mid-gesture on a curve, by a grip or by the transform gizmo.
-fn dragging(resources: &Resources) -> bool {
-    crate::gizmos::spline_handles::is_dragging(resources)
-        || resources
-            .get::<kooch_gizmos_handles::HandleSet>()
-            .is_some_and(kooch_gizmos_handles::HandleSet::is_active)
-}
-
-/// Puts `mesh` where the entity's block reads it from. `Some(true)` when the loaded asset was
-/// replaced and now owes a write, `Some(false)` when the file itself was just written, `None` when
-/// it could not land and the sweep has to be tried again next frame.
-///
-/// 🔴 A brand new sweep writes its geometry **into the file**, rather than writing an empty one and
-/// patching the loaded copy. `set_shape` can only replace an asset `sync_blocks` has already built,
-/// and a source minted this frame has not been built yet — so the patch silently did nothing, the
-/// revision was recorded anyway, and the entity kept an empty mesh for ever. That was the whole bug.
+/// Puts `mesh` on the entity's block, asking for the block components first if it has none.
+/// `false` when it could not land and the sweep has to be tried again next frame.
 fn build(
     resources: &mut Resources,
-    project: &Path,
     entity: Entity,
     mesh: &kooch_blockmesh::BlockMesh,
     actions: &mut Vec<EditorAction>,
-    minted: &mut HashSet<Entity>,
-) -> Option<bool> {
-    if let Some(source) = source_of(resources, entity) {
-        minted.remove(&entity);
-        return match super::set_shape(resources, source, mesh) {
-            true => {
-                super::announce(resources, source);
-                Some(true)
-            }
-            // The source exists but its asset is not loaded yet — a scene that has just opened.
-            // Retried next frame rather than recorded as built.
-            false => None,
-        };
+    asked: &mut HashSet<Entity>,
+) -> bool {
+    if !has_block(resources, entity) {
+        // Already asked, and the components have not arrived. `false` keeps the revision unset, so
+        // the curve is swept again on the frame they land rather than being skipped for ever.
+        if !asked.insert(entity) {
+            return false;
+        }
+        request(resources, entity, actions);
+        return false;
     }
-    // Already minted, and the components have not arrived yet. `None` keeps the revision unset,
-    // so the curve is swept again on the frame the block lands rather than being skipped for ever.
-    if minted.contains(&entity) {
-        return None;
+    asked.remove(&entity);
+
+    let Some(geometry) = Block {
+        mesh: mesh.clone(),
+        source: None,
     }
-    mint(resources, project, entity, mesh, actions)?;
-    minted.insert(entity);
-    Some(false)
-}
-
-/// The source already on the entity's block, if it has one.
-fn source_of(resources: &Resources, entity: Entity) -> Option<kooch_core::Guid> {
-    resources
-        .get::<ComponentRegistry>()?
-        .get_cpu::<Block>()?
-        .get(entity)?
-        .source
-}
-
-/// The `.block` this entity's sweep writes to, created along with the components that point at it
-/// the first time it is needed.
-///
-/// ⚠️ Not undoable, unlike a spawned block. Undoing the component that asked for the sweep leaves
-/// the asset on disk — a stray file in `assets/blocks`, which is recoverable, where rolling an
-/// asset back from a system that cannot see the command stack is not.
-fn mint(
-    resources: &mut Resources,
-    project: &Path,
-    entity: Entity,
-    mesh: &kooch_blockmesh::BlockMesh,
-    actions: &mut Vec<EditorAction>,
-) -> Option<kooch_core::Guid> {
-    let Some((path, guid)) =
-        crate::actions::asset_ops::new_block_asset_in(resources, project, "Sweep", mesh)
-    else {
-        // Only a write that failed reaches here now that the folder is handed in.
-        tracing::warn!(
-            target: "kooch_editor_core::sweep",
-            project = %project.display(),
-            "a sweep could not write its block",
-        );
-        return None;
+    .reflect_get("mesh") else {
+        return false;
     };
+    let Some(component) = component_id(resources, std::any::type_name::<Block>()) else {
+        return false;
+    };
+    // 🔴 An action, never a write into this world. In a remote session the world here is a mirror
+    // of the project's, and a component written into a mirror is gone at the next snapshot — while
+    // the entity that is actually in the game never got it.
+    actions.push(EditorAction::SetField {
+        entity,
+        component,
+        field: "mesh".to_owned(),
+        value: geometry,
+    });
     tracing::info!(
         target: "kooch_editor_core::sweep",
-        file = %path.display(),
         faces = mesh.face_count(),
-        "a sweep took its own block",
+        "a sweep filled in its block",
     );
-    // 🔴 Emitted as actions, never written into this world. In a remote session the world here is
-    // a mirror of the project's, and a component inserted into a mirror is gone at the next
-    // snapshot — while the entity that is actually in the game never got it. An action goes down
-    // whichever path the session is on, and is undoable on both.
-    let mut added = 0;
+    true
+}
+
+/// Whether the entity already carries the block the sweep writes to.
+fn has_block(resources: &Resources, entity: Entity) -> bool {
+    resources
+        .get::<ComponentRegistry>()
+        .and_then(|registry| registry.get_cpu::<Block>())
+        .is_some_and(|storage| storage.get(entity).is_some())
+}
+
+/// Asks for every component a block needs, as actions.
+fn request(resources: &Resources, entity: Entity, actions: &mut Vec<EditorAction>) {
     for (_, type_name) in kooch_blockmesh::block_components() {
         match component_id(resources, type_name) {
-            Some(component) => {
-                actions.push(EditorAction::AddComponent { entity, component });
-                added += 1;
-            }
+            Some(component) => actions.push(EditorAction::AddComponent { entity, component }),
             // A component the editor cannot name is a component the wire cannot carry, and an
             // action for it would be dropped without a word.
             None => tracing::warn!(
@@ -246,19 +167,6 @@ fn mint(
             ),
         }
     }
-    tracing::info!(
-        target: "kooch_editor_core::sweep",
-        added,
-        "asked for the components that point at the block",
-    );
-    let component = component_id(resources, std::any::type_name::<Block>())?;
-    actions.push(EditorAction::SetField {
-        entity,
-        component,
-        field: "source".to_owned(),
-        value: kooch_ecs::reflect::ReflectValue::String(guid.to_string()),
-    });
-    Some(guid)
 }
 
 /// The id the actions above name a component by.

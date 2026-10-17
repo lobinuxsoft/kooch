@@ -56,12 +56,10 @@ pub(super) fn action_to_command(
         }
         EditorAction::BlockEdit {
             entity,
-            source,
             before,
             after,
         } => Some(Box::new(BlockEditCommand::new(
             *entity,
-            *source,
             (**before).clone(),
             (**after).clone(),
         ))),

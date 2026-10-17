@@ -494,8 +494,8 @@ pub(crate) fn apply_handle_input(
         }
     }
 
-    // Drag end while editing faces: write the shape back. The asset IS the shape, and an edit that
-    // lives only in `Assets` is one the next load throws away.
+    // Drag end while editing faces: the geometry is the component, so the edit is already where
+    // it belongs — the scene only has to be told it has unsaved work.
     if was_dragging && !dragging {
         spline_handles::ended_gizmo_drag(resources, actions);
     }
@@ -504,17 +504,15 @@ pub(crate) fn apply_handle_input(
         && !dragging
         && let Some(before) = shape_start.take()
     {
-        crate::block_edit::save(resources, target);
+        crate::block_edit::touch(resources, target);
         // Compared rather than assumed: clicking a handle without
         // moving it is a click, not an edit, and a history full of
         // no-ops is what makes undo untrustworthy.
         if let Some(after) = crate::block_edit::shape_of(resources, target)
-            && let Some(source) = crate::block_edit::source_of(resources, target)
             && after != before
         {
             actions.push(EditorAction::BlockEdit {
                 entity: target,
-                source,
                 before: Box::new(before),
                 after: Box::new(after),
             });

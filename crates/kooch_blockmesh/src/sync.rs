@@ -20,8 +20,6 @@ use crate::BlockMesh;
 
 mod migrate;
 
-pub(crate) use migrate::migrate_block_sources;
-
 /// Which blocks have already been turned into a mesh, so untouched ones are not regenerated every
 /// frame.
 #[derive(Debug, Default)]

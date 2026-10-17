@@ -36,7 +36,7 @@ impl Visualizer<MeshRenderer> for MeshBoundsVisualizer {
         &self,
         renderer: &MeshRenderer,
         transform: &GlobalTransform,
-        _entity: Entity,
+        entity: Entity,
         resources: &Resources,
         gizmos: &mut Gizmos<'_>,
     ) {
@@ -45,7 +45,7 @@ impl Visualizer<MeshRenderer> for MeshBoundsVisualizer {
         }
         let Some(bounds) = renderer
             .mesh
-            .and_then(|mesh| crate::picking::mesh_bounds(resources, mesh))
+            .and_then(|mesh| crate::picking::mesh_bounds(resources, entity, mesh))
         else {
             return;
         };

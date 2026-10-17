@@ -6,6 +6,30 @@ use kooch_ecs::component::ComponentNames;
 use crate::actions::EditorAction;
 use crate::remote_session::RemoteState;
 
+/// A block's whole geometry, as the field edit that carries it.
+fn block_field(
+    resources: &Resources,
+    entity: kooch_ecs::entity::Entity,
+    mesh: &kooch_blockmesh::BlockMesh,
+) -> Option<EditorAction> {
+    use kooch_ecs::reflect::Reflect;
+
+    let value = kooch_blockmesh::Block {
+        mesh: mesh.clone(),
+        source: None,
+    }
+    .reflect_get("mesh")?;
+    let component = resources
+        .get::<ComponentNames>()?
+        .id(std::any::type_name::<kooch_blockmesh::Block>())?;
+    Some(EditorAction::SetField {
+        entity,
+        component,
+        field: "mesh".to_owned(),
+        value,
+    })
+}
+
 /// Attempts to handle `action` over the wire.
 pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool {
     // Undo/Redo travel as inverses of the edits already sent — the local command stack describes
@@ -26,18 +50,15 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
         return true;
     }
 
-    // And a block, for the same reason twice over: it writes an asset and resolves its GUID, both
-    // of which need a mutable world.
-    if let EditorAction::BlockEdit { source, before, .. } = action {
-        crate::actions::remote_undo::record_step(
-            resources,
-            "Edit Block",
-            crate::actions::remote_undo::Inverse::BlockShape {
-                source: *source,
-                shape: before.clone(),
-            },
-        );
-        return true;
+    // 🔴 A block's geometry is a component field since #1452, so an edit to it is an ordinary
+    // `SetField` — sent, mirrored and undone by the paths that already do all three. Re-dispatched
+    // rather than reimplemented: the asset it used to write is gone, and so is the reason this
+    // needed a case of its own.
+    if let EditorAction::BlockEdit { entity, after, .. } = action {
+        let Some(edit) = block_field(resources, *entity, after) else {
+            return false;
+        };
+        return dispatch(resources, &edit);
     }
 
     if let EditorAction::SpawnBlock { shape, at, .. } = action {

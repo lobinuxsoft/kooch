@@ -93,7 +93,6 @@ pub(crate) enum EditorAction {
     /// One block's shape, before and after an edit.
     BlockEdit {
         entity: Entity,
-        source: kooch_core::Guid,
         before: Box<kooch_blockmesh::BlockMesh>,
         after: Box<kooch_blockmesh::BlockMesh>,
     },
@@ -426,8 +425,6 @@ pub(crate) enum NewFileKind {
     InputAction,
     /// One way of building this project: target, output, packed (#758).
     BuildPreset,
-    /// One editable block shape — a cube until somebody drags it (#946).
-    BlockMesh,
     /// How the project looks: exposure, ambient, shadows (#744).
     RenderSettings,
     /// What the project calls its 32 layers, read by renderers and colliders alike (#1218).

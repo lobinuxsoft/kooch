@@ -207,7 +207,6 @@ fn every_unclassified_world_edit_is_routed() {
             "BlockEdit",
             EditorAction::BlockEdit {
                 entity: kooch_ecs::Entity::new(0, 0),
-                source: kooch_core::Guid::new_v4(),
                 before: Box::default(),
                 after: Box::default(),
             },

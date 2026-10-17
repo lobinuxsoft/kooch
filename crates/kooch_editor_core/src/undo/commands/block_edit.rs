@@ -1,7 +1,6 @@
 //! [`BlockEditCommand`] — one drag's worth of reshaping, undone whole.
 
 use kooch_blockmesh::BlockMesh;
-use kooch_core::Guid;
 use kooch_core::resource::Resources;
 use kooch_ecs::entity::Entity;
 
@@ -10,31 +9,24 @@ use crate::undo::EditorCommand;
 /// Restores a block's shape to what it was before an edit, or to what it became.
 pub(crate) struct BlockEditCommand {
     entity: Entity,
-    source: Guid,
     before: BlockMesh,
     after: BlockMesh,
 }
 
 impl BlockEditCommand {
-    pub fn new(entity: Entity, source: Guid, before: BlockMesh, after: BlockMesh) -> Self {
+    pub fn new(entity: Entity, before: BlockMesh, after: BlockMesh) -> Self {
         Self {
             entity,
-            source,
             before,
             after,
         }
     }
 
-    /// Puts one shape back and republishes everything derived from it.
+    /// Puts one shape back on the component everything else is derived from.
     fn restore(&self, resources: &mut Resources, shape: &BlockMesh) {
-        if !crate::block_edit::set_shape(resources, self.source, shape) {
-            return;
+        if crate::block_edit::set_shape(resources, self.entity, shape) {
+            crate::block_edit::touch(resources, self.entity);
         }
-        // The same announcement a drag makes. Without it the collider
-        // and the render mesh keep the shape they were built from, and
-        // an undo moves the outline while the body stays where it was.
-        crate::block_edit::announce(resources, self.source);
-        crate::block_edit::save(resources, self.entity);
     }
 }
 

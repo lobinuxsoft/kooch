@@ -1,10 +1,8 @@
-//! [`SpawnBlockCommand`] — a new block, asset and entity together.
+//! [`SpawnBlockCommand`] — a new block, geometry and entity together.
 
 use std::any::TypeId;
-use std::path::PathBuf;
 
 use kooch_blockmesh::Block;
-use kooch_core::Guid;
 use kooch_core::resource::Resources;
 use kooch_ecs::allocator::EntityAllocator;
 use kooch_ecs::archetype_registry::ArchetypeRegistry;
@@ -20,11 +18,6 @@ pub(crate) struct SpawnBlockCommand {
     shape: kooch_blockmesh::Shape,
     /// Entity allocated on first execute, reused on redo.
     entity: Option<Entity>,
-    /// The source written on first execute. Kept so redo points at the
-    /// same file rather than writing a second one.
-    source: Option<Guid>,
-    /// Where that file went, for the log and for undo to say so.
-    path: Option<PathBuf>,
     spawned_component_types: Vec<TypeId>,
     /// Where in the world it lands.
     at: crate::viewport_pick::DropPoint,
@@ -44,21 +37,8 @@ impl SpawnBlockCommand {
             at,
             placed: None,
             entity: None,
-            source: None,
-            path: None,
             spawned_component_types: Vec::new(),
         }
-    }
-
-    /// Writes the shape and registers it, once. Redo reuses the answer.
-    fn ensure_source(&mut self, resources: &mut Resources) -> Option<Guid> {
-        if let Some(guid) = self.source {
-            return Some(guid);
-        }
-        let (file, guid) = crate::actions::asset_ops::new_block_asset(resources, self.shape)?;
-        self.path = Some(file);
-        self.source = Some(guid);
-        Some(guid)
     }
 
     fn spawn_fresh_entity(&self, resources: &mut Resources) -> Entity {
@@ -72,8 +52,6 @@ impl SpawnBlockCommand {
     }
 
     fn do_spawn(&mut self, resources: &mut Resources) {
-        let source = self.ensure_source(resources);
-
         let entity = match self.entity {
             Some(existing) => match revive(resources, existing) {
                 true => existing,
@@ -129,15 +107,14 @@ impl SpawnBlockCommand {
             renderer.material = Some(guid);
         }
 
-        // Only the source is written. The renderer's mesh and the
-        // collider's are `sync_blocks`'s answer, and writing them here
-        // would be a second place that decides what a block draws.
-        if let Some(guid) = source
-            && let Some(registry) = resources.get_mut::<ComponentRegistry>()
+        // Only the geometry is written. The renderer's mesh and the collider's are
+        // `sync_blocks`'s answer, and writing them here would be a second place that decides
+        // what a block draws.
+        if let Some(registry) = resources.get_mut::<ComponentRegistry>()
             && let Some(storage) = registry.get_cpu_mut::<Block>()
             && let Some(block) = storage.get_mut(entity)
         {
-            block.source = Some(guid);
+            block.mesh = self.shape.build();
         }
 
         // The parameters stay on the block, so the Inspector can reshape it until it is edited by hand.

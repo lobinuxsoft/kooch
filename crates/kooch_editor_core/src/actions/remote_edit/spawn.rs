@@ -80,7 +80,15 @@ pub(super) fn spawn_block(
     const TARGET: &str = "kooch_editor_core::remote_edit::spawn_block";
     use crate::undo::prototype_material;
 
-    let Some((path, guid)) = crate::actions::asset_ops::new_block_asset(resources, shape) else {
+    use kooch_ecs::reflect::Reflect;
+
+    // The geometry travels as the field it is (#1452), built here and sent below — there is no
+    // file to write and no guid for the project to resolve.
+    let Some(geometry) = kooch_blockmesh::Block {
+        mesh: shape.build(),
+        source: None,
+    }
+    .reflect_get("mesh") else {
         return;
     };
 
@@ -133,12 +141,8 @@ pub(super) fn spawn_block(
         tracing::warn!(target: TARGET, error = %e, "could not give the block its shape");
     }
 
-    let value = kooch_ecs::reflect::ReflectValue::AssetRef {
-        guid: Some(guid),
-        asset_type: std::any::type_name::<kooch_blockmesh::BlockMesh>().to_owned(),
-    };
-    if let Err(e) = client.set_field(entity, block_ty, "source", value) {
-        tracing::warn!(target: TARGET, error = %e, "could not write the block source");
+    if let Err(e) = client.set_field(entity, block_ty, "mesh", geometry) {
+        tracing::warn!(target: TARGET, error = %e, "could not write the block geometry");
         return;
     }
     place(client, entity, transform_ty, at);
@@ -169,10 +173,7 @@ pub(super) fn spawn_block(
         tracing::warn!(target: TARGET, error = %e, "could not make the block static");
     }
 
-    tracing::info!(
-        target: TARGET, path = %path.display(), %guid,
-        "spawned a block on the project",
-    );
+    tracing::info!(target: TARGET, shape = shape.label(), "spawned a block on the project");
 
     remember(resources, "Spawn Block", entity);
 
