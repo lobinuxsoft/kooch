@@ -306,6 +306,20 @@ pub(crate) fn capture_before(
                 after: value.clone(),
             })
         }
+        // 🔴 The action's own `before`, never the world's. The gizmo writes the new geometry onto
+        // the component and *then* emits this, so reading the field here answers with the edit
+        // that was just made — `before == after`, and an undo writes back what is already there.
+        EditorAction::BlockEdit {
+            entity,
+            before,
+            after,
+        } => Some(Inverse::SetField {
+            entity: mirror.remote_of(*entity)?,
+            component: std::any::type_name::<kooch_blockmesh::Block>().to_owned(),
+            field: "mesh".to_owned(),
+            before: crate::actions::remote_edit::mesh_value(before)?,
+            after: crate::actions::remote_edit::mesh_value(after)?,
+        }),
         // The action already carries the transform it started from, which
         // is exactly what an undo has to write back — no need to read the
         // world for a value the gizmo has been holding all along.

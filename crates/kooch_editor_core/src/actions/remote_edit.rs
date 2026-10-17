@@ -6,28 +6,24 @@ use kooch_ecs::component::ComponentNames;
 use crate::actions::EditorAction;
 use crate::remote_session::RemoteState;
 
-/// A block's whole geometry, as the field edit that carries it.
-fn block_field(
-    resources: &Resources,
-    entity: kooch_ecs::entity::Entity,
+/// A block's whole geometry as one reflected value — what `Block.mesh` is set to.
+pub(crate) fn mesh_value(
     mesh: &kooch_blockmesh::BlockMesh,
-) -> Option<EditorAction> {
+) -> Option<kooch_ecs::reflect::ReflectValue> {
     use kooch_ecs::reflect::Reflect;
 
-    let value = kooch_blockmesh::Block {
+    kooch_blockmesh::Block {
         mesh: mesh.clone(),
         source: None,
     }
-    .reflect_get("mesh")?;
-    let component = resources
+    .reflect_get("mesh")
+}
+
+/// The id the wire names `Block` by.
+fn block_component(resources: &Resources) -> Option<kooch_ecs::component::ComponentId> {
+    resources
         .get::<ComponentNames>()?
-        .id(std::any::type_name::<kooch_blockmesh::Block>())?;
-    Some(EditorAction::SetField {
-        entity,
-        component,
-        field: "mesh".to_owned(),
-        value,
-    })
+        .id(std::any::type_name::<kooch_blockmesh::Block>())
 }
 
 /// Attempts to handle `action` over the wire.
@@ -48,17 +44,6 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
         let at = crate::viewport_pick::resolve(resources, *at);
         spawn_mesh(resources, path, name, at);
         return true;
-    }
-
-    // 🔴 A block's geometry is a component field since #1452, so an edit to it is an ordinary
-    // `SetField` — sent, mirrored and undone by the paths that already do all three. Re-dispatched
-    // rather than reimplemented: the asset it used to write is gone, and so is the reason this
-    // needed a case of its own.
-    if let EditorAction::BlockEdit { entity, after, .. } = action {
-        let Some(edit) = block_field(resources, *entity, after) else {
-            return false;
-        };
-        return dispatch(resources, &edit);
     }
 
     if let EditorAction::SpawnBlock { shape, at, .. } = action {
@@ -312,7 +297,9 @@ enum Edit<'a> {
         entity: kooch_ecs::entity::Entity,
         component: kooch_ecs::component::ComponentId,
         field: &'a str,
-        value: &'a kooch_ecs::reflect::ReflectValue,
+        /// 🔴 Owned where the action does not already hold the value: a block edit carries a
+        /// `BlockMesh`, and the `ReflectValue` for it is built here rather than stored twice.
+        value: std::borrow::Cow<'a, kooch_ecs::reflect::ReflectValue>,
     },
     AddComponent {
         entity: kooch_ecs::entity::Entity,
@@ -437,7 +424,15 @@ fn classify<'a>(action: &'a EditorAction, resources: &mut Resources) -> Option<E
             entity: *entity,
             component: *component,
             field,
-            value,
+            value: std::borrow::Cow::Borrowed(value),
+        }),
+        // A block's geometry is a component field since #1452, so this is a `SetField` whose value
+        // has to be built rather than borrowed — which is the whole reason `value` is a `Cow`.
+        EditorAction::BlockEdit { entity, after, .. } => Some(Edit::SetField {
+            entity: *entity,
+            component: block_component(resources)?,
+            field: "mesh",
+            value: std::borrow::Cow::Owned(mesh_value(after)?),
         }),
         EditorAction::AddComponent { entity, component } => Some(Edit::AddComponent {
             entity: *entity,

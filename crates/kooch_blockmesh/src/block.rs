@@ -18,12 +18,16 @@ use crate::BlockMesh;
 #[reflect(category = "Level")]
 pub struct Block {
     /// The geometry itself, edited by the block tools.
+    ///
+    /// 🔴 Reflected but never drawn. A thousand corners, one row each, rebuilt every frame in an
+    /// immediate-mode panel — and nobody types corner 417 by hand. The tools are the gesture.
+    #[reflect(hidden)]
     pub mesh: BlockMesh,
     /// ⚠️ **Legacy.** The `.block` this block's geometry used to come from, kept so a scene written
     /// before #1452 can still be read: the migration loads it once, copies it into `mesh` and
     /// clears this. A block that lost it before migrating is a block that loads empty with nothing
     /// failing, which is why it is not simply deleted.
-    #[reflect(asset = "kooch_blockmesh::block_mesh::BlockMesh")]
+    #[reflect(asset = "kooch_blockmesh::block_mesh::BlockMesh", hidden)]
     pub source: Option<Guid>,
 }
 
