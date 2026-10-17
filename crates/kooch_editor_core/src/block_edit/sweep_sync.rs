@@ -28,12 +28,16 @@ pub(crate) struct BuiltSweeps {
     /// are frames where the request is in flight and the entity has not got them yet. Asking again
     /// in one of them is a second `AddComponent` per frame for as long as the wire takes.
     asked: HashSet<Entity>,
-    /// Rebuilt while the hand was still on the curve, and not sent yet.
+    /// What the gesture built, waiting for the hand to come off.
     ///
     /// 🔴 A drag changes the curve every frame, and a thousand corners down the wire on each of
     /// them is one gesture filing sixty history steps and sixty meshlet rebuilds. The mesh still
     /// follows live — written straight into this world — and only the edit waits (#1513).
-    unsent: HashSet<Entity>,
+    ///
+    /// 🔴 The **mesh**, not just the entity. On the frame the hand comes off, the mirror has
+    /// already applied a snapshot carrying the old geometry, so reading the world back here sends
+    /// the project what it already had and the mesh snaps to where it was (#1515).
+    unsent: HashMap<Entity, kooch_blockmesh::BlockMesh>,
     /// Last reported `(splines, sweeps, both)`, so the count below is said when it changes rather
     /// than every frame.
     counted: Option<(usize, usize, usize)>,
@@ -68,7 +72,7 @@ pub(crate) fn sync_sweeps(resources: &mut Resources, actions: &mut Vec<EditorAct
     // A sweep whose component or entity is gone leaves nothing behind to rebuild.
     built.revisions.retain(|entity, _| seen.contains(entity));
     built.asked.retain(|entity| seen.contains(entity));
-    built.unsent.retain(|entity| seen.contains(entity));
+    built.unsent.retain(|entity, _| seen.contains(entity));
 
     let dragging = dragging(resources);
     for (entity, mesh) in changed {
@@ -85,15 +89,17 @@ pub(crate) fn sync_sweeps(resources: &mut Resources, actions: &mut Vec<EditorAct
         ) {
             built.revisions.remove(&entity);
         } else if dragging {
-            built.unsent.insert(entity);
+            built.unsent.insert(entity, mesh);
         }
     }
 
     // The hand came off: what the gesture built goes down the wire, once.
     if !dragging {
-        for entity in std::mem::take(&mut built.unsent) {
-            if let Some(mesh) = block_of(resources, entity) {
-                send(resources, entity, &mesh, actions);
+        for (entity, mesh) in std::mem::take(&mut built.unsent) {
+            // Kept where it is if it could not go: a gesture's geometry exists nowhere else, and
+            // dropping it here would lose the whole drag with nothing failing.
+            if !send(resources, entity, &mesh, actions) {
+                built.unsent.insert(entity, mesh);
             }
         }
     }
