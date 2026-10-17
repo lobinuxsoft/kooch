@@ -168,6 +168,12 @@ impl PrefabInstance {
 impl Component for PrefabInstance {}
 
 impl Reflect for PrefabInstance {
+    /// Beside `PrefabMember` in the menu: an author does not add either by hand, but a component
+    /// nobody can find is a component nobody knows the engine has.
+    fn category() -> Option<&'static str> {
+        Some("Scene")
+    }
+
     fn reflect_fields(&self) -> &'static [FieldMeta] {
         static FIELDS: &[FieldMeta] = &[
             FieldMeta {
@@ -251,7 +257,7 @@ being saved — that is what makes it an override.",
 /// Marks one entity of an instance as the prefab entity it was built from.
 #[derive(Debug, Clone, Default, crate::Reflect)]
 #[reflect(inspector = "read_only")]
-#[reflect(inspector = "hidden")]
+#[reflect(category = "Scene")]
 pub struct PrefabMember {
     /// The instance this belongs to — the entity carrying [`PrefabInstance`].
     pub root: Entity,

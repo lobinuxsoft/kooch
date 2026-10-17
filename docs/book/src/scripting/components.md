@@ -83,6 +83,10 @@ That is the right place for a handful of a project's own components and the wron
 hundred, so give yours a category — your own name for it, or one of the engine's (`Gameplay`,
 `Character`, `Physics`, `Rendering`, `Input`, `Level`, `Core`, `Spline`, …) to file it beside them.
 
+⚠️ **Hiding is not grouping.** A component an author never adds by hand still belongs in a group if
+knowing it exists is useful — `PrefabInstance` and `PrefabMember` sit under **Scene** for exactly
+that reason. Reach for `hidden` when the component is pure runtime state nobody can act on.
+
 `inspector = "hidden"` also takes it **out of the Add Component menu**: bookkeeping an author
 cannot usefully add by hand says so on itself, rather than in a list the editor keeps. The same
 goes for a component with no `Reflect` at all — it cannot be edited or written to a scene, so the
