@@ -211,7 +211,8 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
     let applying = Instant::now();
     let mirror_time = if just_connected || session.changed_last_refresh() {
         profiling::scope!("remote: apply");
-        mirror.apply(session.snapshot(), resources);
+        // The entity under the author's hand keeps what the gesture put there (#1513).
+        mirror.apply(session.snapshot(), held(resources), resources);
         // Now that the snapshot has landed, whatever the last creation
         // made has a mirror handle to select.
         take_selection(resources, mirror, pending_selection);
@@ -288,3 +289,25 @@ fn drag_in_flight(resources: &Resources) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+/// The entity the author is mid-gesture on, by a spline grip or by the transform gizmo.
+///
+/// 🔴 Only while a drag is actually running. Outside one the project is the truth about every
+/// entity, and holding any of them back would be the editor showing its own answer (#1482).
+fn held(resources: &Resources) -> Option<kooch_ecs::entity::Entity> {
+    let dragging = resources
+        .get::<kooch_gizmos_handles::HandleSet>()
+        .is_some_and(kooch_gizmos_handles::HandleSet::is_active)
+        || crate::gizmos::spline_handles::is_dragging(resources);
+    if !dragging {
+        return None;
+    }
+    match resources
+        .get::<crate::state::EditorOverlay>()?
+        .selected_entities
+        .as_slice()
+    {
+        [entity] => Some(*entity),
+        _ => None,
+    }
+}

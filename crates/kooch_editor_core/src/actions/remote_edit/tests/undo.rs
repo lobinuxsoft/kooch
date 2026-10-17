@@ -64,7 +64,7 @@ fn an_undone_field_goes_back() {
     }
     assert!(state.is_connected(), "did not connect");
     let snapshot = state.session.as_ref().unwrap().snapshot().to_vec();
-    state.mirror.apply(&snapshot, &mut editor);
+    state.mirror.apply(&snapshot, None, &mut editor);
     let local = state.mirror.local_of(snapshot[0].id).expect("mirrored");
     let comp = editor
         .get_mut::<ComponentNames>()
@@ -184,7 +184,7 @@ fn an_undone_despawn_rebuilds_it() {
     }
     assert!(state.is_connected(), "did not connect");
     let snapshot = state.session.as_ref().unwrap().snapshot().to_vec();
-    state.mirror.apply(&snapshot, &mut editor);
+    state.mirror.apply(&snapshot, None, &mut editor);
     let local = state.mirror.local_of(snapshot[0].id).expect("mirrored");
     editor.insert(state);
 
@@ -288,7 +288,7 @@ fn a_paste_is_built_and_undone() {
     }
     assert!(state.is_connected(), "did not connect");
     let snapshot = state.session.as_ref().unwrap().snapshot().to_vec();
-    state.mirror.apply(&snapshot, &mut editor);
+    state.mirror.apply(&snapshot, None, &mut editor);
     let source = state.mirror.local_of(snapshot[0].id).expect("mirrored");
     editor.insert(state);
 
@@ -356,7 +356,7 @@ fn a_block_edit_keeps_its_before() {
             fields: Vec::new(),
         }],
     }];
-    mirror.apply(&snapshot, &mut editor);
+    mirror.apply(&snapshot, None, &mut editor);
     let local = mirror.local_of(snapshot[0].id).expect("mirrored");
 
     let before = kooch_blockmesh::BlockMesh::cuboid(glam::Vec3::splat(0.5));

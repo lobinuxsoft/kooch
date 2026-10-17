@@ -66,7 +66,7 @@ fn set_field_routes_to_the_server() {
     assert!(state.is_connected(), "did not connect");
 
     let snapshot = state.session.as_ref().unwrap().snapshot().to_vec();
-    state.mirror.apply(&snapshot, &mut editor);
+    state.mirror.apply(&snapshot, None, &mut editor);
     let remote_id = snapshot[0].id;
     let local = state.mirror.local_of(remote_id).expect("mirrored");
     let comp = editor

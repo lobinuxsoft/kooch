@@ -28,6 +28,12 @@ pub(crate) struct BuiltSweeps {
     /// are frames where the request is in flight and the entity has not got them yet. Asking again
     /// in one of them is a second `AddComponent` per frame for as long as the wire takes.
     asked: HashSet<Entity>,
+    /// Rebuilt while the hand was still on the curve, and not sent yet.
+    ///
+    /// 🔴 A drag changes the curve every frame, and a thousand corners down the wire on each of
+    /// them is one gesture filing sixty history steps and sixty meshlet rebuilds. The mesh still
+    /// follows live — written straight into this world — and only the edit waits (#1513).
+    unsent: HashSet<Entity>,
     /// Last reported `(splines, sweeps, both)`, so the count below is said when it changes rather
     /// than every frame.
     counted: Option<(usize, usize, usize)>,
@@ -62,13 +68,33 @@ pub(crate) fn sync_sweeps(resources: &mut Resources, actions: &mut Vec<EditorAct
     // A sweep whose component or entity is gone leaves nothing behind to rebuild.
     built.revisions.retain(|entity, _| seen.contains(entity));
     built.asked.retain(|entity| seen.contains(entity));
+    built.unsent.retain(|entity| seen.contains(entity));
 
+    let dragging = dragging(resources);
     for (entity, mesh) in changed {
         // 🔴 A rebuild that did not land is NOT a built sweep (#1481's lesson, on another system).
         // Recording the revision above is what would make a miss permanent: the curve has not
         // changed, so the guard skips it for ever and the author watches an entity with no mesh.
-        if !build(resources, entity, &mesh, actions, &mut built.asked) {
+        if !build(
+            resources,
+            entity,
+            &mesh,
+            dragging,
+            actions,
+            &mut built.asked,
+        ) {
             built.revisions.remove(&entity);
+        } else if dragging {
+            built.unsent.insert(entity);
+        }
+    }
+
+    // The hand came off: what the gesture built goes down the wire, once.
+    if !dragging {
+        for entity in std::mem::take(&mut built.unsent) {
+            if let Some(mesh) = block_of(resources, entity) {
+                send(resources, entity, &mesh, actions);
+            }
         }
     }
     resources.insert(built);
@@ -104,6 +130,7 @@ fn build(
     resources: &mut Resources,
     entity: Entity,
     mesh: &kooch_blockmesh::BlockMesh,
+    dragging: bool,
     actions: &mut Vec<EditorAction>,
     asked: &mut HashSet<Entity>,
 ) -> bool {
@@ -125,6 +152,26 @@ fn build(
         return true;
     }
 
+    // Mid-gesture the mesh is written here and nowhere else, so the viewport follows the curve
+    // while the wire stays quiet. The mirror leaves a held entity alone (#1513), so this survives
+    // the next snapshot rather than being undone by it.
+    if dragging {
+        return crate::block_edit::set_shape(resources, entity, mesh);
+    }
+    send(resources, entity, mesh, actions)
+}
+
+/// Asks for `mesh` to be written onto the entity's block, wherever that world is.
+///
+/// 🔴 An action, never a write into this world. In a remote session the world here is a mirror of
+/// the project's, and a component written into a mirror is gone at the next snapshot — while the
+/// entity that is actually in the game never got it.
+fn send(
+    resources: &Resources,
+    entity: Entity,
+    mesh: &kooch_blockmesh::BlockMesh,
+    actions: &mut Vec<EditorAction>,
+) -> bool {
     let Some(geometry) = Block {
         mesh: mesh.clone(),
         source: None,
@@ -135,18 +182,12 @@ fn build(
     let Some(component) = component_id(resources, std::any::type_name::<Block>()) else {
         return false;
     };
-    // 🔴 An action, never a write into this world. In a remote session the world here is a mirror
-    // of the project's, and a component written into a mirror is gone at the next snapshot — while
-    // the entity that is actually in the game never got it.
     actions.push(EditorAction::SetField {
         entity,
         component,
         field: "mesh".to_owned(),
         value: geometry,
     });
-    // 🔴 `entity` and `revision` are the two ways the guard above can keep firing: a mirror that
-    // hands out a new entity each snapshot, or a curve whose revision does not survive the round
-    // trip. One line tells them apart; neither is visible from the face count.
     tracing::info!(
         target: "kooch_editor_core::sweep",
         faces = mesh.face_count(),
@@ -154,6 +195,14 @@ fn build(
         "a sweep filled in its block",
     );
     true
+}
+
+/// Whether the author is mid-gesture on a curve, by a grip or by the transform gizmo.
+fn dragging(resources: &Resources) -> bool {
+    crate::gizmos::spline_handles::is_dragging(resources)
+        || resources
+            .get::<kooch_gizmos_handles::HandleSet>()
+            .is_some_and(kooch_gizmos_handles::HandleSet::is_active)
 }
 
 /// The block `entity` carries, if it carries one.
