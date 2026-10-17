@@ -50,22 +50,6 @@ impl Inverse {
         resources: &mut Resources,
     ) -> Result<Inverse, String> {
         match self {
-            // Writes the file both processes read. The opposite is what
-            // the corners were before this put them back, so a redo has
-            // something to return to.
-            Inverse::BlockShape { source, shape } => {
-                let opposite = crate::block_edit::shape_for(resources, source)
-                    .ok_or_else(|| "the block is not loaded".to_owned())?;
-                if !crate::block_edit::set_shape(resources, source, &shape) {
-                    return Err("the block is not loaded".to_owned());
-                }
-                crate::block_edit::announce(resources, source);
-                crate::block_edit::save_source(resources, source);
-                Ok(Inverse::BlockShape {
-                    source,
-                    shape: Box::new(opposite),
-                })
-            }
             Inverse::SetField {
                 entity,
                 component,

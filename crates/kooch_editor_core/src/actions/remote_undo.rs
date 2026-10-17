@@ -82,11 +82,6 @@ pub(crate) enum Inverse {
     /// project's despawn took (`kooch_remote::handlers`, "Despawns an
     /// entity **and everything under it**").
     Recreate(Vec<Reborn>),
-    /// A block's corners, as they were.
-    BlockShape {
-        source: kooch_core::Guid,
-        shape: Box<kooch_blockmesh::BlockMesh>,
-    },
     /// Several edits that have to travel together, applied in order.
     Several(Vec<Inverse>),
 }

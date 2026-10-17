@@ -15,29 +15,25 @@ use crate::actions::EditorAction;
 pub(crate) struct BuiltShapes(HashMap<Entity, BlockShape>);
 
 /// Rebuilds every block whose shape parameters changed since they were last seen. A first sighting
-/// only records: the file already holds that shape, and rewriting it on load would dirty it.
+/// only records: the scene already holds that shape, and rebuilding it on load would dirty it.
 pub(crate) fn sync_block_shapes(resources: &mut Resources) {
     let mut shaped = Vec::new();
-    Query::<(&BlockShape, &Block)>::new(resources).for_each_entity(|entity, (shape, block)| {
-        if let Some(source) = block.source {
-            shaped.push((entity, *shape, source));
-        }
-    });
+    Query::<(&BlockShape, &Block)>::new(resources)
+        .for_each_entity(|entity, (shape, _)| shaped.push((entity, *shape)));
 
     let mut built = resources.remove::<BuiltShapes>().unwrap_or_default();
     built
         .0
         .retain(|entity, _| shaped.iter().any(|(seen, ..)| seen == entity));
-    for (entity, shape, source) in shaped {
+    for (entity, shape) in shaped {
         if built
             .0
             .insert(entity, shape)
             .is_some_and(|last| last != shape)
         {
             let mesh = shape.build();
-            if super::set_shape(resources, source, &mesh) {
-                super::announce(resources, source);
-                super::save(resources, entity);
+            if super::set_shape(resources, entity, &mesh) {
+                super::touch(resources, entity);
             }
         }
     }

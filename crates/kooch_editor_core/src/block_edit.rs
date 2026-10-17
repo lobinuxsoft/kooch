@@ -2,7 +2,6 @@
 
 use glam::{Vec2, Vec3};
 use kooch_blockmesh::{Block, BlockMesh, BuiltBlocks};
-use kooch_core::assets::Assets;
 use kooch_core::resource::Resources;
 use kooch_ecs::GlobalTransform;
 use kooch_ecs::component::ComponentRegistry;
@@ -373,9 +372,6 @@ pub(crate) fn edit_selection(
     entity: Entity,
     delta: kooch_gizmos_handles::TransformDelta,
 ) -> bool {
-    let Some(source) = source_of(resources, entity) else {
-        return false;
-    };
     let Some((mode, elements)) = resources
         .get::<BlockSelection>()
         .and_then(|selection| Some((selection.mode, selection.of(entity)?)))
@@ -395,15 +391,11 @@ pub(crate) fn edit_selection(
         return false;
     };
 
-    let Some(handle) = resources
-        .get::<BuiltBlocks>()
-        .and_then(|built| built.handle(source))
-    else {
-        return false;
-    };
     let Some(mesh) = resources
-        .get_mut::<Assets<BlockMesh>>()
-        .and_then(|assets| assets.get_mut(handle))
+        .get_mut::<ComponentRegistry>()
+        .and_then(|registry| registry.get_cpu_mut::<Block>())
+        .and_then(|storage| storage.get_mut(entity))
+        .map(|block| &mut block.mesh)
     else {
         return false;
     };
@@ -428,60 +420,29 @@ pub(crate) fn edit_selection(
         }
     }
 
-    // The render mesh and the collider are generated from this, and both are cached under the
-    // source's GUID. Forgetting is what makes the next frame rebuild them; without it the block
-    // keeps the shape it had when it was first built.
+    // The render mesh and the collider are generated from this, and both are cached per entity.
+    // Forgetting is what makes the next frame rebuild them.
     if let Some(built) = resources.get_mut::<BuiltBlocks>() {
-        built.forget(source);
+        built.forget(entity);
     }
     true
 }
 
-/// Tells every consumer of this source that its bytes moved.
-pub(crate) fn announce(resources: &mut Resources, source: kooch_core::Guid) {
-    if let Some(reloaded) = resources.get_mut::<kooch_core::asset_loader::ReloadedAssets>() {
-        reloaded.bump(source);
-    }
-}
-
-/// Writes the edited shape back to its `.block` file.
-pub(crate) fn save(resources: &mut Resources, entity: Entity) {
-    let Some(source) = source_of(resources, entity) else {
-        return;
-    };
-    let Some(mesh) = mesh_of(resources, entity) else {
-        return;
-    };
-    let Some(path) = resources
-        .get::<kooch_core::asset_database::AssetDatabase>()
-        .and_then(|database| database.entry(source).map(|entry| entry.path.clone()))
+/// Marks the scene holding `entity` as having unsaved work.
+///
+/// 🔴 What writing a `.block` used to be (#1452). The geometry is a component now, so an edit is
+/// saved when the scene is — there is no second file to keep in step and no moment where the two
+/// disagree.
+pub(crate) fn touch(resources: &mut Resources, entity: Entity) {
+    let Some(scene) = resources
+        .get::<ComponentRegistry>()
+        .and_then(|registry| registry.get_cpu::<kooch_ecs::SceneMember>()?.get(entity))
+        .map(|member| member.scene)
     else {
         return;
     };
-
-    write_block(resources, &path, &mesh);
-}
-
-/// Serialises a block to its file and tells the database it moved.
-fn write_block(resources: &mut Resources, path: &std::path::Path, mesh: &BlockMesh) {
-    match ron::ser::to_string_pretty(mesh, ron::ser::PrettyConfig::default()) {
-        Ok(text) => match std::fs::write(path, text) {
-            Ok(()) => {
-                tracing::debug!(
-                    target: "kooch_editor_core::block_edit",
-                    path = %path.display(), "block written",
-                );
-                crate::actions::handlers::asset_saved(resources, path);
-            }
-            Err(error) => tracing::error!(
-                target: "kooch_editor_core::block_edit",
-                path = %path.display(), %error, "could not write the block",
-            ),
-        },
-        Err(error) => tracing::error!(
-            target: "kooch_editor_core::block_edit",
-            %error, "could not serialise the block",
-        ),
+    if let Some(manager) = resources.get_mut::<kooch_ecs::SceneManager>() {
+        manager.mark_scene_dirty(scene);
     }
 }
 
@@ -491,7 +452,6 @@ pub(crate) fn extrude_selection(
     entity: Entity,
     distance: f32,
 ) -> Option<(BlockMesh, BlockMesh)> {
-    let source = source_of(resources, entity)?;
     // Face-only, and it stays that way. Extruding an edge or a vertex
     // is a different operation with a different result, not this one
     // applied to fewer corners.
@@ -500,19 +460,18 @@ pub(crate) fn extrude_selection(
         .filter(|selection| selection.mode == ElementMode::Face)
         .and_then(|selection| selection.of(entity))?;
 
-    let before = shape_for(resources, source)?;
+    let before = mesh_of(resources, entity)?;
     let mut after = before.clone();
     let by = after.extrude_direction(&faces, distance)?;
     let extruded = after.extrude(&faces, by)?;
 
-    if !set_shape(resources, source, &after) {
+    if !set_shape(resources, entity, &after) {
         return None;
     }
     if let Some(selection) = resources.get_mut::<BlockSelection>() {
         selection.elements = extruded.faces;
     }
-    announce(resources, source);
-    save(resources, entity);
+    touch(resources, entity);
     Some((before, after))
 }
 
@@ -523,67 +482,35 @@ pub(crate) fn shape_of(resources: &Resources, entity: Entity) -> Option<BlockMes
     mesh_of(resources, entity)
 }
 
-/// Every corner of the block behind `source`.
-pub(crate) fn shape_for(resources: &Resources, source: kooch_core::Guid) -> Option<BlockMesh> {
-    let handle = resources.get::<BuiltBlocks>()?.handle(source)?;
-    resources.get::<Assets<BlockMesh>>()?.get(handle).cloned()
-}
-
-/// Writes a block's shape to its own file, found by GUID.
-pub(crate) fn save_source(resources: &mut Resources, source: kooch_core::Guid) {
-    let Some(mesh) = shape_for(resources, source) else {
-        return;
-    };
-    let Some(path) = resources
-        .get::<kooch_core::asset_database::AssetDatabase>()
-        .and_then(|database| database.entry(source).map(|entry| entry.path.clone()))
-    else {
-        return;
-    };
-    write_block(resources, &path, &mesh);
-}
-
 /// Replaces a block's whole shape, answering whether it landed.
-pub(crate) fn set_shape(
-    resources: &mut Resources,
-    source: kooch_core::Guid,
-    shape: &BlockMesh,
-) -> bool {
-    let Some(handle) = resources
-        .get::<BuiltBlocks>()
-        .and_then(|built| built.handle(source))
+pub(crate) fn set_shape(resources: &mut Resources, entity: Entity, shape: &BlockMesh) -> bool {
+    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
+        return false;
+    };
+    let Some(block) = registry
+        .get_cpu_mut::<Block>()
+        .and_then(|storage| storage.get_mut(entity))
     else {
         return false;
     };
-    let Some(mesh) = resources
-        .get_mut::<Assets<BlockMesh>>()
-        .and_then(|assets| assets.get_mut(handle))
-    else {
-        return false;
-    };
-    *mesh = shape.clone();
+    block.mesh = shape.clone();
     true
 }
 
-/// The source a block names.
-pub(crate) fn source_of(resources: &Resources, entity: Entity) -> Option<kooch_core::Guid> {
-    resources
-        .get::<ComponentRegistry>()?
-        .get_cpu::<Block>()?
-        .get(entity)?
-        .source
-}
-
-/// The block mesh an entity is built from, if it has one and it is
-/// built.
+/// The block mesh an entity is built from.
+///
+/// 🔴 Straight off the component (#1452). There is no asset to resolve, no load to wait for and no
+/// handle to go stale: the geometry is in the scene, which is why each block can now diverge from
+/// the one it was copied from.
 pub(crate) fn mesh_of(resources: &Resources, entity: Entity) -> Option<BlockMesh> {
-    let source = resources
-        .get::<ComponentRegistry>()?
-        .get_cpu::<Block>()?
-        .get(entity)?
-        .source?;
-    let handle = resources.get::<BuiltBlocks>()?.handle(source)?;
-    resources.get::<Assets<BlockMesh>>()?.get(handle).cloned()
+    Some(
+        resources
+            .get::<ComponentRegistry>()?
+            .get_cpu::<Block>()?
+            .get(entity)?
+            .mesh
+            .clone(),
+    )
 }
 
 pub(crate) mod shape_sync;

@@ -34,9 +34,9 @@ pub fn list_from<T: Reflect + Default>(
     match value {
         ReflectValue::List { items, .. } => items
             .into_iter()
-            .map(|item| struct_from(item, bare, field))
+            .map(|item| item_from(item, bare, field))
             .collect(),
-        single if bare.is_some() => Ok(vec![struct_from(single, bare, field)?]),
+        single if bare.is_some() => Ok(vec![item_from(single, bare, field)?]),
         other => Err(ReflectError::TypeMismatch {
             field: field.into(),
             expected: FieldKind::List,
@@ -45,9 +45,18 @@ pub fn list_from<T: Reflect + Default>(
     }
 }
 
+/// A nested struct field read back from `value`, for a field that is one struct rather than a list
+/// of them (#1452).
+pub fn struct_from<T: Reflect + Default>(
+    value: ReflectValue,
+    field: &str,
+) -> Result<T, ReflectError> {
+    item_from(value, None, field)
+}
+
 /// One item, starting from `T::default()`. A field the struct no longer has is skipped, so a scene
 /// written by a newer or older layout still loads.
-fn struct_from<T: Reflect + Default>(
+fn item_from<T: Reflect + Default>(
     value: ReflectValue,
     bare: Option<&str>,
     field: &str,

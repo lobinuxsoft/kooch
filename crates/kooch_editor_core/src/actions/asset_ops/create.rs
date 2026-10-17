@@ -33,32 +33,6 @@ pub(super) fn create_file(resources: &mut Resources, folder: &Path, name: &str, 
             }
             return;
         }
-        NewFileKind::BlockMesh => {
-            // A cube, because a block tool that starts from nothing has
-            // nothing to drag. One metre: a step and a half for the
-            // character, and a unit against the snap grid.
-            let file = unique_target(
-                folder,
-                OsStr::new(&format!("{name}.{}", kooch_blockmesh::BLOCK_MESH_EXTENSION)),
-            );
-            let cube = kooch_blockmesh::BlockMesh::cuboid(glam::Vec3::splat(0.5));
-            match ron::ser::to_string_pretty(&cube, ron::ser::PrettyConfig::default()) {
-                // Through the identity-minting path rather than a plain
-                // write: a block nothing registered cannot be named by
-                // `Block.source`.
-                Ok(text) => {
-                    write_asset_guid(
-                        resources,
-                        &file,
-                        &text,
-                        "block mesh",
-                        std::any::type_name::<kooch_blockmesh::BlockMesh>(),
-                    );
-                }
-                Err(e) => tracing::error!(error = %e, "failed to serialise block mesh"),
-            }
-            return;
-        }
         NewFileKind::Shader => {
             let file = unique_target(
                 folder,

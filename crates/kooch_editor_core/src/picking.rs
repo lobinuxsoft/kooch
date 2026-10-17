@@ -83,9 +83,9 @@ pub(crate) fn surface_at(
     // One entry per distinct mesh rather than per entity — a hundred instances of one tree share a
     // shape.
     let mut shapes: HashMap<Guid, Option<Shape>> = HashMap::new();
-    for (_, mesh, _) in &candidates {
+    for (entity, mesh, _) in &candidates {
         if !shapes.contains_key(mesh) {
-            shapes.insert(*mesh, resolve_shape(resources, *mesh));
+            shapes.insert(*mesh, resolve_shape(resources, *entity, *mesh));
         }
     }
 
@@ -135,8 +135,9 @@ struct Shape {
 /// Which store a mesh's triangles come from.
 #[derive(Debug, Clone, Copy)]
 enum Triangles {
-    /// A block authored in the editor. Its faces are the shape (#1118).
-    Block(kooch_core::assets::Handle<kooch_blockmesh::BlockMesh>),
+    /// A block authored in the editor. Its faces are the shape (#1118), and since #1452 they are
+    /// on the entity rather than in an asset store — so this names the entity, not a handle.
+    Block(Entity),
     /// An imported mesh. LOD 0 of its meshlet chain is the shape.
     Meshlet(kooch_core::assets::Handle<MeshletMesh>),
 }
@@ -163,11 +164,9 @@ fn exact_hit(
     let direction = to_local.transform_vector3(direction);
 
     match shape.triangles {
-        Triangles::Block(handle) => {
-            let assets =
-                resources.get::<kooch_core::assets::Assets<kooch_blockmesh::BlockMesh>>()?;
-            let block = assets.get(handle)?;
-            let hit = kooch_blockmesh::face_at(block, origin, direction)?;
+        Triangles::Block(entity) => {
+            let block = block_of(resources, entity)?;
+            let hit = kooch_blockmesh::face_at(&block, origin, direction)?;
             Some((
                 hit.distance,
                 block.face_normal(hit.element as usize).unwrap_or(Vec3::Y),
@@ -212,17 +211,14 @@ fn visible_meshes(resources: &Resources) -> Vec<(Entity, Guid, Mat4)> {
 }
 
 /// A mesh resolved to its box and its triangles, loading it if this is the first ask.
-fn resolve_shape(resources: &mut Resources, mesh: Guid) -> Option<Shape> {
-    // 🔴 A generated mesh first, because it has no file to load. A block's renderer names the GUID
-    // of the `.block` it was generated from, and asking the server for that produced nothing — so a
-    // block was never a candidate and could not be clicked at all.
-    if let Some(handle) = resources
-        .get::<kooch_blockmesh::BuiltBlocks>()
-        .and_then(|built| built.handle(mesh))
-    {
+fn resolve_shape(resources: &mut Resources, entity: Entity, mesh: Guid) -> Option<Shape> {
+    // 🔴 A block first, because it has no file to load. Its renderer names a GUID derived from the
+    // entity (#1452), and asking the server for that produces nothing — so a block that fell
+    // through to the loader was never a candidate and could not be clicked at all.
+    if let Some(aabb) = block_bounds(resources, entity) {
         return Some(Shape {
-            aabb: block_bounds(resources, mesh)?,
-            triangles: Triangles::Block(handle),
+            aabb,
+            triangles: Triangles::Block(entity),
         });
     }
 
@@ -243,11 +239,10 @@ fn resolve_shape(resources: &mut Resources, mesh: Guid) -> Option<Shape> {
 }
 
 /// The mesh's local-space bounds.
-fn local_bounds(resources: &mut Resources, mesh: Guid) -> Option<Aabb> {
-    // 🔴 A generated mesh first, because it has no file to load. A block's renderer names the GUID
-    // of the `.block` it was generated from, and asking the server for that produced nothing — so a
-    // block was never a candidate and could not be clicked at all.
-    if let Some(bounds) = block_bounds(resources, mesh) {
+fn local_bounds(resources: &mut Resources, entity: Entity, mesh: Guid) -> Option<Aabb> {
+    // 🔴 A block first: its geometry is on the entity (#1452), so there is no GUID the loader
+    // below could resolve and a block that fell through to it had no bounds at all.
+    if let Some(bounds) = block_bounds(resources, entity) {
         return Some(bounds);
     }
 
@@ -270,7 +265,7 @@ pub(crate) fn entity_bounds(resources: &mut Resources, entity: Entity) -> Option
         .into_iter()
         .find(|(candidate, _, _)| *candidate == entity)
         .map(|(_, mesh, to_world)| (mesh, to_world))?;
-    let aabb = local_bounds(resources, mesh)?;
+    let aabb = local_bounds(resources, entity, mesh)?;
 
     // Every corner through the transform, not the two extremes: a
     // rotated box's min and max are not its rotated min and max, and
@@ -316,7 +311,7 @@ pub(crate) fn surface_support(
         .into_iter()
         .find(|(candidate, _, _)| *candidate == entity)
         .map(|(_, mesh, to_world)| (mesh, to_world))?;
-    let shape = resolve_shape(resources, mesh)?;
+    let shape = resolve_shape(resources, entity, mesh)?;
 
     // `(M v + t) · d == v · (Mᵀ d) + t · d`, so the whole walk stays in the mesh's own space for
     // the price of one matrix-vector product instead of a transform per vertex.
@@ -324,16 +319,11 @@ pub(crate) fn surface_support(
     let origin = to_world.w_axis.truncate().dot(direction);
 
     let reach = match shape.triangles {
-        Triangles::Block(handle) => {
-            let assets =
-                resources.get::<kooch_core::assets::Assets<kooch_blockmesh::BlockMesh>>()?;
-            assets
-                .get(handle)?
-                .positions()
-                .iter()
-                .map(|corner| corner.dot(local))
-                .fold(f32::NEG_INFINITY, f32::max)
-        }
+        Triangles::Block(entity) => block_of(resources, entity)?
+            .positions()
+            .iter()
+            .map(|corner| corner.dot(local))
+            .fold(f32::NEG_INFINITY, f32::max),
         Triangles::Meshlet(handle) => {
             let assets = resources.get::<kooch_core::assets::Assets<MeshletMesh>>()?;
             kooch_render::meshlet::support(assets.get(handle)?, local)?
@@ -346,8 +336,8 @@ pub(crate) fn surface_support(
 ///
 /// Nothing loaded, nothing drawn: a visualizer runs while the asset may still be in flight, and a
 /// box around the origin is worse than no box at all.
-pub(crate) fn mesh_bounds(resources: &Resources, mesh: Guid) -> Option<Aabb> {
-    if let Some(bounds) = block_bounds(resources, mesh) {
+pub(crate) fn mesh_bounds(resources: &Resources, entity: Entity, mesh: Guid) -> Option<Aabb> {
+    if let Some(bounds) = block_bounds(resources, entity) {
         return Some(bounds);
     }
     let path = resources
@@ -365,20 +355,27 @@ pub(crate) fn mesh_bounds(resources: &Resources, mesh: Guid) -> Option<Aabb> {
     Some(Aabb::new(aabb.min, aabb.max))
 }
 
-/// The bounds of a block's authoring mesh, if this GUID names one.
-fn block_bounds(resources: &Resources, mesh: Guid) -> Option<Aabb> {
-    let handle = resources
-        .get::<kooch_blockmesh::BuiltBlocks>()?
-        .handle(mesh)?;
-    let assets = resources.get::<kooch_core::assets::Assets<kooch_blockmesh::BlockMesh>>()?;
-    let positions = assets.get(handle)?.positions();
-    if positions.is_empty() {
-        return None;
-    }
+/// The block `entity` carries, if it carries one.
+fn block_of(resources: &Resources, entity: Entity) -> Option<kooch_blockmesh::BlockMesh> {
+    Some(
+        resources
+            .get::<kooch_ecs::component::ComponentRegistry>()?
+            .get_cpu::<kooch_blockmesh::Block>()?
+            .get(entity)?
+            .mesh
+            .clone(),
+    )
+}
 
-    let mut min = positions[0];
-    let mut max = positions[0];
-    for position in positions {
+/// The bounds of a block's authoring mesh, if this entity has one.
+fn block_bounds(resources: &Resources, entity: Entity) -> Option<Aabb> {
+    let block = block_of(resources, entity)?;
+    let positions = block.positions();
+    let (first, rest) = positions.split_first()?;
+
+    let mut min = *first;
+    let mut max = *first;
+    for position in rest {
         min = min.min(*position);
         max = max.max(*position);
     }

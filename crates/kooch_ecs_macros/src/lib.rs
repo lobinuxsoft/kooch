@@ -15,6 +15,7 @@
 
 mod asset_list;
 mod attrs;
+mod nested_field;
 mod scalar_list;
 mod struct_list;
 mod system_attr;
@@ -406,6 +407,28 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 &set_pattern,
                 element,
                 bare.as_deref(),
+                &field_doc,
+                &field_group,
+            );
+            field_metas.push(meta);
+            get_arms.push(get);
+            set_arms.push(set);
+            continue;
+        }
+
+        // Not a `Vec`, not a primitive, not an asset or entity reference: a struct that reflects
+        // on its own (#1452). A mesh on a component is this.
+        if type_mapping(ty).is_none() && vec_inner(ty).is_none() && option_inner(ty).is_none() {
+            let hidden = match crate::attrs::parse_field_hidden(field) {
+                Ok(flag) => flag,
+                Err(e) => return e,
+            };
+            let (meta, get, set) = nested_field::nested_field(
+                field_name,
+                &field_name_str,
+                &set_pattern,
+                ty,
+                hidden,
                 &field_doc,
                 &field_group,
             );

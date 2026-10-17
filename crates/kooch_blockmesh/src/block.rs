@@ -4,14 +4,25 @@ use kooch_core::Guid;
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 
-/// Binds an entity to the authoring mesh it is built from.
-/// Feeds the renderer and physics rather than replacing them: [`sync_blocks`](crate::sync_blocks)
-/// generates both from `source`.
+use crate::BlockMesh;
+
+/// A block's geometry, in the scene (#1452).
+///
+/// 🔴 **The authoring mesh is the component, not an asset.** ProBuilder does the same, and for the
+/// same reason: a blockout's geometry belongs to one level, each instance has to be free to diverge
+/// from the next, and the level is then one file to version and review. Turning a block into a
+/// durable 3D object is a separate, deliberate export (#1069).
+///
+/// [`sync_blocks`](crate::sync_blocks) generates the render mesh and the collider from `mesh`.
 #[derive(Debug, Clone, Default, Reflect)]
 #[reflect(category = "Level")]
 pub struct Block {
-    /// The `.block` this block's geometry comes from. Generated meshes share its GUID, so entities
-    /// with one source share one upload.
+    /// The geometry itself, edited by the block tools.
+    pub mesh: BlockMesh,
+    /// ⚠️ **Legacy.** The `.block` this block's geometry used to come from, kept so a scene written
+    /// before #1452 can still be read: the migration loads it once, copies it into `mesh` and
+    /// clears this. A block that lost it before migrating is a block that loads empty with nothing
+    /// failing, which is why it is not simply deleted.
     #[reflect(asset = "kooch_blockmesh::block_mesh::BlockMesh")]
     pub source: Option<Guid>,
 }

@@ -141,15 +141,31 @@ becomes geometry: a closed profile — round with a chosen number of sides, or s
 the path and capped at both ends, with **each knot's radius scaling it**. That is the taper. A
 trunk thick at the base and thin at the tip, a pipe that narrows, a kerb that widens into a ramp.
 
-It comes out as an ordinary block: faces to select, faces to extrude, a collider, a `.block` asset
-in the project. The sweep writes that asset itself the first time there is something to sweep, so
-there is nothing to spawn first — the component is the whole gesture.
+It comes out as an ordinary block: faces to select, faces to extrude, a collider. The sweep fills
+in the block itself the first time there is something to sweep, so there is nothing to spawn
+first — the component is the whole gesture.
 
 A knot whose radius is zero contributes a **point** rather than a ring, which is how a branch ends
 in a tip instead of a flat cap.
 
-The rebuild follows the curve live while you drag a knot, but the file is only written when you
-let go: one gesture is one write, not sixty.
+The rebuild follows the curve live while you drag a knot.
+
+### Where a block's geometry lives
+
+**In the scene, on the entity.** A block carries its own corners and faces; there is no asset
+beside the scene holding them and no file to keep in step. Save the scene and the blockout is
+saved.
+
+That is what lets two blocks copied from each other **diverge**: nudge one doorway and the other
+one does not move. It is also why a blockout is one file to version and review — the level *is*
+the file.
+
+A scene written before this still loads. Its blocks name a `.block`, and the first time one is
+seen its geometry is read in and the name dropped; after that the file is never read again and can
+be deleted.
+
+Turning a block into a durable 3D object stays a deliberate step: **export**, not a side effect of
+drawing one.
 
 Surface snapping is the gesture a blockout is built with: hold it and the thing you are dragging
 lands *on* the geometry the cursor is over, rather than sliding along an axis until it looks right.
