@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-10-15 — 🎯 **The spline places entities, and the editor stopped lying about what the game is doing.** #1428's placement went from "looks right in the editor, empty in the game" to working, through five faults that were one question wearing five coats: **which of the two worlds is the truth?** The editor adds `EcsPlugin` and runs its own schedule, so it derived its own run beside the project's. I removed the duplicate by hiding **the project's** — exactly backwards — and the owner set the rule that settles it: *Play shows the game, with no exceptions for being the editor*. That is now `Mirrored` in `kooch_core`, beside `Playing`: a world that is a mirror does not simulate. Under it: `stamp` swallowed `PrefabUnavailable` with `.ok()?` and the run was recorded as built having built nothing, so one unlucky frame at scene load was permanent and silent; prefab propagation stripped `Placed` off every copy because `is_bookkeeping` did not list it, which un-ephemeraled twelve entities mid-load; `carry::resume` replayed a held world onto a game already running. 🔴 **And the lesson that cost the most is about tests, not about splines: three of mine passed with the fix removed.** Once because the test entity was never registered in an archetype so the `Query` could not see it, once because another fix already cleared the case, once because an empty list made the function return empty whatever the guard did. A test that goes green the first time it is run has not been verified — it has been written. Every fix here was confirmed red without its guard before it shipped.
+Last updated 2026-10-16 — 🎯 **A block's geometry moved into the scene, and four bugs in a row were the same bug.** ProBuilder keeps a mesh's corners on the component and makes export a deliberate step; #1068 chose the opposite because `FieldKind` had no list variant, and that constraint went away in #1201. So the `.block` files are gone (#1452) and the level is one file again. Under that, four faults that all read the same way: **a value was already in hand, and the code asked a shared world for it instead.** The render frame lifts `ProjectState` out of `Resources`, so the sweep saw no project with one wide open (#1499). `capture_before` read the undo's before-state after the gizmo had written it, so `before == after` (#1511). The mirror wrote a stale snapshot over the entity the author was dragging, so the knot flickered, the sweep's revision flickered with it, a thousand corners went down the wire every frame and the meshlet pool passed its 128 MiB binding limit (#1513). And on release the sweep read that same overwritten world to decide what to send (#1515). 🔴 **The lesson is about instrumentation, not about splines:** three hypotheses on #1492 failed, and one of them — #1495, blaming a second process — was wrong on a fact I could have checked. What settled it was putting `entity` in one log line: it never changed, so the mirror was not the cause and the revision was. A field that separates two causes beats three theories.
 
 ---
 
@@ -206,6 +206,36 @@ what the engine did before any of this existed, for the reason
 `settings.rs:510` argues at length: a serde default is not a
 recommendation, it is what an old file silently becomes. A project that
 wants these values sets them.
+
+---
+
+## 🎯 2026-10-16 — the blockout is the scene, and the sweep is a tool you can use
+
+### What shipped
+
+- **#1452** — **a block's geometry lives on its component.** `Block { mesh: BlockMesh }`, reflected into the scene, migrated once from whatever `.block` a pre-#1452 scene names. Every path that addressed a block by `source: Guid` now addresses it by `entity`: picking, bounds, the undo command, the remote inverse, both spawn paths, the sweep. `announce`/`save`/`save_source`/`write_block` are gone — saving the scene is what saves it. Two blocks copied from each other diverge when one is edited, which was the point. **This deleted three open bugs instead of fixing them** (#1503 a guid sent as a `String`, #1504 a file bouncing between editor and host, and the Asset Browser's "New Block Mesh" entry, which made a file nothing could name).
+- **#1501** — **angle-based smoothing.** A corner averages the faces meeting at its position that sit within 60° of its own. A swept tube reads as round; a box keeps its edges, a square profile keeps its four corners, the caps stay separate from the walls. UVs still project along the **face** normal — an axis that swims along a curve stretches the texels it exists to keep square.
+- **#1499** — the sweep's project is handed in, not read from a table the frame is holding.
+- **#1511** — `Block.mesh` and `source` are `#[reflect(hidden)]`: reflected, never drawn. A thousand rows rebuilt every frame in an immediate-mode panel, for values only the tools write. Block edits undo, with the before-state off the action.
+- **#1513 / #1515** — the mirror leaves alone the entity the author has his hand on, and the sweep sends the mesh **the gesture built** rather than whatever the world holds a frame later.
+
+### The shape of all four bugs
+
+**A value was already in hand, and the code asked a shared world for it instead.** Four times, in four different crates, with four different symptoms — no project, an undo that does nothing, a flickering knot, a mesh that snaps back. Worth naming, because none of them looked alike from the outside.
+
+🔴 And the measurement that ended it: `entity` in the sweep's log line. It never changed across a thousand rebuilds, which ruled out the mirror and left the revision. Three hypotheses had failed before that — one of them a wrong diagnosis of mine (#1495) that blamed a process which does not even link the crate that was logging.
+
+### What the owner decided
+
+- **Baking goes to a meshlet, not to a `.glb`** (#1507). A `.glb` would have to be parsed and meshletised at startup, which is the exact cost baking exists to remove. glTF stays an explicit export for an artist.
+- **#1509 deforms, it does not chain.** Rigid modules tear on a tight curve; the ask was *"sin que se rompa"*.
+- **#1506 and #1509 share the weighted list and `hash(revision, index)` seeding.** Without a stable seed a rebuild reshuffles the forest and a knot moved a millimetre moves every tree.
+
+### Next
+
+**#1505 — a wall thickness on the sweep, so a tube is a tunnel.** One field, `wall: f32`, zero meaning solid. Two rings per span, annular caps, the thickness clamped under the smallest radius on the curve. The crease from #1501 keeps the 90° lip sharp with nothing to author. After it: **#1507** baking (which now has something to bake from), then **#1508** per-face materials, which is what makes a blockout readable rather than a grey lump.
+
+⚠️ **#1517** — one small jump still survives on release. The mirror stops holding the entity the moment the drag ends, and the first snapshot after that is a round trip behind. Measure before writing: a fixed delay that guesses wrong is a different flicker.
 
 ---
 
