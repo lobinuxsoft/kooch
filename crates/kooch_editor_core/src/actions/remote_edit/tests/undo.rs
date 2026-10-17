@@ -328,3 +328,62 @@ fn a_paste_is_built_and_undone() {
     done.store(true, Ordering::Relaxed);
     main_loop.join().unwrap();
 }
+
+/// 🔴 The gizmo writes the new geometry onto the component and *then* emits `BlockEdit`, so a
+/// before-state read from the world is the edit that was just made. Undo would write it back and
+/// look like it did nothing.
+#[test]
+fn a_block_edit_keeps_its_before() {
+    use kooch_ecs::reflect::Reflect;
+
+    let mut editor = ecs();
+    editor
+        .get_mut::<ComponentRegistry>()
+        .unwrap()
+        .register_cpu_reflected::<kooch_blockmesh::Block>();
+
+    let mut mirror = crate::remote_mirror::RemoteMirror::new();
+    let snapshot = vec![kooch_remote::protocol::EntitySnapshot {
+        id: kooch_remote::protocol::EntityId {
+            index: 0,
+            generation: 0,
+        },
+        name: Some("Block".into()),
+        parent: None,
+        scene: None,
+        components: vec![kooch_remote::protocol::ComponentSnapshot {
+            type_name: std::any::type_name::<kooch_blockmesh::Block>().into(),
+            fields: Vec::new(),
+        }],
+    }];
+    mirror.apply(&snapshot, &mut editor);
+    let local = mirror.local_of(snapshot[0].id).expect("mirrored");
+
+    let before = kooch_blockmesh::BlockMesh::cuboid(glam::Vec3::splat(0.5));
+    let after = kooch_blockmesh::BlockMesh::cuboid(glam::Vec3::splat(2.0));
+    // The world already holds `after`, which is the whole trap.
+    crate::block_edit::set_shape(&mut editor, local, &after);
+
+    let inverse = crate::actions::remote_undo::capture_before(
+        &EditorAction::BlockEdit {
+            entity: local,
+            before: Box::new(before.clone()),
+            after: Box::new(after.clone()),
+        },
+        &editor,
+        &mirror,
+    )
+    .expect("a block edit is undoable");
+
+    let crate::actions::remote_undo::Inverse::SetField {
+        before: recorded, ..
+    } = inverse
+    else {
+        panic!("a block edit undoes as a field edit");
+    };
+    assert_eq!(
+        recorded,
+        crate::actions::remote_edit::mesh_value(&before).unwrap(),
+        "the undo would write back the edit it was meant to reverse",
+    );
+}

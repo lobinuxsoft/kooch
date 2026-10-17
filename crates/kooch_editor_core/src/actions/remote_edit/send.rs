@@ -42,8 +42,10 @@ pub(super) fn send(
             // (#1261). The two calls share one function; what is duplicated is the call, not the
             // rule.
             let value = match crate::spline_edit::is_knot_list(&component, field) {
-                true => crate::spline_edit::placed(value).unwrap_or_else(|| value.clone()),
-                false => value.clone(),
+                true => {
+                    crate::spline_edit::placed(&value).unwrap_or_else(|| value.clone().into_owned())
+                }
+                false => value.into_owned(),
             };
             client
                 .set_field(

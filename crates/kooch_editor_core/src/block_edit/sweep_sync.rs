@@ -107,7 +107,7 @@ fn build(
     actions: &mut Vec<EditorAction>,
     asked: &mut HashSet<Entity>,
 ) -> bool {
-    if !has_block(resources, entity) {
+    let Some(current) = block_of(resources, entity) else {
         // Already asked, and the components have not arrived. `false` keeps the revision unset, so
         // the curve is swept again on the frame they land rather than being skipped for ever.
         if !asked.insert(entity) {
@@ -115,8 +115,15 @@ fn build(
         }
         request(resources, entity, actions);
         return false;
-    }
+    };
     asked.remove(&entity);
+
+    // 🔴 The last word on whether this is a change, whatever the revision guard believed. A guard
+    // that keeps firing sends a thousand corners down the wire every frame and fills the undo
+    // history with the sweep's own writes, so the author's edit is never what Ctrl+Z reaches.
+    if current == *mesh {
+        return true;
+    }
 
     let Some(geometry) = Block {
         mesh: mesh.clone(),
@@ -137,20 +144,28 @@ fn build(
         field: "mesh".to_owned(),
         value: geometry,
     });
+    // 🔴 `entity` and `revision` are the two ways the guard above can keep firing: a mirror that
+    // hands out a new entity each snapshot, or a curve whose revision does not survive the round
+    // trip. One line tells them apart; neither is visible from the face count.
     tracing::info!(
         target: "kooch_editor_core::sweep",
         faces = mesh.face_count(),
+        ?entity,
         "a sweep filled in its block",
     );
     true
 }
 
-/// Whether the entity already carries the block the sweep writes to.
-fn has_block(resources: &Resources, entity: Entity) -> bool {
-    resources
-        .get::<ComponentRegistry>()
-        .and_then(|registry| registry.get_cpu::<Block>())
-        .is_some_and(|storage| storage.get(entity).is_some())
+/// The block `entity` carries, if it carries one.
+fn block_of(resources: &Resources, entity: Entity) -> Option<kooch_blockmesh::BlockMesh> {
+    Some(
+        resources
+            .get::<ComponentRegistry>()?
+            .get_cpu::<Block>()?
+            .get(entity)?
+            .mesh
+            .clone(),
+    )
 }
 
 /// Asks for every component a block needs, as actions.
