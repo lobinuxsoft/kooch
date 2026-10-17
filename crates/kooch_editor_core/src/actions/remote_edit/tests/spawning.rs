@@ -262,7 +262,7 @@ fn reparent_reaches_the_project() {
     assert!(state.is_connected(), "did not connect");
 
     let snapshot = state.session.as_ref().unwrap().snapshot().to_vec();
-    state.mirror.apply(&snapshot, &mut editor);
+    state.mirror.apply(&snapshot, None, &mut editor);
     assert!(snapshot.len() >= 2, "the project has no pair to relate");
     let parent = state.mirror.local_of(snapshot[0].id).expect("mirrored");
     let child = state.mirror.local_of(snapshot[1].id).expect("mirrored");
@@ -359,7 +359,7 @@ fn duplicate_creates_a_copy_on_the_project() {
     }
     assert!(state.is_connected(), "did not connect");
     let snapshot = state.session.as_ref().unwrap().snapshot().to_vec();
-    state.mirror.apply(&snapshot, &mut editor);
+    state.mirror.apply(&snapshot, None, &mut editor);
     let source = state.mirror.local_of(snapshot[0].id).expect("mirrored");
 
     // Give the source a distinctive value so the copy can be told apart

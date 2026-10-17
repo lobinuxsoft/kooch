@@ -131,7 +131,7 @@ fn connected(socket: &str, resources: &mut Resources) -> RemoteState {
     }
     assert!(state.is_connected(), "did not connect");
     let snapshot = state.session.as_ref().unwrap().snapshot().to_vec();
-    state.mirror.apply(&snapshot, resources);
+    state.mirror.apply(&snapshot, None, resources);
     state
 }
 
@@ -416,6 +416,7 @@ fn a_creation_waits_for_its_snapshot() {
             scene: None,
             components: Vec::new(),
         }],
+        None,
         &mut resources,
     );
     take_selection(&mut resources, &mirror, &mut pending);
@@ -449,4 +450,51 @@ fn the_project_names_the_open_scenes() {
 
     done.store(true, Ordering::Relaxed);
     let _ = thread.join();
+}
+
+/// 🔴 A snapshot is taken before the edit just sent has landed, so writing it back puts the
+/// dragged value where it *was* — and the next frame puts it where it is. That flicker is what
+/// kept the sweep rebuilding every frame (#1513).
+#[test]
+fn a_held_entity_keeps_its_edit() {
+    use kooch_ecs::reflect::ReflectValue;
+
+    let mut resources = ecs();
+    let mut mirror = crate::remote_mirror::RemoteMirror::new();
+    let id = kooch_remote::protocol::EntityId {
+        index: 0,
+        generation: 0,
+    };
+    let stale = vec![kooch_remote::protocol::EntitySnapshot {
+        id,
+        name: Some("Curve".to_owned()),
+        parent: None,
+        scene: None,
+        components: vec![kooch_remote::protocol::ComponentSnapshot {
+            type_name: std::any::type_name::<Transform>().to_owned(),
+            fields: vec![("position".to_owned(), ReflectValue::Vec3(glam::Vec3::ZERO))],
+        }],
+    }];
+
+    mirror.apply(&stale, None, &mut resources);
+    let local = mirror.local_of(id).expect("mirrored");
+
+    let moved = glam::Vec3::new(5.0, 0.0, 0.0);
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        let _ = registry.reflect_set_field(
+            &std::any::TypeId::of::<Transform>(),
+            local,
+            "position",
+            ReflectValue::Vec3(moved),
+        );
+    }
+
+    // The same stale snapshot arrives again, with the hand still on it.
+    mirror.apply(&stale, Some(local), &mut resources);
+
+    let after = resources
+        .get::<ComponentRegistry>()
+        .and_then(|registry| registry.get_cpu::<Transform>()?.get(local))
+        .map(|transform| transform.position);
+    assert_eq!(after, Some(moved), "the snapshot overwrote the live edit");
 }

@@ -52,7 +52,7 @@ fn mirrored_world() -> Resources {
             },
         ],
     }];
-    RemoteMirror::new().apply(&snapshot, &mut r);
+    RemoteMirror::new().apply(&snapshot, None, &mut r);
     r
 }
 

@@ -94,7 +94,18 @@ impl RemoteMirror {
         }
     }
 
-    pub fn apply(&mut self, snapshot: &[EntitySnapshot], resources: &mut Resources) {
+    /// Updates the local mirror to match `snapshot`, leaving `held` alone.
+    ///
+    /// 🔴 `held` is the entity the author has his hand on. A snapshot is taken before the edit
+    /// just sent has landed, so writing it back puts the dragged value where it *was* — and the
+    /// next frame puts it where it is. The knot flickers between the two, and anything derived
+    /// from it rebuilds on every one of them (#1513).
+    pub fn apply(
+        &mut self,
+        snapshot: &[EntitySnapshot],
+        held: Option<Entity>,
+        resources: &mut Resources,
+    ) {
         {
             profiling::scope!("mirror: retain");
             self.retain_only(snapshot, resources);
@@ -120,6 +131,9 @@ impl RemoteMirror {
                 let Some(&entity) = self.id_map.get(&snap.id) else {
                     continue;
                 };
+                if held == Some(entity) {
+                    continue;
+                }
                 self.sync_components(resources, entity, snap);
             }
         }
