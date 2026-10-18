@@ -387,3 +387,76 @@ fn a_block_edit_keeps_its_before() {
         "the undo would write back the edit it was meant to reverse",
     );
 }
+
+/// 🔴 The knot grip edits the curve live, so the world holds the moved knot when the capture runs.
+/// It used to rewind the component to make that read right, and for the frame it stayed rewound
+/// the sweep rebuilt itself from the curve the drag began at (#1517).
+#[test]
+fn a_grip_edit_keeps_its_before() {
+    use kooch_ecs::reflect::Reflect;
+    use kooch_ecs::spline::{Knot, Spline};
+
+    let mut editor = ecs();
+    editor
+        .get_mut::<ComponentRegistry>()
+        .unwrap()
+        .register_cpu_reflected::<Spline>();
+
+    let mut mirror = crate::remote_mirror::RemoteMirror::new();
+    let snapshot = vec![kooch_remote::protocol::EntitySnapshot {
+        id: kooch_remote::protocol::EntityId {
+            index: 0,
+            generation: 0,
+        },
+        name: Some("Curve".into()),
+        parent: None,
+        scene: None,
+        components: vec![kooch_remote::protocol::ComponentSnapshot {
+            type_name: std::any::type_name::<Spline>().into(),
+            fields: Vec::new(),
+        }],
+    }];
+    mirror.apply(&snapshot, None, &mut editor);
+    let local = mirror.local_of(snapshot[0].id).expect("mirrored");
+
+    let start = Spline {
+        points: vec![Knot::at(glam::Vec3::ZERO), Knot::at(glam::Vec3::X)],
+        closed: false,
+    };
+    let moved = Spline {
+        points: vec![Knot::at(glam::Vec3::ZERO), Knot::at(glam::Vec3::Y * 5.0)],
+        closed: false,
+    };
+    let component = editor
+        .get_mut::<ComponentNames>()
+        .expect("names")
+        .intern(std::any::type_name::<Spline>());
+
+    let inverse = crate::actions::remote_undo::capture_before(
+        &EditorAction::SetFieldFrom {
+            entity: local,
+            component,
+            field: "points".to_owned(),
+            before: start.reflect_get("points").expect("a knot list"),
+            after: moved.reflect_get("points").expect("a knot list"),
+        },
+        &editor,
+        &mirror,
+    )
+    .expect("a grip edit is undoable");
+
+    let crate::actions::remote_undo::Inverse::SetField {
+        before: recorded,
+        after: applied,
+        ..
+    } = inverse
+    else {
+        panic!("a grip edit undoes as a field edit");
+    };
+    assert_ne!(recorded, applied, "undo would write the edit back");
+    assert_eq!(
+        recorded,
+        start.reflect_get("points").expect("a knot list"),
+        "the curve the drag began at",
+    );
+}

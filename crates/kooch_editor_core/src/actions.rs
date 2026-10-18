@@ -90,6 +90,19 @@ pub(crate) enum EditorAction {
         shape: kooch_blockmesh::Shape,
         at: crate::viewport_pick::DropPoint,
     },
+    /// One field, before and after an edit, for a gizmo that has already written the world.
+    ///
+    /// 🔴 The grip edits the component live so the author sees the curve follow, which leaves the
+    /// world holding the *new* value when the undo capture wants the old one. Carrying `before`
+    /// here is what lets it stop rewinding — and a rewound curve is a lie that everything derived
+    /// from the spline reads as truth for a frame (#1517).
+    SetFieldFrom {
+        entity: Entity,
+        component: ComponentId,
+        field: String,
+        before: kooch_ecs::reflect::ReflectValue,
+        after: kooch_ecs::reflect::ReflectValue,
+    },
     /// One block's shape, before and after an edit.
     BlockEdit {
         entity: Entity,

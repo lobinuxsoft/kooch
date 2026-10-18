@@ -426,6 +426,19 @@ fn classify<'a>(action: &'a EditorAction, resources: &mut Resources) -> Option<E
             field,
             value: std::borrow::Cow::Borrowed(value),
         }),
+        // The same edit on the wire; only the undo capture cares that it carries its own before.
+        EditorAction::SetFieldFrom {
+            entity,
+            component,
+            field,
+            after,
+            ..
+        } => Some(Edit::SetField {
+            entity: *entity,
+            component: *component,
+            field,
+            value: std::borrow::Cow::Borrowed(after),
+        }),
         // A block's geometry is a component field since #1452, so this is a `SetField` whose value
         // has to be built rather than borrowed — which is the whole reason `value` is a `Cow`.
         EditorAction::BlockEdit { entity, after, .. } => Some(Edit::SetField {

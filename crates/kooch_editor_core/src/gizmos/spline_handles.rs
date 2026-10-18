@@ -309,16 +309,23 @@ fn drive(
             && let Some(component) = resources
                 .get::<ComponentNames>()
                 .and_then(|names| names.id(std::any::type_name::<Spline>()))
-            && let Some(value) = live.reflect_get("points")
+            && let Some(after) = live.reflect_get("points")
+            && let Some(before) = drag.start.reflect_get("points")
         {
-            write(resources, entity, drag.start);
+            // 🔴 The curve is NOT put back. It used to be, so the undo capture could read the old
+            // value out of the component — and for the frame it stayed rewound, everything built
+            // from the spline read it as the truth. The sweep rebuilt itself from the curve the
+            // drag began at and sent that, so a knot moved by its own grip snapped back while the
+            // transform gizmo, which never rewinds, worked (#1517).
+            //
             // The whole list, because that is what the field is — and what the Inspector's own list
             // edits emit, so both paths undo the same way.
-            actions.push(EditorAction::SetField {
+            actions.push(EditorAction::SetFieldFrom {
                 entity,
                 component,
                 field: "points".to_owned(),
-                value,
+                before,
+                after,
             });
         }
         return true;
