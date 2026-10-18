@@ -90,6 +90,11 @@ pub(crate) fn sync_sweeps(resources: &mut Resources, actions: &mut Vec<EditorAct
             built.revisions.remove(&entity);
         } else if dragging {
             built.unsent.insert(entity, mesh);
+        } else {
+            // 🔴 What the gesture left behind is older than what just went down the wire, and the
+            // flush below would land after it. Two `SetField`s in one frame, stalest last: the
+            // block ends the gesture a shape behind, and the author moves the knot twice (#1517).
+            built.unsent.remove(&entity);
         }
     }
 
