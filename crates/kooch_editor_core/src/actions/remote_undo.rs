@@ -469,7 +469,9 @@ fn label_of(action: &EditorAction) -> String {
         EditorAction::PasteEntities { .. } => "Paste".to_owned(),
         EditorAction::MoveToScene { .. } => "Move to Scene".to_owned(),
         EditorAction::InstantiatePrefab { .. } => "Instantiate Prefab".to_owned(),
-        EditorAction::SetField { field, .. } => format!("Set {field}"),
+        EditorAction::SetField { field, .. } | EditorAction::SetFieldFrom { field, .. } => {
+            format!("Set {field}")
+        }
         EditorAction::AddComponent { .. } => "Add Component".to_owned(),
         EditorAction::RemoveComponent { .. } => "Remove Component".to_owned(),
         EditorAction::Reparent { .. } => "Reparent".to_owned(),
@@ -501,12 +503,26 @@ fn label_of(action: &EditorAction) -> String {
 /// new step  label=Set overrides  depth=6
 /// ```
 fn rides_along(action: &EditorAction, resources: &Resources) -> bool {
-    let EditorAction::SetField { component, .. } = action else {
+    let EditorAction::SetField {
+        component, field, ..
+    } = action
+    else {
         return false;
     };
-    component_name(resources, *component)
+    let Some(name) = component_name(resources, *component)
         .and_then(|name| name.rsplit("::").next().map(str::to_owned))
-        .is_some_and(|name| name == "PrefabInstance" || name == "PrefabMember")
+    else {
+        return false;
+    };
+    // 🔴 A swept mesh is not something the author did — it is what the curve they moved implies,
+    // and the sweep flushes it a frame later than the edit that caused it (`sync_sweeps` runs
+    // before the handles). As a step of its own that is a second Ctrl+Z per gesture, and the first
+    // one takes the geometry back while leaving the knot where it was: the mesh jumps (#1517).
+    // Block's own element edits travel as `BlockEdit`, so this field is the sweep's alone.
+    if name == "Block" && field == "mesh" {
+        return true;
+    }
+    name == "PrefabInstance" || name == "PrefabMember"
 }
 
 /// What a run of edits to the same thing looks like.
@@ -514,6 +530,12 @@ fn merge_key_of(action: &EditorAction) -> Option<crate::history::MergeKey> {
     use crate::history::MergeKey;
     match action {
         EditorAction::SetField {
+            entity,
+            component,
+            field,
+            ..
+        }
+        | EditorAction::SetFieldFrom {
             entity,
             component,
             field,
