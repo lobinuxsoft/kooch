@@ -219,3 +219,59 @@ fn a_named_layer_becomes_its_bit() {
     };
     assert_eq!(named.layer_mask(), 0b1000, "the layer it named, as a bit");
 }
+
+/// 🔴 A drag rebuilds a block every frame. Unbounded, that is 62 KiB a frame into a pool with a
+/// 128 MiB ceiling, and the render stops at about 2100 frames (#1520).
+#[test]
+fn a_replaced_mesh_is_reclaimed() {
+    let built = build_default_meshlets(&cube_mesh()).expect("built");
+    let guid = Guid::new_v4();
+    let mut pipeline = MeshletPipeline::new();
+    pipeline.replace_mesh(guid, &built);
+    let one = pipeline.pool().byte_size();
+
+    for _ in 0..200 {
+        pipeline.replace_mesh(guid, &built);
+    }
+
+    assert!(
+        pipeline.pool().byte_size() <= one * 2,
+        "200 rebuilds of one mesh grew the pool to {} from {one}",
+        pipeline.pool().byte_size(),
+    );
+    assert_eq!(pipeline.registered_count(), 1, "one mesh, one entry");
+}
+
+/// Compaction moves ids, and a mesh that comes back wrong is a mesh drawn from another mesh's
+/// vertices.
+#[test]
+fn a_compacted_mesh_survives() {
+    let built = build_default_meshlets(&cube_mesh()).expect("built");
+    let (kept, churned) = (Guid::new_v4(), Guid::new_v4());
+    let mut pipeline = MeshletPipeline::new();
+    pipeline.replace_mesh(kept, &built);
+    for _ in 0..200 {
+        pipeline.replace_mesh(churned, &built);
+    }
+
+    let handle = pipeline.lookup(kept).expect("still registered");
+    let pool = pipeline.pool();
+    let descriptor = &pool.mesh_descriptors[handle.mesh_id as usize];
+    assert_eq!(descriptor.meshlet_count, built.meshlet_count());
+    for meshlet in &pool.meshlets[descriptor.first_meshlet as usize
+        ..(descriptor.first_meshlet + descriptor.meshlet_count) as usize]
+    {
+        let last = meshlet.vertex_offset + meshlet.vertex_count;
+        assert!(
+            (last as usize) <= pool.meshlet_vertices.len(),
+            "meshlet reaches past the repacked pool",
+        );
+    }
+    for index in &pool.meshlet_vertices {
+        assert!(
+            (*index as usize) < pool.vertices.len(),
+            "a repacked index {index} left the vertex pool ({})",
+            pool.vertices.len(),
+        );
+    }
+}

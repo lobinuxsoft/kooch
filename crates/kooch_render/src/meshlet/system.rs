@@ -23,6 +23,8 @@ use super::trim::{AlphaTrim, TrimPair};
 pub struct MeshletPipeline {
     pool: GlobalMeshPool,
     registry: HashMap<Guid, MeshHandle>,
+    /// Bytes held by meshes nothing points at any more, since the pool only appends (#1520).
+    dead_bytes: u64,
     /// Which masked pairs draw a cut mesh instead of discarding per pixel (#452).
     pub trim: AlphaTrim,
 }
@@ -59,10 +61,45 @@ impl MeshletPipeline {
     }
 
     /// Registers `mesh` under `guid`, replacing whatever was there.
+    ///
+    /// 🔴 The pool appends, so the mesh being replaced stays in it as garbage. Left alone that is
+    /// 62 KiB per rebuild of a swept block, and a drag rebuilds every frame — about 2100 frames to
+    /// the 128 MiB binding limit, after which the bind group is invalid and nothing draws (#1520).
     pub fn replace_mesh(&mut self, guid: Guid, mesh: &MeshletMesh) -> MeshHandle {
         let mesh_handle = self.pool.register(mesh);
-        self.registry.insert(guid, mesh_handle);
-        mesh_handle
+        if let Some(stale) = self.registry.insert(guid, mesh_handle) {
+            self.dead_bytes += self.pool.mesh_bytes(stale.mesh_id);
+        }
+        self.compact();
+        self.registry.get(&guid).copied().unwrap_or(mesh_handle)
+    }
+
+    /// Repacks the pool once the dead outweigh the living, which bounds it at about twice what is
+    /// actually referenced however long the author keeps dragging.
+    ///
+    /// Amortised: each compaction copies the live set and buys at least as many bytes of slack
+    /// again, so the copying stays proportional to the registering.
+    fn compact(&mut self) {
+        if self.dead_bytes <= self.pool.byte_size().saturating_sub(self.dead_bytes) {
+            return;
+        }
+        let live: Vec<(Guid, u32)> = self
+            .registry
+            .iter()
+            .map(|(guid, handle)| (*guid, handle.mesh_id))
+            .collect();
+        let moved = self
+            .pool
+            .retain(&live.iter().map(|(_, id)| *id).collect::<Vec<_>>());
+        for ((guid, _), mesh_id) in live.iter().zip(moved) {
+            self.registry.insert(*guid, MeshHandle { mesh_id });
+        }
+        self.dead_bytes = 0;
+    }
+
+    /// Bytes the pool is holding for meshes nothing references.
+    pub fn dead_bytes(&self) -> u64 {
+        self.dead_bytes
     }
 
     /// Walks the ECS query and returns every distinct `Guid` referenced by a visible
