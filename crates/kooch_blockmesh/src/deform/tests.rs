@@ -239,3 +239,62 @@ fn a_straight_curve_is_identity() {
         assert!(normal.distance(Vec3::X) < 0.05, "normal {index}: {normal}");
     }
 }
+
+/// A curve `length` long, straight along Z.
+fn run(length: f32) -> Vec<Knot> {
+    [Vec3::ZERO, Vec3::new(0.0, 0.0, length)]
+        .map(Knot::at)
+        .to_vec()
+}
+
+/// A bar whose one meshlet carries a simplification error, so the scaling can be read off it.
+fn errored() -> MeshletMesh {
+    let mut mesh = bar();
+    mesh.meshlets[0].lod_error = 0.01;
+    mesh
+}
+
+/// 🔴 The measurement #1531 asks for. The source bar is 4 m along Z; on a 32 m curve it is
+/// stretched 8×, and its simplification error is 8× more visible. The selector multiplies
+/// `lod_error` only by the TRANSFORM's scale, which a deformed entity leaves at 1 — so without
+/// this the mesh holds a coarse LOD eight times closer to the camera than the artist asked for.
+#[test]
+fn a_stretch_grows_the_lod_error() {
+    let source = errored();
+    let was = source.meshlets[0].lod_error;
+    let same = deform(&source, &run(4.0), false, &settings()).expect("bent");
+    let eight = deform(&source, &run(32.0), false, &settings()).expect("bent");
+
+    let unchanged = same.meshlets[0].lod_error / was;
+    let stretched = eight.meshlets[0].lod_error / was;
+    assert!(
+        (unchanged - 1.0).abs() < 0.05,
+        "a curve the mesh's own length changed the error by {unchanged}×",
+    );
+    assert!(
+        (stretched - 8.0).abs() < 0.5,
+        "a curve eight times the mesh's length scaled the error by {stretched}×, not 8",
+    );
+}
+
+/// Compression is the other half, and the one that would be missed: a mesh squeezed onto a short
+/// curve has LESS error than it was imported with, and holding the imported number spends
+/// triangles nobody can see.
+#[test]
+fn a_squeeze_shrinks_the_lod_error() {
+    let source = errored();
+    let bent = deform(&source, &run(1.0), false, &settings()).expect("bent");
+    let ratio = bent.meshlets[0].lod_error / source.meshlets[0].lod_error;
+    assert!(
+        ratio < 0.5,
+        "a quarter-length curve scaled the error by {ratio}×"
+    );
+}
+
+/// A meshlet that is already at full detail has no error to scale, and inventing one would stop
+/// the finest LOD from ever being chosen.
+#[test]
+fn a_lod_zero_error_stays_zero() {
+    let bent = deform(&bar(), &run(32.0), false, &settings()).expect("bent");
+    assert_eq!(bent.meshlets[0].lod_error, 0.0);
+}
