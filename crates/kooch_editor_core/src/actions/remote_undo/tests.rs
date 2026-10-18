@@ -230,3 +230,26 @@ fn a_rider_does_not_break_the_run() {
         _ => panic!("the edit is not first"),
     }
 }
+
+/// 🔴 A swept mesh is what the curve implies, not a thing the author did. It is also flushed a
+/// frame after the edit that caused it, so as a step of its own the first Ctrl+Z takes the
+/// geometry back and leaves the knot where it was — the mesh jumps and the gesture needs two.
+#[test]
+fn a_swept_mesh_rides_along() {
+    let mut resources = kooch_core::resource::Resources::new();
+    let mut names = kooch_ecs::component::ComponentNames::default();
+    let block = names.intern(std::any::type_name::<kooch_blockmesh::Block>());
+    let other = names.intern(std::any::type_name::<kooch_ecs::spline::Spline>());
+    resources.insert(names);
+
+    let field = |component, field: &str| EditorAction::SetField {
+        entity: kooch_ecs::entity::Entity::new(1, 0),
+        component,
+        field: field.to_owned(),
+        value: kooch_ecs::reflect::ReflectValue::F32(0.0),
+    };
+
+    assert!(rides_along(&field(block, "mesh"), &resources));
+    // The curve the author moved is the step, so it must not fold into whatever came before it.
+    assert!(!rides_along(&field(other, "points"), &resources));
+}

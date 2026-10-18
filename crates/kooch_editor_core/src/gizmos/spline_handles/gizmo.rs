@@ -241,16 +241,20 @@ pub(crate) fn ended_gizmo_drag(resources: &mut Resources, actions: &mut Vec<Edit
     else {
         return;
     };
-    let Some(value) = after.reflect_get("points") else {
+    let Some(after) = after.reflect_get("points") else {
         return;
     };
-    // Put the start back, so the command records the value the drag began from and the whole
-    // gesture is one undo step — the same shape the grip drag follows.
-    write(resources, entity, before);
-    actions.push(EditorAction::SetField {
+    let Some(before) = before.reflect_get("points") else {
+        return;
+    };
+    // 🔴 The curve is NOT put back. It used to be, so the capture could read the old value out of
+    // the component — and everything built from the spline read that rewind as the truth for the
+    // frame. Same shape the grip drag follows since #1517.
+    actions.push(EditorAction::SetFieldFrom {
         entity,
         component,
         field: "points".to_owned(),
-        value,
+        before,
+        after,
     });
 }
