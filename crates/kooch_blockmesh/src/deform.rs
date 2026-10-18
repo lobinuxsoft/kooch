@@ -138,7 +138,7 @@ pub fn deform(
     }
 
     bent.aabb = bounds;
-    rebound(&mut bent);
+    rebound(&mut bent, mesh);
     Some(bent)
 }
 
@@ -162,40 +162,74 @@ fn span(mesh: &MeshletMesh, axis: u32) -> (f32, f32) {
     (low, high)
 }
 
-/// Recomputes every meshlet's bounds from the vertices it now has.
+/// Recomputes every meshlet's bounds and simplification error from the vertices it now has.
 ///
 /// 🔴 The backface cone is **switched off**, not recomputed. A bent cluster's normals no longer
 /// share one cone, and a cone that is wrong by any amount culls geometry the camera can see —
 /// holes in the mesh, with nothing reporting a fault. `cone_cutoff >= 1.0` is what the cull shader
 /// and `cull.rs` both read as "do not try", so the cost is some backface culling and never
 /// correctness.
-fn rebound(mesh: &mut MeshletMesh) {
+///
+/// 🔴 `lod_error` is scaled too (#1531). It was measured by `meshopt` against the source mesh, in
+/// the source mesh's units, and the selector multiplies it only by the **transform's** scale —
+/// which a deformed entity leaves at 1. A mesh stretched eight times over a long curve would
+/// report an eighth of the error it really has and hold a coarse LOD eight times too close.
+///
+/// ⚠️ **Per meshlet, and a scalar.** Each cluster gets its own ratio, so a curve that stretches one
+/// stretch of a mesh and squeezes the next is handled — that is the part a single per-instance
+/// factor cannot do. What it still approximates is **direction**: a cluster pulled along the curve
+/// and squeezed across it reports one number for both, taken from how its bounding sphere grew.
+/// It errs towards the larger of the two, which spends triangles rather than showing simplification
+/// — the right way round to be wrong. A directional error needs `lod_error` to stop being one
+/// float, which is a format change and a different issue.
+fn rebound(mesh: &mut MeshletMesh, source: &MeshletMesh) {
     for index in 0..mesh.meshlets.len() {
         let meshlet = mesh.meshlets[index];
         let first = meshlet.vertex_offset as usize;
         let count = meshlet.vertex_count as usize;
-        let mut bounds = Aabb::empty();
-        for slot in first..first + count {
-            let Some(vertex) = mesh
-                .meshlet_vertices
-                .get(slot)
-                .and_then(|at| mesh.vertices.get(*at as usize))
-            else {
-                continue;
-            };
-            bounds.expand(Vec3::from(vertex.position));
-        }
-        if bounds.is_empty() {
+        let Some((centre, bounds, radius)) = spread(mesh, first, count) else {
             continue;
-        }
-        let centre = (bounds.min + bounds.max) / 2.0;
+        };
+        // Both measured the same way, from the vertices: the ratio is what matters and a stored
+        // radius from `meshopt` is a differently-fitted sphere, which would bias every meshlet.
+        let stretch = spread(source, first, count)
+            .map(|(_, _, was)| was)
+            .filter(|was| *was > 0.0)
+            .map_or(1.0, |was| radius / was);
         let descriptor = &mut mesh.meshlets[index];
         descriptor.aabb_min = bounds.min.into();
         descriptor.aabb_max = bounds.max.into();
         descriptor.bounds_center = centre.into();
-        descriptor.bounding_radius = (bounds.max - centre).length();
+        descriptor.bounding_radius = radius;
         descriptor.cone_cutoff = 1.0;
+        descriptor.lod_error *= stretch;
     }
+}
+
+/// A meshlet's centre, box and radius, from the vertices it points at.
+///
+/// ⚠️ The radius is measured from the box's centre rather than from the average of the vertices:
+/// it has to match `bounds_center`, which is what the culler tests the sphere against. A radius
+/// about one point and a centre at another is a sphere that does not contain its own meshlet.
+fn spread(mesh: &MeshletMesh, first: usize, count: usize) -> Option<(Vec3, Aabb, f32)> {
+    let corners = || {
+        mesh.meshlet_vertices
+            .get(first..first + count)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|at| mesh.vertices.get(*at as usize))
+            .map(|vertex| Vec3::from(vertex.position))
+    };
+    let mut bounds = Aabb::empty();
+    for corner in corners() {
+        bounds.expand(corner);
+    }
+    if bounds.is_empty() {
+        return None;
+    }
+    let centre = (bounds.min + bounds.max) / 2.0;
+    let radius = corners().fold(0.0_f32, |far, corner| far.max(corner.distance(centre)));
+    Some((centre, bounds, radius))
 }
 
 /// A number that changes whenever the bend would come out different.
