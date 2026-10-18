@@ -289,6 +289,21 @@ pub(crate) fn capture_before(
     mirror: &RemoteMirror,
 ) -> Option<Inverse> {
     match action {
+        // 🔴 The action's own before, never the world's — the grip has already written the new
+        // curve there, and reading it back would record `before == after` (#1517).
+        EditorAction::SetFieldFrom {
+            entity,
+            component,
+            field,
+            before,
+            after,
+        } => Some(Inverse::SetField {
+            entity: mirror.remote_of(*entity)?,
+            component: component_name(resources, *component)?,
+            field: field.clone(),
+            before: before.clone(),
+            after: after.clone(),
+        }),
         EditorAction::SetField {
             entity,
             component,

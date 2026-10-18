@@ -14,6 +14,7 @@ impl EditorAction {
             | Self::Spawn { .. }
             | Self::SpawnMesh { .. }
             | Self::SpawnBlock { .. }
+            | Self::SetFieldFrom { .. }
             | Self::BlockEdit { .. }
             | Self::Despawn(_)
             | Self::Duplicate(_)
@@ -130,6 +131,7 @@ impl EditorAction {
             Self::Spawn { .. }
             | Self::SpawnMesh { .. }
             | Self::SpawnBlock { .. }
+            | Self::SetFieldFrom { .. }
             | Self::BlockEdit { .. }
             | Self::Despawn(_)
             | Self::Duplicate(_)

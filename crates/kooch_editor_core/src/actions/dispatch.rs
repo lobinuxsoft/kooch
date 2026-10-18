@@ -54,6 +54,24 @@ pub(super) fn action_to_command(
         EditorAction::SpawnBlock { into, shape, at } => {
             Some(Box::new(SpawnBlockCommand::new(*into, *shape, *at)))
         }
+        EditorAction::SetFieldFrom {
+            entity,
+            component,
+            field,
+            before,
+            after,
+        } => {
+            // The before comes with the action, so nothing is read back out of a world the gizmo
+            // has already written (#1517).
+            let type_id = resolve_component(resources, *component)?;
+            Some(Box::new(SetFieldCommand::with_before(
+                *entity,
+                type_id,
+                field.clone(),
+                after.clone(),
+                before.clone(),
+            )))
+        }
         EditorAction::BlockEdit {
             entity,
             before,

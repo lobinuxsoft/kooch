@@ -44,6 +44,24 @@ impl SetFieldCommand {
             old_value,
         })
     }
+
+    /// The same command with the old value supplied rather than read, for a caller that already
+    /// changed the world and still knows what was there (#1517).
+    pub fn with_before(
+        entity: Entity,
+        type_id: TypeId,
+        field: String,
+        new_value: ReflectValue,
+        old_value: ReflectValue,
+    ) -> Self {
+        Self {
+            entity,
+            type_id,
+            field,
+            new_value,
+            old_value,
+        }
+    }
 }
 
 impl EditorCommand for SetFieldCommand {
