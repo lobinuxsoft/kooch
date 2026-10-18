@@ -172,13 +172,16 @@ fn build(
     send(resources, entity, mesh, actions)
 }
 
-/// Asks for `mesh` to be written onto the entity's block, wherever that world is.
+/// Asks for `mesh` to be written onto the entity's block, wherever that world is, and writes it
+/// here too.
 ///
-/// 🔴 An action, never a write into this world. In a remote session the world here is a mirror of
-/// the project's, and a component written into a mirror is gone at the next snapshot — while the
-/// entity that is actually in the game never got it.
+/// 🔴 The action alone is not enough. It is the project that owns the geometry, but until the
+/// project's answer comes back the local component is whatever the mirror last put there — and on
+/// the release frame that is the mesh from the previous gesture. Writing here as well is what the
+/// author sees in the meantime; `await_block` is what stops the stale snapshot from undoing it
+/// (#1517).
 fn send(
-    resources: &Resources,
+    resources: &mut Resources,
     entity: Entity,
     mesh: &kooch_blockmesh::BlockMesh,
     actions: &mut Vec<EditorAction>,
@@ -199,6 +202,10 @@ fn send(
         field: "mesh".to_owned(),
         value: geometry,
     });
+    if let Some(mirror) = resources.get_mut::<crate::remote_mirror::RemoteMirror>() {
+        mirror.await_block(entity, crate::block_edit::digest(mesh));
+    }
+    crate::block_edit::set_shape(resources, entity, mesh);
     tracing::info!(
         target: "kooch_editor_core::sweep",
         faces = mesh.face_count(),

@@ -483,6 +483,22 @@ pub(crate) fn shape_of(resources: &Resources, entity: Entity) -> Option<BlockMes
 }
 
 /// Replaces a block's whole shape, answering whether it landed.
+/// A block mesh as one number, so a snapshot's geometry can be told apart from the one that was
+/// sent without comparing a thousand corners.
+///
+/// 🔴 Face count cannot tell them apart: moving a knot changes every position and no count at all
+/// (#1517).
+pub(crate) fn digest(mesh: &BlockMesh) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for position in mesh.positions() {
+        for axis in position.to_array() {
+            axis.to_bits().hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
+
 pub(crate) fn set_shape(resources: &mut Resources, entity: Entity, shape: &BlockMesh) -> bool {
     let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
         return false;
