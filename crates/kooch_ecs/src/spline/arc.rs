@@ -61,6 +61,14 @@ pub fn walked(points: &[Knot], closed: bool) -> Vec<f32> {
     table
 }
 
+/// The `t` for a distance against a table [`walked`] already built.
+///
+/// 🔴 For a caller inverting many distances on one curve. [`parameter_at`] rebuilds the table on
+/// every call, which is fine once and quadratic per vertex of a mesh (#1446).
+pub fn parameter_in(table: &[f32], distance: f32) -> f32 {
+    parameter(table, distance).unwrap_or(0.0)
+}
+
 /// The `t` for a distance, given the table. `None` where the table has nothing to search.
 fn parameter(table: &[f32], distance: f32) -> Option<f32> {
     let total = *table.last()?;
