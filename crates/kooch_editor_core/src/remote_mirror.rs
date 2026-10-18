@@ -33,6 +33,13 @@ pub struct RemoteMirror {
     components: HashMap<Entity, Vec<String>>,
     /// The scenes the last snapshot said its entities belonged to.
     scenes: HashSet<kooch_core::Guid>,
+    /// Block geometry sent to the project and not yet echoed back, as a digest of its positions.
+    ///
+    /// 🔴 Measured on the release frame: the snapshot in flight carries the mesh from the
+    /// *previous* gesture, and applying it is the last write of the frame, so the block reverts a
+    /// gesture and stays there. Holding the entity during the drag is not enough — the overwrite
+    /// happens the instant the hand comes off (#1517).
+    awaited: HashMap<Entity, u64>,
 }
 
 impl RemoteMirror {
@@ -61,6 +68,12 @@ impl RemoteMirror {
         // Forgotten too, or reconnecting to the SAME scene reads as no
         // change and the mirror comes back over a stale page cache.
         self.scenes.clear();
+        self.awaited.clear();
+    }
+
+    /// Notes that `digest` was sent for `entity` and no snapshot reflecting it has come back yet.
+    pub fn await_block(&mut self, entity: Entity, digest: u64) {
+        self.awaited.insert(entity, digest);
     }
 
     /// Updates the local mirror to match `snapshot`.
@@ -200,6 +213,18 @@ impl RemoteMirror {
         snap: &EntitySnapshot,
     ) {
         for comp in &snap.components {
+            // The project has not caught up with the geometry just sent, so this carries the shape
+            // from before it. Skipped until the echo matches what went out (#1517).
+            if comp.type_name == std::any::type_name::<kooch_blockmesh::Block>() {
+                if let Some(awaited) = self.awaited.get(&entity).copied() {
+                    match block_digest(&comp.fields) == Some(awaited) {
+                        true => {
+                            self.awaited.remove(&entity);
+                        }
+                        false => continue,
+                    }
+                }
+            }
             let fields = self.localise_refs(&comp.fields);
             insert_component(resources, entity, &comp.type_name, &fields);
         }
@@ -424,4 +449,15 @@ fn write_transform(resources: &mut Resources, entity: Entity, matrix: glam::Mat4
     transform.position = translation;
     transform.rotation = rotation;
     transform.scale = scale;
+}
+
+/// The block geometry carried by a snapshot's fields, as the same number [`crate::block_edit::digest`]
+/// gives for a mesh in hand. `None` when the fields carry no readable geometry.
+fn block_digest(fields: &[(String, kooch_ecs::reflect::ReflectValue)]) -> Option<u64> {
+    use kooch_ecs::reflect::Reflect;
+
+    let (_, value) = fields.iter().find(|(name, _)| name == "mesh")?;
+    let mut block = kooch_blockmesh::Block::default();
+    block.reflect_set("mesh", value.clone()).ok()?;
+    Some(crate::block_edit::digest(&block.mesh))
 }
