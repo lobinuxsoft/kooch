@@ -1,6 +1,7 @@
 //! Inspector panel — component details for selected entities.
 
 mod asset_view;
+mod curve_ops;
 #[cfg(test)]
 mod idle_tests;
 #[cfg(test)]
@@ -393,6 +394,9 @@ fn draw_inspector_body(
                                     entities,
                                     layer_labels,
                                 );
+                                if comp.short_name == "Spline" {
+                                    curve_ops::draw(ui, entity, comp.component, comp, actions);
+                                }
                                 // An entity's edits go to the world.
                                 for (field, value) in edits {
                                     actions.push(EditorAction::SetField {
