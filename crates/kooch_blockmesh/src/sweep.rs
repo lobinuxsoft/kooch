@@ -225,7 +225,7 @@ fn ring(
     // Clamped here and not against the whole curve: a trunk that tapers to a tip would otherwise
     // force the wall to nothing everywhere, and a tunnel stays hollow until its own ring pinches.
     let radius = (eval::radius_at(points, closed, along).max(0.0) - inset).max(0.0);
-    let (up, side) = frame(points, closed, along);
+    let eval::Frame { up, side, .. } = eval::frame(points, closed, along);
     let (corners, offset, reach) = match of.profile {
         // A square's corners sit on the diagonal, so its radius has to carry out to them for its
         // sides to land at the radius the author asked for.
@@ -242,18 +242,6 @@ fn ring(
             at + (up * angle.cos() + side * angle.sin()) * radius * reach
         })
         .collect()
-}
-
-/// The curve's up and the axis square to both, at `along`.
-fn frame(points: &[Knot], closed: bool, along: f32) -> (Vec3, Vec3) {
-    let tangent = eval::tangent(points, closed, along);
-    let up = eval::up(points, closed, along);
-    match tangent.length_squared() > 1.0e-12 && up.length_squared() > 1.0e-12 {
-        true => (up, tangent.cross(up).normalize_or_zero()),
-        // A stalled stretch of curve has no frame of its own; any fixed pair keeps the ring from
-        // collapsing onto the axis.
-        false => (Vec3::Y, Vec3::X),
-    }
 }
 
 /// How far the profile has to be turned back, spread along the curve, for a closed sweep to meet

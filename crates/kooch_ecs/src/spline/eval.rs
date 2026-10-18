@@ -232,3 +232,46 @@ fn hermite_slope(p0: Vec3, m0: Vec3, p1: Vec3, m1: Vec3, t: f32) -> Vec3 {
         + p1 * (-6.0 * t2 + 6.0 * t)
         + m1 * (3.0 * t2 - 2.0 * t)
 }
+
+/// Where the curve is at a point along it, and how it is turned there.
+///
+/// 🔴 One derivation, shared. The swept mesh (#1152), the deformed mesh (#1446) and the extrude
+/// along a path (#1526) all need the same frame, and three copies of it are three answers free to
+/// disagree about which way is up.
+#[derive(Debug, Clone, Copy)]
+pub struct Frame {
+    /// Where the curve passes.
+    pub at: Vec3,
+    /// Which way it heads, normalised.
+    pub tangent: Vec3,
+    /// Which way is up, rolled by the knots' `roll`.
+    pub up: Vec3,
+    /// Square to both, completing the basis.
+    pub side: Vec3,
+}
+
+/// The rotation-minimising frame at `t`.
+///
+/// ⚠️ Costs a transport walk, same as [`up`]. A caller sampling many points along one curve pays
+/// it per sample; caching the walk is the optimisation to make against a measurement.
+pub fn frame(points: &[Knot], closed: bool, t: f32) -> Frame {
+    let tangent = tangent(points, closed, t);
+    let up = up(points, closed, t);
+    let at = at(points, closed, t);
+    match tangent.length_squared() > 1e-12 && up.length_squared() > 1e-12 {
+        true => Frame {
+            at,
+            tangent,
+            up,
+            side: tangent.cross(up).normalize_or_zero(),
+        },
+        // A stalled stretch of curve has no frame of its own. A fixed basis keeps whatever is
+        // being carried from collapsing onto the axis, which is the one failure with no recovery.
+        false => Frame {
+            at,
+            tangent: Vec3::NEG_Z,
+            up: Vec3::Y,
+            side: Vec3::X,
+        },
+    }
+}

@@ -163,6 +163,30 @@ The collider is the same welded mesh, so a character walks through a tunnel the 
 
 The rebuild follows the curve live while you drag a knot.
 
+### Bending a mesh along the curve
+
+Add a **Spline Deform** beside a `Spline`, pick a **source** mesh and the **axis** of it that runs
+along the path, and the mesh is bent to follow the curve. Blender calls this the Curve modifier.
+Pipes, handrails, vines, a road that follows a valley.
+
+The mesh's extent on the chosen axis maps to the curve's **whole length**, so a one-metre pipe
+on an eight-metre curve is stretched to eight. Repeating a mesh instead of stretching it is a
+different thing and not this one.
+
+🔴 **The source asset is read, never written.** The bent copy is generated and belongs to the
+entity, so moving a knot re-bends it from the original rather than from the last bend. Two
+entities pointing at the same source bend independently.
+
+**Taper** lets each knot's `radius` scale the cross-section there — a branch that thins towards
+its tip, a pipe that narrows. The knots' `roll` twists it. Off by default, so a curve nobody
+tapered carries the mesh at the size it was modelled.
+
+A straight curve running along the chosen axis leaves the mesh exactly where it was. If a mesh
+comes out turned, it is the **axis** that is wrong, not the curve.
+
+This bends the mesh *once*, while you author. A mesh that bends while the game runs is a shader,
+and a different feature.
+
 ## Reshaping the curve itself
 
 A `Spline` in the Inspector carries a **Curve operations** section. Each one rewrites the whole

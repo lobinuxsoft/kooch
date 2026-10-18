@@ -8,6 +8,7 @@ mod block;
 mod block_mesh;
 pub mod block_shape;
 mod collider;
+mod deform;
 mod extrude;
 mod generate;
 mod pick;
@@ -21,6 +22,9 @@ pub use asset::{BLOCK_MESH_EXTENSION, BlockMeshLoader, BlockMeshParseError};
 pub use block::{Block, block_components};
 pub use block_mesh::BlockMesh;
 pub use block_shape::BlockShape;
+pub use deform::{
+    AXIS_CHOICES, AXIS_X, AXIS_Y, AXIS_Z, BentMeshes, SplineDeform, deform, sync_deforms,
+};
 pub use extrude::Extruded;
 pub use pick::{Hit, Screen, edge_at, face_at, vertex_at};
 pub use plugin::BlockPlugin;
