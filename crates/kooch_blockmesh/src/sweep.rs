@@ -5,8 +5,8 @@
 //! from them. The radius is the whole point: it is what tapers a trunk towards its tip and narrows
 //! a pipe, and without it every sweep comes out the same thickness end to end.
 //!
-//! Produces a [`BlockMesh`] like every other shape, so face selection, extrude, colliders and the
-//! `.block` asset pipeline work on the result with no code of their own.
+//! Produces a [`BlockMesh`] like every other shape, so face selection, extrude and colliders work
+//! on the result with no code of their own.
 
 use std::f32::consts::{FRAC_PI_4, SQRT_2, TAU};
 
@@ -14,7 +14,7 @@ use glam::Vec3;
 
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
-use kooch_ecs::reflect::{FieldChoice, FieldCondition};
+use kooch_ecs::reflect::{FieldChoice, FieldCondition, FieldRange};
 use kooch_ecs::spline::{Knot, eval};
 
 use crate::BlockMesh;
@@ -54,9 +54,22 @@ pub struct SplineSweep {
     pub sides: u32,
     /// Rings per curve segment. What decides whether a bend reads as a bend or as a crease.
     pub spans: u32,
-    /// Closes an open sweep at both ends. A closed curve has no ends to cap.
+    /// Closes an open sweep at both ends. A closed curve has no ends to cap, and neither has a
+    /// walled one — its ends are always a rim, or the tunnel would have no mouth.
     pub caps: bool,
+    /// How thick the wall is, zero meaning solid. Above zero the sweep is a tube you can walk
+    /// through, and a ring thinner than this is where the passage ends.
+    #[reflect(range = WALL_RANGE)]
+    pub wall: f32,
 }
+
+/// A wall is a thickness, so it has no sense below zero; the ceiling is the widest radius a knot
+/// can carry, past which every ring is solid anyway.
+const WALL_RANGE: FieldRange = FieldRange {
+    min: 0.0,
+    max: 10.0,
+    step: 0.05,
+};
 
 impl Default for SplineSweep {
     fn default() -> Self {
@@ -65,6 +78,7 @@ impl Default for SplineSweep {
             sides: 8,
             spans: 8,
             caps: true,
+            wall: 0.0,
         }
     }
 }
@@ -101,47 +115,74 @@ pub fn sweep(points: &[Knot], closed: bool, of: &SplineSweep) -> BlockMesh {
         false => spans + 1,
     };
 
+    // NaN fails every comparison, so ask whether there IS a wall rather than whether there is none.
+    let hollow = of.wall > 0.0;
     let twist = closing_twist(points, closed);
-    let rings: Vec<Vec<Vec3>> = (0..count)
-        .map(|index| {
-            let along = index as f32 / spans as f32;
-            ring(points, closed, of, along, twist * along)
-        })
-        .collect();
+    let shell = |inset: f32| -> Vec<Vec<Vec3>> {
+        (0..count)
+            .map(|index| {
+                let along = index as f32 / spans as f32;
+                ring(points, closed, of, along, twist * along, inset)
+            })
+            .collect()
+    };
+    let rings = shell(0.0);
+    let bore: Vec<Vec<Vec3>> = match hollow {
+        true => shell(of.wall),
+        false => Vec::new(),
+    };
 
     let mut out = Builder::default();
     for index in 0..spans {
-        let (here, next) = (&rings[index], &rings[(index + 1) % count]);
-        walls(&mut out, here, next);
+        let ahead = (index + 1) % count;
+        let axis = (centre(&rings[index]) + centre(&rings[ahead])) / 2.0;
+        walls(&mut out, &rings[index], &rings[ahead], axis);
+        if hollow {
+            bore_walls(&mut out, &bore[index], &bore[ahead], axis);
+        }
     }
-    if of.caps && !closed {
-        // Wound away from the ring beside it, which is inside the tube: a cap facing the wrong way
-        // is a hole that only shows up as a black end.
-        cap(&mut out, &rings[0], centre(&rings[1]));
-        cap(&mut out, &rings[count - 1], centre(&rings[count - 2]));
+    if !closed {
+        // Wound away from the ring beside it, which is inside the tube: an end facing the wrong way
+        // is a hole that only shows up as a black mouth.
+        let (first, last) = (centre(&rings[1]), centre(&rings[count - 2]));
+        match hollow {
+            // A rim, not a lid, and built whatever `caps` says — a plugged tunnel is not a tunnel,
+            // but an unsealed shell is a leak. Where the bore has pinched shut the rim is a disc.
+            true => {
+                walls(&mut out, &rings[0], &bore[0], first);
+                walls(&mut out, &rings[count - 1], &bore[count - 1], last);
+            }
+            false if of.caps => {
+                cap(&mut out, &rings[0], first);
+                cap(&mut out, &rings[count - 1], last);
+            }
+            false => {}
+        }
     }
     out.finish()
 }
 
-/// The quads between two rings, each wound away from the solid between them.
-fn walls(out: &mut Builder, here: &[Vec3], next: &[Vec3]) {
-    let inside = (centre(here) + centre(next)) / 2.0;
+/// The quads between two rings, each wound away from `inside`.
+fn walls(out: &mut Builder, here: &[Vec3], next: &[Vec3], inside: Vec3) {
     for corner in 0..here.len() {
         let ahead = (corner + 1) % here.len();
         // 🔴 A ring collapsed to a point welds its corners together, and a quad with two corners
         // on one position is a face with no area that `Adjacency::of` counts as a leak.
-        let quad = [here[corner], here[ahead], next[ahead], next[corner]];
-        if quad
-            .iter()
-            .any(|a| quad.iter().filter(|b| *b == a).count() > 1)
-        {
-            let triangle: Vec<Vec3> = dedup(&quad);
-            if triangle.len() > 2 {
-                out.face_away(&triangle, inside);
-            }
-            continue;
+        let quad = dedup(&[here[corner], here[ahead], next[ahead], next[corner]]);
+        if quad.len() > 2 {
+            out.face_away(&quad, inside);
         }
-        out.face_away(&quad, inside);
+    }
+}
+
+/// The same quads turned in, so the bore's normals face the passage rather than the rock.
+fn bore_walls(out: &mut Builder, here: &[Vec3], next: &[Vec3], axis: Vec3) {
+    for corner in 0..here.len() {
+        let ahead = (corner + 1) % here.len();
+        let quad = dedup(&[here[corner], here[ahead], next[ahead], next[corner]]);
+        if quad.len() > 2 {
+            out.face_toward(&quad, axis);
+        }
     }
 }
 
@@ -172,9 +213,18 @@ fn centre(ring: &[Vec3]) -> Vec3 {
 ///
 /// 🔴 The frame comes from `eval::up`, which is rotation-minimising. The Frenet normal flips
 /// through an inflection, and a swept ring that flips turns the mesh inside out over one span.
-fn ring(points: &[Knot], closed: bool, of: &SplineSweep, along: f32, twist: f32) -> Vec<Vec3> {
+fn ring(
+    points: &[Knot],
+    closed: bool,
+    of: &SplineSweep,
+    along: f32,
+    twist: f32,
+    inset: f32,
+) -> Vec<Vec3> {
     let at = eval::at(points, closed, along);
-    let radius = eval::radius_at(points, closed, along).max(0.0);
+    // Clamped here and not against the whole curve: a trunk that tapers to a tip would otherwise
+    // force the wall to nothing everywhere, and a tunnel stays hollow until its own ring pinches.
+    let radius = (eval::radius_at(points, closed, along).max(0.0) - inset).max(0.0);
     let (up, side) = frame(points, closed, along);
     let (corners, offset, reach) = match of.profile {
         // A square's corners sit on the diagonal, so its radius has to carry out to them for its
