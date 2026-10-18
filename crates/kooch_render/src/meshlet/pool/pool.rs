@@ -64,6 +64,14 @@ pub struct GlobalMeshPool {
     pub group_capacity: u32,
 }
 
+/// One mesh's slice of each parallel array.
+struct MeshSlices<'a> {
+    vertices: &'a [MeshVertex],
+    meshlet_vertices: &'a [u32],
+    meshlet_triangles: &'a [u8],
+    meshlets: &'a [MeshletDescriptor],
+}
+
 impl GlobalMeshPool {
     pub fn new() -> Self {
         Self::default()
@@ -95,6 +103,100 @@ impl GlobalMeshPool {
         let m = (self.meshlets.len() * std::mem::size_of::<MeshletDescriptor>()) as u64;
         let md = (self.mesh_descriptors.len() * std::mem::size_of::<MeshDescriptor>()) as u64;
         v + mlv + mlt + m + md
+    }
+
+    /// Bytes this one mesh occupies, counted the same way as [`Self::byte_size`].
+    ///
+    /// Its slices run from its own offsets to the next mesh's, because `register` only ever
+    /// appends — the last mesh runs to the end of each array.
+    pub fn mesh_bytes(&self, mesh_id: u32) -> u64 {
+        let Some(range) = self.ranges(mesh_id) else {
+            return 0;
+        };
+        (range.vertices.len() * std::mem::size_of::<crate::mesh::MeshVertex>()
+            + range.meshlet_vertices.len() * std::mem::size_of::<u32>()
+            + range.meshlet_triangles.len()
+            + range.meshlets.len() * std::mem::size_of::<MeshletDescriptor>()
+            + std::mem::size_of::<MeshDescriptor>()) as u64
+    }
+
+    /// Repacks the pool down to `live`, dropping everything else, and returns each kept mesh's
+    /// new id in the order given.
+    ///
+    /// 🔴 Ids move. Every `MeshInstance::mesh_id` is resolved from the registry each frame, so the
+    /// caller only has to repoint the registry in the same breath — nothing else holds an id
+    /// across frames.
+    pub fn retain(&mut self, live: &[u32]) -> Vec<u32> {
+        let kept: Vec<MeshletMesh> = live.iter().filter_map(|id| self.extract(*id)).collect();
+        *self = Self::new();
+        kept.iter()
+            .map(|mesh| self.register(mesh).mesh_id)
+            .collect()
+    }
+
+    /// One mesh lifted back out of the pool, with every offset returned to mesh-local.
+    ///
+    /// Goes back through [`Self::register`] on the way in, so the rebasing arithmetic lives in
+    /// one place and cannot drift between the two directions.
+    fn extract(&self, mesh_id: u32) -> Option<MeshletMesh> {
+        let range = self.ranges(mesh_id)?;
+        let descriptor = &self.mesh_descriptors[mesh_id as usize];
+        let mut aabb = crate::mesh::Aabb::empty();
+        let meshlets = range
+            .meshlets
+            .iter()
+            .map(|desc| {
+                aabb.expand(glam::Vec3::from(desc.aabb_min));
+                aabb.expand(glam::Vec3::from(desc.aabb_max));
+                MeshletDescriptor {
+                    vertex_offset: desc.vertex_offset - descriptor.meshlet_vertex_offset,
+                    triangle_offset: desc.triangle_offset - descriptor.meshlet_triangle_offset,
+                    parent_meshlet_index: match desc.parent_meshlet_index {
+                        crate::meshlet::asset::MESHLET_ROOT_PARENT => desc.parent_meshlet_index,
+                        parent => parent - descriptor.first_meshlet,
+                    },
+                    group_index: match desc.group_index {
+                        crate::meshlet::asset::MESHLET_GROUP_NONE => desc.group_index,
+                        group => group - descriptor.group_base,
+                    },
+                    children_group_index: match desc.children_group_index {
+                        crate::meshlet::asset::MESHLET_GROUP_NONE => desc.children_group_index,
+                        group => group - descriptor.group_base,
+                    },
+                    ..*desc
+                }
+            })
+            .collect();
+        Some(MeshletMesh {
+            vertices: range.vertices.to_vec(),
+            meshlet_vertices: range
+                .meshlet_vertices
+                .iter()
+                .map(|index| index - descriptor.vertex_offset)
+                .collect(),
+            meshlet_triangles: range.meshlet_triangles.to_vec(),
+            meshlets,
+            aabb,
+        })
+    }
+
+    /// Where one mesh's data sits in each of the parallel arrays.
+    fn ranges(&self, mesh_id: u32) -> Option<MeshSlices<'_>> {
+        let descriptor = self.mesh_descriptors.get(mesh_id as usize)?;
+        let next = self.mesh_descriptors.get(mesh_id as usize + 1);
+        let end = |of: fn(&MeshDescriptor) -> u32, total: usize| {
+            next.map_or(total, |descriptor| of(descriptor) as usize)
+        };
+        Some(MeshSlices {
+            vertices: &self.vertices
+                [descriptor.vertex_offset as usize..end(|d| d.vertex_offset, self.vertices.len())],
+            meshlet_vertices: &self.meshlet_vertices[descriptor.meshlet_vertex_offset as usize
+                ..end(|d| d.meshlet_vertex_offset, self.meshlet_vertices.len())],
+            meshlet_triangles: &self.meshlet_triangles[descriptor.meshlet_triangle_offset as usize
+                ..end(|d| d.meshlet_triangle_offset, self.meshlet_triangles.len())],
+            meshlets: &self.meshlets[descriptor.first_meshlet as usize
+                ..(descriptor.first_meshlet + descriptor.meshlet_count) as usize],
+        })
     }
 
     /// Appends `mesh` to the pool. Returns the handle whose `mesh_id`
