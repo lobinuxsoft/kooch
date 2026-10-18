@@ -163,6 +163,32 @@ The collider is the same welded mesh, so a character walks through a tunnel the 
 
 The rebuild follows the curve live while you drag a knot.
 
+## Reshaping the curve itself
+
+A `Spline` in the Inspector carries a **Curve operations** section. Each one rewrites the whole
+knot list in a single step, so one **Ctrl+Z** puts the curve back the way it was.
+
+| Operation | What it does |
+|---|---|
+| **Resample** | Replaces the knots with evenly spaced ones — spaced in **metres along the curve**, not in parameter. Authored tangents are lost; the new points sit on the old curve. |
+| **Subdivide** | Adds knots inside every segment, keeping the spacing you chose. The counterpart to Resample, not a synonym for it. |
+| **Fillet** | Rounds every corner by pulling it back along both of its neighbours. This is how a *Broken* knot becomes a bend. |
+| **Trim** | Keeps only the curve between two distances. |
+| **Reverse** | Walks the curve the other way. |
+
+**Why metres and not parameter.** A tight segment and a long one take the same share of the
+curve's parameter, so spacing points by parameter bunches them up wherever you placed knots close
+together. Anything that runs *along* the curve — a swept tube, a line of scattered props — reads
+badly when that happens, so Resample measures the arc.
+
+Two details worth knowing before you press a button:
+
+- **Fillet is clamped to half of each segment.** Ask for a radius larger than the segment and the
+  corners stop short rather than crossing each other and folding the curve back on itself.
+- **Trim opens a closed curve**, and the *Closed* box clears itself when it does. A ring cut
+  anywhere is a line; keeping it closed would join the two fresh ends back together, which is the
+  part you just removed.
+
 ### Where a block's geometry lives
 
 **In the scene, on the entity.** A block carries its own corners and faces; there is no asset

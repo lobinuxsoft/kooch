@@ -134,7 +134,11 @@ fn rolled(up: Vec3, heading: Vec3, degrees: f32) -> Vec3 {
 }
 
 /// The roll at `t`, straight between the two knots of the segment.
-fn roll_at(points: &[Knot], closed: bool, t: f32) -> f32 {
+///
+/// Public for the same reason [`radius_at`] is: an operation that rebuilds the knot list has to
+/// carry both authored-per-point values across, and deriving either a second time is a second
+/// answer free to disagree with the curve.
+pub fn roll_at(points: &[Knot], closed: bool, t: f32) -> f32 {
     let Some((a, b, local)) = segment_at(points, closed, t) else {
         return points.first().map_or(0.0, |knot| knot.roll);
     };
