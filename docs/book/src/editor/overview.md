@@ -148,6 +148,19 @@ first — the component is the whole gesture.
 A knot whose radius is zero contributes a **point** rather than a ring, which is how a branch ends
 in a tip instead of a flat cap.
 
+### Hollow, for tunnels
+
+**Wall** is the thickness of the tube, and zero — the default — is the solid shape above. Above
+zero the sweep is a passage you can walk through: a second surface runs inside the first, turned
+to face inwards, and the ends become a **rim** rather than a lid. A walled sweep ignores *Caps*,
+because a plugged tunnel is not a tunnel.
+
+The wall is taken off each ring on its own, so a tube that tapers stays hollow until its own
+radius drops under the wall. Where it does, the passage simply ends and the tube goes solid — that
+is how a culvert closes off, not a fault to correct.
+
+The collider is the same welded mesh, so a character walks through a tunnel the moment it exists.
+
 The rebuild follows the curve live while you drag a knot.
 
 ### Where a block's geometry lives

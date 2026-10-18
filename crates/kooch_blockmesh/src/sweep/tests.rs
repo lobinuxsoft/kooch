@@ -57,3 +57,46 @@ fn a_short_curve_sweeps_nothing() {
     assert_eq!(sweep(&one, false, &SplineSweep::default()).face_count(), 0);
     assert_eq!(sweep(&[], false, &SplineSweep::default()).face_count(), 0);
 }
+
+/// 🔴 The bore doubles every surface and its own normals point the other way. A hole here is a
+/// tunnel the character falls out of, and no screenshot shows it.
+#[test]
+fn a_walled_sweep_is_closed() {
+    let curve = curve();
+    for profile in [PROFILE_ROUND, PROFILE_SQUARE] {
+        for closed in [false, true] {
+            for caps in [false, true] {
+                let mesh = sweep(
+                    &curve.points,
+                    closed,
+                    &SplineSweep {
+                        profile,
+                        caps,
+                        wall: 0.2,
+                        ..SplineSweep::default()
+                    },
+                );
+                assert!(
+                    Adjacency::of(&mesh).is_closed(),
+                    "profile {profile} closed {closed} caps {caps} leaks"
+                );
+            }
+        }
+    }
+}
+
+/// A wall thicker than the radius pinches the bore shut, and the quads there go to triangles.
+#[test]
+fn a_pinched_bore_closes() {
+    let mut curve = curve();
+    curve.points.last_mut().expect("four knots").radius = 0.0;
+    let mesh = sweep(
+        &curve.points,
+        false,
+        &SplineSweep {
+            wall: 0.4,
+            ..SplineSweep::default()
+        },
+    );
+    assert!(Adjacency::of(&mesh).is_closed(), "the pinch leaks");
+}

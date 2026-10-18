@@ -513,13 +513,23 @@ impl Builder {
     /// Adds a face wound so its normal points away from `inside`, a point within the convex piece
     /// the face bounds — for shapes whose winding is easier to derive than to write out.
     pub(crate) fn face_away(&mut self, points: &[Vec3], inside: Vec3) {
+        self.oriented(points, inside, 1.0);
+    }
+
+    /// Wound so the normal points back at `axis` — the bore of a tube, where the solid is outside
+    /// the face and the passage is in.
+    pub(crate) fn face_toward(&mut self, points: &[Vec3], axis: Vec3) {
+        self.oriented(points, axis, -1.0);
+    }
+
+    fn oriented(&mut self, points: &[Vec3], reference: Vec3, sign: f32) {
         let mut normal = Vec3::ZERO;
         for (index, current) in points.iter().enumerate() {
             let next = points[(index + 1) % points.len()];
             normal += (*current - next).cross(*current + next);
         }
         let centre = points.iter().copied().sum::<Vec3>() / points.len() as f32;
-        match normal.dot(centre - inside) < 0.0 {
+        match normal.dot(centre - reference) * sign < 0.0 {
             true => {
                 let reversed: Vec<Vec3> = points.iter().rev().copied().collect();
                 self.face(&reversed);

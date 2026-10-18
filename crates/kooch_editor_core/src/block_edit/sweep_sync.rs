@@ -256,5 +256,8 @@ fn revision(spline: &Spline, of: &SplineSweep) -> u64 {
     of.sides.hash(&mut hasher);
     of.spans.hash(&mut hasher);
     of.caps.hash(&mut hasher);
+    // 🔴 Hashed field by field, so a new one that is not listed here edits nothing the author can
+    // see: the slider moves and the sweep never rebuilds.
+    of.wall.to_bits().hash(&mut hasher);
     hasher.finish()
 }
