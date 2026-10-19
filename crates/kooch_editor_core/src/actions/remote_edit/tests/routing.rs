@@ -216,7 +216,7 @@ fn every_unclassified_world_edit_is_routed() {
             EditorAction::ExtrudeAlong {
                 entity: kooch_ecs::Entity::new(0, 0),
                 spline: kooch_ecs::Entity::new(1, 0),
-                samples: 8,
+                spans: 2,
                 taper: false,
             },
         ),

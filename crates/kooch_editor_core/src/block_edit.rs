@@ -454,7 +454,7 @@ pub(crate) fn extrude_along(
     resources: &Resources,
     entity: Entity,
     spline: Entity,
-    samples: u32,
+    spans: u32,
     taper: bool,
 ) -> Option<(BlockMesh, BlockMesh)> {
     let faces = resources
@@ -469,7 +469,7 @@ pub(crate) fn extrude_along(
     let points = in_block_space(resources, entity, spline, &curve.points);
     let before = mesh_of(resources, entity)?;
     let mut after = before.clone();
-    after.extrude_along(&faces, &points, curve.closed, samples, taper)?;
+    after.extrude_along(&faces, &points, curve.closed, spans, taper)?;
     Some((before, after))
 }
 

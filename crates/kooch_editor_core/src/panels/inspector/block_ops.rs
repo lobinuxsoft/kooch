@@ -14,7 +14,7 @@ use crate::state::EntityDisplayInfo;
 #[derive(Clone, Copy)]
 struct Asked {
     spline: Option<Entity>,
-    samples: u32,
+    spans: u32,
     taper: bool,
 }
 
@@ -22,7 +22,7 @@ impl Default for Asked {
     fn default() -> Self {
         Self {
             spline: None,
-            samples: 16,
+            spans: 2,
             taper: false,
         }
     }
@@ -62,11 +62,11 @@ pub(super) fn draw(
                     pick_curve(ui, &mut asked.spline, entities, entity);
                 });
                 ui.horizontal(|ui| {
-                    ui.label("rings");
-                    ui.add(crate::numeric::drag(&mut asked.samples).range(1..=256))
+                    ui.label("spans");
+                    ui.add(crate::numeric::drag(&mut asked.spans).range(1..=64))
                         .on_hover_text(
-                            "How many sections it lays down, spaced evenly in metres along the \
-                             curve rather than in parameter.",
+                            "Sections per curve segment, as a Spline Sweep's spans are. They are \
+                             spaced evenly in metres along the curve, not in parameter.",
                         );
                     ui.checkbox(&mut asked.taper, "taper").on_hover_text(
                         "Scale each section by the knot radius there, so a path can narrow what \
@@ -93,7 +93,7 @@ pub(super) fn draw(
                         actions.push(EditorAction::ExtrudeAlong {
                             entity,
                             spline,
-                            samples: asked.samples,
+                            spans: asked.spans,
                             taper: asked.taper,
                         });
                     }

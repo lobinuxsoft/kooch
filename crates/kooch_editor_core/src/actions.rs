@@ -112,8 +112,8 @@ pub(crate) enum EditorAction {
         /// The entity whose `Spline` is the path. Its own, not a copy — a copied curve would stop
         /// matching the one the author is dragging.
         spline: Entity,
-        /// Rings along the curve, evenly spaced in metres.
-        samples: u32,
+        /// Sections per curve segment, as a sweep's `spans` are.
+        spans: u32,
         /// Whether each knot's radius scales the section there.
         taper: bool,
     },

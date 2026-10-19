@@ -19,14 +19,16 @@ fn line(at: &[f32]) -> Vec<Knot> {
     at.iter().map(|z| Knot::at(Vec3::Z * *z)).collect()
 }
 
-/// A run down a straight curve is the straight extrude, or the curve is not carrying the face —
-/// it is re-deriving it.
+/// A run down a straight curve starting at the face's own middle is the straight extrude, or the
+/// curve is not carrying the section — it is re-deriving it.
 #[test]
 fn a_straight_run_matches_extrude() {
     let (mut along, mut straight) = (cube(), cube());
     let face = facing(&along, Vec3::Z);
+    // From the face's centre, 2 m on: the section is centred on the curve, so a curve that starts
+    // anywhere else lands the run there and this comparison would be measuring the offset.
     along
-        .extrude_along(&[face], &line(&[0.0, 2.0]), false, 1, false)
+        .extrude_along(&[face], &line(&[0.5, 2.5]), false, 1, false)
         .expect("a straight curve extrudes");
     straight
         .extrude(&[face], Vec3::Z * 2.0)
@@ -47,8 +49,9 @@ fn a_straight_run_matches_extrude() {
 fn rings_are_evenly_spaced() {
     let mut mesh = cube();
     let face = facing(&mesh, Vec3::Z);
+    // Two segments, two spans each: four rings over the 10 m.
     let extruded = mesh
-        .extrude_along(&[face], &line(&[0.0, 1.0, 10.0]), false, 4, false)
+        .extrude_along(&[face], &line(&[0.5, 1.5, 10.5]), false, 2, false)
         .expect("the curve has length");
 
     // Where the last ring landed, read back through the walls it stitched: each wall carries one
@@ -63,7 +66,7 @@ fn rings_are_evenly_spaced() {
     depths.sort_by(f32::total_cmp);
     depths.dedup_by(|a, b| (*a - *b).abs() < 1.0e-3);
 
-    // The face starts at 0.5 and four rings walk the 10 m curve, so every step is 2.5 m.
+    // The face is at 0.5, where the curve starts, and four rings walk its 10 m in 2.5 m steps.
     //
     // 🔴 To within 6%, not to the float: `arc::walked` is 16 chords per segment, and the second
     // segment here is 9 m long. Even steps of `t` would put the first ring at 1 m, not 3.
