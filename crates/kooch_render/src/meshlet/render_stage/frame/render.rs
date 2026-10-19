@@ -31,7 +31,10 @@ impl MeshletRenderStage {
             if self.pipeline.registered_count() == 0 {
                 return MeshletRenderStats::default();
             }
-            self.gpu_pool = Some(self.pipeline.pool().upload(device));
+            match self.gpu_pool.as_mut() {
+                Some(gpu) => gpu.sync(device, queue, self.pipeline.pool_mut()),
+                None => self.gpu_pool = Some(self.pipeline.pool_mut().upload(device, queue)),
+            }
             self.pool_dirty = false;
             tracing::debug!(
                 target: "kooch_render::meshlet::render",

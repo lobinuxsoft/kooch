@@ -32,6 +32,10 @@ impl MeshletPipeline {
         Self::default()
     }
 
+    pub fn pool_mut(&mut self) -> &mut GlobalMeshPool {
+        &mut self.pool
+    }
+
     pub fn pool(&self) -> &GlobalMeshPool {
         &self.pool
     }

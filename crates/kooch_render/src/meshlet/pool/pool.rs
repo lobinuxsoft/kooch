@@ -8,7 +8,7 @@ use crate::meshlet::asset::{
 };
 
 use super::descriptor::{MeshDescriptor, MeshHandle};
-use super::slots::{Holes, Slot, Span};
+use super::slots::{Dirty, Holes, Slot, Span, Touched};
 use bytemuck::Zeroable;
 use glam::{Mat4, Vec3};
 
@@ -75,6 +75,8 @@ pub struct GlobalMeshPool {
     free_groups: Holes,
     /// `mesh_descriptors` indices a released mesh gave back.
     free_ids: Vec<u32>,
+    /// What each array owes the GPU since the last sync (#1558).
+    dirty: Dirty,
 }
 
 impl Default for GlobalMeshPool {
@@ -96,6 +98,7 @@ impl Default for GlobalMeshPool {
             free_meshlets: Holes::aligned(1),
             free_groups: Holes::aligned(1),
             free_ids: Vec::new(),
+            dirty: Dirty::default(),
         }
     }
 }
@@ -165,9 +168,15 @@ impl GlobalMeshPool {
     pub fn retain(&mut self, live: &[u32]) -> Vec<u32> {
         let kept: Vec<MeshletMesh> = live.iter().filter_map(|id| self.extract(*id)).collect();
         *self = Self::new();
-        kept.iter()
+        let moved = kept
+            .iter()
             .map(|mesh| self.register(mesh).mesh_id)
-            .collect()
+            .collect();
+        // A repack moves everything, so the mirror owes a full copy. Whatever the smaller pool
+        // leaves behind in the buffer is stale, and unread: every lookup is bounded by a
+        // descriptor.
+        self.mark_all();
+        moved
     }
 
     /// One mesh lifted back out of the pool, with every offset returned to mesh-local.
@@ -236,6 +245,22 @@ impl GlobalMeshPool {
             + self.free_ids.len() as u64 * std::mem::size_of::<MeshDescriptor>() as u64
     }
 
+    /// Marks every array in full, for when the pool was rebuilt rather than edited.
+    pub(super) fn mark_all(&mut self) {
+        self.dirty = Dirty {
+            vertices: Touched::all(self.vertices.len()),
+            meshlet_vertices: Touched::all(self.meshlet_vertices.len()),
+            triangles: Touched::all(self.meshlet_triangles.len()),
+            meshlets: Touched::all(self.meshlets.len()),
+            descriptors: Touched::all(self.mesh_descriptors.len()),
+        };
+    }
+
+    /// What has been written since the last call — the ranges the GPU mirror has to copy.
+    pub(super) fn take_dirty(&mut self) -> Dirty {
+        std::mem::take(&mut self.dirty)
+    }
+
     /// Hands one mesh's ranges and its id back, for the next [`Self::register`] to reuse.
     ///
     /// 🔴 The caller has to have stopped resolving this `mesh_id` first. The id is handed out
@@ -258,6 +283,10 @@ impl GlobalMeshPool {
         self.mesh_descriptors[mesh_id as usize] = MeshDescriptor::zeroed();
         self.mesh_bounds[mesh_id as usize] = MeshBounds::default();
         self.free_ids.push(mesh_id);
+        self.dirty.descriptors.mark(Span {
+            start: mesh_id,
+            len: 1,
+        });
     }
 
     /// Puts `mesh` in the pool, reusing the ranges a released mesh left wherever they fit.
@@ -366,6 +395,14 @@ impl GlobalMeshPool {
             _pad0: 0,
         };
         self.slots[mesh_id as usize] = slot;
+        self.dirty.vertices.mark(slot.vertices);
+        self.dirty.meshlet_vertices.mark(slot.meshlet_vertices);
+        self.dirty.triangles.mark(slot.triangles);
+        self.dirty.meshlets.mark(slot.meshlets);
+        self.dirty.descriptors.mark(Span {
+            start: mesh_id,
+            len: 1,
+        });
     }
 }
 
