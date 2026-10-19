@@ -4,6 +4,7 @@
 mod descriptor;
 mod gpu;
 mod pool;
+mod slots;
 #[cfg(test)]
 mod tests;
 

@@ -23,8 +23,6 @@ use super::trim::{AlphaTrim, TrimPair};
 pub struct MeshletPipeline {
     pool: GlobalMeshPool,
     registry: HashMap<Guid, MeshHandle>,
-    /// Bytes held by meshes nothing points at any more, since the pool only appends (#1520).
-    dead_bytes: u64,
     /// Which masked pairs draw a cut mesh instead of discarding per pixel (#452).
     pub trim: AlphaTrim,
 }
@@ -62,25 +60,27 @@ impl MeshletPipeline {
 
     /// Registers `mesh` under `guid`, replacing whatever was there.
     ///
-    /// 🔴 The pool appends, so the mesh being replaced stays in it as garbage. Left alone that is
-    /// 62 KiB per rebuild of a swept block, and a drag rebuilds every frame — about 2100 frames to
-    /// the 128 MiB binding limit, after which the bind group is invalid and nothing draws (#1520).
+    /// The previous copy's ranges go back to the pool's free lists first, so a republished mesh of
+    /// the same size lands in the slot it just vacated and the pool does not grow at all — which
+    /// is the case that matters, because a drag republishes the same topology every frame (#1087).
     pub fn replace_mesh(&mut self, guid: Guid, mesh: &MeshletMesh) -> MeshHandle {
-        let mesh_handle = self.pool.register(mesh);
-        if let Some(stale) = self.registry.insert(guid, mesh_handle) {
-            self.dead_bytes += self.pool.mesh_bytes(stale.mesh_id);
+        if let Some(stale) = self.registry.get(&guid).copied() {
+            self.pool.release(stale.mesh_id);
         }
-        self.compact();
-        self.registry.get(&guid).copied().unwrap_or(mesh_handle)
+        let mesh_handle = self.pool.register(mesh);
+        self.registry.insert(guid, mesh_handle);
+        self.defragment();
+        mesh_handle
     }
 
-    /// Repacks the pool once the dead outweigh the living, which bounds it at about twice what is
-    /// actually referenced however long the author keeps dragging.
+    /// Repacks the pool once its holes outweigh what is in use.
     ///
-    /// Amortised: each compaction copies the live set and buys at least as many bytes of slack
-    /// again, so the copying stays proportional to the registering.
-    fn compact(&mut self) {
-        if self.dead_bytes <= self.pool.byte_size().saturating_sub(self.dead_bytes) {
+    /// Rare by design: a same-size republish reuses its own ranges, so this only fires when edits
+    /// keep changing a mesh's size and leave holes nothing fits in. It is a scene-wide re-upload,
+    /// so it is the fallback, not the mechanism.
+    fn defragment(&mut self) {
+        let free = self.pool.free_bytes();
+        if free <= self.pool.byte_size().saturating_sub(free) {
             return;
         }
         let live: Vec<(Guid, u32)> = self
@@ -94,12 +94,11 @@ impl MeshletPipeline {
         for ((guid, _), mesh_id) in live.iter().zip(moved) {
             self.registry.insert(*guid, MeshHandle { mesh_id });
         }
-        self.dead_bytes = 0;
     }
 
-    /// Bytes the pool is holding for meshes nothing references.
+    /// Bytes the pool is holding in holes, waiting for a mesh that fits.
     pub fn dead_bytes(&self) -> u64 {
-        self.dead_bytes
+        self.pool.free_bytes()
     }
 
     /// Walks the ECS query and returns every distinct `Guid` referenced by a visible

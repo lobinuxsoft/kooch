@@ -3,9 +3,13 @@
 
 use crate::mesh::MeshVertex;
 
-use crate::meshlet::asset::{MeshletDescriptor, MeshletMesh};
+use crate::meshlet::asset::{
+    MESHLET_GROUP_NONE, MESHLET_ROOT_PARENT, MeshletDescriptor, MeshletMesh,
+};
 
 use super::descriptor::{MeshDescriptor, MeshHandle};
+use super::slots::{Holes, Slot, Span};
+use bytemuck::Zeroable;
 use glam::{Mat4, Vec3};
 
 /// A mesh's extent, as one sphere in mesh space.
@@ -49,7 +53,7 @@ impl MeshBounds {
 /// CPU-side accumulator. Call [`Self::register`] once per meshlet mesh,
 /// then `super::GpuGlobalMeshPool::upload` to push the latest state to
 /// GPU. Keep the resulting `GpuGlobalMeshPool` alive across frames.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct GlobalMeshPool {
     pub mesh_descriptors: Vec<MeshDescriptor>,
     pub meshlets: Vec<MeshletDescriptor>,
@@ -62,6 +66,38 @@ pub struct GlobalMeshPool {
     /// Sum of `1 + max_group_id` across registered meshes — the size of the per-frame
     /// `group_max_err` buffer the 2-pass cull (#465) indexes by `MeshletDescriptor::group_index`.
     pub group_capacity: u32,
+    /// Where each mesh sits, parallel to `mesh_descriptors`. A dead entry is a hole.
+    slots: Vec<Slot>,
+    free_vertices: Holes,
+    free_meshlet_vertices: Holes,
+    free_triangles: Holes,
+    free_meshlets: Holes,
+    free_groups: Holes,
+    /// `mesh_descriptors` indices a released mesh gave back.
+    free_ids: Vec<u32>,
+}
+
+impl Default for GlobalMeshPool {
+    fn default() -> Self {
+        Self {
+            mesh_descriptors: Vec::new(),
+            meshlets: Vec::new(),
+            vertices: Vec::new(),
+            meshlet_vertices: Vec::new(),
+            meshlet_triangles: Vec::new(),
+            mesh_bounds: Vec::new(),
+            group_capacity: 0,
+            slots: Vec::new(),
+            free_vertices: Holes::aligned(1),
+            free_meshlet_vertices: Holes::aligned(1),
+            // The cull shader reads triangle bytes out of an `array<u32>`, so every mesh's base
+            // offset has to land on a word boundary.
+            free_triangles: Holes::aligned(4),
+            free_meshlets: Holes::aligned(1),
+            free_groups: Holes::aligned(1),
+            free_ids: Vec::new(),
+        }
+    }
 }
 
 /// One mesh's slice of each parallel array.
@@ -180,109 +216,188 @@ impl GlobalMeshPool {
         })
     }
 
-    /// Where one mesh's data sits in each of the parallel arrays.
+    /// Where one mesh's data sits in each of the parallel arrays, or `None` for a hole.
     fn ranges(&self, mesh_id: u32) -> Option<MeshSlices<'_>> {
-        let descriptor = self.mesh_descriptors.get(mesh_id as usize)?;
-        let next = self.mesh_descriptors.get(mesh_id as usize + 1);
-        let end = |of: fn(&MeshDescriptor) -> u32, total: usize| {
-            next.map_or(total, |descriptor| of(descriptor) as usize)
-        };
+        let slot = self.slots.get(mesh_id as usize).filter(|slot| slot.live)?;
         Some(MeshSlices {
-            vertices: &self.vertices
-                [descriptor.vertex_offset as usize..end(|d| d.vertex_offset, self.vertices.len())],
-            meshlet_vertices: &self.meshlet_vertices[descriptor.meshlet_vertex_offset as usize
-                ..end(|d| d.meshlet_vertex_offset, self.meshlet_vertices.len())],
-            meshlet_triangles: &self.meshlet_triangles[descriptor.meshlet_triangle_offset as usize
-                ..end(|d| d.meshlet_triangle_offset, self.meshlet_triangles.len())],
-            meshlets: &self.meshlets[descriptor.first_meshlet as usize
-                ..(descriptor.first_meshlet + descriptor.meshlet_count) as usize],
+            vertices: &self.vertices[slot.vertices.range()],
+            meshlet_vertices: &self.meshlet_vertices[slot.meshlet_vertices.range()],
+            meshlet_triangles: &self.meshlet_triangles[slot.triangles.range()],
+            meshlets: &self.meshlets[slot.meshlets.range()],
         })
     }
 
-    /// Appends `mesh` to the pool. Returns the handle whose `mesh_id`
-    /// the caller should write into `MeshInstance::mesh_id`.
-    pub fn register(&mut self, mesh: &MeshletMesh) -> MeshHandle {
-        let mesh_id = self.mesh_descriptors.len() as u32;
-        self.mesh_bounds
-            .push(MeshBounds::of_meshlets(&mesh.meshlets));
+    /// Bytes the free lists are holding: ranges a released mesh left, waiting for one that fits.
+    pub fn free_bytes(&self) -> u64 {
+        self.free_vertices.free_slots() * std::mem::size_of::<MeshVertex>() as u64
+            + self.free_meshlet_vertices.free_slots() * std::mem::size_of::<u32>() as u64
+            + self.free_triangles.free_slots()
+            + self.free_meshlets.free_slots() * std::mem::size_of::<MeshletDescriptor>() as u64
+            + self.free_ids.len() as u64 * std::mem::size_of::<MeshDescriptor>() as u64
+    }
 
-        let vertex_offset = self.vertices.len() as u32;
-        let meshlet_vertex_offset = self.meshlet_vertices.len() as u32;
-        let meshlet_triangle_offset = self.meshlet_triangles.len() as u32;
-        let first_meshlet = self.meshlets.len() as u32;
-        let meshlet_count = mesh.meshlet_count();
-
-        self.vertices.extend_from_slice(&mesh.vertices);
-        // meshlet_vertices stores indices INTO the global vertex pool. Each appended value must be
-        // shifted by `vertex_offset` (where this mesh's vertices land in the pool) so the GPU
-        // shader's `vertices[meshlet_vertices[...]]` lookup hits the correct mesh's vertex slice.
-        self.meshlet_vertices.extend(
-            mesh.meshlet_vertices
-                .iter()
-                .map(|&local_index| local_index + vertex_offset),
-        );
-        self.meshlet_triangles
-            .extend_from_slice(&mesh.meshlet_triangles);
-
-        // Pad triangles up to a 4-byte boundary so the next mesh's first triangle byte lands on a
-        // u32 word boundary — the cull shader reads `array<u32>` and extracts bytes via shift-mask;
-        // an unaligned base offset would mis-read the first byte.
-        while self.meshlet_triangles.len() % 4 != 0 {
-            self.meshlet_triangles.push(0);
-        }
-
-        // Re-base each meshlet's offsets into pool-global coordinates. Three indices need shifting
-        // on top of the byte-offset rebases above.
-        let group_offset = self.group_capacity;
-        let mut max_local_group: i64 = -1;
-        for desc in &mesh.meshlets {
-            let new_parent =
-                if desc.parent_meshlet_index == crate::meshlet::asset::MESHLET_ROOT_PARENT {
-                    desc.parent_meshlet_index
-                } else {
-                    desc.parent_meshlet_index + first_meshlet
-                };
-            let new_group_index = if desc.group_index == crate::meshlet::asset::MESHLET_GROUP_NONE {
-                desc.group_index
-            } else {
-                max_local_group = max_local_group.max(desc.group_index as i64);
-                desc.group_index + group_offset
-            };
-            let new_children_group_index =
-                if desc.children_group_index == crate::meshlet::asset::MESHLET_GROUP_NONE {
-                    desc.children_group_index
-                } else {
-                    max_local_group = max_local_group.max(desc.children_group_index as i64);
-                    desc.children_group_index + group_offset
-                };
-            self.meshlets.push(MeshletDescriptor {
-                vertex_offset: desc.vertex_offset + meshlet_vertex_offset,
-                triangle_offset: desc.triangle_offset + meshlet_triangle_offset,
-                parent_meshlet_index: new_parent,
-                group_index: new_group_index,
-                children_group_index: new_children_group_index,
-                ..*desc
-            });
-        }
-        let group_count = if max_local_group >= 0 {
-            let count = (max_local_group as u32) + 1;
-            self.group_capacity += count;
-            count
-        } else {
-            0
+    /// Hands one mesh's ranges and its id back, for the next [`Self::register`] to reuse.
+    ///
+    /// 🔴 The caller has to have stopped resolving this `mesh_id` first. The id is handed out
+    /// again on the very next register, and an instance still holding it would draw the new mesh.
+    pub fn release(&mut self, mesh_id: u32) {
+        let Some(slot) = self
+            .slots
+            .get_mut(mesh_id as usize)
+            .filter(|slot| slot.live)
+        else {
+            return;
         };
+        let slot = std::mem::take(slot);
+        self.free_vertices.give(slot.vertices);
+        self.free_meshlet_vertices.give(slot.meshlet_vertices);
+        self.free_triangles.give(slot.triangles);
+        self.free_meshlets.give(slot.meshlets);
+        self.free_groups.give(slot.groups);
+        // A hole still ships to the GPU, so it has to cull to nothing: zero meshlets.
+        self.mesh_descriptors[mesh_id as usize] = MeshDescriptor::zeroed();
+        self.mesh_bounds[mesh_id as usize] = MeshBounds::default();
+        self.free_ids.push(mesh_id);
+    }
 
-        self.mesh_descriptors.push(MeshDescriptor {
-            first_meshlet,
-            meshlet_count,
-            vertex_offset,
-            meshlet_vertex_offset,
-            meshlet_triangle_offset,
-            group_base: group_offset,
-            group_count,
-            _pad0: 0,
-        });
-
+    /// Puts `mesh` in the pool, reusing the ranges a released mesh left wherever they fit.
+    /// Returns the handle whose `mesh_id` the caller should write into `MeshInstance::mesh_id`.
+    pub fn register(&mut self, mesh: &MeshletMesh) -> MeshHandle {
+        let slot = self.reserve(mesh);
+        let mesh_id = match self.free_ids.pop() {
+            Some(id) => id,
+            None => {
+                self.mesh_descriptors.push(MeshDescriptor::zeroed());
+                self.mesh_bounds.push(MeshBounds::default());
+                self.slots.push(Slot::default());
+                self.mesh_descriptors.len() as u32 - 1
+            }
+        };
+        self.write(mesh_id, mesh, slot);
         MeshHandle { mesh_id }
+    }
+
+    /// One range per array for `mesh`: out of the holes when it fits, off the end when it does not.
+    fn reserve(&mut self, mesh: &MeshletMesh) -> Slot {
+        let vertices = take(
+            &mut self.free_vertices,
+            &mut self.vertices,
+            mesh.vertices.len(),
+            MeshVertex::zeroed(),
+        );
+        let meshlet_vertices = take(
+            &mut self.free_meshlet_vertices,
+            &mut self.meshlet_vertices,
+            mesh.meshlet_vertices.len(),
+            0,
+        );
+        let triangles = take(
+            &mut self.free_triangles,
+            &mut self.meshlet_triangles,
+            mesh.meshlet_triangles.len(),
+            0,
+        );
+        let meshlets = take(
+            &mut self.free_meshlets,
+            &mut self.meshlets,
+            mesh.meshlets.len(),
+            MeshletDescriptor::zeroed(),
+        );
+        // Groups are a capacity the cull indexes into, not an array this pool stores.
+        let count = group_count(mesh);
+        let groups = match self.free_groups.take(count) {
+            Some(span) => span,
+            None => {
+                let span = Span {
+                    start: self.group_capacity,
+                    len: count,
+                };
+                self.group_capacity += count;
+                span
+            }
+        };
+        Slot {
+            vertices,
+            meshlet_vertices,
+            triangles,
+            meshlets,
+            groups,
+            live: true,
+        }
+    }
+
+    /// Copies `mesh` into its reserved ranges, rebasing every index into pool-global coordinates.
+    ///
+    /// `meshlet_vertices` holds indices INTO the global vertex array, meshlet offsets are
+    /// pool-relative, and group ids are shifted by the mesh's `group_base` — rebase any one of
+    /// them wrong and the shader reads another mesh's geometry.
+    fn write(&mut self, mesh_id: u32, mesh: &MeshletMesh, slot: Slot) {
+        self.vertices[slot.vertices.range()].copy_from_slice(&mesh.vertices);
+        for (at, local) in slot.meshlet_vertices.range().zip(&mesh.meshlet_vertices) {
+            self.meshlet_vertices[at] = local + slot.vertices.start;
+        }
+        // The span is rounded up to a word; the tail past the mesh's own bytes is padding nothing
+        // reads, because each meshlet's triangle_offset bounds it.
+        let bytes = slot.triangles.start as usize
+            ..slot.triangles.start as usize + mesh.meshlet_triangles.len();
+        self.meshlet_triangles[bytes].copy_from_slice(&mesh.meshlet_triangles);
+        for (at, desc) in slot.meshlets.range().zip(&mesh.meshlets) {
+            self.meshlets[at] = MeshletDescriptor {
+                vertex_offset: desc.vertex_offset + slot.meshlet_vertices.start,
+                triangle_offset: desc.triangle_offset + slot.triangles.start,
+                parent_meshlet_index: match desc.parent_meshlet_index {
+                    MESHLET_ROOT_PARENT => desc.parent_meshlet_index,
+                    parent => parent + slot.meshlets.start,
+                },
+                group_index: shifted(desc.group_index, slot.groups.start),
+                children_group_index: shifted(desc.children_group_index, slot.groups.start),
+                ..*desc
+            };
+        }
+        self.mesh_bounds[mesh_id as usize] = MeshBounds::of_meshlets(&mesh.meshlets);
+        self.mesh_descriptors[mesh_id as usize] = MeshDescriptor {
+            first_meshlet: slot.meshlets.start,
+            meshlet_count: slot.meshlets.len,
+            vertex_offset: slot.vertices.start,
+            meshlet_vertex_offset: slot.meshlet_vertices.start,
+            meshlet_triangle_offset: slot.triangles.start,
+            group_base: slot.groups.start,
+            group_count: slot.groups.len,
+            _pad0: 0,
+        };
+        self.slots[mesh_id as usize] = slot;
+    }
+}
+
+/// A span out of `holes`, or one appended to `array` — which grows with filler the write
+/// overwrites.
+fn take<T: Copy>(holes: &mut Holes, array: &mut Vec<T>, len: usize, filler: T) -> Span {
+    let len = holes.rounded(len as u32);
+    if let Some(span) = holes.take(len) {
+        return span;
+    }
+    let span = Span {
+        start: array.len() as u32,
+        len,
+    };
+    array.resize(span.end() as usize, filler);
+    span
+}
+
+/// Distinct LOD group ids `mesh` contributes, counted over both the group a meshlet belongs to and
+/// the one its children form.
+fn group_count(mesh: &MeshletMesh) -> u32 {
+    mesh.meshlets
+        .iter()
+        .flat_map(|desc| [desc.group_index, desc.children_group_index])
+        .filter(|group| *group != MESHLET_GROUP_NONE)
+        .max()
+        .map_or(0, |group| group + 1)
+}
+
+fn shifted(group: u32, base: u32) -> u32 {
+    match group {
+        MESHLET_GROUP_NONE => group,
+        group => group + base,
     }
 }
