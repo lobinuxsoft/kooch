@@ -243,6 +243,8 @@ Two details worth knowing before you press a button:
 
 - **Fillet is clamped to half of each segment.** Ask for a radius larger than the segment and the
   corners stop short rather than crossing each other and folding the curve back on itself.
+- **Set radius** gives every knot the same radius at once. That radius is how thick a **Spline
+  Sweep** comes out and what the viewport grips scale; the knot list edits it one knot at a time.
 - **Trim opens a closed curve**, and the *Closed* box clears itself when it does. A ring cut
   anywhere is a line; keeping it closed would join the two fresh ends back together, which is the
   part you just removed.
@@ -251,10 +253,10 @@ Two details worth knowing before you press a button:
 
 Under the same header, the **Replace with a shape** sub-panel builds a curve instead of reshaping
 one: **Circle**, **Arc** and **Spiral**. It stays shut until you open it, because each of the three
-discards whatever the curve was — one Ctrl+Z brings it back. *Segments* and *radius* at the top are
-shared by all three; the rest of each row is that shape's own. Each is drawn on the XZ plane around
-the entity's origin — the transform is how you aim it, so there is no rotation field to keep in
-step with it.
+discards whatever the curve was — one Ctrl+Z brings it back. Every shape sits in its own box with
+its own measurements; only *segments* and *knot radius*, in the box at the top, are shared. Each is
+drawn on the XZ plane around the entity's origin — the transform is how you aim it, so there is no
+rotation field to keep in step with it.
 
 | Primitive | What you set |
 |---|---|
