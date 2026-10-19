@@ -283,14 +283,19 @@ is the way back.
 
 A `Block` has its own **Face operations** in the Inspector. The one there now is *Extrude along a
 curve*: paint faces in **Face** mode, pick the entity whose `Spline` is the path, say how many
-rings, and press **Extrude**.
+spans, and press **Extrude**.
 
 - **The run lands on the curve, where the curve actually is.** The knots are read in the block's
   own space, so moving the spline moves the result, and parenting the spline to the block makes it
-  follow the block. What the faces contribute is their shape and how they sit against the curve's
-  start — a face 3 m off the curve runs 3 m off it the whole way.
-- Rings are spaced evenly **in metres** along the curve, not in parameter, so a tight bend does
-  not bunch them up.
+  follow the block.
+- **The section is centred on the curve**, the way a Spline Sweep centres its profile. What the
+  faces contribute is their shape, not where you modelled them; the first span is the bridge from
+  the block to the curve's start, so the block never tears off.
+- *spans* counts sections **per curve segment**, as a sweep's does: a 12-knot circle at 2 spans is
+  24 sections. The count follows the curve you drew rather than a number that means nothing
+  against it.
+- They are spaced evenly **in metres** along the curve, not in parameter, so a tight bend does not
+  bunch them up. This is the one place it differs from the sweep, which samples in parameter.
 - *taper* scales each ring by the knot radius there, so a path can narrow what it carries.
 - It bakes: the result is ordinary block geometry, with ordinary faces you can extrude again. The
   curve is not kept as a live modifier, so moving a knot afterwards changes nothing. That is

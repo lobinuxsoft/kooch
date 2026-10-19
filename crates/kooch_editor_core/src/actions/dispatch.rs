@@ -75,11 +75,11 @@ pub(super) fn action_to_command(
         EditorAction::ExtrudeAlong {
             entity,
             spline,
-            samples,
+            spans,
             taper,
         } => {
             let (before, after) =
-                crate::block_edit::extrude_along(resources, *entity, *spline, *samples, *taper)?;
+                crate::block_edit::extrude_along(resources, *entity, *spline, *spans, *taper)?;
             let edit: Box<dyn EditorCommand> =
                 Box::new(BlockEditCommand::new(*entity, before, after));
             // 🔴 A block still holding its `BlockShape` is rebuilt from its sliders next frame,

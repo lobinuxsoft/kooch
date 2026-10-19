@@ -14,11 +14,11 @@ use super::Extruded;
 const MAX_RINGS: usize = 256;
 
 impl BlockMesh {
-    /// Extrudes `faces` along the curve, one ring per sample, evenly spaced **in metres**.
+    /// Extrudes `faces` along the curve, `spans` sections per segment, spaced **in metres**.
     ///
-    /// 🔴 The knots are read **where they are**, in this mesh's own space (#1554): the run lands on
-    /// the curve the author is looking at. What the face contributes is its shape and how it sits
-    /// relative to the curve's start, not where it was modelled.
+    /// 🔴 The section is centred on the curve, the way a [`sweep`](crate::sweep) centres its
+    /// profile (#1554): what the faces give is their shape, not where they were modelled. The
+    /// first span is the bridge from the block to the curve's start, so the block never tears.
     ///
     /// `taper` scales each ring by the curve's radius there, relative to the radius at the start.
     /// `None` when the selection names nothing or the curve has no length.
@@ -27,29 +27,31 @@ impl BlockMesh {
         faces: &[u32],
         points: &[Knot],
         closed: bool,
-        samples: u32,
+        spans: u32,
         taper: bool,
     ) -> Option<Extruded> {
+        let segments = eval::segments(points, closed);
         let length = arc::length(points, closed);
-        if !(length > 0.0) {
+        if segments == 0 || !(length > 0.0) {
             return None;
         }
-        let rings = (samples.max(1) as usize).min(MAX_RINGS);
-        self.centre_of(faces)?;
+        // Per segment, like the sweep's `spans`: the count follows the curve the author drew
+        // rather than a number that means nothing against it.
+        let rings = (spans.max(1) as usize * segments).min(MAX_RINGS);
+        let centre = self.centre_of(faces)?;
         let start = eval::frame(points, closed, 0.0);
         let into_start = basis(&start).inverse();
-        let at_start = start.at;
         let radius_start = eval::radius_at(points, closed, 0.0);
 
-        // The face seen from the curve's start, read once: every ring below is placed from these,
-        // so the section keeps the offset and the angle it has against the curve there.
+        // The section, read once around the face's own middle: every ring below is placed from
+        // these, so nothing accumulates ring to ring.
         let plan: Vec<Vec<Vec3>> = faces
             .iter()
             .map(|face| {
                 self.face(*face as usize)
                     .unwrap_or(&[])
                     .iter()
-                    .map(|corner| into_start * (self.positions[*corner as usize] - at_start))
+                    .map(|corner| into_start * (self.positions[*corner as usize] - centre))
                     .collect()
             })
             .collect();

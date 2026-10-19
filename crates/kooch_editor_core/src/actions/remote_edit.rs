@@ -57,12 +57,12 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     if let EditorAction::ExtrudeAlong {
         entity,
         spline,
-        samples,
+        spans,
         taper,
     } = action
     {
         let Some((before, after)) =
-            crate::block_edit::extrude_along(resources, *entity, *spline, *samples, *taper)
+            crate::block_edit::extrude_along(resources, *entity, *spline, *spans, *taper)
         else {
             return true;
         };
