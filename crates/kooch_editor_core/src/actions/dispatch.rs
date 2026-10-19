@@ -72,6 +72,29 @@ pub(super) fn action_to_command(
                 before.clone(),
             )))
         }
+        EditorAction::ExtrudeAlong {
+            entity,
+            spline,
+            samples,
+            taper,
+        } => {
+            let (before, after) =
+                crate::block_edit::extrude_along(resources, *entity, *spline, *samples, *taper)?;
+            let edit: Box<dyn EditorCommand> =
+                Box::new(BlockEditCommand::new(*entity, before, after));
+            // 🔴 A block still holding its `BlockShape` is rebuilt from its sliders next frame,
+            // which would wipe this. Dropping it is what `bake` does on the E key, and it travels
+            // inside the same history entry so one Ctrl+Z puts both back.
+            let Some(drop_shape) = crate::block_edit::shape_sync::bake(resources, *entity) else {
+                return Some(edit);
+            };
+            let mut commands = vec![edit];
+            commands.extend(action_to_command(&drop_shape, resources));
+            Some(Box::new(crate::undo::CompoundCommand::new(
+                "Extrude Along Curve",
+                commands,
+            )))
+        }
         EditorAction::BlockEdit {
             entity,
             before,

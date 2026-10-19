@@ -1,6 +1,7 @@
 //! Inspector panel — component details for selected entities.
 
 mod asset_view;
+mod block_ops;
 mod curve_ops;
 #[cfg(test)]
 mod idle_tests;
@@ -106,6 +107,7 @@ pub(crate) fn draw_inspector_content(
     asset_detail: Option<&AssetSnapshot>,
     // The project's layer names, for any field that masks over them (#1218).
     layer_labels: &[String],
+    picked_faces: Option<(Entity, usize)>,
 ) {
     if focused {
         nav.handle_keyboard(ui);
@@ -154,6 +156,7 @@ pub(crate) fn draw_inspector_content(
             rotation_display_mode,
             asset_catalog,
             layer_labels,
+            picked_faces,
         )
     });
 
@@ -183,6 +186,7 @@ fn draw_inspector_body(
     asset_catalog: &[AssetCatalogEntry],
     // The project's layer names, for any field that masks over them (#1218).
     layer_labels: &[String],
+    picked_faces: Option<(Entity, usize)>,
 ) {
     if selected.is_empty() {
         ui.weak("No entity selected");
@@ -396,6 +400,9 @@ fn draw_inspector_body(
                                 );
                                 if comp.short_name == "Spline" {
                                     curve_ops::draw(ui, entity, comp.component, comp, actions);
+                                }
+                                if comp.short_name == "Block" {
+                                    block_ops::draw(ui, entity, entities, picked_faces, actions);
                                 }
                                 // An entity's edits go to the world.
                                 for (field, value) in edits {

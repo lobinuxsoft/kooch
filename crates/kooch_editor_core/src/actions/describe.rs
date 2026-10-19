@@ -16,6 +16,7 @@ impl EditorAction {
             | Self::SpawnBlock { .. }
             | Self::SetFieldFrom { .. }
             | Self::BlockEdit { .. }
+            | Self::ExtrudeAlong { .. }
             | Self::Despawn(_)
             | Self::Duplicate(_)
             // Both read or write entities, so both wait for a world to
@@ -133,6 +134,7 @@ impl EditorAction {
             | Self::SpawnBlock { .. }
             | Self::SetFieldFrom { .. }
             | Self::BlockEdit { .. }
+            | Self::ExtrudeAlong { .. }
             | Self::Despawn(_)
             | Self::Duplicate(_)
             | Self::PasteEntities { .. }

@@ -91,6 +91,8 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Whether the selection is a single block — the only case where
     /// face mode has anything to act on.
     pub(crate) editing_a_block: bool,
+    /// The block's painted faces, for the panel that runs them down a curve (#1526).
+    pub(crate) picked_faces: Option<(Entity, usize)>,
     pub(crate) editing_a_spline: bool,
     /// Which gizmo groups draw. Threaded through so the Gizmos dropdown
     /// can mutate it from the viewport toolbar.
@@ -312,6 +314,7 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 *self.selected_asset,
                 self.asset_detail,
                 self.layer_labels,
+                self.picked_faces,
             ),
             EditorTab::ShaderGraph => {
                 let path = self

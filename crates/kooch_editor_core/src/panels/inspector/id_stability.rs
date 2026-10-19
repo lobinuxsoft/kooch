@@ -106,6 +106,7 @@ fn draw_repeatedly(
             None,
             None,
             &labels,
+            None,
         );
     });
 
@@ -191,6 +192,7 @@ fn moving_the_selection_keeps_the_widget_ids() {
             None,
             None,
             &labels,
+            None,
         );
     });
 

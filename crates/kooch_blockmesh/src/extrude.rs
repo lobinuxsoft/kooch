@@ -195,5 +195,7 @@ impl BlockMesh {
     }
 }
 
+mod along;
+
 #[cfg(test)]
 mod tests;
