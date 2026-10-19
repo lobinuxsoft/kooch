@@ -249,9 +249,12 @@ Two details worth knowing before you press a button:
 
 ### Curves from parameters
 
-Under the same header, **Replace with** builds a curve instead of reshaping one: **Circle**,
-**Arc** and **Spiral**. Each is drawn on the XZ plane around the entity's origin — the transform
-is how you aim it, so there is no rotation field to keep in step with it.
+Under the same header, the **Replace with a shape** sub-panel builds a curve instead of reshaping
+one: **Circle**, **Arc** and **Spiral**. It stays shut until you open it, because each of the three
+discards whatever the curve was — one Ctrl+Z brings it back. *Segments* and *radius* at the top are
+shared by all three; the rest of each row is that shape's own. Each is drawn on the XZ plane around
+the entity's origin — the transform is how you aim it, so there is no rotation field to keep in
+step with it.
 
 | Primitive | What you set |
 |---|---|

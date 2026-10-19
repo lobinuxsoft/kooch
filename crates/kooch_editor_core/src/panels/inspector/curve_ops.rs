@@ -100,6 +100,8 @@ pub(super) fn draw(
         });
     };
 
+    const NEEDS_TWO: &str = "A curve needs at least two knots before it can be operated on.";
+
     egui::CollapsingHeader::new("Curve operations")
         .id_salt(id)
         .show(ui, |ui| {
@@ -108,13 +110,15 @@ pub(super) fn draw(
             ui.label(format!("{length:.2} m along {} knots", points.len()));
 
             ui.horizontal(|ui| {
+                ui.label("knots");
                 ui.add(egui::DragValue::new(&mut asked.count).range(2..=512));
                 if ui
-                    .add_enabled(usable, egui::Button::new("Resample").small())
+                    .add_enabled(usable, egui::Button::new("Resample"))
                     .on_hover_text(
                         "Replace the knots with evenly spaced ones, measured in metres along \
                          the curve rather than in parameter. Authored tangents are lost.",
                     )
+                    .on_disabled_hover_text(NEEDS_TWO)
                     .clicked()
                 {
                     edited(ops::resample(&points, closed, asked.count), actions);
@@ -122,13 +126,15 @@ pub(super) fn draw(
             });
 
             ui.horizontal(|ui| {
+                ui.label("cuts");
                 ui.add(egui::DragValue::new(&mut asked.cuts).range(1..=16));
                 if ui
-                    .add_enabled(usable, egui::Button::new("Subdivide").small())
+                    .add_enabled(usable, egui::Button::new("Subdivide"))
                     .on_hover_text(
                         "Add this many knots inside every segment, keeping the spacing the \
                          author chose. Resample is the one that evens it out.",
                     )
+                    .on_disabled_hover_text(NEEDS_TWO)
                     .clicked()
                 {
                     edited(ops::subdivide(&points, closed, asked.cuts), actions);
@@ -136,17 +142,20 @@ pub(super) fn draw(
             });
 
             ui.horizontal(|ui| {
+                ui.label("radius");
                 ui.add(
                     egui::DragValue::new(&mut asked.radius)
                         .speed(0.05)
-                        .range(0.0..=100.0),
+                        .range(0.0..=100.0)
+                        .suffix(" m"),
                 );
                 if ui
-                    .add_enabled(usable, egui::Button::new("Fillet").small())
+                    .add_enabled(usable, egui::Button::new("Fillet"))
                     .on_hover_text(
                         "Round every corner by pulling it back along both neighbours. Clamped \
                          to half of each segment, so two corners cannot cross.",
                     )
+                    .on_disabled_hover_text(NEEDS_TWO)
                     .clicked()
                 {
                     edited(ops::fillet(&points, closed, asked.radius), actions);
@@ -154,22 +163,27 @@ pub(super) fn draw(
             });
 
             ui.horizontal(|ui| {
+                ui.label("from");
                 ui.add(
                     egui::DragValue::new(&mut asked.from)
                         .speed(0.1)
-                        .range(0.0..=length),
+                        .range(0.0..=length)
+                        .suffix(" m"),
                 );
+                ui.label("to");
                 ui.add(
                     egui::DragValue::new(&mut asked.to)
                         .speed(0.1)
-                        .range(0.0..=length),
+                        .range(0.0..=length)
+                        .suffix(" m"),
                 );
                 if ui
-                    .add_enabled(usable, egui::Button::new("Trim").small())
+                    .add_enabled(usable, egui::Button::new("Trim"))
                     .on_hover_text(
                         "Keep only the curve between these two distances, in metres. The \
                          result is open: a ring cut anywhere is a line.",
                     )
+                    .on_disabled_hover_text(NEEDS_TWO)
                     .clicked()
                 {
                     let trimmed = ops::trim(&points, closed, asked.from, asked.to);
@@ -188,99 +202,120 @@ pub(super) fn draw(
             });
 
             if ui
-                .add_enabled(usable, egui::Button::new("Reverse").small())
+                .add_enabled(usable, egui::Button::new("Reverse"))
                 .on_hover_text("Walk the curve the other way. The roll flips with it.")
+                .on_disabled_hover_text(NEEDS_TWO)
                 .clicked()
             {
                 edited(ops::reverse(&points), actions);
             }
 
-            ui.separator();
-            // 🔴 These REPLACE the curve rather than operating on it, so they are enabled when the
-            // five above are not: a `Spline` with no knots yet is exactly when an author reaches
-            // for a circle. They are kept apart by a separator for the same reason — pressing one
-            // by mistake throws away whatever was there, and one Ctrl+Z is the way back.
-            ui.label("Replace with");
-            ui.horizontal(|ui| {
-                ui.add(egui::DragValue::new(&mut asked.segments).range(3..=256));
-                ui.label("segments");
-            });
+            // 🔴 These REPLACE the curve rather than operating on it: one press throws away
+            // whatever was there, and one Ctrl+Z is the only way back. Kept behind a named
+            // sub-panel, shut until asked for, so nobody lands on one reaching for Reverse.
+            egui::CollapsingHeader::new("Replace with a shape")
+                .id_salt(("curve_make", entity))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("segments");
+                        ui.add(egui::DragValue::new(&mut asked.segments).range(3..=256))
+                            .on_hover_text("How many knots each shape below is built from.");
+                    });
 
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::DragValue::new(&mut asked.made)
-                        .speed(0.1)
-                        .range(0.0..=1000.0),
-                );
-                if ui
-                    .button("Circle")
-                    .on_hover_text(
-                        "A closed ring of this radius on the XZ plane, around the entity's \
-                         origin. Aim it with the transform.",
-                    )
-                    .clicked()
-                {
-                    made(make::circle(asked.made, asked.segments), true, actions);
-                }
-                if ui
-                    .button("Arc")
-                    .on_hover_text(
-                        "An open arc of this radius, turning by the angle beside it and \
-                         starting along +X.",
-                    )
-                    .clicked()
-                {
-                    let sweep = asked.sweep.to_radians();
-                    made(make::arc(asked.made, sweep, asked.segments), false, actions);
-                }
-                ui.add(
-                    egui::DragValue::new(&mut asked.sweep)
-                        .speed(1.0)
-                        .range(-720.0..=720.0)
-                        .suffix("°"),
-                );
-            });
+                    ui.horizontal(|ui| {
+                        ui.label("radius");
+                        ui.add(
+                            egui::DragValue::new(&mut asked.made)
+                                .speed(0.1)
+                                .range(0.0..=1000.0)
+                                .suffix(" m"),
+                        )
+                        .on_hover_text("Shared by the three shapes. A spiral starts here.");
+                    });
 
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::DragValue::new(&mut asked.tip)
-                        .speed(0.1)
-                        .range(0.0..=1000.0),
-                )
-                .on_hover_text("Radius at the top. Below the first one it winds inwards.");
-                ui.add(
-                    egui::DragValue::new(&mut asked.height)
-                        .speed(0.1)
-                        .range(-1000.0..=1000.0),
-                )
-                .on_hover_text("How far it climbs.");
-                ui.add(
-                    egui::DragValue::new(&mut asked.turns)
-                        .speed(0.1)
-                        .range(-64.0..=64.0),
-                )
-                .on_hover_text("Turns. Negative winds the other way.");
-                if ui
-                    .button("Spiral")
-                    .on_hover_text(
-                        "A helix from the first radius to the one beside it. Put a Spline \
-                         Sweep with the Steps profile on it and it is a spiral staircase.",
-                    )
-                    .clicked()
-                {
-                    made(
-                        make::spiral(
-                            asked.made,
-                            asked.tip,
-                            asked.height,
-                            asked.turns,
-                            asked.segments,
-                        ),
-                        false,
-                        actions,
-                    );
-                }
-            });
+                    if ui
+                        .button("Circle")
+                        .on_hover_text(
+                            "A closed ring of that radius on the XZ plane, around the entity's \
+                             origin. Aim it with the transform.",
+                        )
+                        .clicked()
+                    {
+                        made(make::circle(asked.made, asked.segments), true, actions);
+                    }
+
+                    ui.horizontal(|ui| {
+                        ui.label("angle");
+                        ui.add(
+                            egui::DragValue::new(&mut asked.sweep)
+                                .speed(1.0)
+                                .range(-720.0..=720.0)
+                                .suffix("°"),
+                        );
+                        if ui
+                            .button("Arc")
+                            .on_hover_text(
+                                "An open arc of that radius, turning by this angle and \
+                                 starting along +X.",
+                            )
+                            .clicked()
+                        {
+                            let sweep = asked.sweep.to_radians();
+                            made(make::arc(asked.made, sweep, asked.segments), false, actions);
+                        }
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("top");
+                        ui.add(
+                            egui::DragValue::new(&mut asked.tip)
+                                .speed(0.1)
+                                .range(0.0..=1000.0)
+                                .suffix(" m"),
+                        )
+                        .on_hover_text(
+                            "Radius at the top. Below the radius above it winds inwards.",
+                        );
+                        ui.label("height");
+                        ui.add(
+                            egui::DragValue::new(&mut asked.height)
+                                .speed(0.1)
+                                .range(-1000.0..=1000.0)
+                                .suffix(" m"),
+                        )
+                        .on_hover_text("How far it climbs.");
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("turns");
+                        ui.add(
+                            egui::DragValue::new(&mut asked.turns)
+                                .speed(0.1)
+                                .range(-64.0..=64.0),
+                        )
+                        .on_hover_text("Negative winds the other way.");
+                        if ui
+                            .button("Spiral")
+                            .on_hover_text(
+                                "A helix from the radius above to the top one. Put a Spline \
+                                 Sweep with the Steps profile on it and it is a spiral staircase.",
+                            )
+                            .clicked()
+                        {
+                            made(
+                                make::spiral(
+                                    asked.made,
+                                    asked.tip,
+                                    asked.height,
+                                    asked.turns,
+                                    asked.segments,
+                                ),
+                                false,
+                                actions,
+                            );
+                        }
+                    });
+                });
         });
 
     ui.ctx().data_mut(|data| data.insert_temp(id, asked));
