@@ -285,8 +285,10 @@ A `Block` has its own **Face operations** in the Inspector. The one there now is
 curve*: paint faces in **Face** mode, pick the entity whose `Spline` is the path, say how many
 rings, and press **Extrude**.
 
-- The faces keep the orientation you modelled them with. The curve only carries them from there —
-  it never re-aims the section behind you.
+- **The run lands on the curve, where the curve actually is.** The knots are read in the block's
+  own space, so moving the spline moves the result, and parenting the spline to the block makes it
+  follow the block. What the faces contribute is their shape and how they sit against the curve's
+  start — a face 3 m off the curve runs 3 m off it the whole way.
 - Rings are spaced evenly **in metres** along the curve, not in parameter, so a tight bend does
   not bunch them up.
 - *taper* scales each ring by the knot radius there, so a path can narrow what it carries.

@@ -466,10 +466,46 @@ pub(crate) fn extrude_along(
         .get_cpu::<kooch_ecs::spline::Spline>()?
         .get(spline)?
         .clone();
+    let points = in_block_space(resources, entity, spline, &curve.points);
     let before = mesh_of(resources, entity)?;
     let mut after = before.clone();
-    after.extrude_along(&faces, &curve.points, curve.closed, samples, taper)?;
+    after.extrude_along(&faces, &points, curve.closed, samples, taper)?;
     Some((before, after))
+}
+
+/// The curve's knots seen from the block's own space (#1554).
+///
+/// 🔴 Knots are in the spline entity's space, and a block's mesh is in its own. Without this the
+/// run lands wherever the curve would be if it sat at the block's origin — which is nowhere the
+/// author can see. Parenting needs nothing else: a child curve is already expressed through its
+/// parent's transform.
+fn in_block_space(
+    resources: &Resources,
+    block: Entity,
+    spline: Entity,
+    knots: &[kooch_ecs::spline::Knot],
+) -> Vec<kooch_ecs::spline::Knot> {
+    let Some(globals) = resources
+        .get::<ComponentRegistry>()
+        .and_then(|registry| registry.get_cpu::<GlobalTransform>())
+    else {
+        return knots.to_vec();
+    };
+    // Either pose missing is a frame where one of the two has not been placed yet. The knots as
+    // authored are a worse answer than none, but a silent no-op is worse than both.
+    let (Some(here), Some(there)) = (globals.get(block), globals.get(spline)) else {
+        return knots.to_vec();
+    };
+    let into = here.matrix.inverse() * there.matrix;
+    knots
+        .iter()
+        .map(|knot| kooch_ecs::spline::Knot {
+            position: into.transform_point3(knot.position),
+            arriving: into.transform_vector3(knot.arriving),
+            leaving: into.transform_vector3(knot.leaving),
+            ..*knot
+        })
+        .collect()
 }
 
 /// Extrudes the selected faces and answers the edit for the history.
