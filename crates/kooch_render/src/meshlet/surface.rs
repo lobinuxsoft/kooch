@@ -74,6 +74,26 @@ pub fn ray_hit(mesh: &MeshletMesh, origin: Vec3, direction: Vec3) -> Option<Surf
     nearest
 }
 
+/// The finest LOD's triangles, as indices into [`MeshletMesh::vertices`].
+///
+/// 🔴 `lod_level == 0` only. A `MeshletMesh` carries every level at once, and walking all of them
+/// hands back the same surface several times over — for a collider that is a solid full of
+/// overlapping shells, and nothing reports it as a fault.
+pub fn base_triangles(mesh: &MeshletMesh) -> Vec<[u32; 3]> {
+    let mut out = Vec::new();
+    for meshlet in mesh.meshlets.iter().filter(|m| m.lod_level == 0) {
+        for triangle in 0..meshlet.triangle_count {
+            let corner = |index: u32| -> u32 {
+                let byte = (meshlet.triangle_offset + triangle * 3 + index) as usize;
+                let local = mesh.meshlet_triangles[byte] as u32;
+                mesh.meshlet_vertices[(meshlet.vertex_offset + local) as usize]
+            };
+            out.push([corner(0), corner(1), corner(2)]);
+        }
+    }
+    out
+}
+
 /// How far the surface reaches along `direction`, in the mesh's own space: `max(v · direction)`
 /// over every LOD-0 vertex.
 ///
@@ -102,4 +122,56 @@ pub fn support(mesh: &MeshletMesh, direction: Vec3) -> Option<f32> {
         }
     }
     best.is_finite().then_some(best)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mesh::{Aabb, MeshVertex};
+    use crate::meshlet::MeshletDescriptor;
+
+    /// `Pod`, so all-zero is a legal value and a test names only what it cares about.
+    fn blank() -> MeshletDescriptor {
+        unsafe { std::mem::zeroed() }
+    }
+
+    /// One triangle at LOD 0 and the same surface again at LOD 1 — what every simplified mesh
+    /// looks like.
+    fn two_levels() -> MeshletMesh {
+        let vertices = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+            .map(|position| MeshVertex {
+                position,
+                normal: [0.0, 0.0, 1.0],
+                uv: [0.0, 0.0],
+            })
+            .to_vec();
+        let fine = MeshletDescriptor {
+            vertex_count: 3,
+            triangle_count: 1,
+            lod_level: 0,
+            ..blank()
+        };
+        MeshletMesh {
+            vertices,
+            meshlet_vertices: vec![0, 1, 2, 0, 1, 2],
+            meshlet_triangles: vec![0, 1, 2, 0, 1, 2],
+            meshlets: vec![
+                fine,
+                MeshletDescriptor {
+                    vertex_offset: 3,
+                    triangle_offset: 3,
+                    lod_level: 1,
+                    ..fine
+                },
+            ],
+            aabb: Aabb::empty(),
+        }
+    }
+
+    /// 🔴 A collider built from every level is the same surface several times over — a solid full
+    /// of overlapping shells that a character catches on, with nothing anywhere reporting a fault.
+    #[test]
+    fn only_the_finest_level_collides() {
+        assert_eq!(base_triangles(&two_levels()), vec![[0, 1, 2]]);
+    }
 }

@@ -17,5 +17,22 @@ impl BlockMesh {
     }
 }
 
+/// A bent mesh as geometry the solver can read (#1537).
+///
+/// 🔴 Only the finest LOD's triangles. The coarser levels describe the same surface again, and a
+/// collider built from all of them is a solid full of overlapping shells that a character catches
+/// on with nothing reporting a fault.
+pub fn bent_collider(mesh: &kooch_render::meshlet::MeshletMesh) -> ColliderMesh {
+    ColliderMesh {
+        vertices: mesh
+            .vertices
+            .iter()
+            .map(|vertex| glam::Vec3::from(vertex.position))
+            .collect(),
+        indices: kooch_render::meshlet::base_triangles(mesh),
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests;

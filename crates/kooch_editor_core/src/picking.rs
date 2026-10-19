@@ -46,8 +46,8 @@ pub(crate) struct SurfaceHit {
 ///
 /// 🔴 **Rendered meshes, not colliders.** A blockout entity need not have a collider yet, and a
 /// snap that only worked on things with physics would be a trap in the exact scene it is for
-/// (#1435). The cost is the approximation picking already lives with: a block answers from its
-/// triangles, every other mesh from its box.
+/// (#1435). Every mesh answers from its own triangles: the box is only the rejection test that
+/// decides which ones are worth testing exactly.
 ///
 /// 🔴 `exclude` is not optional in practice — a drag that raycasts the thing it is moving snaps it
 /// to itself and sticks there. It is a list because an imported model's mesh usually hangs off a
@@ -138,6 +138,9 @@ enum Triangles {
     /// A block authored in the editor. Its faces are the shape (#1118), and since #1452 they are
     /// on the entity rather than in an asset store — so this names the entity, not a handle.
     Block(Entity),
+    /// A mesh bent along a curve (#1446). Generated, so there is no file and no handle either —
+    /// the CPU copy lives in `BentMeshes`, keyed by the entity that owns it.
+    Bent(Entity),
     /// An imported mesh. LOD 0 of its meshlet chain is the shape.
     Meshlet(kooch_core::assets::Handle<MeshletMesh>),
 }
@@ -171,6 +174,11 @@ fn exact_hit(
                 hit.distance,
                 block.face_normal(hit.element as usize).unwrap_or(Vec3::Y),
             ))
+        }
+        Triangles::Bent(entity) => {
+            let bent = resources.get::<kooch_blockmesh::BentMeshes>()?;
+            let hit = kooch_render::meshlet::ray_hit(bent.get(entity)?, origin, direction)?;
+            Some((hit.distance, hit.normal))
         }
         Triangles::Meshlet(handle) => {
             let assets = resources.get::<kooch_core::assets::Assets<MeshletMesh>>()?;
@@ -211,14 +219,25 @@ fn visible_meshes(resources: &Resources) -> Vec<(Entity, Guid, Mat4)> {
 }
 
 /// A mesh resolved to its box and its triangles, loading it if this is the first ask.
+///
+/// 🔴 **The one place that knows where geometry can live.** There are three stores — the `Block`
+/// component (#1452), the bent meshes a curve generates (#1446) and the asset server — and a
+/// caller that remembers only two silently drops whatever is in the third: not clickable, not
+/// frameable, with nothing failing (#1537). Every reader goes through here.
 fn resolve_shape(resources: &mut Resources, entity: Entity, mesh: Guid) -> Option<Shape> {
-    // 🔴 A block first, because it has no file to load. Its renderer names a GUID derived from the
-    // entity (#1452), and asking the server for that produces nothing — so a block that fell
-    // through to the loader was never a candidate and could not be clicked at all.
+    // A block first, because it has no file to load. Its renderer names a GUID derived from the
+    // entity, and asking the server for that produces nothing.
     if let Some(aabb) = block_bounds(resources, entity) {
         return Some(Shape {
             aabb,
             triangles: Triangles::Block(entity),
+        });
+    }
+    // Then a bent mesh, for the same reason: its GUID is synthetic too.
+    if let Some(aabb) = bent_bounds(resources, entity) {
+        return Some(Shape {
+            aabb,
+            triangles: Triangles::Bent(entity),
         });
     }
 
@@ -238,25 +257,16 @@ fn resolve_shape(resources: &mut Resources, entity: Entity, mesh: Guid) -> Optio
     })
 }
 
-/// The mesh's local-space bounds.
-fn local_bounds(resources: &mut Resources, entity: Entity, mesh: Guid) -> Option<Aabb> {
-    // 🔴 A block first: its geometry is on the entity (#1452), so there is no GUID the loader
-    // below could resolve and a block that fell through to it had no bounds at all.
-    if let Some(bounds) = block_bounds(resources, entity) {
-        return Some(bounds);
-    }
-
-    let mut server = resources.remove::<kooch_core::asset_loader::AssetServer>()?;
-    let handle = server.load_by_guid::<MeshletMesh>(mesh, resources).ok();
-    resources.insert(server);
-
-    let handle = handle?;
-    let assets = resources.get::<kooch_core::assets::Assets<MeshletMesh>>()?;
-    let aabb = assets.get(handle)?.aabb;
-    // Two `Aabb` types exist — `kooch_render`'s carries mesh bounds and
-    // `kooch_core`'s carries the tested slab intersection. Converting is
-    // cheaper than a third copy of the same six lines of ray maths.
+/// The box a bent mesh occupies in its own space.
+fn bent_bounds(resources: &Resources, entity: Entity) -> Option<Aabb> {
+    let bent = resources.get::<kooch_blockmesh::BentMeshes>()?;
+    let aabb = bent.get(entity)?.aabb;
     Some(Aabb::new(aabb.min, aabb.max))
+}
+
+/// The mesh's local-space bounds, from whichever of the three stores holds it.
+fn local_bounds(resources: &mut Resources, entity: Entity, mesh: Guid) -> Option<Aabb> {
+    Some(resolve_shape(resources, entity, mesh)?.aabb)
 }
 
 /// The world-space box `entity`'s visual mesh occupies.
@@ -324,6 +334,10 @@ pub(crate) fn surface_support(
             .iter()
             .map(|corner| corner.dot(local))
             .fold(f32::NEG_INFINITY, f32::max),
+        Triangles::Bent(entity) => {
+            let bent = resources.get::<kooch_blockmesh::BentMeshes>()?;
+            kooch_render::meshlet::support(bent.get(entity)?, local)?
+        }
         Triangles::Meshlet(handle) => {
             let assets = resources.get::<kooch_core::assets::Assets<MeshletMesh>>()?;
             kooch_render::meshlet::support(assets.get(handle)?, local)?

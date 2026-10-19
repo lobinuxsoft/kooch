@@ -7,7 +7,7 @@ mod asset;
 mod block;
 mod block_mesh;
 pub mod block_shape;
-mod collider;
+pub(crate) mod collider;
 mod deform;
 mod extrude;
 mod generate;
