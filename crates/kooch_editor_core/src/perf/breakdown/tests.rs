@@ -75,6 +75,7 @@ fn the_gather_sub_stages_are_a_split_of_gather_not_an_addition() {
         archetypes_ms: 0.3,
         types_ms: 0.2,
         assets_ms: 0.4,
+        reused: false,
     };
     assert!((gather.total_ms() - 5.0).abs() < 1e-4);
 

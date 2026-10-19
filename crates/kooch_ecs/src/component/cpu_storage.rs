@@ -10,6 +10,9 @@ use super::traits::{AnyStorage, Component};
 /// CPU-only component storage using a `HashMap<Entity, T>`.
 pub struct ComponentStorage<T: Component> {
     data: HashMap<Entity, T>,
+    /// Bumped by every write. Read by anything that caches a view of this component and has to
+    /// know whether the view is still true — the editor's per-frame world snapshot (#1561).
+    revision: u64,
 }
 
 impl<T: Component> ComponentStorage<T> {
@@ -17,16 +20,25 @@ impl<T: Component> ComponentStorage<T> {
     pub fn new() -> Self {
         Self {
             data: HashMap::new(),
+            revision: 0,
         }
+    }
+
+    /// How many times this storage has been written to.
+    #[inline]
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Inserts a component value for `entity`, returning the previous value.
     pub fn insert(&mut self, entity: Entity, value: T) -> Option<T> {
+        self.revision += 1;
         self.data.insert(entity, value)
     }
 
     /// Removes the component for `entity`, returning it if present.
     pub fn remove(&mut self, entity: Entity) -> Option<T> {
+        self.revision += 1;
         self.data.remove(&entity)
     }
 
@@ -37,6 +49,9 @@ impl<T: Component> ComponentStorage<T> {
 
     /// Returns a mutable reference to the component, if present.
     pub fn get_mut(&mut self, entity: Entity) -> Option<&mut T> {
+        // Handing out `&mut` counts as a write: whether the caller changes anything is not
+        // knowable here, and a missed bump is a panel that stops updating.
+        self.revision += 1;
         self.data.get_mut(&entity)
     }
 
@@ -64,6 +79,7 @@ impl<T: Component> ComponentStorage<T> {
 
     /// Iterates mutably over all `(entity, component)` pairs.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&Entity, &mut T)> {
+        self.revision += 1;
         self.data.iter_mut()
     }
 }

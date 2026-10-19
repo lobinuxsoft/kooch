@@ -27,6 +27,9 @@ pub struct GatherStages {
     /// The asset catalog for the Inspector's pickers, and the contents
     /// of whatever the Asset Browser has selected.
     pub assets_ms: f32,
+    /// Whether the entity/archetype/type lists were reused from the previous frame instead of
+    /// gathered again (#1561).
+    pub reused: bool,
 }
 
 impl GatherStages {

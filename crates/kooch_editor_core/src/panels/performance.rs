@@ -281,12 +281,22 @@ pub(crate) fn draw_performance_content(
                         let gather = render.gather;
                         metric_with_tooltip(
                             ui,
+                            "  · reused",
+                            match gather.reused {
+                                true => "yes",
+                                false => "no",
+                            },
+                            "Whether this frame reused the previous snapshot instead of walking \
+                         the world again. It is rebuilt when something spawns, is reparented, \
+                         renamed or reordered — not when a body moves (#1561).",
+                        );
+                        metric_with_tooltip(
+                            ui,
                             "  · entities",
                             &format!("{:.2} ms", gather.entities_ms),
                             "Every entity with its components and their reflected field \
-                         values. Grows with the world twice over — entities times \
-                         components — and is paid whether or not a panel is open to \
-                         read it.",
+                         values. On a reused frame this is only the selection being \
+                         re-read, which is what the Inspector needs live.",
                         );
                         metric_with_tooltip(
                             ui,

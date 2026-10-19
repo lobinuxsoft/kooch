@@ -612,6 +612,9 @@ pub(crate) fn gather_reflected_types(resources: &Resources) -> Vec<ReflectedType
     types
 }
 
+mod detail;
+pub(crate) use detail::refresh_detail;
+
 #[cfg(test)]
 mod tests;
 
