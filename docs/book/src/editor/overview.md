@@ -214,6 +214,13 @@ comes out turned, it is the **axis** that is wrong, not the curve.
 This bends the mesh *once*, while you author. A mesh that bends while the game runs is a shader,
 and a different feature.
 
+The bent mesh is **clickable and frameable** like any other: the click raycasts its real
+triangles, not a box, so picking one of two crossing pipes picks the one under the cursor.
+
+Give the entity a **Collider** and it collides too — the solver gets the bent triangles, so a
+character walks over a deformed bridge. The collider is not added for you: a vine that suddenly
+blocks the player is not something the engine should decide.
+
 ## Reshaping the curve itself
 
 A `Spline` in the Inspector carries a **Curve operations** section. Each one rewrites the whole
@@ -240,12 +247,32 @@ Two details worth knowing before you press a button:
   anywhere is a line; keeping it closed would join the two fresh ends back together, which is the
   part you just removed.
 
-The bent mesh is **clickable and frameable** like any other: the click raycasts its real
-triangles, not a box, so picking one of two crossing pipes picks the one under the cursor.
+### Curves from parameters
 
-Give the entity a **Collider** and it collides too — the solver gets the bent triangles, so a
-character walks over a deformed bridge. The collider is not added for you: a vine that suddenly
-blocks the player is not something the engine should decide.
+Under the same header, **Replace with** builds a curve instead of reshaping one: **Circle**,
+**Arc** and **Spiral**. Each is drawn on the XZ plane around the entity's origin — the transform
+is how you aim it, so there is no rotation field to keep in step with it.
+
+| Primitive | What you set |
+|---|---|
+| **Circle** | Radius. Comes out closed. |
+| **Arc** | Radius and the angle it sweeps, starting along +X. Comes out open. |
+| **Spiral** | Radius at the bottom and at the top, how far it climbs, and how many turns. Negative turns wind the other way. |
+
+Put a **Spline Sweep** with the *Steps* profile on a spiral and it is a spiral staircase, exact
+rather than dragged into shape by hand.
+
+**They are generated once, not live.** What you get is an ordinary knot list — nothing remembers it
+was a circle, so there are no parameters left to drift out of step with the knots you then drag.
+That is deliberate: a curve you cannot edit is a curve you will fight.
+
+**Segments is a trade, not a quality setting.** The knots are *Auto*, so the curve passes through a
+circle's points rather than being a true circle, and Catmull-Rom bulges a little outwards between
+them. Against a unit radius: 6 segments is off by 2.6 %, 8 by 0.85 %, the default 12 by 0.17 %, 24
+by 0.011 %. More segments is a rounder circle and a longer list to edit.
+
+These are enabled when the five operations above are not — a `Spline` with no knots yet is exactly
+when you reach for a circle. They **replace** whatever was there, and one Ctrl+Z is the way back.
 
 ### Where a block's geometry lives
 
