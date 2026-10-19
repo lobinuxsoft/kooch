@@ -7,7 +7,7 @@
 use kooch_ecs::component::ComponentId;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::{ReflectValue, list_from, list_value};
-use kooch_ecs::spline::{Knot, arc, make, ops};
+use kooch_ecs::spline::{self, Knot, arc, make, ops};
 
 use crate::actions::EditorAction;
 use crate::state::ComponentDisplayInfo;
@@ -23,8 +23,12 @@ struct Asked {
     to: f32,
     /// What the primitives below are built from (#1528).
     segments: usize,
+    /// How thick the curve is at a knot, for the shapes and for `Set radius` (#1542).
+    knot: f32,
     made: f32,
+    arc: f32,
     sweep: f32,
+    foot: f32,
     tip: f32,
     height: f32,
     turns: f32,
@@ -39,8 +43,11 @@ impl Default for Asked {
             from: 0.0,
             to: 0.0,
             segments: make::DEFAULT_SEGMENTS,
+            knot: spline::DEFAULT_RADIUS,
             made: 1.0,
+            arc: 1.0,
             sweep: 90.0,
+            foot: 1.0,
             tip: 1.0,
             height: 3.0,
             turns: 2.0,
@@ -109,9 +116,9 @@ pub(super) fn draw(
             let usable = points.len() >= 2;
             ui.label(format!("{length:.2} m along {} knots", points.len()));
 
-            ui.horizontal(|ui| {
+            boxed(ui, |ui| {
                 ui.label("knots");
-                ui.add(egui::DragValue::new(&mut asked.count).range(2..=512));
+                ui.add(crate::numeric::drag(&mut asked.count).range(2..=512));
                 if ui
                     .add_enabled(usable, egui::Button::new("Resample"))
                     .on_hover_text(
@@ -125,9 +132,9 @@ pub(super) fn draw(
                 }
             });
 
-            ui.horizontal(|ui| {
+            boxed(ui, |ui| {
                 ui.label("cuts");
-                ui.add(egui::DragValue::new(&mut asked.cuts).range(1..=16));
+                ui.add(crate::numeric::drag(&mut asked.cuts).range(1..=16));
                 if ui
                     .add_enabled(usable, egui::Button::new("Subdivide"))
                     .on_hover_text(
@@ -141,10 +148,10 @@ pub(super) fn draw(
                 }
             });
 
-            ui.horizontal(|ui| {
-                ui.label("radius");
+            boxed(ui, |ui| {
+                ui.label("corner");
                 ui.add(
-                    egui::DragValue::new(&mut asked.radius)
+                    crate::numeric::drag(&mut asked.radius)
                         .speed(0.05)
                         .range(0.0..=100.0)
                         .suffix(" m"),
@@ -162,17 +169,17 @@ pub(super) fn draw(
                 }
             });
 
-            ui.horizontal(|ui| {
+            boxed(ui, |ui| {
                 ui.label("from");
                 ui.add(
-                    egui::DragValue::new(&mut asked.from)
+                    crate::numeric::drag(&mut asked.from)
                         .speed(0.1)
                         .range(0.0..=length)
                         .suffix(" m"),
                 );
                 ui.label("to");
                 ui.add(
-                    egui::DragValue::new(&mut asked.to)
+                    crate::numeric::drag(&mut asked.to)
                         .speed(0.1)
                         .range(0.0..=length)
                         .suffix(" m"),
@@ -201,14 +208,39 @@ pub(super) fn draw(
                 }
             });
 
-            if ui
-                .add_enabled(usable, egui::Button::new("Reverse"))
-                .on_hover_text("Walk the curve the other way. The roll flips with it.")
-                .on_disabled_hover_text(NEEDS_TWO)
-                .clicked()
-            {
-                edited(ops::reverse(&points), actions);
-            }
+            // The one knot field the Inspector cannot reach in bulk: the list edits it one knot at
+            // a time, and a swept profile wants the same width along the whole curve.
+            let any = !points.is_empty();
+            boxed(ui, |ui| {
+                ui.label("knot radius");
+                ui.add(knot_radius(&mut asked.knot));
+                if ui
+                    .add_enabled(any, egui::Button::new("Set radius"))
+                    .on_hover_text(
+                        "Give every knot this radius. It is what a Spline Sweep is thick, and \
+                         what the viewport grips scale.",
+                    )
+                    .on_disabled_hover_text("This curve has no knots yet.")
+                    .clicked()
+                {
+                    let mut knots = points.clone();
+                    for knot in &mut knots {
+                        knot.radius = asked.knot;
+                    }
+                    edited(knots, actions);
+                }
+            });
+
+            boxed(ui, |ui| {
+                if ui
+                    .add_enabled(usable, egui::Button::new("Reverse"))
+                    .on_hover_text("Walk the curve the other way. The roll flips with it.")
+                    .on_disabled_hover_text(NEEDS_TWO)
+                    .clicked()
+                {
+                    edited(ops::reverse(&points), actions);
+                }
+            });
 
             // 🔴 These REPLACE the curve rather than operating on it: one press throws away
             // whatever was there, and one Ctrl+Z is the only way back. Kept behind a named
@@ -216,38 +248,43 @@ pub(super) fn draw(
             egui::CollapsingHeader::new("Replace with a shape")
                 .id_salt(("curve_make", entity))
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("segments");
-                        ui.add(egui::DragValue::new(&mut asked.segments).range(3..=256))
-                            .on_hover_text("How many knots each shape below is built from.");
+                    ui.group(|ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.label("Shared by the three");
+                        ui.horizontal(|ui| {
+                            ui.label("segments");
+                            ui.add(crate::numeric::drag(&mut asked.segments).range(3..=256))
+                                .on_hover_text("How many knots each shape is built from.");
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("knot radius");
+                            ui.add(knot_radius(&mut asked.knot))
+                                .on_hover_text("Every knot the shape comes out with.");
+                        });
                     });
 
-                    ui.horizontal(|ui| {
+                    boxed(ui, |ui| {
                         ui.label("radius");
-                        ui.add(
-                            egui::DragValue::new(&mut asked.made)
-                                .speed(0.1)
-                                .range(0.0..=1000.0)
-                                .suffix(" m"),
-                        )
-                        .on_hover_text("Shared by the three shapes. A spiral starts here.");
+                        ui.add(shape_radius(&mut asked.made));
+                        if ui
+                            .button("Circle")
+                            .on_hover_text(
+                                "A closed ring of that radius on the XZ plane, around the \
+                                 entity's origin. Aim it with the transform.",
+                            )
+                            .clicked()
+                        {
+                            let knots = make::circle(asked.made, asked.segments);
+                            made(sized(knots, asked.knot), true, actions);
+                        }
                     });
 
-                    if ui
-                        .button("Circle")
-                        .on_hover_text(
-                            "A closed ring of that radius on the XZ plane, around the entity's \
-                             origin. Aim it with the transform.",
-                        )
-                        .clicked()
-                    {
-                        made(make::circle(asked.made, asked.segments), true, actions);
-                    }
-
-                    ui.horizontal(|ui| {
+                    boxed(ui, |ui| {
+                        ui.label("radius");
+                        ui.add(shape_radius(&mut asked.arc));
                         ui.label("angle");
                         ui.add(
-                            egui::DragValue::new(&mut asked.sweep)
+                            crate::numeric::drag(&mut asked.sweep)
                                 .speed(1.0)
                                 .range(-720.0..=720.0)
                                 .suffix("°"),
@@ -261,64 +298,93 @@ pub(super) fn draw(
                             .clicked()
                         {
                             let sweep = asked.sweep.to_radians();
-                            made(make::arc(asked.made, sweep, asked.segments), false, actions);
+                            let knots = make::arc(asked.arc, sweep, asked.segments);
+                            made(sized(knots, asked.knot), false, actions);
                         }
                     });
 
-                    ui.horizontal(|ui| {
-                        ui.label("top");
-                        ui.add(
-                            egui::DragValue::new(&mut asked.tip)
-                                .speed(0.1)
-                                .range(0.0..=1000.0)
-                                .suffix(" m"),
-                        )
-                        .on_hover_text(
-                            "Radius at the top. Below the radius above it winds inwards.",
-                        );
-                        ui.label("height");
-                        ui.add(
-                            egui::DragValue::new(&mut asked.height)
-                                .speed(0.1)
-                                .range(-1000.0..=1000.0)
-                                .suffix(" m"),
-                        )
-                        .on_hover_text("How far it climbs.");
-                    });
-
-                    ui.horizontal(|ui| {
-                        ui.label("turns");
-                        ui.add(
-                            egui::DragValue::new(&mut asked.turns)
-                                .speed(0.1)
-                                .range(-64.0..=64.0),
-                        )
-                        .on_hover_text("Negative winds the other way.");
-                        if ui
-                            .button("Spiral")
-                            .on_hover_text(
-                                "A helix from the radius above to the top one. Put a Spline \
-                                 Sweep with the Steps profile on it and it is a spiral staircase.",
+                    ui.group(|ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.label("foot");
+                            ui.add(shape_radius(&mut asked.foot))
+                                .on_hover_text("Radius at the bottom, where it starts.");
+                            ui.label("top");
+                            ui.add(shape_radius(&mut asked.tip))
+                                .on_hover_text("Radius at the top. Below the foot it winds in.");
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("height");
+                            ui.add(
+                                crate::numeric::drag(&mut asked.height)
+                                    .speed(0.1)
+                                    .range(-1000.0..=1000.0)
+                                    .suffix(" m"),
                             )
-                            .clicked()
-                        {
-                            made(
-                                make::spiral(
-                                    asked.made,
+                            .on_hover_text("How far it climbs.");
+                            ui.label("turns");
+                            ui.add(
+                                crate::numeric::drag(&mut asked.turns)
+                                    .speed(0.1)
+                                    .range(-64.0..=64.0),
+                            )
+                            .on_hover_text("Negative winds the other way.");
+                            if ui
+                                .button("Spiral")
+                                .on_hover_text(
+                                    "A helix from the foot radius to the top one. Put a Spline \
+                                     Sweep with the Steps profile on it and it is a spiral \
+                                     staircase.",
+                                )
+                                .clicked()
+                            {
+                                let knots = make::spiral(
+                                    asked.foot,
                                     asked.tip,
                                     asked.height,
                                     asked.turns,
                                     asked.segments,
-                                ),
-                                false,
-                                actions,
-                            );
-                        }
+                                );
+                                made(sized(knots, asked.knot), false, actions);
+                            }
+                        });
                     });
                 });
         });
 
     ui.ctx().data_mut(|data| data.insert_temp(id, asked));
+}
+
+/// One operation per box: its own inputs, its own button, nothing shared with the box below.
+fn boxed(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    ui.group(|ui| {
+        ui.set_min_width(ui.available_width());
+        ui.horizontal(add);
+    });
+}
+
+/// How wide the shape comes out, in metres.
+fn shape_radius(value: &mut f32) -> egui::DragValue<'_> {
+    crate::numeric::drag(value)
+        .speed(0.1)
+        .range(0.0..=1000.0)
+        .suffix(" m")
+}
+
+/// How thick the curve is at a knot — what a sweep is built around.
+fn knot_radius(value: &mut f32) -> egui::DragValue<'_> {
+    crate::numeric::drag(value)
+        .speed(0.05)
+        .range(spline::RADIUS_MIN as f64..=spline::RADIUS_MAX as f64)
+        .suffix(" m")
+}
+
+/// The same radius on every knot a generator just made.
+fn sized(mut knots: Vec<Knot>, radius: f32) -> Vec<Knot> {
+    for knot in &mut knots {
+        knot.radius = radius;
+    }
+    knots
 }
 
 /// The knots and the closed flag this component is showing.
