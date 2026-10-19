@@ -48,6 +48,10 @@ pub(super) fn apply_viewport_edits(
         // Beside it and gated the same way: during Play the project's own world is the truth, and
         // an editor rebuilding geometry over it would be showing its own answer (#1482).
         crate::block_edit::sweep_sync::sync_sweeps(resources, actions);
+        // After it: a sweep asks for its block components here, and the renderer they create has
+        // no material until something gives it one (#1534). The entity it just asked for does not
+        // exist yet, so this picks it up on the frame it lands.
+        crate::block_edit::dress::dress_blocks(resources, actions);
     }
     let Some(delta) = input else {
         return;
