@@ -211,6 +211,15 @@ fn every_unclassified_world_edit_is_routed() {
                 after: Box::default(),
             },
         ),
+        (
+            "ExtrudeAlong",
+            EditorAction::ExtrudeAlong {
+                entity: kooch_ecs::Entity::new(0, 0),
+                spline: kooch_ecs::Entity::new(1, 0),
+                samples: 8,
+                taper: false,
+            },
+        ),
     ]
     .into_iter()
     .filter(|(_, action)| {
@@ -225,8 +234,8 @@ fn every_unclassified_world_edit_is_routed() {
 
     assert_eq!(
         unroutable,
-        ["SpawnMesh", "SpawnBlock", "BlockEdit"],
-        "these two are refused by `classify` and must therefore be \
+        ["SpawnMesh", "SpawnBlock", "BlockEdit", "ExtrudeAlong"],
+        "these are refused by `classify` and must therefore be \
          handled in `dispatch` before it — check that they still are",
     );
 }
