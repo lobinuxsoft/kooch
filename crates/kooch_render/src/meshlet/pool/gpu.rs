@@ -1,80 +1,152 @@
-//! GPU-side mirror of [`super::GlobalMeshPool`] — five storage buffers
-//! the cull / vbuf / deferred shaders read through one bind group.
+//! GPU-side mirror of [`super::GlobalMeshPool`] — six storage buffers the cull / vbuf / deferred
+//! shaders read through one bind group, kept across frames and written in place.
 
 use bytemuck::Pod;
-use wgpu::util::DeviceExt;
 
 use super::GlobalMeshPool;
 
+/// How much slack a reallocation takes, so a pool that keeps growing stops reallocating.
+const GROWTH: u64 = 2;
+
 impl GlobalMeshPool {
-    /// Uploads the current CPU state to GPU buffers. Call after a
-    /// batch of [`Self::register`] invocations and before the next
-    /// frame's scene cull.
-    pub fn upload(&self, device: &wgpu::Device) -> GpuGlobalMeshPool {
-        let mesh_descriptors = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("global_pool_mesh_descriptors"),
-            contents: &pad_bytes(&self.mesh_descriptors),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
-        let meshlets = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("global_pool_meshlets"),
-            contents: &pad_bytes(&self.meshlets),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
-        let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("global_pool_vertices"),
-            contents: &pad_bytes(&self.vertices),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
-        let meshlet_vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("global_pool_meshlet_vertices"),
-            contents: &pad_bytes(&self.meshlet_vertices),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let triangle_bytes = if self.meshlet_triangles.is_empty() {
-            vec![0u8; 4]
-        } else {
-            let mut tris = self.meshlet_triangles.clone();
-            while tris.len() % 4 != 0 {
-                tris.push(0);
-            }
-            tris
+    /// Allocates the GPU mirror and copies the whole pool into it. Keep the result alive across
+    /// frames and call [`GpuGlobalMeshPool::sync`] after that.
+    pub fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> GpuGlobalMeshPool {
+        let mut gpu = GpuGlobalMeshPool {
+            mesh_descriptors: empty(device, "global_pool_mesh_descriptors"),
+            meshlets: empty(device, "global_pool_meshlets"),
+            vertices: empty(device, "global_pool_vertices"),
+            meshlet_vertices: empty(device, "global_pool_meshlet_vertices"),
+            meshlet_triangles: empty(device, "global_pool_meshlet_triangles"),
+            mesh_bounds: empty(device, "global_pool_mesh_bounds"),
+            mesh_count: 0,
+            max_meshlets_per_mesh: 0,
         };
-        let meshlet_triangles = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("global_pool_meshlet_triangles"),
-            contents: &triangle_bytes,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
+        self.mark_all();
+        gpu.sync(device, queue, self);
+        gpu
+    }
+}
 
-        // One vec4 per mesh: bounds sphere as (center, radius). Uploaded
-        // for the lamp cull's light/instance pre-pass (#939); parallel
-        // to `mesh_descriptors` the way the CPU vec is (#847).
-        let bounds: Vec<[f32; 4]> = self
+impl GpuGlobalMeshPool {
+    /// Copies into the buffers only what the pool has written since the last call.
+    ///
+    /// 🔴 This is the whole point of #1558: an edited block used to throw all six buffers away and
+    /// re-upload every mesh in the scene, every frame of a drag. A buffer is only reallocated when
+    /// the pool outgrows it, and nothing caches a bind group across frames, so a new buffer
+    /// invalidates nothing.
+    pub fn sync(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, pool: &mut GlobalMeshPool) {
+        self.mesh_count = pool.mesh_count();
+        self.max_meshlets_per_mesh = pool.max_meshlets_per_mesh();
+        let mut dirty = pool.take_dirty();
+
+        write(
+            device,
+            queue,
+            &mut self.vertices,
+            &pool.vertices,
+            dirty.vertices.take(),
+            "global_pool_vertices",
+        );
+        write(
+            device,
+            queue,
+            &mut self.meshlet_vertices,
+            &pool.meshlet_vertices,
+            dirty.meshlet_vertices.take(),
+            "global_pool_meshlet_vertices",
+        );
+        write(
+            device,
+            queue,
+            &mut self.meshlet_triangles,
+            &pool.meshlet_triangles,
+            dirty.triangles.take(),
+            "global_pool_meshlet_triangles",
+        );
+        write(
+            device,
+            queue,
+            &mut self.meshlets,
+            &pool.meshlets,
+            dirty.meshlets.take(),
+            "global_pool_meshlets",
+        );
+        let descriptors = dirty.descriptors.take();
+        write(
+            device,
+            queue,
+            &mut self.mesh_descriptors,
+            &pool.mesh_descriptors,
+            descriptors.clone(),
+            "global_pool_mesh_descriptors",
+        );
+        // One vec4 per mesh, parallel to the descriptors, for the lamp cull's light/instance
+        // pre-pass (#939) — so it is dirty exactly when they are.
+        let bounds: Vec<[f32; 4]> = pool
             .mesh_bounds
             .iter()
             .map(|b| [b.center.x, b.center.y, b.center.z, b.radius])
             .collect();
-        let mesh_bounds = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("global_pool_mesh_bounds"),
-            contents: &pad_bytes(&bounds),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
-
-        GpuGlobalMeshPool {
-            mesh_descriptors,
-            meshlets,
-            vertices,
-            meshlet_vertices,
-            meshlet_triangles,
-            mesh_bounds,
-            mesh_count: self.mesh_count(),
-            max_meshlets_per_mesh: self.max_meshlets_per_mesh(),
-        }
+        write(
+            device,
+            queue,
+            &mut self.mesh_bounds,
+            &bounds,
+            descriptors,
+            "global_pool_mesh_bounds",
+        );
     }
 }
 
-/// GPU-resident pool. Bound by the cull shader (mesh-descriptor lookups
+/// Writes `range` of `data` into `buffer`, or reallocates and writes all of it when `data` has
+/// outgrown what is there.
+fn write<T: Pod>(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    buffer: &mut wgpu::Buffer,
+    data: &[T],
+    range: Option<std::ops::Range<usize>>,
+    label: &str,
+) {
+    let stride = std::mem::size_of::<T>() as u64;
+    let needed = (data.len() as u64 * stride).max(4).next_multiple_of(4);
+    if buffer.size() < needed {
+        *buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: needed * GROWTH,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(buffer, 0, &padded(data));
+        return;
+    }
+    let Some(range) = range.filter(|range| range.end <= data.len()) else {
+        return;
+    };
+    // `write_buffer` wants both offset and length on a 4-byte boundary. Every array but the
+    // triangle bytes has a stride of at least 4, and the triangle spans are reserved in whole
+    // words for the same reason the shader needs them to be.
+    let offset = range.start as u64 * stride;
+    let bytes = bytemuck::cast_slice(&data[range]);
+    if offset % 4 == 0 && bytes.len() % 4 == 0 {
+        queue.write_buffer(buffer, offset, bytes);
+    } else {
+        queue.write_buffer(buffer, 0, &padded(data));
+    }
+}
+
+/// A one-record buffer: a storage binding cannot be empty, and the pool starts out so.
+fn empty(device: &wgpu::Device, label: &str) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: 4,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+/// GPU-resident pool, kept across frames. Bound by the cull shader (mesh-descriptor lookups
 /// to redirect per-meshlet reads) and the vbuf rasterizer (vertex pull
 /// through the same arrays).
 pub struct GpuGlobalMeshPool {
@@ -156,10 +228,8 @@ fn entry(binding: u32, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
-/// Pads an empty slice to a single zero record so wgpu storage
-/// bindings stay non-empty. Helper kept here because it's only used
-/// by the GPU upload path.
-fn pad_bytes<T: Pod>(slice: &[T]) -> Vec<u8> {
+/// Pads an empty slice to a single zero record so wgpu storage bindings stay non-empty.
+fn padded<T: Pod>(slice: &[T]) -> Vec<u8> {
     if slice.is_empty() {
         vec![0u8; std::mem::size_of::<T>().max(4)]
     } else {

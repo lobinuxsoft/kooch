@@ -103,3 +103,51 @@ impl Holes {
         self.free.iter().map(|hole| hole.len as u64).sum()
     }
 }
+
+/// The slots of one array written since the last GPU sync, as a single range.
+///
+/// One range and not a list: an edit touches one mesh's ranges, and spanning the gap between two
+/// distant edits still writes far less than re-uploading the array.
+#[derive(Copy, Clone, Debug, Default)]
+pub(super) struct Touched(Option<(u32, u32)>);
+
+impl Touched {
+    pub fn mark(&mut self, span: Span) {
+        if span.len == 0 {
+            return;
+        }
+        self.0 = Some(match self.0 {
+            Some((start, end)) => (start.min(span.start), end.max(span.end())),
+            None => (span.start, span.end()),
+        });
+    }
+
+    /// Everything, for when the array was rebuilt rather than edited.
+    pub fn all(len: usize) -> Self {
+        Self::default().marked(Span {
+            start: 0,
+            len: len as u32,
+        })
+    }
+
+    fn marked(mut self, span: Span) -> Self {
+        self.mark(span);
+        self
+    }
+
+    pub fn take(&mut self) -> Option<std::ops::Range<usize>> {
+        self.0
+            .take()
+            .map(|(start, end)| start as usize..end as usize)
+    }
+}
+
+/// What each of the pool's arrays owes the GPU.
+#[derive(Copy, Clone, Debug, Default)]
+pub(super) struct Dirty {
+    pub vertices: Touched,
+    pub meshlet_vertices: Touched,
+    pub triangles: Touched,
+    pub meshlets: Touched,
+    pub descriptors: Touched,
+}

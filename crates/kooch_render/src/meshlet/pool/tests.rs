@@ -163,3 +163,28 @@ fn meshlet_vertices_values_are_rebased_into_pool_vertex_space() {
         );
     }
 }
+
+/// What the mirror copies after an edit is that mesh's own ranges, not the pool's (#1558).
+#[test]
+fn an_edit_dirties_only_its_ranges() {
+    let mesh = build_default_meshlets(&cube_mesh()).expect("build");
+    let mut pool = GlobalMeshPool::new();
+    for _ in 0..4 {
+        pool.register(&mesh);
+    }
+    let _ = pool.take_dirty();
+
+    let edited = 1;
+    pool.release(edited);
+    pool.register(&mesh);
+    let mut dirty = pool.take_dirty();
+
+    let descriptor = pool.mesh_descriptors[edited as usize];
+    let vertices = dirty.vertices.take().expect("its vertices were written");
+    assert_eq!(vertices.start, descriptor.vertex_offset as usize);
+    assert_eq!(vertices.len(), mesh.vertices.len(), "one mesh, not four");
+    assert_eq!(
+        dirty.descriptors.take(),
+        Some(edited as usize..edited as usize + 1),
+    );
+}
