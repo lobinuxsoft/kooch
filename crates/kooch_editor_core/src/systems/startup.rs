@@ -123,6 +123,7 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         selected_entities: Vec::new(),
         pinned_gizmos: std::collections::HashSet::new(),
         last_clicked_index: None,
+        click_cycle: None,
         rotation_euler_cache: std::collections::HashMap::new(),
         rotation_display_mode: crate::state::RotationDisplayMode::default(),
         snap_settings: kooch_gizmos_handles::SnapSettings::default(),
