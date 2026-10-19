@@ -186,6 +186,18 @@ pub(crate) type EulerCacheKey = (
     RotationDisplayMode,
 );
 
+/// Where the last viewport click landed and what it picked.
+///
+/// 🔴 The **entity**, not an index into the hit list. The list is rebuilt per click and the camera
+/// may have moved between two of them; an index would then point at something else and the cycle
+/// would jump. Finding the remembered entity in the fresh list and taking the next one survives a
+/// list that changed under it.
+#[derive(Clone, Copy)]
+pub(crate) struct ClickCycle {
+    pub(crate) at: glam::Vec2,
+    pub(crate) picked: Entity,
+}
+
 /// Editor overlay state, stored as a resource.
 pub struct EditorOverlay {
     pub(crate) ctx: egui::Context,
@@ -217,6 +229,9 @@ pub struct EditorOverlay {
     pub(crate) pinned_gizmos: std::collections::HashSet<Entity>,
     /// Anchor index for Shift+Click range selection in the World panel.
     pub(crate) last_clicked_index: Option<usize>,
+    /// What the last viewport click picked, so clicking the same spot again reaches what is
+    /// behind it (#1539).
+    pub(crate) click_cycle: Option<ClickCycle>,
     /// Per-field Euler angle cache (radians, XYZ convention) for Quat rotation fields. Kept to
     /// avoid a `Quat → Euler → Quat` round-trip every frame, which introduces gimbal lock when
     /// crossing ±90° on any axis. See issue #202.

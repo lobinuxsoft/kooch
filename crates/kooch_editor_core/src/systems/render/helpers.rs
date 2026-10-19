@@ -86,7 +86,8 @@ pub(super) fn apply_viewport_click(
         return;
     }
 
-    let hit = crate::picking::entity_at(resources, cursor, delta.viewport_size);
+    let under = crate::picking::entities_at(resources, cursor, delta.viewport_size);
+    let hit = pick_in_turn(overlay, cursor, &under, delta.ctrl_held);
     match (hit, delta.ctrl_held) {
         // Ctrl adds and removes, the same chord the World panel uses, so
         // building a multi-selection does not depend on which panel it was
@@ -105,6 +106,49 @@ pub(super) fn apply_viewport_click(
         // Ctrl+click on nothing is a miss, not "deselect everything".
         (None, true) => {}
     }
+}
+
+/// How far the cursor may drift and still count as the same spot, in viewport pixels.
+///
+/// A click is not a pixel: a hand holding a mouse still moves a little between two of them, and a
+/// cycle that resets on one pixel never reaches the second entity.
+const SAME_SPOT: f32 = 4.0;
+
+/// The entity this click selects: the front one, or the next one behind it when the same spot is
+/// clicked again (#1539).
+///
+/// 🔴 Ctrl does **not** cycle. It builds a multi-selection, and a second Ctrl+click in one place
+/// is how an entity is removed from it again — making that reach deeper would take away the only
+/// way to undo the click before it.
+fn pick_in_turn(
+    overlay: &mut EditorOverlay,
+    cursor: glam::Vec2,
+    under: &[kooch_ecs::entity::Entity],
+    ctrl_held: bool,
+) -> Option<kooch_ecs::entity::Entity> {
+    if ctrl_held {
+        overlay.click_cycle = None;
+        return under.first().copied();
+    }
+    let picked = in_turn(overlay.click_cycle, cursor, under);
+    overlay.click_cycle = picked.map(|picked| crate::state::ClickCycle { at: cursor, picked });
+    picked
+}
+
+/// The one after what the last click picked, or the front one.
+fn in_turn(
+    cycle: Option<crate::state::ClickCycle>,
+    cursor: glam::Vec2,
+    under: &[kooch_ecs::entity::Entity],
+) -> Option<kooch_ecs::entity::Entity> {
+    cycle
+        .filter(|cycle| cycle.at.distance(cursor) <= SAME_SPOT)
+        // 🔴 Not found means the list changed under the cycle — the camera moved, something was
+        // deleted. Starting over at the front is the honest answer; carrying an index would pick
+        // whatever happens to sit at that position now.
+        .and_then(|cycle| under.iter().position(|entity| *entity == cycle.picked))
+        .map(|index| under[(index + 1) % under.len()])
+        .or_else(|| under.first().copied())
 }
 
 /// What the scene's history can offer, from whichever one is driving it.
@@ -249,3 +293,6 @@ pub(super) fn loaded_image(
         .get(handle?)
         .cloned()
 }
+
+#[cfg(test)]
+mod tests;

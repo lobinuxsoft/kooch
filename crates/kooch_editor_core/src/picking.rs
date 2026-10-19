@@ -12,15 +12,6 @@ use kooch_ecs::mesh_renderer::MeshRenderer;
 use kooch_ecs::query::Query;
 use kooch_render::meshlet::MeshletMesh;
 
-/// The entity under `cursor`, or `None` if the click hit nothing.
-pub(crate) fn entity_at(
-    resources: &mut Resources,
-    cursor: Vec2,
-    viewport_size: Vec2,
-) -> Option<Entity> {
-    entity_hit_at(resources, cursor, viewport_size).map(|(entity, _)| entity)
-}
-
 /// The entity under `cursor` and how far along the cursor ray it was struck, in world units.
 pub(crate) fn entity_hit_at(
     resources: &mut Resources,
@@ -42,6 +33,30 @@ pub(crate) struct SurfaceHit {
     pub(crate) normal: Vec3,
 }
 
+/// Every rendered surface under `cursor`, nearest first, skipping `exclude`.
+///
+/// 🔴 For **selection**, where a mesh inside another has to be reachable (#1539). Everything else
+/// wants [`surface_at`]: it prunes a candidate whose box is already further than the best hit so
+/// far, and that prune is what keeps a drag cheap. A list cannot prune — the far hits are the
+/// answer.
+pub(crate) fn entities_at(
+    resources: &mut Resources,
+    cursor: Vec2,
+    viewport_size: Vec2,
+) -> Vec<Entity> {
+    cast(resources, cursor, viewport_size, &[], Keep::All)
+        .into_iter()
+        .map(|hit| hit.entity)
+        .collect()
+}
+
+/// Whether a cast may stop testing what the nearest hit already beats.
+#[derive(Clone, Copy, PartialEq)]
+enum Keep {
+    Nearest,
+    All,
+}
+
 /// The nearest rendered surface under `cursor`, skipping `exclude`.
 ///
 /// 🔴 **Rendered meshes, not colliders.** A blockout entity need not have a collider yet, and a
@@ -59,20 +74,37 @@ pub(crate) fn surface_at(
     viewport_size: Vec2,
     exclude: &[Entity],
 ) -> Option<SurfaceHit> {
-    let (camera, transform) = crate::gizmos::active_camera(resources)?;
-    let ray = kooch_render::projection::viewport_cursor_to_ray(
+    cast(resources, cursor, viewport_size, exclude, Keep::Nearest)
+        .into_iter()
+        .next()
+}
+
+/// Every surface the cursor ray meets, nearest first.
+fn cast(
+    resources: &mut Resources,
+    cursor: Vec2,
+    viewport_size: Vec2,
+    exclude: &[Entity],
+    keep: Keep,
+) -> Vec<SurfaceHit> {
+    let Some((camera, transform)) = crate::gizmos::active_camera(resources) else {
+        return Vec::new();
+    };
+    let Some(ray) = kooch_render::projection::viewport_cursor_to_ray(
         cursor,
         viewport_size,
         transform.matrix,
         camera.fov.to_radians(),
         camera.near,
-    )?;
+    ) else {
+        return Vec::new();
+    };
 
     // Collected before resolving any asset: loading a mesh takes
     // `&mut Resources` and the query holds a borrow of it.
     let candidates = visible_meshes(resources);
     if candidates.is_empty() {
-        return None;
+        return Vec::new();
     }
 
     // 🔴 Two passes, because resolving a mesh needs `&mut Resources` and reading its triangles
@@ -89,7 +121,8 @@ pub(crate) fn surface_at(
         }
     }
 
-    let mut nearest: Option<SurfaceHit> = None;
+    let mut hits: Vec<SurfaceHit> = Vec::new();
+    let mut best = f32::INFINITY;
     for (entity, mesh, to_world) in candidates {
         if exclude.contains(&entity) {
             continue;
@@ -102,7 +135,9 @@ pub(crate) fn surface_at(
         let Some(entry) = hit_distance(shape.aabb, to_world, ray.origin, ray.direction) else {
             continue;
         };
-        if nearest.is_some_and(|best| best.distance < entry) {
+        // Only when one answer is wanted. Keeping the list, the candidates this would skip are
+        // precisely the ones behind the front mesh — the point of asking.
+        if keep == Keep::Nearest && best < entry {
             continue;
         }
         let Some((distance, local_normal)) =
@@ -110,10 +145,8 @@ pub(crate) fn surface_at(
         else {
             continue;
         };
-        if nearest.is_some_and(|best| best.distance <= distance) {
-            continue;
-        }
-        nearest = Some(SurfaceHit {
+        best = best.min(distance);
+        hits.push(SurfaceHit {
             entity,
             distance,
             point: ray.origin + ray.direction * distance,
@@ -122,7 +155,8 @@ pub(crate) fn surface_at(
             normal: (normal_matrix(to_world) * local_normal).normalize_or(Vec3::Y),
         });
     }
-    nearest
+    hits.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+    hits
 }
 
 /// A mesh resolved to something a ray can be tested against: its box, and where its triangles are.
