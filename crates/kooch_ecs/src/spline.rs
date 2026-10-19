@@ -14,6 +14,7 @@ use crate::Reflect;
 
 pub mod arc;
 pub mod eval;
+pub mod make;
 pub mod nearest;
 pub mod ops;
 pub mod placement;

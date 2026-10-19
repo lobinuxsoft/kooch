@@ -7,7 +7,7 @@
 use kooch_ecs::component::ComponentId;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::{ReflectValue, list_from, list_value};
-use kooch_ecs::spline::{Knot, arc, ops};
+use kooch_ecs::spline::{Knot, arc, make, ops};
 
 use crate::actions::EditorAction;
 use crate::state::ComponentDisplayInfo;
@@ -21,6 +21,13 @@ struct Asked {
     radius: f32,
     from: f32,
     to: f32,
+    /// What the primitives below are built from (#1528).
+    segments: usize,
+    made: f32,
+    sweep: f32,
+    tip: f32,
+    height: f32,
+    turns: f32,
 }
 
 impl Default for Asked {
@@ -31,6 +38,12 @@ impl Default for Asked {
             radius: 0.5,
             from: 0.0,
             to: 0.0,
+            segments: make::DEFAULT_SEGMENTS,
+            made: 1.0,
+            sweep: 90.0,
+            tip: 1.0,
+            height: 3.0,
+            turns: 2.0,
         }
     }
 }
@@ -59,6 +72,26 @@ pub(super) fn draw(
     }
 
     let edited = |knots: Vec<Knot>, actions: &mut Vec<EditorAction>| {
+        actions.push(EditorAction::SetField {
+            entity,
+            component,
+            field: "points".to_owned(),
+            value: list_value(&knots),
+        });
+    };
+
+    // 🔴 `closed` travels with the knots, not after them. A ring written onto an open curve draws
+    // with a gap and a line written onto a closed one joins its two ends — and the author would be
+    // looking at a shape nobody asked for with nothing to say why.
+    let made = |knots: Vec<Knot>, ring: bool, actions: &mut Vec<EditorAction>| {
+        if ring != closed {
+            actions.push(EditorAction::SetField {
+                entity,
+                component,
+                field: "closed".to_owned(),
+                value: ReflectValue::Bool(ring),
+            });
+        }
         actions.push(EditorAction::SetField {
             entity,
             component,
@@ -161,6 +194,93 @@ pub(super) fn draw(
             {
                 edited(ops::reverse(&points), actions);
             }
+
+            ui.separator();
+            // 🔴 These REPLACE the curve rather than operating on it, so they are enabled when the
+            // five above are not: a `Spline` with no knots yet is exactly when an author reaches
+            // for a circle. They are kept apart by a separator for the same reason — pressing one
+            // by mistake throws away whatever was there, and one Ctrl+Z is the way back.
+            ui.label("Replace with");
+            ui.horizontal(|ui| {
+                ui.add(egui::DragValue::new(&mut asked.segments).range(3..=256));
+                ui.label("segments");
+            });
+
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::DragValue::new(&mut asked.made)
+                        .speed(0.1)
+                        .range(0.0..=1000.0),
+                );
+                if ui
+                    .button("Circle")
+                    .on_hover_text(
+                        "A closed ring of this radius on the XZ plane, around the entity's \
+                         origin. Aim it with the transform.",
+                    )
+                    .clicked()
+                {
+                    made(make::circle(asked.made, asked.segments), true, actions);
+                }
+                if ui
+                    .button("Arc")
+                    .on_hover_text(
+                        "An open arc of this radius, turning by the angle beside it and \
+                         starting along +X.",
+                    )
+                    .clicked()
+                {
+                    let sweep = asked.sweep.to_radians();
+                    made(make::arc(asked.made, sweep, asked.segments), false, actions);
+                }
+                ui.add(
+                    egui::DragValue::new(&mut asked.sweep)
+                        .speed(1.0)
+                        .range(-720.0..=720.0)
+                        .suffix("°"),
+                );
+            });
+
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::DragValue::new(&mut asked.tip)
+                        .speed(0.1)
+                        .range(0.0..=1000.0),
+                )
+                .on_hover_text("Radius at the top. Below the first one it winds inwards.");
+                ui.add(
+                    egui::DragValue::new(&mut asked.height)
+                        .speed(0.1)
+                        .range(-1000.0..=1000.0),
+                )
+                .on_hover_text("How far it climbs.");
+                ui.add(
+                    egui::DragValue::new(&mut asked.turns)
+                        .speed(0.1)
+                        .range(-64.0..=64.0),
+                )
+                .on_hover_text("Turns. Negative winds the other way.");
+                if ui
+                    .button("Spiral")
+                    .on_hover_text(
+                        "A helix from the first radius to the one beside it. Put a Spline \
+                         Sweep with the Steps profile on it and it is a spiral staircase.",
+                    )
+                    .clicked()
+                {
+                    made(
+                        make::spiral(
+                            asked.made,
+                            asked.tip,
+                            asked.height,
+                            asked.turns,
+                            asked.segments,
+                        ),
+                        false,
+                        actions,
+                    );
+                }
+            });
         });
 
     ui.ctx().data_mut(|data| data.insert_temp(id, asked));
