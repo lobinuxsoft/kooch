@@ -16,7 +16,10 @@ const MAX_RINGS: usize = 256;
 impl BlockMesh {
     /// Extrudes `faces` along the curve, one ring per sample, evenly spaced **in metres**.
     ///
-    /// The faces keep the orientation they were modelled with; the curve carries them from there.
+    /// 🔴 The knots are read **where they are**, in this mesh's own space (#1554): the run lands on
+    /// the curve the author is looking at. What the face contributes is its shape and how it sits
+    /// relative to the curve's start, not where it was modelled.
+    ///
     /// `taper` scales each ring by the curve's radius there, relative to the radius at the start.
     /// `None` when the selection names nothing or the curve has no length.
     pub fn extrude_along(
@@ -32,26 +35,21 @@ impl BlockMesh {
             return None;
         }
         let rings = (samples.max(1) as usize).min(MAX_RINGS);
-        // Averaged over the selection, like the straight extrude: per-face normals tear a curved
-        // patch apart.
-        let normal = self.extrude_direction(faces, 1.0)?;
-        let centre = self.centre_of(faces)?;
+        self.centre_of(faces)?;
         let start = eval::frame(points, closed, 0.0);
-        // The one rotation taking the curve's start onto the face's normal. Everything else the
-        // curve does is expressed through it, so the face is never re-oriented behind the author.
-        let turn = Quat::from_rotation_arc(start.tangent, normal);
-        let into_face = (turn * basis(&start)).inverse();
+        let into_start = basis(&start).inverse();
         let at_start = start.at;
         let radius_start = eval::radius_at(points, closed, 0.0);
 
-        // Read once, from the face as modelled: every ring below is placed from these.
+        // The face seen from the curve's start, read once: every ring below is placed from these,
+        // so the section keeps the offset and the angle it has against the curve there.
         let plan: Vec<Vec<Vec3>> = faces
             .iter()
             .map(|face| {
                 self.face(*face as usize)
                     .unwrap_or(&[])
                     .iter()
-                    .map(|corner| into_face * (self.positions[*corner as usize] - centre))
+                    .map(|corner| into_start * (self.positions[*corner as usize] - at_start))
                     .collect()
             })
             .collect();
@@ -77,8 +75,7 @@ impl BlockMesh {
                 let moved = self.face(*face as usize)?.to_vec();
                 for (corner, local) in moved.iter().zip(corners) {
                     let local = Vec3::new(local.x * scale, local.y * scale, local.z);
-                    self.positions[*corner as usize] =
-                        centre + turn * ((frame.at - at_start) + rotation * local);
+                    self.positions[*corner as usize] = frame.at + rotation * local;
                 }
             }
             current = extruded.faces;
