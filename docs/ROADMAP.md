@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-10-16 — 🎯 **A block's geometry moved into the scene, and four bugs in a row were the same bug.** ProBuilder keeps a mesh's corners on the component and makes export a deliberate step; #1068 chose the opposite because `FieldKind` had no list variant, and that constraint went away in #1201. So the `.block` files are gone (#1452) and the level is one file again. Under that, four faults that all read the same way: **a value was already in hand, and the code asked a shared world for it instead.** The render frame lifts `ProjectState` out of `Resources`, so the sweep saw no project with one wide open (#1499). `capture_before` read the undo's before-state after the gizmo had written it, so `before == after` (#1511). The mirror wrote a stale snapshot over the entity the author was dragging, so the knot flickered, the sweep's revision flickered with it, a thousand corners went down the wire every frame and the meshlet pool passed its 128 MiB binding limit (#1513). And on release the sweep read that same overwritten world to decide what to send (#1515). 🔴 **The lesson is about instrumentation, not about splines:** three hypotheses on #1492 failed, and one of them — #1495, blaming a second process — was wrong on a fact I could have checked. What settled it was putting `entity` in one log line: it never changed, so the mirror was not the cause and the revision was. A field that separates two causes beats three theories.
+Last updated 2026-10-18 — 🎯 **The spline is finished, and a bend turned out to lie to the LOD selector.** Everything the owner set as the goal for this stretch — curve operations, sweeps, mesh deformation, block shapes — is closed: #1447 (resample, subdivide, reverse, trim, fillet), #1505 (hollow sweeps), #1446 (a mesh bent along the curve), #1152 (profile *and* steps). The one that was not on anybody's list is **#1531**: a deformed mesh keeps the `lod_error` `meshopt` measured on its source, and the selector only ever multiplies that by the **transform's** scale — which a deformed entity leaves at 1. A 4 m bar stretched over a 32 m curve reported an eighth of the error it really had and held a coarse LOD eight times too close. 🔴 The shape that keeps recurring is now at **nine** instances: *a value was already in hand, and the code asked a shared world for it instead.* The spline work added one more reading of it — `sync_sweeps` runs **before** the handles, so a swept mesh flushes a frame late and files its own undo step; the fix was not a delay but `rides_along`, which says the mesh is not something the author did.
 
 ---
 
@@ -209,6 +209,44 @@ wants these values sets them.
 
 ---
 
+## 🎯 2026-10-18 — the curve finished the job: operations, a hollow tube, a bent mesh and a staircase
+
+### What shipped
+
+- **#1517** — one undo step per spline gesture. The symptom was *"tengo que hacer muchos Ctrl+Z"*, and the owner's hypothesis was that state was being saved every frame. It was not. 🔴 **The call order was the answer:** `sync_sweeps` runs at line 50 of `systems/render/edits.rs` and `apply_spline_handles` at line 77, so the mesh the curve implies flushes a frame *after* the edit that caused it and lands as a history step of its own. `rides_along` now says a `Block`'s `mesh` field belongs to the gesture before it — a swept mesh is not something the author did, it is what the curve they moved implies.
+- **#1447** — the curve operations everything else is built from: `resample`, `subdivide`, `reverse`, `trim`, `fillet`, as pure functions over `&[Knot]` with a "Curve operations" header in the Inspector. `reverse` takes no `closed`, because a ring reversed is the same ring.
+- **#1505** — a wall thickness, so a tube is a tunnel.
+- **#1446** — a mesh bent along the curve, Blender's Curve modifier. The source asset is **read and never written**; the bent copy goes out under a Guid of the entity's own (`koochdfm`), the way a block's geometry does. Only positions and normals move: topology, the meshlet partition and the triangle bytes are untouched, which makes the deform exact and free of a remeshing pass.
+- **#1531** — a deformed meshlet's `lod_error` scaled by how far that meshlet actually stretched, measured per cluster from the vertices.
+- **#1152** — closed at last, both halves: the profile sweep, and now **steps**. One level step per span, placed by **arc length** and turned by the tangent. The rise comes from the curve's climb and the run from its plan, so straight, curved and spiral flights are the same component rather than three generators.
+
+### What the owner decided
+
+- **UE5 is reference, never source.** The owner's own framing: *"lo único que sacaríamos de UE5 es si optimizaron la técnica y nada más, porque Kóoch tiene su propio API y usa Rust, el código íntegro de UE5 no nos sirve."* The techniques are papers; Epic did not invent them. Read the papers, read UE5 to see what they measured, write Rust.
+- **`Shape::Stairs` was not reused for stairs on a curve**, and the owner accepted why: it builds inside its own box (`width`/`rise`/`run`/`turn`/`core`) and its turn is degrees, not a path. There is nowhere to put a curve. Open, unfiled: whether the toolbar generator becomes a two-knot curve.
+
+### What the deform taught
+
+🔴 **`Frame::side` is left-handed with `up` and `tangent`.** `side = tangent × up`, so placing geometry with it mirrors the mesh. Use `frame.up.cross(frame.tangent)`. Four tests failed on this and **no bend test can catch it** — a bent mesh is supposed to move. What catches it is `a_straight_curve_is_identity`: a straight curve along the chosen axis must leave the mesh exactly where it was modelled.
+
+🔴 **Walk the arc table once.** `arc::parameter_at` rebuilds it on every call; per vertex that is ten thousand walks of the curve for a 10k mesh. `arc::walked` once, then `arc::parameter_in` per element. The steps generator spaces treads the same way — spacing by `t` bunches them where the curve is tight, which is the one thing a stair may not do.
+
+🔴 **Steps are separate boxes, appended rather than welded.** A riser shared between two treads is an edge four faces meet at: `Adjacency::of` reads that as a leak and the face tool selects two steps as one surface. Both of these were confirmed red before the fix went in.
+
+🔴 **A bent cluster's cone is switched off, not recomputed** (`cone_cutoff = 1.0`). Its normals no longer share one cone, and a cone wrong by any amount culls geometry the camera can see — holes, with nothing reporting a fault.
+
+### Still unmeasured
+
+⚠️ The owner saw the meshlet pattern on a deformed mesh change with distance and reported it as changing with the **transform's** position rather than with each meshlet's. Reading the shaders says the LOD maths **is** per meshlet (`inst.transform * parent.bounds_center`). The live hypothesis is that the cut is group-coherent with the group structure inherited from a small source asset — **not measured**, and the issue stays unwritten until the `MeshletIds` reading arrives. #1531 is a different fault and does not explain it.
+
+### Next
+
+**#1534 — the material a sweep's block never gets.** The owner's order for tomorrow, said as a list: **#1534 → #1528 → #1526 → #1112**. A block spawned from the toolbar goes through `spawn_block`, which gives it the prototype grid; a block a curve fills in goes through `sweep_sync::request()`, which does not. Two spawn paths deciding differently about the same thing — the drift `block_components()` exists to prevent. 🔴 The default may only be written when the renderer has **none**, or every rebuild erases the material the author chose.
+
+After it: **#1528** curve primitives (circle, arc, spiral — the spiral is the exact caracol the steps generator now has to be dragged into by hand), **#1526** extruding a face along a spline, and **#1112** the lattice cage, which is the endgame the owner named and which stands on `eval::frame` and `deform::rebound`.
+
+---
+
 ## 🎯 2026-10-16 — the blockout is the scene, and the sweep is a tool you can use
 
 ### What shipped
@@ -236,6 +274,8 @@ wants these values sets them.
 **#1505 — a wall thickness on the sweep, so a tube is a tunnel.** One field, `wall: f32`, zero meaning solid. Two rings per span, annular caps, the thickness clamped under the smallest radius on the curve. The crease from #1501 keeps the 90° lip sharp with nothing to author. After it: **#1507** baking (which now has something to bake from), then **#1508** per-face materials, which is what makes a blockout readable rather than a grey lump.
 
 ⚠️ **#1517** — one small jump still survives on release. The mirror stops holding the entity the moment the drag ends, and the first snapshot after that is a round trip behind. Measure before writing: a fixed delay that guesses wrong is a different flicker.
+
+*(Superseded 2026-10-18. #1505 and #1517 are closed; the Next that counts is the one above. #1517 was not the mirror's timing at all — it was the order `sync_sweeps` and the handles run in.)*
 
 ---
 
