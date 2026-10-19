@@ -234,12 +234,65 @@ fn a_replaced_mesh_is_reclaimed() {
         pipeline.replace_mesh(guid, &built);
     }
 
-    assert!(
-        pipeline.pool().byte_size() <= one * 2,
-        "200 rebuilds of one mesh grew the pool to {} from {one}",
+    // Exactly `one`, not bounded by it: the same topology republished lands back in the ranges it
+    // just released, so the pool never grows and no compaction is needed (#1087).
+    assert_eq!(
         pipeline.pool().byte_size(),
+        one,
+        "200 rebuilds of one mesh grew the pool from {one}",
     );
     assert_eq!(pipeline.registered_count(), 1, "one mesh, one entry");
+    assert_eq!(pipeline.dead_bytes(), 0, "the slot went straight back in");
+}
+
+/// A resized mesh cannot reuse its own hole, which is the one case that still fragments.
+#[test]
+fn a_grown_mesh_stays_consistent() {
+    let small = build_default_meshlets(&cube_mesh()).expect("built");
+    let big = build_default_meshlets(&doubled_mesh()).expect("built");
+    let guid = Guid::new_v4();
+    let mut pipeline = MeshletPipeline::new();
+    for round in 0..40 {
+        pipeline.replace_mesh(guid, if round % 2 == 0 { &small } else { &big });
+    }
+
+    let handle = pipeline.lookup(guid).expect("still registered");
+    let pool = pipeline.pool();
+    let descriptor = &pool.mesh_descriptors[handle.mesh_id as usize];
+    assert_eq!(descriptor.meshlet_count, big.meshlet_count());
+    for index in &pool.meshlet_vertices {
+        assert!(
+            (*index as usize) < pool.vertices.len(),
+            "index {index} left the vertex pool ({})",
+            pool.vertices.len(),
+        );
+    }
+    assert!(
+        pool.byte_size() < 8 * pool.mesh_bytes(handle.mesh_id),
+        "alternating sizes left the pool at {} bytes",
+        pool.byte_size(),
+    );
+}
+
+/// The cube, with every face a second quad offset along the normal — twice the geometry, so it
+/// cannot land in the hole the plain cube leaves.
+fn doubled_mesh() -> Mesh {
+    let cube = cube_mesh();
+    let mut vertices = cube.vertices.clone();
+    let mut indices = cube.indices.clone();
+    let base = vertices.len() as u32;
+    for vertex in cube.vertices.iter() {
+        vertices.push(MeshVertex {
+            position: [
+                vertex.position[0] + 2.0,
+                vertex.position[1],
+                vertex.position[2],
+            ],
+            ..*vertex
+        });
+    }
+    indices.extend(cube.indices.iter().map(|index| index + base));
+    Mesh::from_arrays(vertices, indices)
 }
 
 /// Compaction moves ids, and a mesh that comes back wrong is a mesh drawn from another mesh's
