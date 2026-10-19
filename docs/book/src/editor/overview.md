@@ -240,6 +240,13 @@ Two details worth knowing before you press a button:
   anywhere is a line; keeping it closed would join the two fresh ends back together, which is the
   part you just removed.
 
+The bent mesh is **clickable and frameable** like any other: the click raycasts its real
+triangles, not a box, so picking one of two crossing pipes picks the one under the cursor.
+
+Give the entity a **Collider** and it collides too — the solver gets the bent triangles, so a
+character walks over a deformed bridge. The collider is not added for you: a vine that suddenly
+blocks the player is not something the engine should decide.
+
 ### Where a block's geometry lives
 
 **In the scene, on the entity.** A block carries its own corners and faces; there is no asset
