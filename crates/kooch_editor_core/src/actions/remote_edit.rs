@@ -52,6 +52,36 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
         return true;
     }
 
+    // Built here for the same reason `SpawnMesh` is: the mesh has to exist before there is an edit
+    // to send, and the panel that asked for it had no world to build it in (#1552).
+    if let EditorAction::ExtrudeAlong {
+        entity,
+        spline,
+        samples,
+        taper,
+    } = action
+    {
+        let Some((before, after)) =
+            crate::block_edit::extrude_along(resources, *entity, *spline, *samples, *taper)
+        else {
+            return true;
+        };
+        let sent = dispatch(
+            resources,
+            &EditorAction::BlockEdit {
+                entity: *entity,
+                before: Box::new(before),
+                after: Box::new(after),
+            },
+        );
+        // After the mesh, never before: the sliders would rebuild the block from the shape it no
+        // longer has. Same order as the local compound.
+        if let Some(drop_shape) = crate::block_edit::shape_sync::bake(resources, *entity) {
+            dispatch(resources, &drop_shape);
+        }
+        return sent;
+    }
+
     // Non-ECS actions stay on the local path even in remote mode: closing
     // the project, toggling power profiles all act on the editor, not the
     // remote world.
