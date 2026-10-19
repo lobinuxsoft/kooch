@@ -78,7 +78,6 @@ pub(super) fn spawn_block(
     at: Option<glam::Vec3>,
 ) {
     const TARGET: &str = "kooch_editor_core::remote_edit::spawn_block";
-    use crate::undo::prototype_material;
 
     use kooch_ecs::reflect::Reflect;
 
@@ -146,20 +145,6 @@ pub(super) fn spawn_block(
         return;
     }
     place(client, entity, transform_ty, at);
-
-    // The engine's prototype grid, so the block shows its size. Its
-    // UVs are one repeat per world unit, and on flat white a wall
-    // pulled two metres and one pulled four look identical.
-    if let Some(material) = prototype_material(resources) {
-        let renderer_ty = std::any::type_name::<kooch_ecs::mesh_renderer::MeshRenderer>();
-        let value = kooch_ecs::reflect::ReflectValue::AssetRef {
-            guid: Some(material),
-            asset_type: std::any::type_name::<kooch_render::material::Material>().to_owned(),
-        };
-        if let Err(e) = client.set_field(entity, renderer_ty, "material", value) {
-            tracing::warn!(target: TARGET, error = %e, "could not give the block a material");
-        }
-    }
 
     // Static, because a wall that falls over is not a level. Set over
     // the wire like any other field: the project owns the world, and

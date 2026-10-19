@@ -8,7 +8,6 @@ use kooch_ecs::allocator::EntityAllocator;
 use kooch_ecs::archetype_registry::ArchetypeRegistry;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
-use kooch_ecs::mesh_renderer::MeshRenderer;
 use kooch_ecs::reflect::ReflectValue;
 
 use crate::undo::EditorCommand;
@@ -98,15 +97,6 @@ impl SpawnBlockCommand {
             body.kind = kooch_physics::components::KIND_STATIC;
         }
 
-        // A prototype grid rather than the white default.
-        if let Some(guid) = prototype_material(resources)
-            && let Some(registry) = resources.get_mut::<ComponentRegistry>()
-            && let Some(storage) = registry.get_cpu_mut::<MeshRenderer>()
-            && let Some(renderer) = storage.get_mut(entity)
-        {
-            renderer.material = Some(guid);
-        }
-
         // Only the geometry is written. The renderer's mesh and the collider's are
         // `sync_blocks`'s answer, and writing them here would be a second place that decides
         // what a block draws.
@@ -144,17 +134,6 @@ impl SpawnBlockCommand {
 }
 
 /// The engine's own prototype grid, if it is registered.
-pub(crate) fn prototype_material(resources: &Resources) -> Option<kooch_core::Guid> {
-    const PROTOTYPE: &str = "materials/prototype/orange/orange_texture_01.material";
-
-    let resolved = resources
-        .get::<kooch_core::asset_loader::AssetServer>()?
-        .resolve_path(std::path::Path::new(PROTOTYPE));
-    resources
-        .get::<kooch_core::asset_database::AssetDatabase>()?
-        .guid_for(&resolved)
-}
-
 /// The reflected type ids behind a list of short component names.
 fn named_types(resources: &Resources, wanted: &[&str]) -> Vec<TypeId> {
     let Some(registry) = resources.get::<ComponentRegistry>() else {

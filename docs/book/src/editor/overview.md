@@ -143,7 +143,12 @@ trunk thick at the base and thin at the tip, a pipe that narrows, a kerb that wi
 
 It comes out as an ordinary block: faces to select, faces to extrude, a collider. The sweep fills
 in the block itself the first time there is something to sweep, so there is nothing to spawn
-first — the component is the whole gesture.
+first — the component is the whole gesture. It arrives wearing the **prototype grid**, the same
+material a block from the toolbar gets: its UVs are one repeat per world unit, so a wall pulled
+two metres and one pulled four read as different sizes. On flat white they are the same picture.
+
+The grid is only ever offered to a mesh that has **no** material. Pick one of your own and it
+stays — the curve can be reshaped all day and nothing writes over it.
 
 A knot whose radius is zero contributes a **point** rather than a ring, which is how a branch ends
 in a tip instead of a flat cap.
