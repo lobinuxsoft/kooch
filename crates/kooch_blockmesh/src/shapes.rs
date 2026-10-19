@@ -539,7 +539,7 @@ impl Builder {
     }
 
     /// Adds another builder's faces without welding them to these.
-    fn append(&mut self, other: Builder) {
+    pub(crate) fn append(&mut self, other: Builder) {
         let offset = self.positions.len() as u32;
         self.positions.extend(other.positions);
         self.faces.extend(

@@ -163,6 +163,28 @@ The collider is the same welded mesh, so a character walks through a tunnel the 
 
 The rebuild follows the curve live while you drag a knot.
 
+### Stairs, from the same curve
+
+Set *Profile* to **Steps** and the sweep stops being a skin and becomes a **flight**: one level
+step per span, placed along the path and turned to face the way the curve goes. Straight, curved
+and spiral stairs are the same component — the difference is the curve you drew.
+
+The **rise comes from the curve's climb** and the **run from its plan**, so a flat curve gives a
+walkway, a climbing one a flight, and a circle that climbs a spiral staircase. *Spans* is how many
+steps each segment is cut into, and the knot's radius is the flight's width, so the taper narrows a
+staircase the same way it narrows a pipe.
+
+Treads are **level whatever the curve's roll** — roll banks a pipe, and a banked step is one
+nobody can stand on. Each step reaches down to the one before it, so the flight is solid rather
+than a stack of floating slabs; **Drop** is the thinnest a step may be, which is what a level
+curve gives you.
+
+The steps are spaced by **distance along the curve**, not by parameter, so a curve with one long
+segment and one short one still gets even treads.
+
+Each step is a separate box, so the face tool selects one tread at a time, and *Sides*, *Caps* and
+*Wall* mean nothing here — the Inspector hides them.
+
 ### Bending a mesh along the curve
 
 Add a **Spline Deform** beside a `Spline`, pick a **source** mesh and the **axis** of it that runs

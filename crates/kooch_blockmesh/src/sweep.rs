@@ -24,6 +24,9 @@ use crate::shapes::Builder;
 pub const PROFILE_ROUND: u32 = 0;
 /// Four corners, square to the curve's up — a beam or a kerb rather than a pipe.
 pub const PROFILE_SQUARE: u32 = 1;
+/// A level step every span instead of a continuous skin: the curve's climb is the rise and its
+/// plan is the flight, so straight, curved and spiral stairs are all one curve.
+pub const PROFILE_STEPS: u32 = 2;
 
 /// What the Inspector offers for `profile`. Scenes store the number, so these only append.
 pub static PROFILE_CHOICES: &[FieldChoice] = &[
@@ -35,12 +38,28 @@ pub static PROFILE_CHOICES: &[FieldChoice] = &[
         label: "Square",
         value: PROFILE_SQUARE as i64,
     },
+    FieldChoice {
+        label: "Steps",
+        value: PROFILE_STEPS as i64,
+    },
 ];
 
-/// `sides` means nothing to a square.
+/// `sides` means nothing to a square, and a step is a box whichever way you ask.
 pub static SIDES_WHEN: FieldCondition = FieldCondition {
     field: "profile",
     values: &[PROFILE_ROUND as i64],
+};
+
+/// Nothing to cap and nothing to hollow when the sweep is a flight of separate boxes.
+pub static SKIN_WHEN: FieldCondition = FieldCondition {
+    field: "profile",
+    values: &[PROFILE_ROUND as i64, PROFILE_SQUARE as i64],
+};
+
+/// A tread's thickness only exists where there are treads.
+pub static DROP_WHEN: FieldCondition = FieldCondition {
+    field: "profile",
+    values: &[PROFILE_STEPS as i64],
 };
 
 /// What to sweep along the curve on the same entity, and how finely.
@@ -52,21 +71,35 @@ pub struct SplineSweep {
     /// Corners around a round profile.
     #[reflect(shown_when = SIDES_WHEN)]
     pub sides: u32,
-    /// Rings per curve segment. What decides whether a bend reads as a bend or as a crease.
+    /// Rings per curve segment — steps per segment when the profile is one. What decides whether
+    /// a bend reads as a bend or as a crease, and how many treads a flight is cut into.
     pub spans: u32,
     /// Closes an open sweep at both ends. A closed curve has no ends to cap, and neither has a
     /// walled one — its ends are always a rim, or the tunnel would have no mouth.
+    #[reflect(shown_when = SKIN_WHEN)]
     pub caps: bool,
     /// How thick the wall is, zero meaning solid. Above zero the sweep is a tube you can walk
     /// through, and a ring thinner than this is where the passage ends.
-    #[reflect(range = WALL_RANGE)]
+    #[reflect(range = WALL_RANGE, shown_when = SKIN_WHEN)]
     pub wall: f32,
+    /// Thinnest a step may be. It reaches down to the step before it, so a climbing curve gives a
+    /// solid flight and a level one a walkway this thick. Not the rise — the rise is how much the
+    /// curve climbs over one span, which is the author's to draw.
+    #[reflect(range = DROP_RANGE, shown_when = DROP_WHEN)]
+    pub drop: f32,
 }
 
 /// A wall is a thickness, so it has no sense below zero; the ceiling is the widest radius a knot
 /// can carry, past which every ring is solid anyway.
 const WALL_RANGE: FieldRange = FieldRange {
     min: 0.0,
+    max: 10.0,
+    step: 0.05,
+};
+
+/// A tread's thickness, floored just above zero: a step with no body is a sheet with no underside.
+const DROP_RANGE: FieldRange = FieldRange {
+    min: 0.01,
     max: 10.0,
     step: 0.05,
 };
@@ -79,6 +112,7 @@ impl Default for SplineSweep {
             spans: 8,
             caps: true,
             wall: 0.0,
+            drop: 0.2,
         }
     }
 }
@@ -93,17 +127,22 @@ const MAX_SIDES: u32 = 64;
 
 /// Ceiling on the rings of one sweep, so a long curve at a high `spans` cannot hang the editor
 /// while the author is still typing the number.
-const MAX_RINGS: usize = 4096;
+pub(crate) const MAX_RINGS: usize = 4096;
 
 /// Thinnest ring that still encloses anything. A knot below this contributes a point, which is
 /// what puts a tip on a branch.
-const MIN_RADIUS: f32 = 1.0e-3;
+pub(crate) const MIN_RADIUS: f32 = 1.0e-3;
 
 /// The profile swept along the curve, as an authoring mesh.
 ///
 /// Empty where there is no curve to sweep: fewer than two knots is a point, and a mesh built from
 /// it would be a shape with no inside.
 pub fn sweep(points: &[Knot], closed: bool, of: &SplineSweep) -> BlockMesh {
+    // Steps are boxes placed along the curve rather than a skin stretched over it, so they are
+    // built apart. Dispatched here and not by the caller: every path to a sweep stays one call.
+    if of.profile == PROFILE_STEPS {
+        return steps::steps(points, closed, of);
+    }
     let segments = eval::segments(points, closed);
     if segments == 0 {
         return BlockMesh::default();
@@ -263,6 +302,10 @@ fn closing_twist(points: &[Knot], closed: bool) -> f32 {
     let axis = tangent.normalize();
     -start.cross(end).dot(axis).atan2(start.dot(end))
 }
+
+mod steps;
+
+pub use steps::steps;
 
 #[cfg(test)]
 mod tests;
