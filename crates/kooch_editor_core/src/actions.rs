@@ -103,6 +103,20 @@ pub(crate) enum EditorAction {
         before: kooch_ecs::reflect::ReflectValue,
         after: kooch_ecs::reflect::ReflectValue,
     },
+    /// Run the block's selected faces down a curve (#1526).
+    ///
+    /// 🔴 Carries the choice, not the geometry: the panel that offers it draws from a snapshot and
+    /// has no world to extrude in. The mesh is built where the command is made, once.
+    ExtrudeAlong {
+        entity: Entity,
+        /// The entity whose `Spline` is the path. Its own, not a copy — a copied curve would stop
+        /// matching the one the author is dragging.
+        spline: Entity,
+        /// Rings along the curve, evenly spaced in metres.
+        samples: u32,
+        /// Whether each knot's radius scales the section there.
+        taper: bool,
+    },
     /// One block's shape, before and after an edit.
     BlockEdit {
         entity: Entity,

@@ -446,6 +446,32 @@ pub(crate) fn touch(resources: &mut Resources, entity: Entity) {
     }
 }
 
+/// Runs the selected faces down another entity's curve, answering the edit for the history (#1526).
+///
+/// 🔴 Writes nothing. The command built from this is what puts the mesh on the component, so the
+/// world is written once, by the thing that can also take it back.
+pub(crate) fn extrude_along(
+    resources: &Resources,
+    entity: Entity,
+    spline: Entity,
+    samples: u32,
+    taper: bool,
+) -> Option<(BlockMesh, BlockMesh)> {
+    let faces = resources
+        .get::<BlockSelection>()
+        .filter(|selection| selection.mode == ElementMode::Face)
+        .and_then(|selection| selection.of(entity))?;
+    let curve = resources
+        .get::<ComponentRegistry>()?
+        .get_cpu::<kooch_ecs::spline::Spline>()?
+        .get(spline)?
+        .clone();
+    let before = mesh_of(resources, entity)?;
+    let mut after = before.clone();
+    after.extrude_along(&faces, &curve.points, curve.closed, samples, taper)?;
+    Some((before, after))
+}
+
 /// Extrudes the selected faces and answers the edit for the history.
 pub(crate) fn extrude_selection(
     resources: &mut Resources,

@@ -276,8 +276,26 @@ circle's points rather than being a true circle, and Catmull-Rom bulges a little
 them. Against a unit radius: 6 segments is off by 2.6 %, 8 by 0.85 %, the default 12 by 0.17 %, 24
 by 0.011 %. More segments is a rounder circle and a longer list to edit.
 
-These are enabled when the five operations above are not — a `Spline` with no knots yet is exactly
-when you reach for a circle. They **replace** whatever was there, and one Ctrl+Z is the way back.
+They **replace** whatever was there, which is why they sit behind a shut sub-panel, and one Ctrl+Z
+is the way back.
+
+### Running faces down a curve
+
+A `Block` has its own **Face operations** in the Inspector. The one there now is *Extrude along a
+curve*: paint faces in **Face** mode, pick the entity whose `Spline` is the path, say how many
+rings, and press **Extrude**.
+
+- The faces keep the orientation you modelled them with. The curve only carries them from there —
+  it never re-aims the section behind you.
+- Rings are spaced evenly **in metres** along the curve, not in parameter, so a tight bend does
+  not bunch them up.
+- *taper* scales each ring by the knot radius there, so a path can narrow what it carries.
+- It bakes: the result is ordinary block geometry, with ordinary faces you can extrude again. The
+  curve is not kept as a live modifier, so moving a knot afterwards changes nothing. That is
+  #1550's job, not this one's.
+- A block spawned from a shape loses its *Shape* parameters when you do this, in the same Ctrl+Z —
+  the sliders would otherwise rebuild the block from scratch on the next frame and wipe the run.
+- One Ctrl+Z puts the block back.
 
 ### Where a block's geometry lives
 

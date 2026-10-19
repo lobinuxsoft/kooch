@@ -330,6 +330,7 @@ pub(super) fn run_editor_ui(
                 handle_offers,
                 selection_has_transform,
                 editing_a_block,
+                picked_faces: data.picked_faces,
                 editing_a_spline,
                 element_mode: &mut overlay.element_mode,
                 asset_catalog,

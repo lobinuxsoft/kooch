@@ -24,6 +24,9 @@ pub(super) struct FrameDisplayData {
     pub(super) entity_count: usize,
     pub(super) archetype_count: usize,
     pub(super) active_archetype_count: usize,
+    /// How many faces are painted on the block being edited, and on which entity. The Inspector
+    /// draws from this snapshot and cannot read `BlockSelection` itself.
+    pub(super) picked_faces: Option<(kooch_ecs::Entity, usize)>,
     pub(super) scenes: Vec<SceneDisplayInfo>,
     pub(super) systems: Vec<kooch_remote::protocol::SystemEntry>,
 }
@@ -35,6 +38,7 @@ impl FrameDisplayData {
             archetypes: Vec::new(),
             component_types: Vec::new(),
             reflected_types: Vec::new(),
+            picked_faces: None,
             layer_labels: kooch_core::layers::LayerNames::default().labels(),
             entity_count: 0,
             archetype_count: 0,
@@ -84,6 +88,11 @@ impl FrameDisplayData {
             .get::<ArchetypeRegistry>()
             .map_or(0, |a| a.archetype_count());
         let active_archetype_count = archetypes.iter().filter(|a| a.entity_count > 0).count();
+        // Face mode only: an edge or corner count would read as faces in the panel below.
+        let picked_faces = resources
+            .get::<crate::block_edit::BlockSelection>()
+            .filter(|selection| selection.mode == crate::block_edit::ElementMode::Face)
+            .and_then(|selection| Some((selection.entity?, selection.elements.len())));
         let scenes = gather_scenes(resources);
         let systems = gather_systems(resources);
         (
@@ -96,6 +105,7 @@ impl FrameDisplayData {
                 entity_count,
                 archetype_count,
                 active_archetype_count,
+                picked_faces,
                 scenes,
                 systems,
             },
