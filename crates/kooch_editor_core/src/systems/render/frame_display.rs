@@ -2,6 +2,8 @@
 //! egui context runs. Decouples the queries from the UI pass so the
 //! borrow scopes don't collide.
 
+use std::collections::HashSet;
+
 use kooch_core::resource::Resources;
 use kooch_ecs::archetype_registry::ArchetypeRegistry;
 
@@ -49,7 +51,10 @@ impl FrameDisplayData {
     }
 
     /// Gathers the frame's data, and says what each part of it cost.
-    pub(super) fn gather(resources: &mut Resources) -> (Self, GatherStages) {
+    pub(super) fn gather(
+        resources: &mut Resources,
+        detail_for: &HashSet<kooch_ecs::Entity>,
+    ) -> (Self, GatherStages) {
         let mut stages = GatherStages::default();
 
         // Intern every registry name first, so the read-only gather
@@ -58,16 +63,8 @@ impl FrameDisplayData {
         crate::queries::intern_registry_names(resources);
         stages.intern_ms = ms_since(t);
 
-        // Read before the gather so the entities the Inspector will show are known while their
-        // values are still being decided. The overlay is still in `Resources` at this point in the
-        // frame; the render system removes it further down.
-        let detail_for: std::collections::HashSet<kooch_ecs::Entity> = resources
-            .get::<crate::state::EditorOverlay>()
-            .map(|overlay| overlay.selected_entities.iter().copied().collect())
-            .unwrap_or_default();
-
         let t = std::time::Instant::now();
-        let entities = gather_entity_data(resources, &detail_for);
+        let entities = gather_entity_data(resources, detail_for);
         stages.entities_ms = ms_since(t);
 
         let t = std::time::Instant::now();
@@ -77,10 +74,7 @@ impl FrameDisplayData {
         let t = std::time::Instant::now();
         let component_types = gather_component_types(resources);
         let reflected_types = gather_reflected_types(resources);
-        let layer_labels = resources
-            .get::<kooch_core::layers::LayerNames>()
-            .map(|names| names.labels())
-            .unwrap_or_else(|| kooch_core::layers::LayerNames::default().labels());
+        let layer_labels = layer_labels(resources);
         stages.types_ms = ms_since(t);
 
         let entity_count = entities.len();
@@ -89,10 +83,7 @@ impl FrameDisplayData {
             .map_or(0, |a| a.archetype_count());
         let active_archetype_count = archetypes.iter().filter(|a| a.entity_count > 0).count();
         // Face mode only: an edge or corner count would read as faces in the panel below.
-        let picked_faces = resources
-            .get::<crate::block_edit::BlockSelection>()
-            .filter(|selection| selection.mode == crate::block_edit::ElementMode::Face)
-            .and_then(|selection| Some((selection.entity?, selection.elements.len())));
+        let picked_faces = picked_faces(resources);
         let scenes = gather_scenes(resources);
         let systems = gather_systems(resources);
         (
@@ -115,6 +106,14 @@ impl FrameDisplayData {
 }
 
 /// What the project schedules, or what this editor does when there is no project.
+/// The project's layer names, for every mask the Inspector draws.
+fn layer_labels(resources: &Resources) -> Vec<String> {
+    resources
+        .get::<kooch_core::layers::LayerNames>()
+        .map(|names| names.labels())
+        .unwrap_or_else(|| kooch_core::layers::LayerNames::default().labels())
+}
+
 fn gather_systems(resources: &Resources) -> Vec<kooch_remote::protocol::SystemEntry> {
     if let Some(systems) = resources
         .get::<crate::remote_session::RemoteState>()
@@ -206,4 +205,98 @@ fn remote_scenes(resources: &Resources) -> Option<Vec<SceneDisplayInfo>> {
             })
             .collect(),
     )
+}
+
+/// How many faces are painted on the block being edited, and on which entity.
+///
+/// Face mode only: an edge or corner count would read as faces in the panel below.
+fn picked_faces(resources: &Resources) -> Option<(kooch_ecs::Entity, usize)> {
+    let selection = resources.get::<crate::block_edit::BlockSelection>()?;
+    match selection.mode == crate::block_edit::ElementMode::Face {
+        true => Some((selection.entity?, selection.elements.len())),
+        false => None,
+    }
+}
+
+/// The snapshot plus what it was read from, so a frame that changed nothing reuses it.
+///
+/// 🔴 The gather walks every entity and cost 29.9 of the 40.4 ms of the main thread at 4,129
+/// entities (#1561). Almost every frame of a session changes nothing it reads: the world's shape
+/// moves when something spawns, is reparented or renamed, not when a body falls.
+#[derive(Default)]
+pub(super) struct FrameDisplayCache {
+    data: Option<FrameDisplayData>,
+    key: Key,
+}
+
+/// Everything the snapshot's rows are read from, as revisions.
+///
+/// 🔴 `GlobalTransform` is deliberately absent: it moves every frame in Play, and the only rows
+/// that need it live are the selected ones, which [`refresh_detail`] re-reads anyway.
+#[derive(Default, PartialEq)]
+struct Key {
+    archetypes: u64,
+    names: u64,
+    parents: u64,
+    members: u64,
+    order: u64,
+    dynamic: usize,
+    /// Registered component types, so a plugin reload rebuilds the "Add Component" lists.
+    types: usize,
+    detail: Vec<kooch_ecs::Entity>,
+}
+
+impl Key {
+    fn read(resources: &Resources, detail_for: &HashSet<kooch_ecs::Entity>) -> Self {
+        let components = resources.get::<kooch_ecs::component::ComponentRegistry>();
+        let revision = |read: fn(&kooch_ecs::component::ComponentRegistry) -> Option<u64>| {
+            components.as_deref().and_then(read).unwrap_or(0)
+        };
+        let mut detail: Vec<kooch_ecs::Entity> = detail_for.iter().copied().collect();
+        detail.sort_unstable_by_key(|entity| (entity.index(), entity.generation()));
+        Self {
+            archetypes: resources
+                .get::<ArchetypeRegistry>()
+                .map_or(0, |archetypes| archetypes.revision()),
+            names: revision(|r| Some(r.get_cpu::<kooch_ecs::Name>()?.revision())),
+            parents: revision(|r| Some(r.get_cpu::<kooch_ecs::hierarchy::Parent>()?.revision())),
+            members: revision(|r| Some(r.get_cpu::<kooch_ecs::SceneMember>()?.revision())),
+            order: revision(|r| Some(r.get_cpu::<kooch_ecs::Order>()?.revision())),
+            dynamic: resources
+                .get::<kooch_ecs::dynamic_components::DynamicComponents>()
+                .map_or(0, |dynamic| dynamic.len()),
+            types: components.as_deref().map_or(0, |r| r.registered_count()),
+            detail,
+        }
+    }
+}
+
+impl FrameDisplayCache {
+    /// The frame's snapshot: the cached one with the selection re-read, or a fresh gather.
+    pub(super) fn frame(
+        &mut self,
+        resources: &mut Resources,
+        detail_for: &HashSet<kooch_ecs::Entity>,
+    ) -> (&FrameDisplayData, GatherStages) {
+        let key = Key::read(resources, detail_for);
+        let mut stages = GatherStages::default();
+        if self.data.is_some() && key == self.key {
+            let t = std::time::Instant::now();
+            let data = self.data.as_mut().expect("checked above");
+            crate::queries::refresh_detail(resources, &mut data.entities, detail_for);
+            // Re-read every frame rather than watched: each is bounded by the scene count or by
+            // one selection, not by the world, and watching them would cost more than reading.
+            data.picked_faces = picked_faces(resources);
+            data.layer_labels = layer_labels(resources);
+            data.scenes = gather_scenes(resources);
+            data.systems = gather_systems(resources);
+            stages.entities_ms = ms_since(t);
+            stages.reused = true;
+            return (self.data.as_ref().expect("checked above"), stages);
+        }
+        let (data, gathered) = FrameDisplayData::gather(resources, detail_for);
+        self.key = key;
+        self.data = Some(data);
+        (self.data.as_ref().expect("just stored"), gathered)
+    }
 }

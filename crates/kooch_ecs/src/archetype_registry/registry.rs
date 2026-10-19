@@ -22,6 +22,9 @@ pub struct ArchetypeRegistry {
     /// asks for a table, which is the point where the component registry
     /// is in scope and a column can actually be built.
     tables: Tables,
+    /// Bumped by every structural change — an entity registered, moved between archetypes or
+    /// evicted. Read by anything caching a view of the world's shape (#1561).
+    revision: u64,
 }
 
 impl ArchetypeRegistry {
@@ -37,7 +40,14 @@ impl ArchetypeRegistry {
             add_transitions: HashMap::new(),
             remove_transitions: HashMap::new(),
             tables: Tables::new(),
+            revision: 0,
         }
+    }
+
+    /// How many structural changes this registry has seen.
+    #[inline]
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// The tables holding this world's component values.
@@ -76,6 +86,7 @@ impl ArchetypeRegistry {
 
     /// Returns the archetype for a component set, creating it if needed.
     pub fn get_or_create(&mut self, components: BTreeSet<TypeId>) -> ArchetypeId {
+        self.revision += 1;
         let id = ArchetypeId::from_components(&components);
 
         self.archetypes
@@ -97,6 +108,7 @@ impl ArchetypeRegistry {
 
     /// Moves an entity into the given archetype.
     pub fn register_entity(&mut self, entity: Entity, archetype_id: ArchetypeId) {
+        self.revision += 1;
         if let Some(old_id) = self.entity_archetype.get(&entity).copied() {
             if old_id == archetype_id {
                 return;
@@ -117,6 +129,7 @@ impl ArchetypeRegistry {
     ///
     /// Returns the archetype it was removed from, or `None` if untracked.
     pub fn unregister_entity(&mut self, entity: Entity) -> Option<ArchetypeId> {
+        self.revision += 1;
         if let Some(old_id) = self.entity_archetype.remove(&entity) {
             if let Some(archetype) = self.archetypes.get_mut(&old_id) {
                 archetype.remove_entity(entity);
@@ -173,6 +186,7 @@ impl ArchetypeRegistry {
         archetype: ArchetypeId,
         components: &ComponentRegistry,
     ) -> Option<TableRow> {
+        self.revision += 1;
         let Some(row) = self.row_of(entity) else {
             return self.place(entity, archetype, components);
         };
@@ -199,6 +213,7 @@ impl ArchetypeRegistry {
 
     /// Removes `entity` from its table, destroying its values, and from the archetype index.
     pub fn evict(&mut self, entity: Entity, components: &ComponentRegistry) -> bool {
+        self.revision += 1;
         let Some(row) = self.entity_rows.remove(&entity) else {
             self.unregister_entity(entity);
             return false;
@@ -284,6 +299,7 @@ impl ArchetypeRegistry {
 
     /// Reorders every archetype's entities to follow `order`.
     pub fn reorder_entities(&mut self, order: &[Entity]) {
+        self.revision += 1;
         let rank: std::collections::HashMap<Entity, usize> =
             order.iter().enumerate().map(|(i, e)| (*e, i)).collect();
         for archetype in self.archetypes.values_mut() {
@@ -299,6 +315,7 @@ impl ArchetypeRegistry {
     /// Removes empty archetypes (except `EMPTY`) and invalidates transition cache entries that
     /// reference them.
     pub fn gc_empty_archetypes(&mut self) -> usize {
+        self.revision += 1;
         let to_remove: Vec<ArchetypeId> = self
             .archetypes
             .iter()

@@ -297,3 +297,24 @@ mod tables;
 // -- Rows, and the entity nobody asked about (#891, stage 5c-1) -------------
 
 mod rows;
+
+/// The editor caches its world snapshot against this, so a value write must not move it and a
+/// membership change must (#1561).
+#[test]
+fn only_structure_moves_the_revision() {
+    let mut reg = ArchetypeRegistry::new();
+    let mut components = BTreeSet::new();
+    components.insert(TypeId::of::<Position>());
+    let id = reg.get_or_create(components);
+
+    reg.register_entity(entity(1), id);
+    let settled = reg.revision();
+
+    // Reading is not writing: a frame that only looks has to leave it where it is.
+    assert_eq!(reg.entity_archetype(entity(1)), Some(id));
+    assert_eq!(reg.archetype_count(), 2);
+    assert_eq!(reg.revision(), settled);
+
+    reg.unregister_entity(entity(1));
+    assert_ne!(reg.revision(), settled, "an entity left its archetype");
+}

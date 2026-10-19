@@ -36,7 +36,7 @@ use crate::viewport::render::MeshletPathInputs;
 use crate::viewport::{GameView, ViewportTarget, render_game_view, render_viewport};
 
 use self::edits::{apply_viewport_edits, drives_camera};
-use self::frame_display::FrameDisplayData;
+use self::frame_display::{FrameDisplayCache, FrameDisplayData};
 use self::gather::{build_panel, poll_play, publish_gpu_stats, toolbar_info};
 use self::lifted::Lifted;
 use self::taken::Taken;
@@ -109,11 +109,24 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let project_loaded = resources
         .get::<ProjectState>()
         .is_some_and(|ps| ps.is_project_loaded());
+    // Read before the gather so the entities the Inspector will show are known while their values
+    // are still being decided. The overlay is still in `Resources` here; the render system removes
+    // it further down.
+    let detail_for: std::collections::HashSet<kooch_ecs::Entity> = resources
+        .get::<crate::state::EditorOverlay>()
+        .map(|overlay| overlay.selected_entities.iter().copied().collect())
+        .unwrap_or_default();
+
+    // Owned for the frame and put back at the end, the way the undo stack is: the UI borrows the
+    // snapshot while `Resources` is being taken apart below.
+    let mut cache = resources.remove::<FrameDisplayCache>().unwrap_or_default();
+    let empty;
     let (display_data, mut gather_stages) = if project_loaded {
         profiling::scope!("editor: gather frame data");
-        FrameDisplayData::gather(resources)
+        cache.frame(resources, &detail_for)
     } else {
-        (FrameDisplayData::empty(), Default::default())
+        empty = FrameDisplayData::empty();
+        (&empty, crate::perf::GatherStages::default())
     };
     let window = resources
         .get::<kooch_window::WindowHandle>()
@@ -407,6 +420,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     }
     stages.actions_ms = crate::perf::ms_since(actions_start);
     resources.insert(undo_stack);
+    resources.insert(cache);
 
     // After the actions: one may have opened a project or started Play, and the frame that did must
     // not sleep before the effect shows.
