@@ -29,5 +29,7 @@ pub use extrude::Extruded;
 pub use pick::{Hit, Screen, edge_at, face_at, vertex_at};
 pub use plugin::BlockPlugin;
 pub use shapes::Shape;
-pub use sweep::{PROFILE_CHOICES, PROFILE_ROUND, PROFILE_SQUARE, SplineSweep, sweep};
+pub use sweep::{
+    PROFILE_CHOICES, PROFILE_ROUND, PROFILE_SQUARE, PROFILE_STEPS, SplineSweep, steps, sweep,
+};
 pub use sync::{BuiltBlocks, sync_blocks};
