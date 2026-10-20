@@ -253,13 +253,7 @@ fn park(resources: &mut Resources, entity: Entity, component: &ComponentState) {
 }
 
 fn advance_archetype(resources: &mut Resources, entity: Entity, type_id: std::any::TypeId) {
-    if let Some(archetypes) =
-        resources.get_mut::<kooch_ecs::archetype_registry::ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let next = archetypes.archetype_after_add_dynamic(current, type_id);
-        archetypes.register_entity(entity, next);
-    }
+    kooch_ecs::move_entity::gained(resources, entity, type_id);
 }
 
 #[cfg(test)]

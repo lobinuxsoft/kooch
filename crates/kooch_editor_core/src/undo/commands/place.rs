@@ -3,7 +3,6 @@
 use std::any::TypeId;
 
 use kooch_core::resource::Resources;
-use kooch_ecs::archetype_registry::ArchetypeRegistry;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 
@@ -54,12 +53,7 @@ pub(super) fn adopt(resources: &mut Resources, entity: Entity, scene: kooch_core
             storage.insert(entity, SceneMember::new(scene));
         }
     }
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let next = archetypes.archetype_after_add_dynamic(current, TypeId::of::<SceneMember>());
-        archetypes.register_entity(entity, next);
-    }
+    kooch_ecs::move_entity::gained(resources, entity, TypeId::of::<SceneMember>());
     if let Some(manager) = resources.get_mut::<kooch_ecs::SceneManager>() {
         manager.mark_scene_dirty(scene);
     }
@@ -74,12 +68,7 @@ pub(super) fn disown(resources: &mut Resources, entity: Entity) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.remove_component(entity, &type_id);
     }
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let next = archetypes.archetype_after_remove_dynamic(current, type_id);
-        archetypes.register_entity(entity, next);
-    }
+    kooch_ecs::move_entity::lost(resources, entity, type_id);
 }
 
 /// Puts a freshly spawned entity where the cursor asked for, in its parent's space.

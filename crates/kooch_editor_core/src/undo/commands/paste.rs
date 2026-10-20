@@ -2,7 +2,6 @@
 
 use kooch_core::resource::Resources;
 use kooch_ecs::allocator::EntityAllocator;
-use kooch_ecs::archetype_registry::ArchetypeRegistry;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 
@@ -62,9 +61,7 @@ impl EditorCommand for PasteCommand {
             if let Some(allocator) = resources.get_mut::<EntityAllocator>() {
                 allocator.despawn(entity);
             }
-            if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                archetypes.unregister_entity(entity);
-            }
+            kooch_ecs::move_entity::drop_entity(resources, entity);
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                 registry.remove_entity(entity);
             }

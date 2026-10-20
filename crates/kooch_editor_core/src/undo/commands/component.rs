@@ -5,7 +5,6 @@
 use std::any::TypeId;
 
 use kooch_core::resource::Resources;
-use kooch_ecs::archetype_registry::ArchetypeRegistry;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 
@@ -29,12 +28,7 @@ impl EditorCommand for AddComponentCommand {
             inserted = registry.insert_default_reflected(&self.type_id, self.entity);
         }
         if inserted {
-            if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                if let Some(current) = archetypes.entity_archetype(self.entity) {
-                    let new_arch = archetypes.archetype_after_add_dynamic(current, self.type_id);
-                    archetypes.register_entity(self.entity, new_arch);
-                }
-            }
+            kooch_ecs::move_entity::gained(resources, self.entity, self.type_id);
         }
     }
 
@@ -42,12 +36,7 @@ impl EditorCommand for AddComponentCommand {
         if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
             registry.remove_component(self.entity, &self.type_id);
         }
-        if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-            if let Some(current) = archetypes.entity_archetype(self.entity) {
-                let new_arch = archetypes.archetype_after_remove_dynamic(current, self.type_id);
-                archetypes.register_entity(self.entity, new_arch);
-            }
-        }
+        kooch_ecs::move_entity::lost(resources, self.entity, self.type_id);
     }
 
     fn description(&self) -> &str {
@@ -83,12 +72,7 @@ impl EditorCommand for RemoveComponentCommand {
         if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
             registry.remove_component(self.entity, &self.type_id);
         }
-        if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-            if let Some(current) = archetypes.entity_archetype(self.entity) {
-                let new_arch = archetypes.archetype_after_remove_dynamic(current, self.type_id);
-                archetypes.register_entity(self.entity, new_arch);
-            }
-        }
+        kooch_ecs::move_entity::lost(resources, self.entity, self.type_id);
     }
 
     fn undo(&mut self, resources: &mut Resources) {
@@ -98,12 +82,7 @@ impl EditorCommand for RemoveComponentCommand {
             inserted = registry.insert_default_reflected(&self.type_id, self.entity);
         }
         if inserted {
-            if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                if let Some(current) = archetypes.entity_archetype(self.entity) {
-                    let new_arch = archetypes.archetype_after_add_dynamic(current, self.type_id);
-                    archetypes.register_entity(self.entity, new_arch);
-                }
-            }
+            kooch_ecs::move_entity::gained(resources, self.entity, self.type_id);
         }
 
         // Restore field values from snapshot.

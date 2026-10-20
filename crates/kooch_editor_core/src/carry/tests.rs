@@ -43,13 +43,7 @@ fn spawn_in(resources: &mut Resources, scene: kooch_core::Guid) {
             storage.insert(entity, SceneMember::new(scene));
         }
     }
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let next =
-            archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<SceneMember>());
-        archetypes.register_entity(entity, next);
-    }
+    kooch_ecs::move_entity::gained(resources, entity, std::any::TypeId::of::<SceneMember>());
 }
 
 /// 🔴 The #1159 smoke test, and the second time #1163 has bitten: a fresh `SceneManager` holds an

@@ -8,7 +8,6 @@ use kooch_core::asset_database::AssetDatabase;
 use kooch_core::asset_loader::AssetServer;
 use kooch_core::resource::Resources;
 use kooch_ecs::allocator::EntityAllocator;
-use kooch_ecs::archetype_registry::ArchetypeRegistry;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::mesh_renderer::MeshRenderer;
@@ -116,9 +115,11 @@ impl SpawnMeshCommand {
                 .map(|alloc| alloc.revive(e))
                 .unwrap_or(false);
             if revived {
-                if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                    archetypes.register_entity(e, kooch_ecs::archetype::ArchetypeId::EMPTY);
-                }
+                kooch_ecs::move_entity::move_entity(
+                    resources,
+                    e,
+                    kooch_ecs::archetype::ArchetypeId::EMPTY,
+                );
                 e
             } else {
                 tracing::warn!(
@@ -154,12 +155,7 @@ impl SpawnMeshCommand {
                 inserted = registry.insert_default_reflected(type_id, entity);
             }
             if inserted {
-                if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                    if let Some(current) = archetypes.entity_archetype(entity) {
-                        let new_arch = archetypes.archetype_after_add_dynamic(current, *type_id);
-                        archetypes.register_entity(entity, new_arch);
-                    }
-                }
+                kooch_ecs::move_entity::gained(resources, entity, *type_id);
             }
         }
         self.spawned_component_types = all_types;
@@ -203,9 +199,7 @@ impl EditorCommand for SpawnMeshCommand {
         if let Some(alloc) = resources.get_mut::<EntityAllocator>() {
             alloc.despawn(entity);
         }
-        if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-            archetypes.unregister_entity(entity);
-        }
+        kooch_ecs::move_entity::drop_entity(resources, entity);
         if let Some(components) = resources.get_mut::<ComponentRegistry>() {
             components.remove_entity(entity);
         }
