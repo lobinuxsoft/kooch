@@ -497,6 +497,33 @@ mod columns {
         assert_eq!(seen, vec![5]);
     }
 
+    /// 🔴 The acceptance of #891, and the one that cannot be checked by reading the code: after a
+    /// row moved out of the middle of a table, every entity still reads **its own** values through
+    /// a two-component query. Get the displaced entity wrong and this reads a neighbour's.
+    #[test]
+    fn a_displaced_row_still_reads_itself() {
+        let mut r = setup();
+        let held: Vec<Entity> = (1..6).map(|i| spawn_entity(&mut r, i)).collect();
+        for (i, &entity) in held.iter().enumerate() {
+            add_cpu_component(&mut r, entity, Health(i as u32));
+            add_cpu_component(&mut r, entity, Name(format!("n{i}")));
+        }
+        // Out of the middle, so the last row is dragged into the hole it leaves.
+        add_cpu_component(&mut r, held[1], Marker);
+
+        let mut seen: Vec<(u32, String)> = Vec::new();
+        Query::<(&Health, &Name)>::new(&r).for_each(|(h, n)| seen.push((h.0, n.0.clone())));
+        seen.sort();
+
+        assert_eq!(
+            seen,
+            (0..5)
+                .map(|i| (i as u32, format!("n{i}")))
+                .collect::<Vec<_>>(),
+            "a health read a neighbour's name"
+        );
+    }
+
     /// A column and an inbox at once: two entities of the same archetype, one settled and one not.
     /// Both have to come out of the same walk.
     #[test]
