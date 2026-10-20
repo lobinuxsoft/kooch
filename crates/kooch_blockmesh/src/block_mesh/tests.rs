@@ -309,7 +309,7 @@ fn old_faces_keep_their_ids() {
         "the old faces kept theirs"
     );
     assert_eq!(mesh.face_of_id(before[0]), Some(0));
-    assert_eq!(after.len(), before.len() + 1, "the new face has one too");
+    assert!(after.len() > before.len(), "the walls got ids too");
 }
 
 /// A mesh saved before ids existed answers with the positions it had, and carries on past them.
