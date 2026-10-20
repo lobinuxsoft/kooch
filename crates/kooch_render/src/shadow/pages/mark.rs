@@ -174,6 +174,8 @@ pub struct PageMarker {
     pending: Option<usize>,
     config: PageConfig,
     clipmap: ClipmapConfig,
+    /// What the device-fit cap last said, so a capped scene is reported once (#1579).
+    shadowed_cap: CapNotice,
     /// Slots and views the mark buffer is sized for.
     capacity: (u32, u32),
     /// The frame index and the eviction threshold. See [`PoolLife`].
@@ -236,6 +238,7 @@ impl PageMarker {
             census,
             froxel_mark,
             cluster: cluster_marking(),
+            shadowed_cap: CapNotice::default(),
             bound: None,
             view: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_mark_view"),
@@ -378,14 +381,88 @@ pub(super) fn stride(config: PageConfig, _clipmap: ClipmapConfig) -> u32 {
     local.div_ceil(32) * 32
 }
 
+/// The last thing the device-fit cap reported.
+///
+/// 🔴 Once, not per frame. The failure this replaces was four validation errors every frame with no
+/// cause named, and a warning repeated sixty times a second is the same unreadable log (#1579).
+#[derive(Default)]
+struct CapNotice(Option<(u32, u32)>);
+
+impl CapNotice {
+    fn report(&mut self, shadowed: u32, asked: u32, sunless: bool) {
+        if self.0 == Some((shadowed, asked)) {
+            return;
+        }
+        self.0 = Some((shadowed, asked));
+        if sunless {
+            tracing::error!(
+                target: "kooch_render::shadow",
+                asked,
+                "this device cannot bind a page table large enough for even the sun's clipmap; shadows will not work here — see #1579",
+            );
+            return;
+        }
+        tracing::warn!(
+            target: "kooch_render::shadow",
+            shadowed,
+            asked,
+            "the page table does not fit this many lights on this device; the rest cast no shadow — see #1579",
+        );
+    }
+}
+
 /// Light slots the address space is laid out for, PADDED so that adding a light does not move every
 /// page id.
 pub(super) fn padded_lights(count: u32) -> u32 {
     count.max(1).next_multiple_of(64)
 }
 
-/// Pages one VIEW addresses: `slots - 1` padded light slots, then the
-/// sun's clipmap — every level a full grid, at the tail.
+/// Light slots whose address space fits the device, which is what caps the shadowed light count.
+///
+/// 🔴 The table is one cell per ADDRESSABLE page, so it grows with the light count while residency
+/// is bounded by the pool — at 3 008 lights it asked for 294.8 MiB to index 48 KiB. Past the
+/// device's binding limit `create_buffer` returns an INVALID buffer and every later submit fails
+/// naming a label and no cause: four validation errors a frame, for ever, with the shadows simply
+/// gone. Capped here instead, so the lights that fit keep theirs (#1579).
+pub(super) fn slots_that_fit(
+    device: &wgpu::Device,
+    config: PageConfig,
+    clipmap: ClipmapConfig,
+    views: u32,
+) -> Option<u32> {
+    let limits = device.limits();
+    let cap = limits
+        .max_storage_buffer_binding_size
+        .min(limits.max_buffer_size);
+    slots_for_cap(cap, config, clipmap, views)
+}
+
+/// The same, against a byte cap rather than a device — which is what the arithmetic is.
+pub(super) fn slots_for_cap(
+    cap: u64,
+    config: PageConfig,
+    clipmap: ClipmapConfig,
+    views: u32,
+) -> Option<u32> {
+    let entries = cap / (u64::from(super::pool::PAGE_CELL) * 4);
+    let per_view = entries / u64::from(views.max(1));
+    let sun = u64::from(clipmap.levels) * u64::from(config.side(0)).pow(2);
+    // 🔴 The sun's tail is not negotiable: without it there are no shadows at all, so a cap too
+    // small to hold it is a device this renderer cannot serve rather than a count to clamp. Says so
+    // instead of asking for a buffer it knows is too big.
+    if per_view < sun {
+        return None;
+    }
+    let lamps = (per_view - sun) / u64::from(stride(config, clipmap).max(1));
+    // One slot IS the sun, and `span` reads `slots - 1` lamps.
+    Some(
+        u32::try_from(lamps.saturating_add(1))
+            .unwrap_or(u32::MAX)
+            .max(2),
+    )
+}
+
+/// Pages one view's whole address space holds: the lamps' strides, then the sun's clipmap tail.
 pub(super) fn span(config: PageConfig, clipmap: ClipmapConfig, slots: u32) -> u64 {
     let lights = slots.max(2) as u64 - 1;
     let sun = clipmap.levels as u64 * (config.side(0) as u64).pow(2);

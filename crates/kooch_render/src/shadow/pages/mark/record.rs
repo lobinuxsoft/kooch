@@ -30,7 +30,15 @@ impl PageMarker {
         // One slot past the lights, for the sun: it is not in the grid — it has no position to
         // cluster — so it gets a region of its own at the tail rather than a light index.
         let padded = padded_lights(count);
-        let slots = padded + 1;
+        // 🔴 Capped by what the device can bind, not by the scene. Past the limit the table buffer
+        // comes back INVALID and every submit after it fails naming a label and no cause — four
+        // validation errors a frame with the shadows gone. The lights that fit keep theirs (#1579).
+        let views = self.pool.config().view_count();
+        let room = slots_that_fit(device, self.config, self.clipmap, views);
+        let slots = room.map_or(padded + 1, |room| (padded + 1).min(room));
+        if slots < padded + 1 || room.is_none() {
+            self.shadowed_cap.report(slots - 1, count, room.is_none());
+        }
         let views = self.pool.config().view_count();
         let view = view.min(views - 1);
         if (slots, views) != self.capacity {
