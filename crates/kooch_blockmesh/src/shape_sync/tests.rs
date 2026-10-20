@@ -18,7 +18,7 @@ fn world() -> (Resources, Entity) {
 
     let entity = Entity::new(1, 0);
     if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-        archetypes.register_entity(entity, kooch_ecs::archetype::ArchetypeId::EMPTY);
+        archetypes.register_at(entity, kooch_ecs::archetype::ArchetypeId::EMPTY, None);
     }
     add(&mut resources, entity, Block::default());
     add(&mut resources, entity, cube(1.0));
@@ -28,7 +28,7 @@ fn world() -> (Resources, Entity) {
 fn add<T: kooch_ecs::component::Component>(resources: &mut Resources, entity: Entity, value: T) {
     if let Some(components) = resources.get_mut::<ComponentRegistry>() {
         components.register_cpu::<T>();
-        if let Some(storage) = components.get_cpu_mut::<T>() {
+        if let Some(mut storage) = components.get_cpu_mut::<T>() {
             storage.insert(entity, value);
         }
     }
@@ -112,7 +112,7 @@ fn a_rebuild_marks_nothing() {
 }
 
 fn reshape(resources: &mut Resources, entity: Entity, shape: BlockShape) {
-    if let Some(storage) = resources
+    if let Some(mut storage) = resources
         .get_mut::<ComponentRegistry>()
         .and_then(|registry| registry.get_cpu_mut::<BlockShape>())
         && let Some(held) = storage.get_mut(entity)

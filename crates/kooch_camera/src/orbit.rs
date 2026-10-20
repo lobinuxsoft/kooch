@@ -222,7 +222,7 @@ pub fn orbit_cameras(resources: &mut Resources) {
     let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
         return;
     };
-    if let Some(vcams) = registry.get_cpu_mut::<VirtualCamera>() {
+    if let Some(mut vcams) = registry.get_cpu_mut::<VirtualCamera>() {
         for turn in &turns {
             if let Some(vcam) = vcams.get_mut(turn.entity) {
                 vcam.yaw = turn.orbited.yaw;
@@ -230,7 +230,7 @@ pub fn orbit_cameras(resources: &mut Resources) {
             }
         }
     }
-    let Some(orbits) = registry.get_cpu_mut::<CameraOrbit>() else {
+    let Some(mut orbits) = registry.get_cpu_mut::<CameraOrbit>() else {
         return;
     };
     for turn in &turns {

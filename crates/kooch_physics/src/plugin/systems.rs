@@ -89,7 +89,7 @@ pub fn migrate_collider_layers(resources: &mut Resources) {
     let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
         return;
     };
-    let Some(storage) = registry.get_cpu_mut::<Collider>() else {
+    let Some(mut storage) = registry.get_cpu_mut::<Collider>() else {
         return;
     };
     for (&entity, collider) in storage.iter_mut() {
@@ -215,8 +215,8 @@ fn as_region(registry: &ComponentRegistry, entity: Entity, collider: Collider) -
 #[allow(clippy::too_many_arguments)]
 fn regions(
     registry: &ComponentRegistry,
-    colliders: Option<&kooch_ecs::component::ComponentStorage<Collider>>,
-    slots: Option<&kooch_ecs::component::ComponentStorage<SolverBody>>,
+    colliders: Option<kooch_ecs::component::ComponentView<'_, Collider>>,
+    slots: Option<kooch_ecs::component::ComponentView<'_, SolverBody>>,
     meshes: Option<&ColliderMeshCache>,
     layers: &kooch_core::layers::LayerNames,
     authored: &[Authored],
@@ -281,7 +281,7 @@ fn find_orphans(resources: &Resources, world: &PhysicsWorld) -> Vec<Entity> {
 
 /// The entity's collider, or the default unit sphere.
 fn collider_or_default(
-    colliders: Option<&kooch_ecs::component::ComponentStorage<Collider>>,
+    colliders: Option<kooch_ecs::component::ComponentView<'_, Collider>>,
     entity: Entity,
 ) -> Collider {
     colliders
@@ -349,7 +349,7 @@ fn create_missing_bodies(
         let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
             continue;
         };
-        let Some(storage) = registry.get_cpu_mut::<SolverBody>() else {
+        let Some(mut storage) = registry.get_cpu_mut::<SolverBody>() else {
             continue;
         };
         // Only a first insertion changes the archetype; re-pointing an
@@ -414,10 +414,11 @@ fn push_authored_poses(world: &mut PhysicsWorld, authored: &[Authored], playing:
 fn sync_archetypes(resources: &mut Resources, gained: &[Entity], orphans: &[Entity]) {
     if !orphans.is_empty() {
         if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-            && let Some(storage) = registry.get_cpu_mut::<SolverBody>()
+            && let Some(mut storage) = registry.get_cpu_mut::<SolverBody>()
         {
             for &entity in orphans {
-                storage.remove(entity);
+                // The archetype change below completes it.
+                storage.unpark(entity);
             }
         }
     }
@@ -479,7 +480,7 @@ pub fn physics_writeback_system(resources: &mut Resources) {
     };
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<Transform>()
+        && let Some(mut storage) = registry.get_cpu_mut::<Transform>()
     {
         for (entity, position, rotation) in &local {
             if let Some(transform) = storage.get_mut(*entity) {

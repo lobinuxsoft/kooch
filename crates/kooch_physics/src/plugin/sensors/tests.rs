@@ -23,7 +23,7 @@ fn world(shape: u32, collider: Collider, at: Vec3) -> (ComponentRegistry, Entity
                 ..collider
             },
         );
-    let transforms = registry
+    let mut transforms = registry
         .get_cpu_mut::<GlobalTransform>()
         .expect("registered");
     transforms.insert(

@@ -454,7 +454,7 @@ pub(crate) fn apply_handle_input(
 
         let mut mutated = false;
         if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-            && let Some(storage) = registry.get_cpu_mut::<Transform>()
+            && let Some(mut storage) = registry.get_cpu_mut::<Transform>()
             && let Some(t) = storage.get_mut(target)
         {
             match delta_out {
@@ -656,7 +656,7 @@ fn align_to(resources: &mut Resources, entity: Entity, normal: Vec3) {
     };
     let mut turned = false;
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<Transform>()
+        && let Some(mut storage) = registry.get_cpu_mut::<Transform>()
         && let Some(t) = storage.get_mut(entity)
     {
         t.rotation = (turn * t.rotation).normalize();

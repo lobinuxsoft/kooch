@@ -39,7 +39,7 @@ fn register_entity_into_archetype() {
     let mut reg = ArchetypeRegistry::new();
     let e1 = entity(0);
 
-    reg.register_entity(e1, ArchetypeId::EMPTY);
+    reg.register_at(e1, ArchetypeId::EMPTY, None);
 
     assert_eq!(reg.entity_archetype(e1), Some(ArchetypeId::EMPTY));
     assert_eq!(reg.get(ArchetypeId::EMPTY).unwrap().len(), 1);
@@ -50,10 +50,10 @@ fn register_entity_migrates() {
     let mut reg = ArchetypeRegistry::new();
     let e1 = entity(0);
 
-    reg.register_entity(e1, ArchetypeId::EMPTY);
+    reg.register_at(e1, ArchetypeId::EMPTY, None);
 
     let pos_arch = reg.archetype_after_add::<Position>(ArchetypeId::EMPTY);
-    reg.register_entity(e1, pos_arch);
+    reg.register_at(e1, pos_arch, None);
 
     assert_eq!(reg.entity_archetype(e1), Some(pos_arch));
     assert_eq!(reg.get(ArchetypeId::EMPTY).unwrap().len(), 0);
@@ -65,8 +65,8 @@ fn register_same_archetype_is_noop() {
     let mut reg = ArchetypeRegistry::new();
     let e1 = entity(0);
 
-    reg.register_entity(e1, ArchetypeId::EMPTY);
-    reg.register_entity(e1, ArchetypeId::EMPTY);
+    reg.register_at(e1, ArchetypeId::EMPTY, None);
+    reg.register_at(e1, ArchetypeId::EMPTY, None);
 
     assert_eq!(reg.get(ArchetypeId::EMPTY).unwrap().len(), 1);
 }
@@ -76,7 +76,7 @@ fn unregister_entity() {
     let mut reg = ArchetypeRegistry::new();
     let e1 = entity(0);
 
-    reg.register_entity(e1, ArchetypeId::EMPTY);
+    reg.register_at(e1, ArchetypeId::EMPTY, None);
     let old = reg.unregister_entity(e1);
 
     assert_eq!(old, Some(ArchetypeId::EMPTY));
@@ -151,10 +151,10 @@ fn iter_matching_basic() {
     let pos_vel_hp = reg.archetype_after_add::<Health>(pos_vel);
 
     // Add entities.
-    reg.register_entity(entity(0), pos);
-    reg.register_entity(entity(1), pos_vel);
-    reg.register_entity(entity(2), pos_vel);
-    reg.register_entity(entity(3), pos_vel_hp);
+    reg.register_at(entity(0), pos, None);
+    reg.register_at(entity(1), pos_vel, None);
+    reg.register_at(entity(2), pos_vel, None);
+    reg.register_at(entity(3), pos_vel_hp, None);
 
     // Query for (Position, Velocity) should match pos_vel and pos_vel_hp.
     let required = [TypeId::of::<Position>(), TypeId::of::<Velocity>()];
@@ -170,8 +170,8 @@ fn iter_matching_empty_required() {
     let mut reg = ArchetypeRegistry::new();
 
     let pos = reg.archetype_after_add::<Position>(ArchetypeId::EMPTY);
-    reg.register_entity(entity(0), pos);
-    reg.register_entity(entity(1), ArchetypeId::EMPTY);
+    reg.register_at(entity(0), pos, None);
+    reg.register_at(entity(1), ArchetypeId::EMPTY, None);
 
     // Empty required matches ALL archetypes.
     let matched: Vec<&Archetype> = reg.iter_matching(&[]).collect();
@@ -184,17 +184,17 @@ fn full_migration_workflow() {
     let e = entity(0);
 
     // Entity starts in EMPTY archetype.
-    reg.register_entity(e, ArchetypeId::EMPTY);
+    reg.register_at(e, ArchetypeId::EMPTY, None);
 
     // Add Position.
     let current = reg.entity_archetype(e).unwrap();
     let new_arch = reg.archetype_after_add::<Position>(current);
-    reg.register_entity(e, new_arch);
+    reg.register_at(e, new_arch, None);
 
     // Add Velocity.
     let current = reg.entity_archetype(e).unwrap();
     let new_arch = reg.archetype_after_add::<Velocity>(current);
-    reg.register_entity(e, new_arch);
+    reg.register_at(e, new_arch, None);
 
     // Verify entity has both components in its archetype.
     let arch_id = reg.entity_archetype(e).unwrap();
@@ -205,7 +205,7 @@ fn full_migration_workflow() {
 
     // Remove Position.
     let new_arch = reg.archetype_after_remove::<Position>(arch_id);
-    reg.register_entity(e, new_arch);
+    reg.register_at(e, new_arch, None);
 
     let arch_id = reg.entity_archetype(e).unwrap();
     let arch = reg.get(arch_id).unwrap();
@@ -230,7 +230,7 @@ fn multiple_entities_per_archetype() {
     let arch = reg.archetype_after_add::<Position>(ArchetypeId::EMPTY);
 
     for i in 0..100 {
-        reg.register_entity(entity(i), arch);
+        reg.register_at(entity(i), arch, None);
     }
 
     assert_eq!(reg.get(arch).unwrap().len(), 100);
@@ -242,13 +242,13 @@ fn gc_removes_empty_archetypes() {
     let e = entity(0);
 
     // Create chain: EMPTY → +Pos → +Vel → -Pos (leaves (Pos) and (Pos,Vel) empty).
-    reg.register_entity(e, ArchetypeId::EMPTY);
+    reg.register_at(e, ArchetypeId::EMPTY, None);
     let pos = reg.archetype_after_add::<Position>(ArchetypeId::EMPTY);
-    reg.register_entity(e, pos);
+    reg.register_at(e, pos, None);
     let pos_vel = reg.archetype_after_add::<Velocity>(pos);
-    reg.register_entity(e, pos_vel);
+    reg.register_at(e, pos_vel, None);
     let vel_only = reg.archetype_after_remove::<Position>(pos_vel);
-    reg.register_entity(e, vel_only);
+    reg.register_at(e, vel_only, None);
 
     // 4 archetypes: EMPTY, (Pos), (Pos,Vel), (Vel).
     assert_eq!(reg.archetype_count(), 4);
@@ -290,14 +290,6 @@ fn gc_invalidates_transition_cache() {
     assert!(reg.get(pos2).is_some());
 }
 
-// -- The table behind an archetype (#891, stage 5b) -------------------------
-
-mod tables;
-
-// -- Rows, and the entity nobody asked about (#891, stage 5c-1) -------------
-
-mod rows;
-
 /// The editor caches its world snapshot against this, so a value write must not move it and a
 /// membership change must (#1561).
 #[test]
@@ -307,7 +299,7 @@ fn only_structure_moves_the_revision() {
     components.insert(TypeId::of::<Position>());
     let id = reg.get_or_create(components);
 
-    reg.register_entity(entity(1), id);
+    reg.register_at(entity(1), id, None);
     let settled = reg.revision();
 
     // Reading is not writing: a frame that only looks has to leave it where it is.
@@ -320,7 +312,7 @@ fn only_structure_moves_the_revision() {
     let mut same = BTreeSet::new();
     same.insert(TypeId::of::<Position>());
     assert_eq!(reg.get_or_create(same), id);
-    reg.register_entity(entity(1), id);
+    reg.register_at(entity(1), id, None);
     reg.unregister_entity(entity(2));
     assert_eq!(reg.revision(), settled, "nothing changed");
 

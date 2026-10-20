@@ -6,6 +6,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::entity::Entity;
+use crate::storage::{TableId, TableRow};
 
 /// Unique identifier for an archetype, derived from its component set.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -30,10 +31,20 @@ impl ArchetypeId {
 }
 
 /// A group of entities that share the same set of component types.
+///
+/// 🔴 The archetype hands out a **row**, not a key (#891). `entities` and `rows` are parallel: the
+/// walk reads both from the same index, so a query never asks a map where an entity's values are.
 pub struct Archetype {
     id: ArchetypeId,
     components: BTreeSet<TypeId>,
     entities: Vec<Entity>,
+    /// Which table row holds each entity's values. Parallel to `entities`.
+    ///
+    /// `None` for an entity whose values still live in the per-type maps — a component of its
+    /// archetype has no value yet, so the row cannot be filled without leaving a column short.
+    rows: Vec<Option<TableRow>>,
+    /// The table serving this component set, resolved once rather than per query.
+    table: Option<TableId>,
 }
 
 impl Archetype {
@@ -44,6 +55,8 @@ impl Archetype {
             id,
             components,
             entities: Vec::new(),
+            rows: Vec::new(),
+            table: None,
         }
     }
 
@@ -65,6 +78,24 @@ impl Archetype {
         &self.entities
     }
 
+    /// The table row holding each entity's values, parallel to [`Self::entities`].
+    #[inline]
+    pub fn rows(&self) -> &[Option<TableRow>] {
+        &self.rows
+    }
+
+    /// The table serving this archetype's component set, once one has been built.
+    #[inline]
+    pub fn table(&self) -> Option<TableId> {
+        self.table
+    }
+
+    /// Records which table serves this archetype.
+    #[inline]
+    pub fn set_table(&mut self, table: TableId) {
+        self.table = Some(table);
+    }
+
     /// Returns the number of entities in this archetype.
     #[inline]
     pub fn len(&self) -> usize {
@@ -82,27 +113,58 @@ impl Archetype {
         self.components.contains(&TypeId::of::<T>())
     }
 
-    /// Adds an entity to this archetype.
-    pub fn add_entity(&mut self, entity: Entity) {
+    /// Adds an entity to this archetype, returning the slot it took.
+    pub fn add_entity(&mut self, entity: Entity, row: Option<TableRow>) -> u32 {
+        let at = self.entities.len() as u32;
         self.entities.push(entity);
+        self.rows.push(row);
+        at
+    }
+
+    /// The table row at `at`, if that slot holds one.
+    #[inline]
+    pub fn row_at(&self, at: u32) -> Option<TableRow> {
+        self.rows.get(at as usize).copied().flatten()
+    }
+
+    /// Points the slot at `at` at a different table row.
+    #[inline]
+    pub fn set_row(&mut self, at: u32, row: Option<TableRow>) {
+        if let Some(slot) = self.rows.get_mut(at as usize) {
+            *slot = row;
+        }
     }
 
     /// Reorders this archetype's entities to follow `rank`.
+    ///
+    /// 🔴 Rows travel with their entity. The table's own order does not change — only which order
+    /// this archetype walks it in — so the pair has to move together.
     pub fn reorder_entities(&mut self, rank: &std::collections::HashMap<Entity, usize>) {
-        self.entities
-            .sort_by_key(|e| rank.get(e).copied().unwrap_or(usize::MAX));
+        let mut paired: Vec<(Entity, Option<TableRow>)> = self
+            .entities
+            .iter()
+            .copied()
+            .zip(self.rows.iter().copied())
+            .collect();
+        paired.sort_by_key(|(entity, _)| rank.get(entity).copied().unwrap_or(usize::MAX));
+        for (at, (entity, row)) in paired.into_iter().enumerate() {
+            self.entities[at] = entity;
+            self.rows[at] = row;
+        }
     }
 
-    /// Removes an entity from this archetype using swap-remove.
+    /// Removes the entity in slot `at`, pulling the last one into the hole.
     ///
-    /// Returns `true` if the entity was found and removed.
-    pub fn remove_entity(&mut self, entity: Entity) -> bool {
-        if let Some(pos) = self.entities.iter().position(|e| *e == entity) {
-            self.entities.swap_remove(pos);
-            true
-        } else {
-            false
+    /// Returns the entity dragged into `at`, which the caller has to re-file: it asked for nothing
+    /// and its slot changed anyway.
+    pub fn remove_at(&mut self, at: u32) -> Option<Entity> {
+        let at = at as usize;
+        if at >= self.entities.len() {
+            return None;
         }
+        self.entities.swap_remove(at);
+        self.rows.swap_remove(at);
+        self.entities.get(at).copied()
     }
 }
 

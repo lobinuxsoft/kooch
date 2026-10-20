@@ -333,7 +333,7 @@ pub fn migrate_soft_time(resources: &mut kooch_core::resource::Resources) {
     let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
         return;
     };
-    let Some(storage) = registry.get_cpu_mut::<RotationComposer>() else {
+    let Some(mut storage) = registry.get_cpu_mut::<RotationComposer>() else {
         return;
     };
     for (&entity, framing) in storage.iter_mut() {

@@ -172,7 +172,7 @@ fn the_heaviest_member_owns_the_orientation() {
     let light = allocator.spawn();
     let heavy = allocator.spawn();
     {
-        let storage = registry.get_cpu_mut::<CameraTarget>().unwrap();
+        let mut storage = registry.get_cpu_mut::<CameraTarget>().unwrap();
         storage.insert(
             light,
             CameraTarget {

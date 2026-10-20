@@ -394,7 +394,7 @@ pub(crate) fn edit_selection(
     let Some(mesh) = resources
         .get_mut::<ComponentRegistry>()
         .and_then(|registry| registry.get_cpu_mut::<Block>())
-        .and_then(|storage| storage.get_mut(entity))
+        .and_then(|storage| storage.into_mut(entity))
         .map(|block| &mut block.mesh)
     else {
         return false;
@@ -567,7 +567,7 @@ pub(crate) fn set_shape(resources: &mut Resources, entity: Entity, shape: &Block
     };
     let Some(block) = registry
         .get_cpu_mut::<Block>()
-        .and_then(|storage| storage.get_mut(entity))
+        .and_then(|storage| storage.into_mut(entity))
     else {
         return false;
     };

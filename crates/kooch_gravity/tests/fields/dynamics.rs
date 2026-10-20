@@ -112,7 +112,7 @@ fn a_moved_source_wakes_what_it_pulls_on() {
 
     // Gravity flips upward. A crate that stays asleep through that is a crate glued to the floor.
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<GlobalGravity>()
+        && let Some(mut storage) = registry.get_cpu_mut::<GlobalGravity>()
         && let Some(field) = storage.get_mut(planet)
     {
         field.acceleration = Vec3::new(0.0, 9.81, 0.0);

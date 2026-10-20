@@ -146,7 +146,7 @@ fn read_transform(resources: &Resources, entity: Entity) -> Option<(Vec3, Quat)>
 
 fn write_transform(resources: &mut Resources, entity: Entity, position: Vec3, rotation: Quat) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<Transform>()
+        && let Some(mut storage) = registry.get_cpu_mut::<Transform>()
         && let Some(t) = storage.get_mut(entity)
     {
         t.position = position;

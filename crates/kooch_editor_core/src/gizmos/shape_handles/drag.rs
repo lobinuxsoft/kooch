@@ -221,7 +221,7 @@ pub(super) fn shape_and_matrix(
 
 pub(super) fn write_shape(resources: &mut Resources, entity: Entity, shape: BlockShape) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<BlockShape>()
+        && let Some(mut storage) = registry.get_cpu_mut::<BlockShape>()
         && let Some(held) = storage.get_mut(entity)
     {
         *held = shape;

@@ -360,7 +360,7 @@ fn set_scene(resources: &mut Resources, entity: Entity, scene: Option<kooch_core
         Some(scene) => {
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                 registry.register_cpu_reflected::<kooch_ecs::SceneMember>();
-                if let Some(storage) = registry.get_cpu_mut::<kooch_ecs::SceneMember>() {
+                if let Some(mut storage) = registry.get_cpu_mut::<kooch_ecs::SceneMember>() {
                     storage.insert(entity, kooch_ecs::SceneMember::new(scene));
                 }
             }
@@ -379,7 +379,7 @@ fn set_scene(resources: &mut Resources, entity: Entity, scene: Option<kooch_core
 fn set_parent(resources: &mut Resources, child: Entity, parent: Entity) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<Parent>();
-        if let Some(storage) = registry.get_cpu_mut::<Parent>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<Parent>() {
             storage.insert(child, Parent { entity: parent });
         }
     }
@@ -417,7 +417,7 @@ fn write_transform(resources: &mut Resources, entity: Entity, matrix: glam::Mat4
     let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
         return;
     };
-    let Some(storage) = registry.get_cpu_mut::<kooch_ecs::Transform>() else {
+    let Some(mut storage) = registry.get_cpu_mut::<kooch_ecs::Transform>() else {
         return;
     };
     let Some(transform) = storage.get_mut(entity) else {

@@ -5,4 +5,4 @@ mod core;
 #[cfg(test)]
 mod tests;
 
-pub use core::ComponentRegistry;
+pub use core::{ComponentRegistry, Settled};

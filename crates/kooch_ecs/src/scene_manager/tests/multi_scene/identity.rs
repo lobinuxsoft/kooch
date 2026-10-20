@@ -86,7 +86,7 @@ fn two_scenes_may_reuse_the_same_entity_id_without_crossing_references() {
         };
 
         if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-            && let Some(storage) = registry.get_cpu_mut::<Link>()
+            && let Some(mut storage) = registry.get_cpu_mut::<Link>()
         {
             storage.insert(source, Link { target });
         }
@@ -95,7 +95,7 @@ fn two_scenes_may_reuse_the_same_entity_id_without_crossing_references() {
         {
             let next =
                 archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<Link>());
-            archetypes.register_entity(source, next);
+            archetypes.register_at(source, next, None);
         }
 
         let path = tmp_path(name);
@@ -223,7 +223,7 @@ fn two_copies_of_one_file_keep_their_ids_and_their_links() {
             (source, target)
         };
         if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-            && let Some(storage) = registry.get_cpu_mut::<Link>()
+            && let Some(mut storage) = registry.get_cpu_mut::<Link>()
         {
             storage.insert(source, Link { target });
         }
@@ -232,7 +232,7 @@ fn two_copies_of_one_file_keep_their_ids_and_their_links() {
         {
             let next =
                 archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<Link>());
-            archetypes.register_entity(source, next);
+            archetypes.register_at(source, next, None);
         }
         let path = tmp_path("multi_two_copies");
         let mut manager = SceneManager::new();
@@ -397,7 +397,7 @@ fn a_scratch_scene_is_never_folded_into_a_saved_one() {
     };
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<SceneMember>();
-        if let Some(storage) = registry.get_cpu_mut::<SceneMember>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<SceneMember>() {
             storage.insert(stray, SceneMember::new(scratch));
         }
     }

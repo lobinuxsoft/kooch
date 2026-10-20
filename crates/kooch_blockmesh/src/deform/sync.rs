@@ -158,7 +158,7 @@ fn collide_with(resources: &mut Resources, entity: Entity, mesh: &MeshletMesh) {
     resources.insert(meshes);
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<kooch_physics::components::Collider>()
+        && let Some(mut storage) = registry.get_cpu_mut::<kooch_physics::components::Collider>()
         && let Some(collider) = storage.get_mut(entity)
     {
         // 🔴 Addressed by entity, leaving `mesh` alone: a generated id in a field that means a
@@ -174,7 +174,7 @@ fn collide_with(resources: &mut Resources, entity: Entity, mesh: &MeshletMesh) {
 /// would see the straight mesh and nothing would say why.
 fn point_at(resources: &mut Resources, entity: Entity, id: Guid) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<kooch_ecs::MeshRenderer>()
+        && let Some(mut storage) = registry.get_cpu_mut::<kooch_ecs::MeshRenderer>()
         && let Some(renderer) = storage.get_mut(entity)
         && renderer.mesh != Some(id)
     {

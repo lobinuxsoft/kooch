@@ -111,7 +111,7 @@ pub fn cling_and_leap(resources: &mut Resources) {
     let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
         return;
     };
-    let Some(storage) = registry.get_cpu_mut::<Jump>() else {
+    let Some(mut storage) = registry.get_cpu_mut::<Jump>() else {
         return;
     };
     for entity in spent {

@@ -2,26 +2,33 @@ use std::any::TypeId;
 use std::collections::{BTreeSet, HashMap};
 
 use crate::archetype::{Archetype, ArchetypeId};
-use crate::component::ComponentRegistry;
 use crate::entity::Entity;
-use crate::storage::{TableId, TableRow, Tables};
+use crate::storage::TableRow;
+
+use super::filed::Filed;
+
+/// Where an entity is filed: which archetype, and which slot of it.
+///
+/// The slot is what makes leaving O(1). Without it, every archetype change scanned the entity list
+/// to find the entity it was about to remove.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Where {
+    /// The archetype the entity belongs to.
+    pub archetype: ArchetypeId,
+    /// Its index into that archetype's parallel entity and row lists.
+    pub at: u32,
+}
 
 /// Central registry of all archetypes and entity-archetype mappings.
 pub struct ArchetypeRegistry {
     /// All known archetypes.
     archetypes: HashMap<ArchetypeId, Archetype>,
-    /// Entity → where its components live.
-    entity_archetype: HashMap<Entity, ArchetypeId>,
-    /// Entity → the table row holding its values, for entities that have been placed in one.
-    entity_rows: HashMap<Entity, TableRow>,
+    /// Entity → the archetype and slot holding it.
+    located: Filed,
     /// Cache: `(from_archetype, +component_type)` → `to_archetype`.
     add_transitions: HashMap<(ArchetypeId, TypeId), ArchetypeId>,
     /// Cache: `(from_archetype, -component_type)` → `to_archetype`.
     remove_transitions: HashMap<(ArchetypeId, TypeId), ArchetypeId>,
-    /// Where the component VALUES will live (#891). Empty until something
-    /// asks for a table, which is the point where the component registry
-    /// is in scope and a column can actually be built.
-    tables: Tables,
     /// Bumped by every structural change — an entity registered, moved between archetypes or
     /// evicted. Read by anything caching a view of the world's shape (#1561).
     revision: u64,
@@ -35,11 +42,9 @@ impl ArchetypeRegistry {
 
         Self {
             archetypes,
-            entity_archetype: HashMap::new(),
-            entity_rows: HashMap::new(),
+            located: Filed::default(),
             add_transitions: HashMap::new(),
             remove_transitions: HashMap::new(),
-            tables: Tables::new(),
             revision: 0,
         }
     }
@@ -48,40 +53,6 @@ impl ArchetypeRegistry {
     #[inline]
     pub fn revision(&self) -> u64 {
         self.revision
-    }
-
-    /// The tables holding this world's component values.
-    #[inline]
-    pub fn tables(&self) -> &Tables {
-        &self.tables
-    }
-
-    #[cfg(test)]
-    /// The tables, mutably.
-    #[inline]
-    pub fn tables_mut(&mut self) -> &mut Tables {
-        &mut self.tables
-    }
-
-    /// The table serving `archetype`'s component set, built on first ask.
-    pub fn table_of(
-        &mut self,
-        archetype: ArchetypeId,
-        components: &ComponentRegistry,
-    ) -> Option<TableId> {
-        let ids: Vec<_> = self
-            .archetypes
-            .get(&archetype)?
-            .components()
-            .iter()
-            .map(|type_id| {
-                components
-                    .storage_id(type_id)
-                    .unwrap_or_else(|| panic!("component {type_id:?} is not registered"))
-            })
-            .collect();
-
-        Some(self.tables.get_or_insert(components, &ids))
     }
 
     /// Returns the archetype for a component set, creating it if needed.
@@ -103,139 +74,97 @@ impl ArchetypeRegistry {
         self.archetypes.get(&id)
     }
 
-    /// Returns the archetype an entity currently belongs to.
-    pub fn entity_archetype(&self, entity: Entity) -> Option<ArchetypeId> {
-        self.entity_archetype.get(&entity).copied()
+    /// An archetype, mutably.
+    pub fn get_mut(&mut self, id: ArchetypeId) -> Option<&mut Archetype> {
+        self.archetypes.get_mut(&id)
     }
 
-    /// Moves an entity into the given archetype.
-    pub fn register_entity(&mut self, entity: Entity, archetype_id: ArchetypeId) {
-        if let Some(old_id) = self.entity_archetype.get(&entity).copied() {
-            // Already there: nothing moved, so nothing watching this has to look again.
-            if old_id == archetype_id {
+    /// Returns the archetype an entity currently belongs to.
+    pub fn entity_archetype(&self, entity: Entity) -> Option<ArchetypeId> {
+        self.located.get(entity).map(|at| at.archetype)
+    }
+
+    /// Where `entity` is filed, archetype and slot.
+    #[inline]
+    pub fn located(&self, entity: Entity) -> Option<Where> {
+        self.located.get(entity)
+    }
+
+    /// The table row holding `entity`'s values, if it has one.
+    #[inline]
+    pub fn row_of(&self, entity: Entity) -> Option<TableRow> {
+        let at = self.located(entity)?;
+        self.archetypes.get(&at.archetype)?.row_at(at.at)
+    }
+
+    /// Moves an entity into `archetype_id`, recording which table row holds its values.
+    ///
+    /// 🔴 The only safe caller for a world that holds component values is
+    /// [`move_entity::move_in`](crate::move_entity::move_in). The row recorded here and the one
+    /// [`ComponentRegistry`](crate::ComponentRegistry) holds are the same fact written twice — one
+    /// for the walk, which must not hash, and one for a reader that has no archetype in hand. The
+    /// funnel is what keeps them equal; filing an entity here on its own does not, and the
+    /// disagreement is silent: the query reads one answer and `get_cpu` the other. Check it with
+    /// [`move_entity::rows_agree`](crate::move_entity::rows_agree).
+    ///
+    /// 🔴 Leaving a slot drags the archetype's last entity into it. That entity asked for nothing
+    /// and its slot changed anyway, so it is re-filed here — miss it and its next move removes the
+    /// wrong entity from the list.
+    pub fn register_at(
+        &mut self,
+        entity: Entity,
+        archetype_id: ArchetypeId,
+        row: Option<TableRow>,
+    ) {
+        if let Some(old) = self.located.get(entity) {
+            if old.archetype == archetype_id {
+                // Already there: only the row can have changed, and that is not a structural
+                // change — nothing watching the world's shape has to look again.
+                if let Some(archetype) = self.archetypes.get_mut(&archetype_id) {
+                    archetype.set_row(old.at, row);
+                }
                 return;
             }
-            if let Some(archetype) = self.archetypes.get_mut(&old_id) {
-                archetype.remove_entity(entity);
-            }
+            self.vacate(old);
         }
 
-        if let Some(archetype) = self.archetypes.get_mut(&archetype_id) {
-            archetype.add_entity(entity);
-        }
-
-        self.entity_archetype.insert(entity, archetype_id);
+        let at = match self.archetypes.get_mut(&archetype_id) {
+            Some(archetype) => archetype.add_entity(entity, row),
+            None => 0,
+        };
+        self.located.set(entity, archetype_id, at);
         self.revision += 1;
+    }
+
+    /// Points `entity`'s slot at a different table row. Not a structural change.
+    pub fn set_row(&mut self, entity: Entity, row: Option<TableRow>) {
+        let Some(at) = self.located(entity) else {
+            return;
+        };
+        if let Some(archetype) = self.archetypes.get_mut(&at.archetype) {
+            archetype.set_row(at.at, row);
+        }
     }
 
     /// Removes an entity from its current archetype entirely.
     ///
     /// Returns the archetype it was removed from, or `None` if untracked.
     pub fn unregister_entity(&mut self, entity: Entity) -> Option<ArchetypeId> {
-        if let Some(old_id) = self.entity_archetype.remove(&entity) {
-            self.revision += 1;
-            if let Some(archetype) = self.archetypes.get_mut(&old_id) {
-                archetype.remove_entity(entity);
-            }
-            Some(old_id)
-        } else {
-            None
-        }
+        let at = self.located.take(entity)?;
+        self.revision += 1;
+        self.vacate(at);
+        Some(at.archetype)
     }
 
-    // -- Rows (#891, stage 5c-1) ---------------------------------------------
-
-    /// The table row holding `entity`'s values, if it has been placed.
-    #[inline]
-    pub fn row_of(&self, entity: Entity) -> Option<TableRow> {
-        self.entity_rows.get(&entity).copied()
-    }
-
-    /// The table serving `archetype`, **without creating one**.
-    pub fn table_for(
-        &self,
-        archetype: ArchetypeId,
-        components: &ComponentRegistry,
-    ) -> Option<TableId> {
-        let ids: Vec<_> = self
+    /// Frees a slot, re-filing whichever entity got dragged into it.
+    fn vacate(&mut self, at: Where) {
+        let dragged = self
             .archetypes
-            .get(&archetype)?
-            .components()
-            .iter()
-            .map(|type_id| components.storage_id(type_id))
-            .collect::<Option<_>>()?;
-        self.tables.find(&ids)
-    }
-
-    /// Registers `entity` in `archetype` **and** claims it a row in that archetype's table.
-    pub fn place(
-        &mut self,
-        entity: Entity,
-        archetype: ArchetypeId,
-        components: &ComponentRegistry,
-    ) -> Option<TableRow> {
-        let table = self.table_of(archetype, components)?;
-        self.register_entity(entity, archetype);
-        let row = self.tables.get_mut(table)?.push_entity(entity);
-        self.entity_rows.insert(entity, row);
-        Some(row)
-    }
-
-    /// Moves `entity` into `archetype`, carrying the values both archetypes hold and destroying the
-    /// ones it is losing.
-    pub fn relocate(
-        &mut self,
-        entity: Entity,
-        archetype: ArchetypeId,
-        components: &ComponentRegistry,
-    ) -> Option<TableRow> {
-        let Some(row) = self.row_of(entity) else {
-            return self.place(entity, archetype, components);
-        };
-        self.revision += 1;
-        let from = self.entity_archetype.get(&entity).copied()?;
-        let source = self.table_of(from, components)?;
-        let target = self.table_of(archetype, components)?;
-
-        if source == target {
-            // The same set of stored components: the row does not move, only the archetype the
-            // entity is filed under. Today that can only be the archetype it already had; it
-            // becomes reachable when a component opts out of table storage.
-            self.register_entity(entity, archetype);
-            return Some(row);
+            .get_mut(&at.archetype)
+            .and_then(|archetype| archetype.remove_at(at.at));
+        if let Some(other) = dragged {
+            self.located.set(other, at.archetype, at.at);
         }
-
-        let (landed, displaced) = self.tables.move_row(source, row, target);
-        if let Some(other) = displaced {
-            self.entity_rows.insert(other, row);
-        }
-        self.register_entity(entity, archetype);
-        self.entity_rows.insert(entity, landed);
-        Some(landed)
-    }
-
-    /// Removes `entity` from its table, destroying its values, and from the archetype index.
-    pub fn evict(&mut self, entity: Entity, components: &ComponentRegistry) -> bool {
-        self.revision += 1;
-        let Some(row) = self.entity_rows.remove(&entity) else {
-            self.unregister_entity(entity);
-            return false;
-        };
-        let Some(archetype) = self.entity_archetype.get(&entity).copied() else {
-            return false;
-        };
-        let Some(table) = self.table_of(archetype, components) else {
-            return false;
-        };
-        let displaced = self
-            .tables
-            .get_mut(table)
-            .and_then(|table| table.swap_remove(row));
-        if let Some(other) = displaced {
-            self.entity_rows.insert(other, row);
-        }
-        self.unregister_entity(entity);
-        true
     }
 
     /// Computes the archetype that results from adding component `T` to
@@ -303,10 +232,21 @@ impl ArchetypeRegistry {
     /// Reorders every archetype's entities to follow `order`.
     pub fn reorder_entities(&mut self, order: &[Entity]) {
         self.revision += 1;
-        let rank: std::collections::HashMap<Entity, usize> =
-            order.iter().enumerate().map(|(i, e)| (*e, i)).collect();
+        let rank: HashMap<Entity, usize> = order.iter().enumerate().map(|(i, e)| (*e, i)).collect();
         for archetype in self.archetypes.values_mut() {
             archetype.reorder_entities(&rank);
+        }
+        // The slots moved with the entities, so every one of them is stale.
+        self.refile();
+    }
+
+    /// Rebuilds the entity → slot index from the archetypes themselves.
+    fn refile(&mut self) {
+        self.located.clear();
+        for (&archetype, held) in &self.archetypes {
+            for (at, &entity) in held.entities().iter().enumerate() {
+                self.located.set(entity, archetype, at as u32);
+            }
         }
     }
 

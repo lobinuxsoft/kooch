@@ -154,7 +154,7 @@ pub(super) fn handle_instantiate_prefab(
     // context menu do not, and leave the prefab where it was authored.
     if let Some(at) = at
         && let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<kooch_ecs::transform::Transform>()
+        && let Some(mut storage) = registry.get_cpu_mut::<kooch_ecs::transform::Transform>()
         && let Some(transform) = storage.get_mut(root)
     {
         transform.position = at;

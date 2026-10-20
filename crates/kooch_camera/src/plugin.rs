@@ -374,7 +374,7 @@ fn apply_lens(resources: &mut Resources, camera: Entity, lens: LensOverride) {
     };
     let Some(cam) = registry
         .get_cpu_mut::<PerspectiveCamera>()
-        .and_then(|cameras| cameras.get_mut(camera))
+        .and_then(|cameras| cameras.into_mut(camera))
     else {
         // Once: a live vcam whose camera has no lens to write is an authoring state worth hearing
         // about, and the previous silence is what let this ship.
@@ -495,7 +495,7 @@ struct Pose {
 /// Where a vcam's group is this step, or `None` when nothing carries its tag and there is nothing
 /// to follow.
 pub(crate) fn target_pose(
-    targets: Option<&kooch_ecs::component::ComponentStorage<CameraTarget>>,
+    targets: Option<kooch_ecs::component::ComponentView<'_, CameraTarget>>,
     group: u32,
     pose_of: &impl Fn(Entity) -> Option<(Vec3, glam::Quat)>,
 ) -> Option<GroupPose> {
@@ -733,7 +733,7 @@ fn apply_poses(resources: &mut Resources, plan: &[Pose]) {
     let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
         return;
     };
-    let Some(transforms) = registry.get_cpu_mut::<Transform>() else {
+    let Some(mut transforms) = registry.get_cpu_mut::<Transform>() else {
         return;
     };
     for step in plan {

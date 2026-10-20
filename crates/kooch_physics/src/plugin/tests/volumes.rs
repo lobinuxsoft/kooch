@@ -245,7 +245,7 @@ fn the_matrix_decides_who_meets_whom() {
 
     let region = volume(&mut resources);
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(colliders) = registry.get_cpu_mut::<Collider>()
+        && let Some(mut colliders) = registry.get_cpu_mut::<Collider>()
         && let Some(collider) = colliders.get_mut(region)
     {
         collider.layer = 1;
@@ -296,7 +296,7 @@ fn the_matrix_lets_its_own_layer_through() {
 
     let region = volume(&mut resources);
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(colliders) = registry.get_cpu_mut::<Collider>()
+        && let Some(mut colliders) = registry.get_cpu_mut::<Collider>()
         && let Some(collider) = colliders.get_mut(region)
     {
         collider.layer = 1;

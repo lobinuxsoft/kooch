@@ -18,7 +18,7 @@ fn world() -> (Resources, Entity, Entity) {
         position,
         ..Default::default()
     };
-    let transforms = registry.get_cpu_mut::<Transform>().unwrap();
+    let mut transforms = registry.get_cpu_mut::<Transform>().unwrap();
     transforms.insert(vcam, at(Vec3::Z * 5.0));
     transforms.insert(target, at(Vec3::ZERO));
     registry.register_cpu::<crate::Follow>();

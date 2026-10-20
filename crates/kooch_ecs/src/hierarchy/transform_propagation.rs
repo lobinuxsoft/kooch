@@ -97,7 +97,7 @@ pub fn transform_propagation_system(resources: &mut kooch_core::resource::Resour
     // component for the first time so their archetype can be updated.
     let mut gained_gt: Vec<Entity> = Vec::new();
     for (entity, gt) in global_transforms {
-        if let Some(storage) = registry.get_cpu_mut::<GlobalTransform>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<GlobalTransform>() {
             if let Some(existing) = storage.get_mut(entity) {
                 *existing = gt;
             } else {
@@ -189,7 +189,7 @@ pub fn propagate_subtrees(resources: &mut kooch_core::resource::Resources, roots
         out
     };
 
-    if let Some(storage) = registry.get_cpu_mut::<GlobalTransform>() {
+    if let Some(mut storage) = registry.get_cpu_mut::<GlobalTransform>() {
         for (entity, global) in published {
             // Only entities that already HAVE one: gaining the component needs an archetype move,
             // and a body that has never been propagated is the full pass's job, not this one's.

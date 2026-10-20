@@ -39,7 +39,7 @@ fn spawn_in(resources: &mut Resources, scene: kooch_core::Guid) {
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<SceneMember>();
-        if let Some(storage) = registry.get_cpu_mut::<SceneMember>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<SceneMember>() {
             storage.insert(entity, SceneMember::new(scene));
         }
     }

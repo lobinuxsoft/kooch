@@ -56,7 +56,7 @@ pub fn migrate_renderer_layers(resources: &mut kooch_core::resource::Resources) 
     let Some(registry) = resources.get_mut::<crate::component::ComponentRegistry>() else {
         return;
     };
-    let Some(storage) = registry.get_cpu_mut::<MeshRenderer>() else {
+    let Some(mut storage) = registry.get_cpu_mut::<MeshRenderer>() else {
         return;
     };
     for (&entity, renderer) in storage.iter_mut() {

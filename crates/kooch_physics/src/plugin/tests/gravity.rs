@@ -105,7 +105,7 @@ fn editing_the_scale_reaches_the_solver() {
         .spec(slot_of(&resources, entity).expect("no body"));
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<PhysicsBody>()
+        && let Some(mut storage) = registry.get_cpu_mut::<PhysicsBody>()
         && let Some(body) = storage.get_mut(entity)
     {
         body.gravity_scale = 0.0;

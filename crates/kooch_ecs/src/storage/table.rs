@@ -127,6 +127,33 @@ impl Table {
         self.entities.get(row.index()).copied()
     }
 
+    /// Hands every column of `row` to `drain`, which is expected to take the value out, then frees
+    /// the row and reports the entity dragged into the hole.
+    ///
+    /// The lossless twin of [`Self::swap_remove`]: used to put values back into the per-type maps
+    /// when a move cannot be completed, instead of leaving a row that points at the wrong table.
+    pub fn drain_row(
+        &mut self,
+        row: TableRow,
+        mut drain: impl FnMut(StorageId, &mut Column, usize),
+    ) -> Option<Entity> {
+        assert!(
+            row.index() < self.entities.len(),
+            "row {} is past the end ({})",
+            row.0,
+            self.entities.len()
+        );
+        debug_assert!(self.rows_agree(), "a column drifted out of step");
+
+        for index in 0..self.columns.len() {
+            let id = self.ids[index];
+            drain(id, &mut self.columns[index], row.index());
+        }
+        self.entities.swap_remove(row.index());
+        debug_assert!(self.rows_agree(), "a drain left a column behind");
+        self.entities.get(row.index()).copied()
+    }
+
     /// Moves `row` into `dst`, carrying every component both tables hold and **dropping** the ones
     /// only this table has.
     pub fn move_row_to(&mut self, row: TableRow, dst: &mut Table) -> (TableRow, Option<Entity>) {

@@ -195,7 +195,7 @@ fn point_at_meshes(resources: &mut Resources, blocks: &[Found]) {
         return;
     };
 
-    if let Some(storage) = registry.get_cpu_mut::<kooch_ecs::MeshRenderer>() {
+    if let Some(mut storage) = registry.get_cpu_mut::<kooch_ecs::MeshRenderer>() {
         for (entity, id, ..) in blocks {
             if let Some(renderer) = storage.get_mut(*entity) {
                 renderer.mesh = Some(*id);
@@ -203,7 +203,7 @@ fn point_at_meshes(resources: &mut Resources, blocks: &[Found]) {
         }
     }
 
-    if let Some(storage) = registry.get_cpu_mut::<kooch_physics::components::Collider>() {
+    if let Some(mut storage) = registry.get_cpu_mut::<kooch_physics::components::Collider>() {
         for (entity, ..) in blocks {
             if let Some(collider) = storage.get_mut(*entity) {
                 // 🔴 Addressed by entity, leaving `mesh` alone: a block's id in a field that means a

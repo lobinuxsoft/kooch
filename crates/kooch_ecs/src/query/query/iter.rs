@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use crate::archetype::Archetype;
-use crate::archetype_registry::ArchetypeRegistry;
 use crate::storage::Table;
 
 use crate::query::fetch::WorldQuery;
@@ -15,7 +14,6 @@ pub struct QueryIter<'w, 'q, Q: WorldQuery, F: QueryFilter> {
     pub(super) archetypes: &'q [&'w Archetype],
     /// The table behind each archetype, parallel to `archetypes`.
     pub(super) tables: &'q [Option<&'w Table>],
-    pub(super) registry: &'w ArchetypeRegistry,
     pub(super) archetype_idx: usize,
     pub(super) entity_idx: usize,
     pub(super) _marker: PhantomData<F>,
@@ -41,11 +39,12 @@ impl<'w, 'q, Q: WorldQuery, F: QueryFilter> Iterator for QueryIter<'w, 'q, Q, F>
             }
 
             let entity = entities[self.entity_idx];
+            let row = archetype.rows()[self.entity_idx];
             self.entity_idx += 1;
 
             // SAFETY: Archetype matching guarantees required components exist.
             // The fetch was properly initialised with valid borrows.
-            let at = table.and_then(|table| Some((table, self.registry.row_of(entity)?)));
+            let at = table.zip(row);
             if let Some(item) = unsafe { Q::fetch(self.fetch, entity, at) } {
                 return Some(item);
             }

@@ -18,7 +18,7 @@ fn world() -> (Resources, Entity) {
     registry.register_cpu_reflected::<CameraTarget>();
     registry.register_cpu_reflected::<CameraOrbit>();
     let (vcam, target) = (allocator.spawn(), allocator.spawn());
-    let transforms = registry.get_cpu_mut::<Transform>().unwrap();
+    let mut transforms = registry.get_cpu_mut::<Transform>().unwrap();
     transforms.insert(vcam, Transform::default());
     transforms.insert(target, Transform::default());
     registry.get_cpu_mut::<VirtualCamera>().unwrap().insert(
@@ -45,7 +45,7 @@ fn orbit(resources: &mut Resources, vcam: Entity, change: impl Fn(&mut CameraOrb
     let orbit = registry
         .get_cpu_mut::<CameraOrbit>()
         .unwrap()
-        .get_mut(vcam)
+        .into_mut(vcam)
         .unwrap();
     change(orbit);
 }
@@ -431,7 +431,7 @@ fn turn_target(resources: &mut Resources, degrees: f32) {
         .iter()
         .map(|(&entity, _)| entity)
         .collect();
-    let transforms = registry.get_cpu_mut::<Transform>().unwrap();
+    let mut transforms = registry.get_cpu_mut::<Transform>().unwrap();
     for entity in targets {
         let transform = transforms.get_mut(entity).unwrap();
         transform.rotation = glam::Quat::from_rotation_y(degrees.to_radians());
@@ -443,7 +443,7 @@ fn set_yaw(resources: &mut Resources, vcam: Entity, yaw: f32) {
     registry
         .get_cpu_mut::<VirtualCamera>()
         .unwrap()
-        .get_mut(vcam)
+        .into_mut(vcam)
         .unwrap()
         .yaw = yaw;
 }

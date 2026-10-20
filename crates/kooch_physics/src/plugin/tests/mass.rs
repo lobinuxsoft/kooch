@@ -61,7 +61,7 @@ fn attach_child_collider(resources: &mut Resources, parent: Entity, offset: Vec3
     // The compound walk reads Children, which the hierarchy system
     // normally maintains; this harness has no hierarchy system.
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<kooch_ecs::hierarchy::Children>()
+        && let Some(mut storage) = registry.get_cpu_mut::<kooch_ecs::hierarchy::Children>()
         && let Some(children) = storage.get_mut(parent)
     {
         children.entities.push(child);
@@ -180,7 +180,7 @@ fn editing_the_density_does_not_rebuild_the_body() {
     let slot = slot_of(&resources, entity);
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<PhysicsBody>()
+        && let Some(mut storage) = registry.get_cpu_mut::<PhysicsBody>()
         && let Some(body) = storage.get_mut(entity)
     {
         body.density = 7850.0;
@@ -204,7 +204,7 @@ fn editing_the_centre_of_mass_reaches_the_solver() {
     physics_sync_system(&mut resources);
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<PhysicsBody>()
+        && let Some(mut storage) = registry.get_cpu_mut::<PhysicsBody>()
         && let Some(body) = storage.get_mut(entity)
     {
         body.center_of_mass_enabled = true;

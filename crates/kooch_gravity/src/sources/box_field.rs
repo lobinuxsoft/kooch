@@ -146,7 +146,7 @@ pub fn migrate_box_range(resources: &mut kooch_core::resource::Resources) {
     let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
         return;
     };
-    let Some(storage) = registry.get_cpu_mut::<BoxGravity>() else {
+    let Some(mut storage) = registry.get_cpu_mut::<BoxGravity>() else {
         return;
     };
     for (&entity, field) in storage.iter_mut() {

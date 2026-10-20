@@ -297,7 +297,7 @@ fn insert_reflected<T: Component + crate::reflect::Reflect + Clone>(
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<T>();
-        if let Some(storage) = registry.get_cpu_mut::<T>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<T>() {
             storage.insert(entity, value);
         }
     }

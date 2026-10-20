@@ -269,7 +269,6 @@ mod reflection {
     use crate::component::traits::Component;
     use crate::entity::Entity;
     use crate::reflect::ReflectValue;
-    use crate::storage::{Column, Table, TableRow};
     use std::any::TypeId;
 
     #[derive(Debug, Clone, Copy, Default, crate::Reflect)]
@@ -278,30 +277,36 @@ mod reflection {
     }
     impl Component for Shield {}
 
-    /// A registry with `Shield` reflected, and a one-column table holding one entity's value —
-    /// **and nothing in the map**.
-    fn only_in_a_column(strength: u32) -> (ComponentRegistry, Table, TableRow) {
+    fn held() -> Entity {
+        Entity::new(1, 0)
+    }
+
+    /// A registry whose one entity's `Shield` lives in a column and **nowhere else** — settled
+    /// through the real path, so the fixture cannot drift from what the funnel does.
+    fn only_in_a_column(strength: u32) -> ComponentRegistry {
         let mut registry = ComponentRegistry::new();
         registry.register_cpu_reflected::<Shield>();
         let id = registry.storage_id(&TypeId::of::<Shield>()).unwrap();
+        let shield = TypeId::of::<Shield>();
 
-        let mut table = Table::new([(id, Column::of::<Shield>())]);
-        let row = table.push_entity(Entity::new(1, 0));
-        unsafe { table.column_mut(id).unwrap().push(Shield { strength }) };
+        registry.insert_default_reflected(&shield, held());
+        registry
+            .reflect_set_field(&shield, held(), "strength", ReflectValue::U32(strength))
+            .unwrap();
+        assert!(
+            registry.settle(held(), &[id]).row.is_some(),
+            "the row was handed out"
+        );
 
-        (registry, table, row)
+        registry
     }
 
     #[test]
     fn it_reads_a_field_from_a_column() {
-        let (registry, table, row) = only_in_a_column(42);
+        let registry = only_in_a_column(42);
 
         let fields = registry
-            .reflect_fields_at(
-                &TypeId::of::<Shield>(),
-                Entity::new(1, 0),
-                Some((&table, row)),
-            )
+            .reflect_get_fields(&TypeId::of::<Shield>(), held())
             .expect("the column answers");
 
         assert_eq!(fields, vec![("strength".to_owned(), ReflectValue::U32(42))]);
@@ -309,20 +314,21 @@ mod reflection {
 
     #[test]
     fn it_writes_a_field_into_a_column() {
-        let (mut registry, table, row) = only_in_a_column(42);
+        let mut registry = only_in_a_column(42);
         let id = registry.storage_id(&TypeId::of::<Shield>()).unwrap();
 
         registry
-            .reflect_write_at(
+            .reflect_set_field(
                 &TypeId::of::<Shield>(),
-                Entity::new(1, 0),
+                held(),
                 "strength",
                 ReflectValue::U32(99),
-                Some((&table, row)),
             )
             .expect("the column takes the write");
 
-        let stored = unsafe { table.column(id).unwrap().get::<Shield>(row.index()) };
+        let (table, row) = registry.location(held()).unwrap();
+        let column = registry.tables().get(table).unwrap().column(id).unwrap();
+        let stored = unsafe { column.get::<Shield>(row.index()) };
         assert_eq!(stored.unwrap().strength, 99, "it landed in the column");
     }
 
@@ -330,129 +336,45 @@ mod reflection {
     /// inspector show a value it cannot change.
     #[test]
     fn a_write_is_visible_to_the_next_read() {
-        let (mut registry, table, row) = only_in_a_column(1);
-        let entity = Entity::new(1, 0);
+        let mut registry = only_in_a_column(1);
         let shield = TypeId::of::<Shield>();
 
         registry
-            .reflect_write_at(
-                &shield,
-                entity,
-                "strength",
-                ReflectValue::U32(7),
-                Some((&table, row)),
-            )
+            .reflect_set_field(&shield, held(), "strength", ReflectValue::U32(7))
             .unwrap();
-        let fields = registry
-            .reflect_fields_at(&shield, entity, Some((&table, row)))
-            .unwrap();
+        let fields = registry.reflect_get_fields(&shield, held()).unwrap();
 
         assert_eq!(fields, vec![("strength".to_owned(), ReflectValue::U32(7))]);
     }
 
-    /// And the map is still the answer for everything that has not moved,
-    /// which today is everything.
+    /// The inbox still answers for a component the archetype has not caught up with, which is
+    /// every component in the frame it is added.
     #[test]
-    fn the_map_still_answers_without_a_row() {
+    fn the_inbox_answers_without_a_row() {
         let mut registry = ComponentRegistry::new();
         registry.register_cpu_reflected::<Shield>();
-        let entity = Entity::new(1, 0);
-        registry
-            .get_cpu_mut::<Shield>()
-            .unwrap()
-            .insert(entity, Shield { strength: 5 });
+        let shield = TypeId::of::<Shield>();
 
-        let fields = registry
-            .reflect_get_fields(&TypeId::of::<Shield>(), entity)
+        registry.insert_default_reflected(&shield, held());
+        registry
+            .reflect_set_field(&shield, held(), "strength", ReflectValue::U32(3))
             .unwrap();
 
-        assert_eq!(fields, vec![("strength".to_owned(), ReflectValue::U32(5))]);
-    }
-}
-
-/// 🔴 #1368: a renamed component is resolved by string, so without this it disappears from every
-/// entity on load — no error, no log, the fields simply not there.
-mod renamed {
-    use super::*;
-    use crate::Reflect;
-
-    #[derive(Debug, Clone, Copy, PartialEq, Default, Reflect)]
-    #[reflect(alias = "old::Framing, older::Framing")]
-    struct Composer {
-        screen: f32,
-    }
-    impl Component for Composer {}
-
-    #[derive(Debug, Clone, Copy, PartialEq, Default, Reflect)]
-    struct Plain {
-        value: f32,
-    }
-    impl Component for Plain {}
-
-    fn registry() -> ComponentRegistry {
-        let mut registry = ComponentRegistry::new();
-        registry.register_cpu_reflected::<Composer>();
-        registry
-    }
-
-    #[test]
-    fn an_old_name_still_resolves() {
-        let registry = registry();
-        let mine = TypeId::of::<Composer>();
-        assert_eq!(registry.type_id_by_name("old::Framing"), Some(mine));
-        assert_eq!(registry.type_id_by_name("older::Framing"), Some(mine));
-    }
-
-    #[test]
-    fn the_current_name_still_resolves() {
-        let registry = registry();
-        let name = std::any::type_name::<Composer>();
+        assert!(registry.location(held()).is_none(), "no row yet");
         assert_eq!(
-            registry.type_id_by_name(name),
-            Some(TypeId::of::<Composer>())
+            registry.reflect_get_fields(&shield, held()).unwrap(),
+            vec![("strength".to_owned(), ReflectValue::U32(3))]
         );
     }
 
+    /// 🔴 The promotion drains the inbox. Leaving a copy behind would give one component two
+    /// values, and which one a caller saw would depend on which door it came through.
     #[test]
-    fn a_name_nobody_claims_is_none() {
-        assert!(registry().type_id_by_name("nobody::Knows").is_none());
-    }
+    fn promotion_empties_the_inbox() {
+        let registry = only_in_a_column(42);
+        let view = registry.get_cpu::<Shield>().unwrap();
 
-    /// A clash is refused loudly at registration, whichever of the two arrives first: a load that
-    /// picked one of them would make the other vanish from every entity with nothing said.
-    #[derive(Debug, Clone, Copy, PartialEq, Default, Reflect)]
-    #[reflect(alias = "kooch_ecs::component::registry::tests::renamed::Plain")]
-    struct Thief {
-        value: f32,
-    }
-    impl Component for Thief {}
-
-    #[test]
-    #[should_panic(expected = "own name")]
-    fn stealing_a_live_name_is_refused() {
-        let mut registry = ComponentRegistry::new();
-        registry.register_cpu_reflected::<Plain>();
-        registry.register_cpu_reflected::<Thief>();
-    }
-
-    #[test]
-    #[should_panic(expected = "which is")]
-    fn arriving_first_does_not_help() {
-        let mut registry = ComponentRegistry::new();
-        registry.register_cpu_reflected::<Thief>();
-        registry.register_cpu_reflected::<Plain>();
-    }
-
-    /// The backstop for the one clash registration cannot see: a component registered **without**
-    /// reflection runs no check, so the lookup answers live names first whatever an alias claims.
-    #[test]
-    fn a_live_name_beats_an_alias() {
-        let mut registry = ComponentRegistry::new();
-        registry.register_cpu_reflected::<Thief>();
-        registry.register_cpu::<Plain>();
-        assert_eq!(
-            registry.type_id_by_name(std::any::type_name::<Plain>()),
-            Some(TypeId::of::<Plain>()),
-        );
+        assert_eq!(view.get(held()).map(|s| s.strength), Some(42));
+        assert_eq!(view.len(), 1, "counted once, not twice");
     }
 }

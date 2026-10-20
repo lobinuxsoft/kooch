@@ -90,6 +90,18 @@ impl Tables {
         self.by_components.get(key.as_slice()).copied()
     }
 
+    /// Every table, in id order.
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = &Table> {
+        self.tables.iter()
+    }
+
+    /// Every table, mutably.
+    #[inline]
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Table> {
+        self.tables.iter_mut()
+    }
+
     /// The table `id` names.
     #[inline]
     pub fn get(&self, id: TableId) -> Option<&Table> {

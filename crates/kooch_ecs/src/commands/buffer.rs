@@ -3,7 +3,6 @@
 use kooch_core::resource::Resources;
 
 use crate::allocator::EntityAllocator;
-use crate::archetype::ArchetypeId;
 use crate::archetype_registry::ArchetypeRegistry;
 use crate::component::registry::ComponentRegistry;
 
@@ -28,7 +27,7 @@ impl Commands {
             .get_mut::<EntityAllocator>()
             .expect("EntityAllocator not found in Resources")
             .spawn();
-        crate::move_entity::move_entity(resources, entity, ArchetypeId::EMPTY);
+        crate::move_entity::arrives(resources, entity);
 
         EntityBuilder {
             entity,

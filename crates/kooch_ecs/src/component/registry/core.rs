@@ -11,10 +11,21 @@ use crate::reflect::{
 };
 
 use crate::component::cpu_storage::ComponentStorage;
+use crate::component::locations::Locations;
 use crate::component::storage_id::StorageId;
 use crate::component::traits::{AnyStorage, Component};
+use crate::component::view::{ComponentView, ComponentViewMut};
 use crate::storage::Column;
 use crate::storage::{Table, TableId, TableRow, Tables};
+
+/// Where an entity ended up after a move, and whoever its move disturbed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Settled {
+    /// The row holding its values, or `None` when they are still in the inbox.
+    pub row: Option<TableRow>,
+    /// The entity dragged into the hole the move left. Its row changed and it asked for nothing.
+    pub displaced: Option<Entity>,
+}
 
 /// Everything the registry knows about one registered component type.
 pub(super) struct Slot {
@@ -25,6 +36,12 @@ pub(super) struct Slot {
     reflector: Option<Box<dyn ReflectAccessor>>,
     /// Builds an empty column for this component's type.
     new_column: fn() -> Column,
+    /// Bumped by every write to this component, wherever the value lives.
+    ///
+    /// 🔴 On the slot, not on the map. The editor's frame snapshot cache keys on it (#1561, the
+    /// 29 → 140 FPS change) and the values moved to the columns — a revision left behind on a map
+    /// nobody writes to any more does not fail, it stops being a signal, in silence.
+    revision: u64,
 }
 
 /// Central registry for all component storages.
@@ -38,7 +55,7 @@ pub struct ComponentRegistry {
     /// Where component VALUES live, for the ones that have moved (#891).
     pub(super) tables: Tables,
     /// Which table row holds an entity's values, once they live in one.
-    pub(super) entity_at: HashMap<Entity, (TableId, TableRow)>,
+    pub(super) entity_at: Locations,
 }
 
 // SAFETY: All public methods either take `&mut self` (exclusive access) or
@@ -54,7 +71,7 @@ impl ComponentRegistry {
             slots: Vec::new(),
             ids: HashMap::new(),
             tables: Tables::new(),
-            entity_at: HashMap::new(),
+            entity_at: Locations::default(),
         }
     }
 
@@ -76,7 +93,7 @@ impl ComponentRegistry {
     /// Where `entity`'s values live, if they live in a table.
     #[inline]
     pub fn location(&self, entity: Entity) -> Option<(TableId, TableRow)> {
-        self.entity_at.get(&entity).copied()
+        self.entity_at.get(entity)
     }
 
     /// The table serving `components`, **without creating one**.
@@ -96,12 +113,150 @@ impl ComponentRegistry {
         table
     }
 
-    /// Gives `entity` a row in the table serving `components`, with every value defaulted — the
-    /// caller writes them into the columns it just gained.
-    pub fn place(&mut self, entity: Entity, components: &[StorageId]) -> Option<TableRow> {
+    /// How many times the component `id` names has been written to.
+    #[inline]
+    pub fn slot_revision(&self, id: StorageId) -> u64 {
+        self.slots.get(id.index()).map_or(0, |slot| slot.revision)
+    }
+
+    /// Records a write to the component `id` names.
+    #[inline]
+    pub fn touch(&mut self, id: StorageId) {
+        if let Some(slot) = self.slots.get_mut(id.index()) {
+            slot.revision += 1;
+        }
+    }
+
+    /// Settles `entity` into the table serving `components`, promoting every value still parked in
+    /// a per-type map into the column that now holds it.
+    ///
+    /// Reports the entity dragged into the hole this move left, because its row changed and it
+    /// asked for nothing. 🔴 The return type is the guard: a caller cannot forget what it is
+    /// handed, and an un-refiled entity reads another entity's components with nothing said.
+    ///
+    /// 🔴 All of it or none of it. A row that moves while one value stays behind leaves a column
+    /// short; an archetype that changes while the row stays behind leaves the entity reading
+    /// **another entity's components**, with nothing said. So a move that cannot be completed is
+    /// undone entirely: the values go back to the maps, the row is dropped, and the dual read in
+    /// `fetch` keeps serving the entity until the missing value shows up.
+    ///
+    /// Returns the row the entity ended up in, or `None` when it has none.
+    pub fn settle(&mut self, entity: Entity, components: &[StorageId]) -> Settled {
+        if components.is_empty() || !self.values_are_all_in(entity, components) {
+            // 🔴 `components` and not everything: a value whose component the target does not have
+            // is one the entity is **losing**, and handing that back to the inbox would resurrect
+            // the component the caller just took away.
+            return Settled {
+                row: None,
+                displaced: self.unsettle_but(entity, components),
+            };
+        }
+
+        let (row, displaced) = self.relocate(entity, components);
+        let Some(row) = row else {
+            return Settled {
+                row: None,
+                displaced,
+            };
+        };
+        for id in components {
+            self.promote(entity, *id, row);
+        }
+        debug_assert!(
+            self.location(entity)
+                .and_then(|(table, _)| self.tables.get(table))
+                .is_none_or(|table| table.rows_agree()),
+            "a column drifted out of step"
+        );
+        Settled {
+            row: Some(row),
+            displaced,
+        }
+    }
+
+    /// Whether every one of `components` has a value for `entity` — already in its column, or
+    /// parked in its map waiting to be promoted.
+    fn values_are_all_in(&self, entity: Entity, components: &[StorageId]) -> bool {
+        let held = self
+            .location(entity)
+            .and_then(|(table, _)| self.tables.get(table));
+        components.iter().all(|id| {
+            if held.is_some_and(|table| table.column(*id).is_some()) {
+                return true;
+            }
+            self.slots.get(id.index()).is_some_and(|slot| {
+                // SAFETY: `&self` is the shared access a read needs, and no
+                // query holds a mutable borrow while the funnel runs.
+                unsafe { &**slot.storage.get() }.holds(entity)
+            })
+        })
+    }
+
+    /// Moves `entity`'s value for `id` out of its map and into the column at `row`.
+    ///
+    /// A no-op when the value is already in the column, which is the common case: only a component
+    /// the entity just gained needs promoting.
+    fn promote(&mut self, entity: Entity, id: StorageId, row: TableRow) {
+        let Some((table, _)) = self.location(entity) else {
+            return;
+        };
+        let Some(held) = self.tables.get_mut(table) else {
+            return;
+        };
+        let Some(column) = held.column_mut(id) else {
+            return;
+        };
+        if column.len() > row.index() {
+            return;
+        }
+        let Some(slot) = self.slots.get_mut(id.index()) else {
+            return;
+        };
+        slot.storage.get_mut().take_into(entity, column);
+    }
+
+    /// Puts every one of `entity`'s values back into its inbox and drops its row.
+    ///
+    /// The way out of a move that cannot finish: no table can serve the archetype, so the values
+    /// go back where the dual read in `fetch` can still find them.
+    pub fn unsettle(&mut self, entity: Entity) -> Option<Entity> {
+        let keep: Vec<StorageId> = (0..self.slots.len() as u32).map(StorageId).collect();
+        self.unsettle_but(entity, &keep)
+    }
+
+    /// The same, except values whose component is not in `keep` are **destroyed**.
+    ///
+    /// That is the difference between a move that could not finish and a component the entity gave
+    /// up: the first keeps its values, the second must not.
+    pub fn unsettle_but(&mut self, entity: Entity, keep: &[StorageId]) -> Option<Entity> {
+        let (table, row) = self.entity_at.take(entity)?;
+        let held = self.tables.get_mut(table)?;
+        // The slots are indexed by `StorageId`, so the drain can reach each one by index without
+        // borrowing the whole registry — which the closure cannot do while the table is borrowed.
+        let slots = std::ptr::from_mut(&mut self.slots);
+        let displaced = held.drain_row(row, |id, column, at| {
+            if !keep.contains(&id) {
+                column.swap_remove(at);
+                return;
+            }
+            // SAFETY: `slots` and `self.tables` are distinct fields, and the
+            // closure touches only the former.
+            if let Some(slot) = unsafe { &mut *slots }.get_mut(id.index()) {
+                slot.storage.get_mut().put_from(entity, column, at);
+            }
+        });
+        if let Some(other) = displaced {
+            self.entity_at.set(other, table, row);
+        }
+        displaced
+    }
+
+    /// Gives `entity` a row in the table serving `components`, with its columns one short — the
+    /// caller promotes the values into them.
+    fn place(&mut self, entity: Entity, components: &[StorageId]) -> Option<TableRow> {
         let table = self.table_of(components);
         let row = self.tables.get_mut(table)?.push_entity(entity);
-        self.entity_at.insert(entity, (table, row));
+        self.entity_at.set(entity, table, row);
         Some(row)
     }
 
@@ -110,35 +265,25 @@ impl ComponentRegistry {
     ///
     /// 🔴 A row that moves drags the last row into the hole it left, so the entity that was there
     /// is re-filed here. Miss that and it reads another entity's components, silently.
-    pub fn relocate(&mut self, entity: Entity, components: &[StorageId]) -> Option<TableRow> {
+    fn relocate(
+        &mut self,
+        entity: Entity,
+        components: &[StorageId],
+    ) -> (Option<TableRow>, Option<Entity>) {
         let Some((source, row)) = self.location(entity) else {
-            return self.place(entity, components);
+            return (self.place(entity, components), None);
         };
         let target = self.table_of(components);
         if source == target {
-            return Some(row);
+            return (Some(row), None);
         }
 
         let (landed, displaced) = self.tables.move_row(source, row, target);
         if let Some(other) = displaced {
-            self.entity_at.insert(other, (source, row));
+            self.entity_at.set(other, source, row);
         }
-        self.entity_at.insert(entity, (target, landed));
-        Some(landed)
-    }
-
-    /// Drops `entity`'s row and the values in it. `false` when it had none.
-    pub fn evict(&mut self, entity: Entity) -> bool {
-        let Some((table, row)) = self.entity_at.remove(&entity) else {
-            return false;
-        };
-        let Some(displaced) = self.tables.get_mut(table).map(|t| t.swap_remove(row)) else {
-            return false;
-        };
-        if let Some(other) = displaced {
-            self.entity_at.insert(other, (table, row));
-        }
-        true
+        self.entity_at.set(entity, target, landed);
+        (Some(landed), displaced)
     }
 
     /// The table and row holding `entity`'s values, resolved for reading.
@@ -186,32 +331,68 @@ impl ComponentRegistry {
             name: std::any::type_name::<T>(),
             reflector: None,
             new_column: Column::of::<T>,
+            revision: 0,
         });
         self.ids.insert(type_id, id);
         id
     }
 
-    /// Returns an immutable reference to a CPU component storage.
-    pub fn get_cpu<T: Component>(&self) -> Option<&ComponentStorage<T>> {
-        let slot = self.slot(&TypeId::of::<T>())?;
+    /// A read-only view of one component type, wherever its values live.
+    ///
+    /// 🔴 Not `&ComponentStorage<T>` any more (#891). A value lives in exactly one place and most
+    /// of them have moved into a table column, so a map reference would read `None` for an entity
+    /// that plainly has the component — silently, at six hundred call sites.
+    pub fn get_cpu<T: Component>(&self) -> Option<ComponentView<'_, T>> {
+        let id = self.ids.get(&TypeId::of::<T>()).copied()?;
+        let slot = self.slots.get(id.index())?;
         // SAFETY: No mutable references exist (we have &self, not via query).
-        let storage = unsafe { &*slot.storage.get() };
-        storage.as_any().downcast_ref()
+        let map = unsafe { &*slot.storage.get() }.as_any().downcast_ref()?;
+        Some(ComponentView {
+            id,
+            map,
+            tables: &self.tables,
+            entity_at: &self.entity_at,
+            revision: slot.revision,
+        })
     }
 
-    /// Returns a mutable reference to a CPU component storage.
-    pub fn get_cpu_mut<T: Component>(&mut self) -> Option<&mut ComponentStorage<T>> {
+    /// A writable view of one component type.
+    pub fn get_cpu_mut<T: Component>(&mut self) -> Option<ComponentViewMut<'_, T>> {
         let id = self.ids.get(&TypeId::of::<T>()).copied()?;
         let slot = self.slots.get_mut(id.index())?;
-        // SAFETY: We have &mut self, so exclusive access is guaranteed.
-        slot.storage.get_mut().as_any_mut().downcast_mut()
+        // Three disjoint fields: the slot's storage, the slot's revision, and the tables. Splitting
+        // them here is what lets one view both read a column and park a value in the map.
+        let revision = &mut slot.revision;
+        let map = slot.storage.get_mut().as_any_mut().downcast_mut()?;
+        Some(ComponentViewMut {
+            id,
+            map,
+            tables: &mut self.tables,
+            entity_at: &self.entity_at,
+            revision,
+        })
     }
 
-    /// Removes `entity` from all registered storages.
+    /// Removes `entity` from all registered storages, columns included.
     pub fn remove_entity(&mut self, entity: Entity) {
+        self.drop_row(entity);
         for slot in &mut self.slots {
             slot.storage.get_mut().remove_entity(entity);
+            slot.revision += 1;
         }
+    }
+
+    /// Frees `entity`'s row and destroys the values in it.
+    ///
+    /// Unlike [`Self::unsettle`] the values are **not** handed back to the maps: this is a despawn,
+    /// and nothing is going to read them again.
+    pub fn drop_row(&mut self, entity: Entity) -> Option<Entity> {
+        let (table, row) = self.entity_at.take(entity)?;
+        let displaced = self.tables.get_mut(table)?.swap_remove(row);
+        if let Some(other) = displaced {
+            self.entity_at.set(other, table, row);
+        }
+        displaced
     }
 
     /// Removes a single component from `entity` by `TypeId`.
@@ -223,6 +404,7 @@ impl ComponentRegistry {
         };
         if let Some(slot) = self.slots.get_mut(id.index()) {
             slot.storage.get_mut().remove_entity(entity);
+            slot.revision += 1;
         }
     }
 
@@ -308,25 +490,15 @@ impl ComponentRegistry {
         type_id: &TypeId,
         entity: Entity,
     ) -> Option<Vec<(String, ReflectValue)>> {
-        self.reflect_fields_at(type_id, entity, self.at(entity))
-    }
-
-    /// Reads a component's fields from wherever its value actually lives.
-    pub fn reflect_fields_at(
-        &self,
-        type_id: &TypeId,
-        entity: Entity,
-        at: Option<(&Table, TableRow)>,
-    ) -> Option<Vec<(String, ReflectValue)>> {
         let slot = self.slot(type_id)?;
         let accessor = slot.reflector.as_deref()?;
-        let id = self.ids.get(type_id).copied();
 
-        if let Some((table, row)) = at
-            && let Some(column) = id.and_then(|id| table.column(id))
+        if let Some(id) = self.ids.get(type_id).copied()
+            && let Some((table, row)) = self.at(entity)
+            && let Some(column) = table.column(id)
         {
             // SAFETY: the column was built for this component's type, and
-            // the row is the caller's to have checked.
+            // the row came from this registry's own index.
             let value = unsafe { column.value_ptr::<u8>(row.index())? };
             return Some(unsafe { accessor.read_fields(value) });
         }
@@ -352,16 +524,12 @@ impl ComponentRegistry {
             .ids
             .get(type_id)
             .ok_or(ReflectError::ComponentNotFound)?;
-        let column_value = self
-            .entity_at
-            .get(&entity)
-            .copied()
-            .and_then(|(table, row)| {
-                let column = self.tables.get(table)?.column(slot)?;
-                // SAFETY: the column holds this component's type, and the
-                // pointer derives from the column's own allocation.
-                unsafe { column.value_ptr::<u8>(row.index()) }
-            });
+        let column_value = self.entity_at.get(entity).and_then(|(table, row)| {
+            let column = self.tables.get(table)?.column(slot)?;
+            // SAFETY: the column holds this component's type, and the
+            // pointer derives from the column's own allocation.
+            unsafe { column.value_ptr::<u8>(row.index()) }
+        });
 
         let target = match column_value {
             Some(value) => value,
@@ -374,46 +542,13 @@ impl ComponentRegistry {
             }
         };
 
+        self.slots[slot.index()].revision += 1;
         let accessor = self.slots[slot.index()]
             .reflector
             .as_deref()
             .ok_or(ReflectError::ComponentNotFound)?;
         // SAFETY: `target` points at a live component of this type, and the
         // borrow above is the exclusive access.
-        unsafe { accessor.write_field(target, field, value) }
-    }
-
-    /// Sets a field on a component wherever its value actually lives.
-    pub fn reflect_write_at(
-        &mut self,
-        type_id: &TypeId,
-        entity: Entity,
-        field: &str,
-        value: ReflectValue,
-        at: Option<(&Table, TableRow)>,
-    ) -> Result<(), ReflectError> {
-        let id = self.ids.get(type_id).copied();
-        let slot = self.slot(type_id).ok_or(ReflectError::ComponentNotFound)?;
-        let accessor = slot
-            .reflector
-            .as_deref()
-            .ok_or(ReflectError::ComponentNotFound)?;
-
-        if let Some((table, row)) = at
-            && let Some(column) = id.and_then(|id| table.column(id))
-        {
-            // SAFETY: the column holds this component's type, and `&mut
-            // self` is the exclusive access the write needs.
-            let target = unsafe { column.value_ptr::<u8>(row.index()) }
-                .ok_or(ReflectError::ComponentNotFound)?;
-            return unsafe { accessor.write_field(target, field, value) };
-        }
-
-        // SAFETY: We have &mut self, so exclusive access is guaranteed.
-        let storage = unsafe { &mut **slot.storage.get() };
-        let target = storage
-            .get_mut_ptr(entity)
-            .ok_or(ReflectError::ComponentNotFound)?;
         unsafe { accessor.write_field(target, field, value) }
     }
 
@@ -485,7 +620,11 @@ impl ComponentRegistry {
         };
         // SAFETY: We have &mut self, exclusive access guaranteed.
         let storage = unsafe { &mut **slot.storage.get() };
-        accessor.insert_default_into(storage, entity)
+        let inserted = accessor.insert_default_into(storage, entity);
+        if inserted && let Some(id) = self.ids.get(type_id).copied() {
+            self.slots[id.index()].revision += 1;
+        }
+        inserted
     }
 
     // -- Type-erased storage access -------------------------------------------

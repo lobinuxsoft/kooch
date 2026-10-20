@@ -90,7 +90,7 @@ fn rigid(resources: &mut Resources, vcam: Entity) {
         .unwrap()
         .get_cpu_mut::<RotationComposer>()
         .unwrap()
-        .get_mut(vcam)
+        .into_mut(vcam)
         .unwrap();
     framing.dead_zone = Vec2::ZERO;
     framing.soft_zone = Vec2::ZERO;
@@ -101,7 +101,7 @@ fn place(resources: &mut Resources, entity: Entity, position: Vec3) {
     registry
         .get_cpu_mut::<Transform>()
         .unwrap()
-        .get_mut(entity)
+        .into_mut(entity)
         .unwrap()
         .position = position;
 }
@@ -156,12 +156,7 @@ fn the_dead_zone_holds_the_aim() {
 fn leaving_the_dead_zone_turns_it() {
     let (mut resources, vcam, target) = world();
     // No body at all: the camera stands still and only the aim answers.
-    {
-        let registry = resources.get_mut::<ComponentRegistry>().unwrap();
-        if let Some(storage) = registry.get_cpu_mut::<crate::Follow>() {
-            storage.remove(vcam);
-        }
-    }
+    kooch_ecs::move_entity::take::<crate::Follow>(&mut resources, vcam);
     drive_virtual_cameras(&mut resources);
     let moved = Vec3::X * 4.0;
     place(&mut resources, target, moved);
@@ -199,7 +194,7 @@ fn the_screen_offset_turns_it() {
     registry
         .get_cpu_mut::<RotationComposer>()
         .unwrap()
-        .get_mut(vcam)
+        .into_mut(vcam)
         .unwrap()
         .screen
         .x = 0.25;
@@ -234,13 +229,13 @@ fn a_shoulder_and_a_framing_coexist() {
         let cam = registry
             .get_cpu_mut::<VirtualCamera>()
             .unwrap()
-            .get_mut(vcam)
+            .into_mut(vcam)
             .unwrap();
         cam.pitch = 0.0;
         registry
             .get_cpu_mut::<RotationComposer>()
             .unwrap()
-            .get_mut(vcam)
+            .into_mut(vcam)
             .unwrap()
             .screen
             .x = -0.2;
@@ -264,11 +259,8 @@ fn a_shoulder_and_a_framing_coexist() {
 #[test]
 fn a_running_target_is_led() {
     let (mut resources, vcam, target) = world();
+    kooch_ecs::move_entity::take::<RotationComposer>(&mut resources, vcam);
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
-    registry
-        .get_cpu_mut::<RotationComposer>()
-        .unwrap()
-        .remove(vcam);
     registry.get_cpu_mut::<CameraLookahead>().unwrap().insert(
         vcam,
         CameraLookahead {
@@ -308,13 +300,13 @@ fn the_rig_never_steps() {
             let cam = registry
                 .get_cpu_mut::<VirtualCamera>()
                 .unwrap()
-                .get_mut(vcam)
+                .into_mut(vcam)
                 .unwrap();
             cam.pitch = 18.0;
             registry
                 .get_cpu_mut::<RotationComposer>()
                 .unwrap()
-                .get_mut(vcam)
+                .into_mut(vcam)
                 .unwrap()
                 .enabled = false;
         }
@@ -357,7 +349,7 @@ fn framing_adds_no_jump_of_its_own() {
             let cam = registry
                 .get_cpu_mut::<VirtualCamera>()
                 .unwrap()
-                .get_mut(vcam)
+                .into_mut(vcam)
                 .unwrap();
             cam.pitch = 18.0;
             cam.damping = Vec3::splat(0.3);
@@ -365,7 +357,7 @@ fn framing_adds_no_jump_of_its_own() {
             let frame = registry
                 .get_cpu_mut::<RotationComposer>()
                 .unwrap()
-                .get_mut(vcam)
+                .into_mut(vcam)
                 .unwrap();
             frame.enabled = framed;
             // 🔴 Tight zones on purpose. With the exponential the camera keeps up so well that
@@ -496,7 +488,7 @@ fn the_pitch_walks_the_ring_surface() {
             .unwrap()
             .get_cpu_mut::<VirtualCamera>()
             .unwrap()
-            .get_mut(vcam)
+            .into_mut(vcam)
             .unwrap()
             .pitch = pitch;
         for _ in 0..200 {

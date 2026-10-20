@@ -14,7 +14,7 @@ fn world() -> (Resources, Entity, Entity) {
     registry.register_cpu_reflected::<CameraTarget>();
     registry.register_cpu_reflected::<CameraWhen>();
     let (orbital, shoulder, target) = (allocator.spawn(), allocator.spawn(), allocator.spawn());
-    let transforms = registry.get_cpu_mut::<Transform>().expect("registered");
+    let mut transforms = registry.get_cpu_mut::<Transform>().expect("registered");
     for entity in [orbital, shoulder, target] {
         transforms.insert(entity, Transform::default());
     }
@@ -50,7 +50,7 @@ fn hold(resources: &mut Resources, vcam: Entity, asked: bool) {
     let registry = resources
         .get_mut::<ComponentRegistry>()
         .expect("registered");
-    let whens = registry.get_cpu_mut::<CameraWhen>().expect("registered");
+    let mut whens = registry.get_cpu_mut::<CameraWhen>().expect("registered");
     if whens.get(vcam).is_none() {
         whens.insert(
             vcam,
@@ -118,7 +118,7 @@ fn too_small_a_boost_still_loses() {
         let when = registry
             .get_cpu_mut::<CameraWhen>()
             .expect("registered")
-            .get_mut(shoulder)
+            .into_mut(shoulder)
             .expect("held");
         when.boost = 2;
     }

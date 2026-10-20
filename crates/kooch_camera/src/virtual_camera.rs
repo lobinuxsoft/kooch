@@ -305,7 +305,7 @@ pub fn report_moved_blends(resources: &mut kooch_core::resource::Resources) {
     let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
         return;
     };
-    let Some(storage) = registry.get_cpu_mut::<VirtualCamera>() else {
+    let Some(mut storage) = registry.get_cpu_mut::<VirtualCamera>() else {
         return;
     };
     for (&entity, vcam) in storage.iter_mut() {
@@ -775,7 +775,7 @@ pub fn migrate_bodies(resources: &mut kooch_core::resource::Resources) {
     let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
         return;
     };
-    let Some(vcams) = registry.get_cpu_mut::<VirtualCamera>() else {
+    let Some(mut vcams) = registry.get_cpu_mut::<VirtualCamera>() else {
         return;
     };
     for (entity, _) in &moved {
@@ -806,7 +806,7 @@ fn added<T: kooch_ecs::component::Component + kooch_ecs::reflect::Reflect>(
 ) {
     if let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() {
         registry.register_cpu_reflected::<T>();
-        if let Some(storage) = registry.get_cpu_mut::<T>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<T>() {
             storage.insert(entity, value);
         }
     }

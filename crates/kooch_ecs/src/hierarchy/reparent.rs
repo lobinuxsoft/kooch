@@ -40,7 +40,7 @@ pub(super) fn rewrite_local_transform_for_reparent(
     let new_local_scale = child_ws * inv_parent_scale;
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(transform_storage) = registry.get_cpu_mut::<Transform>()
+        && let Some(mut transform_storage) = registry.get_cpu_mut::<Transform>()
         && let Some(transform) = transform_storage.get_mut(entity)
     {
         transform.position = new_local_pos;
@@ -103,12 +103,12 @@ pub fn reparent(resources: &mut Resources, entity: Entity, new_parent: Option<En
                     .get_cpu::<Parent>()
                     .is_some_and(|s| s.contains(entity));
                 if has_parent {
-                    if let Some(storage) = registry.get_cpu_mut::<Parent>()
+                    if let Some(mut storage) = registry.get_cpu_mut::<Parent>()
                         && let Some(p) = storage.get_mut(entity)
                     {
                         p.entity = parent;
                     }
-                } else if let Some(storage) = registry.get_cpu_mut::<Parent>() {
+                } else if let Some(mut storage) = registry.get_cpu_mut::<Parent>() {
                     storage.insert(entity, Parent { entity: parent });
                     needs_archetype_add = true;
                 }

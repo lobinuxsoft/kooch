@@ -431,7 +431,7 @@ fn inverse_of(resources: &Resources, entity: Entity) -> Option<Mat4> {
 
 fn write(resources: &mut Resources, entity: Entity, spline: Spline) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<Spline>()
+        && let Some(mut storage) = registry.get_cpu_mut::<Spline>()
         && let Some(held) = storage.get_mut(entity)
     {
         *held = spline;

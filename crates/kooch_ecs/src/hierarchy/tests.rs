@@ -77,10 +77,8 @@ fn removing_parent_clears_children() {
     insert_component(&mut resources, child, Parent { entity: parent });
     hierarchy_sync_system(&mut resources);
 
-    // Remove Parent from child.
-    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-        registry.get_cpu_mut::<Parent>().unwrap().remove(child);
-    }
+    // Remove Parent from child, value and archetype both.
+    crate::move_entity::take::<Parent>(&mut resources, child);
     hierarchy_sync_system(&mut resources);
 
     let registry = resources.get::<ComponentRegistry>().unwrap();

@@ -113,7 +113,7 @@ fn a_round_trip_keeps_the_hierarchy_when_names_collide() {
     for (entity, name) in [(first, "Mesh"), (second, "Mesh"), (child, "Child")] {
         let registry = resources.get_mut::<ComponentRegistry>().unwrap();
         registry.insert_default_reflected(&std::any::TypeId::of::<crate::name::Name>(), entity);
-        if let Some(storage) = registry.get_cpu_mut::<crate::name::Name>()
+        if let Some(mut storage) = registry.get_cpu_mut::<crate::name::Name>()
             && let Some(n) = storage.get_mut(entity)
         {
             n.value = name.to_owned();
@@ -126,7 +126,7 @@ fn a_round_trip_keeps_the_hierarchy_when_names_collide() {
     }
     {
         let registry = resources.get_mut::<ComponentRegistry>().unwrap();
-        if let Some(storage) = registry.get_cpu_mut::<Parent>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<Parent>() {
             storage.insert(child, Parent { entity: first });
         }
     }

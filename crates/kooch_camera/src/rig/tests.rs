@@ -113,7 +113,7 @@ fn an_orphan_is_reported() {
     registry.register_cpu_reflected::<VirtualCamera>();
     registry.register_cpu_reflected::<crate::CameraLookahead>();
     let (brain, rig) = (allocator.spawn(), allocator.spawn());
-    let lookaheads = registry.get_cpu_mut::<crate::CameraLookahead>().unwrap();
+    let mut lookaheads = registry.get_cpu_mut::<crate::CameraLookahead>().unwrap();
     lookaheads.insert(brain, crate::CameraLookahead::default());
     lookaheads.insert(rig, crate::CameraLookahead::default());
     registry

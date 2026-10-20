@@ -103,6 +103,45 @@ impl Column {
         Some(self.row_ptr(row).cast::<T>())
     }
 
+    /// Every item, as one contiguous slice.
+    ///
+    /// 🔴 This is what the whole port is for: a query walks this, in a straight line, with no
+    /// lookup per entity.
+    pub unsafe fn as_slice<T>(&self) -> &[T] {
+        debug_assert_eq!(Layout::new::<T>().size(), self.stride, "wrong item type");
+        // SAFETY: the first `len` items are live values of the caller's `T`,
+        // and `data` is aligned for them even when nothing is allocated.
+        unsafe { std::slice::from_raw_parts(self.data.as_ptr().cast::<T>(), self.len) }
+    }
+
+    /// Every item, mutably.
+    pub unsafe fn as_mut_slice<T>(&mut self) -> &mut [T] {
+        debug_assert_eq!(Layout::new::<T>().size(), self.stride, "wrong item type");
+        // SAFETY: as `as_slice`, and `&mut self` is the exclusive access.
+        unsafe { std::slice::from_raw_parts_mut(self.data.as_ptr().cast::<T>(), self.len) }
+    }
+
+    /// Overwrites `row`, returning what was there.
+    pub unsafe fn replace<T>(&mut self, row: usize, value: T) -> Option<T> {
+        if row >= self.len {
+            return None;
+        }
+        // SAFETY: `row` is in bounds and the caller guarantees the type.
+        Some(unsafe { std::ptr::replace(self.row_ptr(row).cast::<T>(), value) })
+    }
+
+    /// Moves the item at `row` out, pulling the last item into the hole **without** running a
+    /// destructor — the value is handed to the caller, not destroyed.
+    pub unsafe fn take<T>(&mut self, row: usize) -> Option<T> {
+        if row >= self.len {
+            return None;
+        }
+        // SAFETY: `row` is in bounds and the caller guarantees the type.
+        let value = unsafe { std::ptr::read(self.row_ptr(row).cast::<T>()) };
+        self.vacate(row, false);
+        Some(value)
+    }
+
     /// Drops the item at `row` and moves the last item into its place.
     pub fn swap_remove(&mut self, row: usize) {
         self.vacate(row, true);

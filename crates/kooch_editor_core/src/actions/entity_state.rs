@@ -157,7 +157,7 @@ pub(crate) fn is_instance_root(state: &EntityState) -> bool {
 pub(crate) fn reroot_prefabs(resources: &mut Resources, copies: &HashMap<Entity, Entity>) {
     use kooch_ecs::prefab_instance::{PrefabInstance, PrefabMember};
 
-    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
+    let Some(registry) = resources.get::<ComponentRegistry>() else {
         return;
     };
     let roots: Vec<(Entity, Option<Entity>)> = registry
@@ -184,16 +184,17 @@ pub(crate) fn reroot_prefabs(resources: &mut Resources, copies: &HashMap<Entity,
     for (copy, root) in roots {
         match root {
             Some(root) => {
-                if let Some(members) = registry.get_cpu_mut::<PrefabMember>()
+                if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+                    && let Some(mut members) = registry.get_cpu_mut::<PrefabMember>()
                     && let Some(member) = members.get_mut(copy)
                 {
                     member.root = root;
                 }
             }
+            // The archetype goes with the value: unparking the inbox alone would leave a
+            // settled copy still carrying the component.
             None => {
-                if let Some(members) = registry.get_cpu_mut::<PrefabMember>() {
-                    members.remove(copy);
-                }
+                kooch_ecs::move_entity::take::<PrefabMember>(resources, copy);
             }
         }
     }

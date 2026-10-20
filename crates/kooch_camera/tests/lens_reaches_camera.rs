@@ -25,7 +25,7 @@ fn spawn(app: &mut App) -> Entity {
 
 fn put<T: Component>(app: &mut App, entity: Entity, value: T) {
     if let Some(registry) = app.resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<T>()
+        && let Some(mut storage) = registry.get_cpu_mut::<T>()
     {
         storage.insert(entity, value);
     }
@@ -36,12 +36,12 @@ fn put<T: Component>(app: &mut App, entity: Entity, value: T) {
         Some(current) => current,
         None => {
             let empty = archetypes.get_or_create(Default::default());
-            archetypes.register_entity(entity, empty);
+            archetypes.register_at(entity, empty, None);
             empty
         }
     };
     let next = archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<T>());
-    archetypes.register_entity(entity, next);
+    archetypes.register_at(entity, next, None);
 }
 
 fn fov(app: &App, camera: Entity) -> f32 {

@@ -44,7 +44,7 @@ impl EditorCommand for TransformEditCommand {
 fn write_transform(resources: &mut Resources, entity: Entity, transform: Transform) {
     let mut wrote = false;
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<Transform>()
+        && let Some(mut storage) = registry.get_cpu_mut::<Transform>()
         && let Some(t) = storage.get_mut(entity)
     {
         *t = transform;

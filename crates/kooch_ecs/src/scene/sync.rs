@@ -234,7 +234,7 @@ fn spawn_returning_as(
             if let Some(parent_entity) = resolved {
                 if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                     registry.register_cpu_reflected::<Parent>();
-                    if let Some(storage) = registry.get_cpu_mut::<Parent>() {
+                    if let Some(mut storage) = registry.get_cpu_mut::<Parent>() {
                         storage.insert(
                             *entity,
                             Parent {
