@@ -47,8 +47,8 @@ fn world() -> (Resources, kooch_ecs::Entity, kooch_ecs::Entity) {
     .into_iter()
     .collect();
     let id = archetypes.get_or_create(signature);
-    archetypes.register_entity(first, id);
-    archetypes.register_entity(second, id);
+    archetypes.register_at(first, id, None);
+    archetypes.register_at(second, id, None);
 
     r.insert(registry);
     r.insert(archetypes);

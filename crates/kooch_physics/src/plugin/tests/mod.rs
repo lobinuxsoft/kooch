@@ -100,36 +100,18 @@ fn spawn_bare(resources: &mut Resources) -> Entity {
 /// Inserts a component and moves the entity's archetype along.
 fn insert<T: kooch_ecs::component::Component>(resources: &mut Resources, entity: Entity, value: T) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<T>()
+        && let Some(mut storage) = registry.get_cpu_mut::<T>()
     {
         storage.insert(entity, value);
     }
-    let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() else {
-        return;
-    };
-    let current = match archetypes.entity_archetype(entity) {
-        Some(current) => current,
-        None => {
-            let empty = archetypes.get_or_create(Default::default());
-            archetypes.register_entity(entity, empty);
-            empty
-        }
-    };
-    let next = archetypes.archetype_after_add_dynamic(current, TypeId::of::<T>());
-    archetypes.register_entity(entity, next);
+    // Through the funnel: the archetype change is what moves the value into its column (#891).
+    kooch_ecs::move_entity::arrives(resources, entity);
+    kooch_ecs::move_entity::gained(resources, entity, TypeId::of::<T>());
 }
 
 /// Removes a component, archetype included.
 fn remove<T: 'static>(resources: &mut Resources, entity: Entity) {
-    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-        registry.remove_component(entity, &TypeId::of::<T>());
-    }
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let next = archetypes.archetype_after_remove::<T>(current);
-        archetypes.register_entity(entity, next);
-    }
+    kooch_ecs::move_entity::take_by_id(resources, entity, TypeId::of::<T>());
 }
 
 fn position(resources: &Resources, entity: Entity) -> Vec3 {

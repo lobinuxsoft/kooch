@@ -122,7 +122,7 @@ fn set_order(resources: &mut Resources, entity: Entity, value: u32) {
             registry.register_cpu_reflected::<Order>();
             let storage = registry.get_cpu_mut::<Order>();
             match storage {
-                Some(storage) => storage.insert(entity, Order::new(value)).is_none(),
+                Some(mut storage) => storage.insert(entity, Order::new(value)).is_none(),
                 None => false,
             }
         }

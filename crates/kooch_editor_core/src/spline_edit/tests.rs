@@ -107,7 +107,7 @@ fn the_dispatch_places_an_added_knot() {
     resources.insert(allocator);
     let mut archetypes = ArchetypeRegistry::new();
     let empty = archetypes.get_or_create(Default::default());
-    archetypes.register_entity(entity, empty);
+    archetypes.register_at(entity, empty, None);
     resources.insert(archetypes);
     resources.insert(AccessTracker::new());
     resources.insert(Commands::new());
@@ -117,7 +117,7 @@ fn the_dispatch_places_an_added_knot() {
 
     let mut registry = ComponentRegistry::new();
     registry.register_cpu_reflected::<Spline>();
-    if let Some(storage) = registry.get_cpu_mut::<Spline>() {
+    if let Some(mut storage) = registry.get_cpu_mut::<Spline>() {
         storage.insert(
             entity,
             Spline {

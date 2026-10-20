@@ -99,7 +99,7 @@ fn renderer_id(resources: &Resources) -> Option<ComponentId> {
 
 fn set_material(resources: &mut Resources, entity: Entity, material: kooch_core::Guid) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<MeshRenderer>()
+        && let Some(mut storage) = registry.get_cpu_mut::<MeshRenderer>()
         && let Some(renderer) = storage.get_mut(entity)
     {
         renderer.material = Some(material);

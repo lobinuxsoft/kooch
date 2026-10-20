@@ -335,9 +335,9 @@ fn duplicate_creates_a_copy_on_the_project() {
         let archetypes = res
             .get_mut::<kooch_ecs::archetype_registry::ArchetypeRegistry>()
             .unwrap();
-        archetypes.register_entity(entity, empty);
+        archetypes.register_at(entity, empty, None);
         let next = archetypes.archetype_after_add::<Transform>(empty);
-        archetypes.register_entity(entity, next);
+        archetypes.register_at(entity, next, None);
 
         while !loop_done.load(Ordering::Relaxed) {
             for item in server.take_pending() {

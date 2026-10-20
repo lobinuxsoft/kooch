@@ -32,7 +32,7 @@ fn an_empty_archetype_with_the_marker_does_not_hide_the_camera() {
     .into_iter()
     .collect();
     let current_id = archetypes.get_or_create(current);
-    archetypes.register_entity(camera, current_id);
+    archetypes.register_at(camera, current_id, None);
     resources.insert(archetypes);
 
     assert_eq!(

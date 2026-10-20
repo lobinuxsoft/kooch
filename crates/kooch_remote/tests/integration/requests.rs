@@ -366,7 +366,7 @@ fn an_ephemeral_entity_is_listed() {
     resources.insert(ephemeral);
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<kooch_ecs::spline::placement::Placed>();
-        if let Some(storage) = registry.get_cpu_mut::<kooch_ecs::spline::placement::Placed>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<kooch_ecs::spline::placement::Placed>() {
             storage.insert(entity, kooch_ecs::spline::placement::Placed::default());
         }
     }
@@ -377,7 +377,7 @@ fn an_ephemeral_entity_is_listed() {
             current,
             std::any::TypeId::of::<kooch_ecs::spline::placement::Placed>(),
         );
-        archetypes.register_entity(entity, next);
+        archetypes.register_at(entity, next, None);
     }
 
     let entities = match call(&mut resources, Method::ListEntities { since: None }) {

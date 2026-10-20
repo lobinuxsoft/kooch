@@ -223,7 +223,7 @@ fn editing_the_friction_rebuilds_the_body() {
         .spec(slot_of(&resources, cube).expect("no body"));
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<Collider>()
+        && let Some(mut storage) = registry.get_cpu_mut::<Collider>()
         && let Some(collider) = storage.get_mut(cube)
     {
         collider.friction = 1.5;
@@ -322,7 +322,7 @@ fn a_childs_friction_changes_the_bodys_shapes() {
         .spec(slot_of(&resources, parent).expect("no body"));
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<Collider>()
+        && let Some(mut storage) = registry.get_cpu_mut::<Collider>()
         && let Some(collider) = storage.get_mut(child)
     {
         collider.friction = 1.9;

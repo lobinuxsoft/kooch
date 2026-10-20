@@ -176,7 +176,7 @@ impl SpawnMeshCommand {
         // user-editable string).
         if let Some(guid) = guid {
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-                if let Some(storage) = registry.get_cpu_mut::<MeshRenderer>() {
+                if let Some(mut storage) = registry.get_cpu_mut::<MeshRenderer>() {
                     if let Some(renderer) = storage.get_mut(entity) {
                         renderer.mesh = Some(guid);
                     }

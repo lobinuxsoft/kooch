@@ -107,10 +107,10 @@ fn world_with_curve() -> (kooch_core::resource::Resources, crate::entity::Entity
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<Spline>();
         registry.register_cpu_reflected::<SplinePlacement>();
-        if let Some(storage) = registry.get_cpu_mut::<Spline>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<Spline>() {
             storage.insert(entity, straight(10.0));
         }
-        if let Some(storage) = registry.get_cpu_mut::<SplinePlacement>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<SplinePlacement>() {
             storage.insert(entity, placing(SPACING_COUNT));
         }
     }
@@ -124,7 +124,7 @@ fn world_with_curve() -> (kooch_core::resource::Resources, crate::entity::Entity
         ] {
             id = archetypes.archetype_after_add_dynamic(id, type_id);
         }
-        archetypes.register_entity(entity, id);
+        archetypes.register_at(entity, id, None);
     }
 
     (resources, entity)
@@ -153,7 +153,7 @@ fn a_mirrored_world_lays_nothing() {
     // would pass for the wrong reason — #1481 clears those anyway — and prove nothing about the
     // mirror.
     let (mut resources, entity) = world_with_curve();
-    if let Some(storage) = resources
+    if let Some(mut storage) = resources
         .get_mut::<crate::component::ComponentRegistry>()
         .and_then(|r| r.get_cpu_mut::<SplinePlacement>())
         && let Some(placement) = storage.get_mut(entity)

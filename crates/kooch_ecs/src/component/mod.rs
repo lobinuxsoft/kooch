@@ -8,13 +8,15 @@ pub mod plugin_bridge;
 pub mod registry;
 pub mod storage_id;
 pub(crate) mod traits;
+pub mod view;
 
 pub use cpu_storage::ComponentStorage;
 pub use dynamic_types::{DynamicField, DynamicType, DynamicTypeRegistry};
 pub use names::{ComponentId, ComponentNames};
-pub use registry::ComponentRegistry;
+pub use registry::{ComponentRegistry, Settled};
 pub use storage_id::StorageId;
 pub use traits::Component;
+pub use view::{ComponentView, ComponentViewMut};
 
 use kooch_core::resource::Resources;
 

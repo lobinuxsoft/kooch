@@ -69,8 +69,8 @@ fn world_with_both_cameras(editor_priority: i32, game_priority: i32) -> Resource
         .get_cpu_mut::<EditorCamera>()
         .expect("registered")
         .insert(editor_cam, EditorCamera);
-    archetypes.register_entity(editor_cam, editor_arch);
-    archetypes.register_entity(game_cam, game_arch);
+    archetypes.register_at(editor_cam, editor_arch, None);
+    archetypes.register_at(game_cam, game_arch, None);
 
     r.insert(registry);
     r.insert(archetypes);
@@ -111,7 +111,7 @@ fn no_gameplay_camera_reports_none() {
     let mut r = world_with_both_cameras(1000, 0);
     {
         let registry = r.get_mut::<ComponentRegistry>().expect("registered");
-        let cams = registry
+        let mut cams = registry
             .get_cpu_mut::<PerspectiveCamera>()
             .expect("registered");
         for (_, cam) in cams.iter_mut() {

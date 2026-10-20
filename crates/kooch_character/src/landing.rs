@@ -217,7 +217,7 @@ fn remember(resources: &mut Resources, falling: &[(Entity, f32, bool)]) {
     let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
         return;
     };
-    let Some(landings) = registry.get_cpu_mut::<LandingImpulse>() else {
+    let Some(mut landings) = registry.get_cpu_mut::<LandingImpulse>() else {
         return;
     };
     for (entity, peak, supported) in falling {

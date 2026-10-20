@@ -35,10 +35,10 @@ fn world(count: usize) -> (Resources, Vec<Entity>, Guid) {
         commands.apply(&mut r);
         r.insert(commands);
         if let Some(archetypes) = r.get_mut::<ArchetypeRegistry>() {
-            archetypes.register_entity(e, crate::archetype::ArchetypeId::EMPTY);
+            archetypes.register_at(e, crate::archetype::ArchetypeId::EMPTY, None);
         }
         if let Some(reg) = r.get_mut::<ComponentRegistry>()
-            && let Some(s) = reg.get_cpu_mut::<SceneMember>()
+            && let Some(mut s) = reg.get_cpu_mut::<SceneMember>()
         {
             s.insert(e, SceneMember::new(scene));
         }
@@ -47,7 +47,7 @@ fn world(count: usize) -> (Resources, Vec<Entity>, Guid) {
         {
             let next = archetypes
                 .archetype_after_add_dynamic(current, std::any::TypeId::of::<SceneMember>());
-            archetypes.register_entity(e, next);
+            archetypes.register_at(e, next, None);
         }
         made.push(e);
     }

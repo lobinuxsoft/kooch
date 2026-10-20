@@ -25,7 +25,7 @@ fn world() -> (Resources, kooch_ecs::Entity) {
     r.insert(ComponentRegistry::new());
     let mut archetypes = ArchetypeRegistry::new();
     let empty = archetypes.get_or_create(Default::default());
-    archetypes.register_entity(entity, empty);
+    archetypes.register_at(entity, empty, None);
     r.insert(archetypes);
     r.insert(AccessTracker::new());
     r.insert(Commands::new());

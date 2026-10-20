@@ -178,7 +178,7 @@ fn it_jumps_off_a_wall() {
 
     let before = position(&resources, hero);
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<Jump>()
+        && let Some(mut storage) = registry.get_cpu_mut::<Jump>()
         && let Some(jump) = storage.get_mut(hero)
     {
         jump.wanted = true;
@@ -212,7 +212,7 @@ fn it_jumps_again_in_the_air() {
 
     let press = |resources: &mut Resources| {
         if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-            && let Some(storage) = registry.get_cpu_mut::<Jump>()
+            && let Some(mut storage) = registry.get_cpu_mut::<Jump>()
             && let Some(jump) = storage.get_mut(hero)
         {
             jump.wanted = true;

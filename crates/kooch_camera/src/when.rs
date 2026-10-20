@@ -74,7 +74,7 @@ pub fn step_camera_whens(resources: &mut kooch_core::resource::Resources) {
     let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
         return;
     };
-    let Some(whens) = registry.get_cpu_mut::<CameraWhen>() else {
+    let Some(mut whens) = registry.get_cpu_mut::<CameraWhen>() else {
         return;
     };
     for (_, when) in whens.iter_mut() {

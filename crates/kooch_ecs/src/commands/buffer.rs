@@ -28,7 +28,7 @@ impl Commands {
             .get_mut::<EntityAllocator>()
             .expect("EntityAllocator not found in Resources")
             .spawn();
-        crate::move_entity::move_entity(resources, entity, ArchetypeId::EMPTY);
+        crate::move_entity::arrives(resources, entity);
 
         EntityBuilder {
             entity,

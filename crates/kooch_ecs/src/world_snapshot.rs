@@ -162,19 +162,8 @@ fn clear_world(resources: &mut Resources) {
 
 /// Moves `entity` into the archetype it belongs in after adding a type.
 fn add_to_archetype(resources: &mut Resources, entity: Entity, type_id: TypeId) {
-    let next = {
-        let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() else {
-            return;
-        };
-        let current = match archetypes.entity_archetype(entity) {
-            Some(current) => current,
-            // First component: the entity is not in any archetype yet, so start it from the empty
-            // one. Filing it there first is what the move below does anyway.
-            None => archetypes.get_or_create(Default::default()),
-        };
-        archetypes.archetype_after_add_dynamic(current, type_id)
-    };
-    crate::move_entity::move_entity(resources, entity, next);
+    crate::move_entity::arrives(resources, entity);
+    crate::move_entity::gained(resources, entity, type_id);
 }
 
 #[cfg(test)]

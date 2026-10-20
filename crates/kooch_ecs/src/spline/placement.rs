@@ -233,7 +233,7 @@ fn move_run(resources: &mut Resources, source: Entity, poses: &[Transform]) -> V
         None => return Vec::new(),
     };
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<Transform>()
+        && let Some(mut storage) = registry.get_cpu_mut::<Transform>()
     {
         for (entity, pose) in standing.iter().zip(poses) {
             if let Some(held) = storage.get_mut(*entity) {
@@ -445,7 +445,7 @@ fn stamp(
     crate::hierarchy::reparent(resources, root, Some(source));
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<Transform>()
+        && let Some(mut storage) = registry.get_cpu_mut::<Transform>()
         && let Some(held) = storage.get_mut(root)
     {
         *held = pose;
@@ -499,7 +499,7 @@ fn forget_failure(resources: &mut Resources, source: Entity) {
 fn mark(resources: &mut Resources, entity: Entity, source: Entity) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<Placed>();
-        if let Some(storage) = registry.get_cpu_mut::<Placed>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<Placed>() {
             storage.insert(entity, Placed { source });
         }
     }

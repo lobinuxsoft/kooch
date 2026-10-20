@@ -53,7 +53,7 @@ fn world() -> (Resources, Entity, Entity) {
             .get_cpu_mut::<PerspectiveCamera>()
             .expect("PerspectiveCamera registered")
             .insert(entity, PerspectiveCamera::default());
-        archetypes.register_entity(entity, id);
+        archetypes.register_at(entity, id, None);
     }
 
     // A component the editor has no Rust type for, on one entity only —

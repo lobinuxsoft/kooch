@@ -86,7 +86,8 @@ impl SpawnBlockCommand {
         // author can make it dynamic; nothing can make a body that was
         // never authored.
         if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-            && let Some(storage) = registry.get_cpu_mut::<kooch_physics::components::PhysicsBody>()
+            && let Some(mut storage) =
+                registry.get_cpu_mut::<kooch_physics::components::PhysicsBody>()
             && let Some(body) = storage.get_mut(entity)
         {
             body.kind = kooch_physics::components::KIND_STATIC;
@@ -96,7 +97,7 @@ impl SpawnBlockCommand {
         // `sync_blocks`'s answer, and writing them here would be a second place that decides
         // what a block draws.
         if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-            && let Some(storage) = registry.get_cpu_mut::<Block>()
+            && let Some(mut storage) = registry.get_cpu_mut::<Block>()
             && let Some(block) = storage.get_mut(entity)
         {
             block.mesh = self.shape.build();
@@ -104,7 +105,7 @@ impl SpawnBlockCommand {
 
         // The parameters stay on the block, so the Inspector can reshape it until it is edited by hand.
         if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-            && let Some(storage) = registry.get_cpu_mut::<kooch_blockmesh::BlockShape>()
+            && let Some(mut storage) = registry.get_cpu_mut::<kooch_blockmesh::BlockShape>()
             && let Some(shape) = storage.get_mut(entity)
         {
             *shape = kooch_blockmesh::BlockShape::from(self.shape);

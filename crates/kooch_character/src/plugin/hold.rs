@@ -38,7 +38,7 @@ fn step_sprints(resources: &mut Resources) {
                 .collect()
         })
         .unwrap_or_default();
-    let Some(sprints) = registry.get_cpu_mut::<Sprint>() else {
+    let Some(mut sprints) = registry.get_cpu_mut::<Sprint>() else {
         return;
     };
     for (&entity, sprint) in sprints.iter_mut() {
@@ -109,14 +109,14 @@ pub fn hold_characters(resources: &mut Resources) {
     let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
         return;
     };
-    if let Some(storage) = registry.get_cpu_mut::<Grounded>() {
+    if let Some(mut storage) = registry.get_cpu_mut::<Grounded>() {
         for (entity, grounded, _) in &found {
             storage.insert(*entity, *grounded);
         }
     }
     // Only where one is authored: a character that has no use for walls
     // should not grow the component by being simulated.
-    if let Some(storage) = registry.get_cpu_mut::<Touching>() {
+    if let Some(mut storage) = registry.get_cpu_mut::<Touching>() {
         for (entity, _, touching) in &found {
             if storage.get(*entity).is_some() {
                 storage.insert(*entity, *touching);

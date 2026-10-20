@@ -59,23 +59,13 @@ fn spawn(resources: &mut Resources) -> Entity {
 fn insert<T: Component>(resources: &mut Resources, entity: Entity, value: T) {
     use std::any::TypeId;
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<T>()
+        && let Some(mut storage) = registry.get_cpu_mut::<T>()
     {
         storage.insert(entity, value);
     }
-    let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() else {
-        return;
-    };
-    let current = match archetypes.entity_archetype(entity) {
-        Some(current) => current,
-        None => {
-            let empty = archetypes.get_or_create(Default::default());
-            archetypes.register_entity(entity, empty);
-            empty
-        }
-    };
-    let next = archetypes.archetype_after_add_dynamic(current, TypeId::of::<T>());
-    archetypes.register_entity(entity, next);
+    // Through the funnel: the archetype change is what moves the value into its column (#891).
+    kooch_ecs::move_entity::arrives(resources, entity);
+    kooch_ecs::move_entity::gained(resources, entity, TypeId::of::<T>());
 }
 
 fn body_at(resources: &mut Resources, position: Vec3) -> Entity {
@@ -115,7 +105,7 @@ fn simulate(resources: &mut Resources, steps: u32) {
     }
 }
 
-#[path = "fields/sources.rs"]
-mod sources;
 #[path = "fields/dynamics.rs"]
 mod dynamics;
+#[path = "fields/sources.rs"]
+mod sources;

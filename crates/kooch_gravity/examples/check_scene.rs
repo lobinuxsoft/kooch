@@ -60,7 +60,7 @@ fn i32_of(c: &ComponentDescription, key: &str) -> i32 {
 
 fn put<T: Component>(resources: &mut Resources, entity: Entity, value: T) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<T>()
+        && let Some(mut storage) = registry.get_cpu_mut::<T>()
     {
         storage.insert(entity, value);
     }

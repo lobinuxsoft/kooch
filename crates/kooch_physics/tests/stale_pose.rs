@@ -26,7 +26,7 @@ fn spawn(app: &mut App) -> Entity {
 
 fn put<T: Component>(app: &mut App, entity: Entity, value: T) {
     if let Some(registry) = app.resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<T>()
+        && let Some(mut storage) = registry.get_cpu_mut::<T>()
     {
         storage.insert(entity, value);
     }
@@ -37,12 +37,12 @@ fn put<T: Component>(app: &mut App, entity: Entity, value: T) {
         Some(current) => current,
         None => {
             let empty = archetypes.get_or_create(Default::default());
-            archetypes.register_entity(entity, empty);
+            archetypes.register_at(entity, empty, None);
             empty
         }
     };
     let next = archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<T>());
-    archetypes.register_entity(entity, next);
+    archetypes.register_at(entity, next, None);
 }
 
 fn solver_pose(app: &App, entity: Entity) -> Vec3 {
@@ -97,7 +97,7 @@ fn a_parent_moved_this_frame_lands() {
     // The move, the way gameplay makes it: the parent's LOCAL transform. The child's own transform
     // never changes, so nothing but propagation can tell the solver.
     if let Some(registry) = app.resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<Transform>()
+        && let Some(mut storage) = registry.get_cpu_mut::<Transform>()
     {
         storage.insert(parent, Transform::from_position(Vec3::new(0.0, 0.0, -42.0)));
     }

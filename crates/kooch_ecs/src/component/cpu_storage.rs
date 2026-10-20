@@ -4,6 +4,7 @@ use std::any::Any;
 use std::collections::HashMap;
 
 use crate::entity::Entity;
+use crate::storage::Column;
 
 use super::traits::{AnyStorage, Component};
 
@@ -113,6 +114,28 @@ impl<T: Component> AnyStorage for ComponentStorage<T> {
 
     fn get_mut_ptr(&mut self, entity: Entity) -> Option<*mut u8> {
         self.data.get_mut(&entity).map(|v| v as *mut T as *mut u8)
+    }
+
+    fn take_into(&mut self, entity: Entity, column: &mut Column) -> bool {
+        let Some(value) = self.data.remove(&entity) else {
+            return false;
+        };
+        // SAFETY: the column was built by `Column::of::<T>` for this very slot.
+        unsafe { column.push(value) };
+        true
+    }
+
+    fn put_from(&mut self, entity: Entity, column: &mut Column, row: usize) -> bool {
+        // SAFETY: the column was built by `Column::of::<T>` for this very slot.
+        let Some(value) = (unsafe { column.take::<T>(row) }) else {
+            return false;
+        };
+        self.data.insert(entity, value);
+        true
+    }
+
+    fn holds(&self, entity: Entity) -> bool {
+        self.data.contains_key(&entity)
     }
 }
 

@@ -40,23 +40,26 @@ fn setup() -> Resources {
 fn spawn_entity(resources: &mut Resources, index: u32) -> Entity {
     let entity = Entity::new(index, 0);
     let archetypes = resources.get_mut::<ArchetypeRegistry>().unwrap();
-    archetypes.register_entity(entity, ArchetypeId::EMPTY);
+    archetypes.register_at(entity, ArchetypeId::EMPTY, None);
     entity
 }
 
+/// The real gesture: write the value, then move the archetype through the funnel — which is what
+/// promotes the value into its column.
 fn add_cpu_component<T: Component>(resources: &mut Resources, entity: Entity, value: T) {
     let components = resources.get_mut::<ComponentRegistry>().unwrap();
     components.register_cpu::<T>();
     components.get_cpu_mut::<T>().unwrap().insert(entity, value);
-
-    // Update archetype
-    let archetypes = resources.get_mut::<ArchetypeRegistry>().unwrap();
-    let current = archetypes.entity_archetype(entity).unwrap();
-    let new_arch = archetypes.archetype_after_add::<T>(current);
-    archetypes.register_entity(entity, new_arch);
+    crate::move_entity::gained(resources, entity, std::any::TypeId::of::<T>());
 }
 
 fn add_component<T: Component>(resources: &mut Resources, entity: Entity, value: T) {
+    add_cpu_component(resources, entity, value);
+}
+
+/// The same component, left in the inbox: the archetype knows about it but no column was built,
+/// which is the state of everything a test registers by hand.
+fn park_component<T: Component>(resources: &mut Resources, entity: Entity, value: T) {
     let components = resources.get_mut::<ComponentRegistry>().unwrap();
     components.register_cpu::<T>();
     components.get_cpu_mut::<T>().unwrap().insert(entity, value);
@@ -64,7 +67,7 @@ fn add_component<T: Component>(resources: &mut Resources, entity: Entity, value:
     let archetypes = resources.get_mut::<ArchetypeRegistry>().unwrap();
     let current = archetypes.entity_archetype(entity).unwrap();
     let new_arch = archetypes.archetype_after_add::<T>(current);
-    archetypes.register_entity(entity, new_arch);
+    archetypes.register_at(entity, new_arch, None);
 }
 
 // -- Tests --
@@ -415,50 +418,39 @@ fn eight_mutable_components_fit_in_one_query() {
     assert_eq!((first.0, last.0), (11, 18), "not every slot was written");
 }
 
-// -- Reading from a column (#891, stage 5d-a) -------------------------------
+// -- Reading from a column (#891) ------------------------------------------
 
 mod columns {
-    use std::any::TypeId;
-    use std::collections::BTreeSet;
-
     use super::*;
 
-    /// Puts `entity` in an archetype holding `Health`, with the value in the **column and nowhere
-    /// else**: the per-type map is cleared after the row is filled.
-    fn only_in_a_column(resources: &mut Resources, entity: Entity, value: u32) {
-        // Taken out and put back: `place` wants the component registry by shared reference and the
-        // archetype registry by exclusive one, and `Resources` cannot hand out both at once.
-        let mut components = resources.remove::<ComponentRegistry>().unwrap();
-        components.register_cpu::<Health>();
-        let health = components.storage_id(&TypeId::of::<Health>()).unwrap();
+    /// 🔴 The proof the whole port rests on: after the normal route, the value is in the column and
+    /// the inbox is empty, so a query that still read the map would see nothing.
+    #[test]
+    fn the_value_left_the_inbox() {
+        let mut r = setup();
+        let entity = spawn_entity(&mut r, 1);
+        add_cpu_component(&mut r, entity, Health(77));
 
-        let set: BTreeSet<TypeId> = [TypeId::of::<Health>()].into_iter().collect();
-        {
-            let archetypes = resources.get_mut::<ArchetypeRegistry>().unwrap();
-            let archetype = archetypes.get_or_create(set);
-            archetypes.place(entity, archetype, &components).unwrap();
-            let table = archetypes.table_of(archetype, &components).unwrap();
-            unsafe {
-                archetypes
-                    .tables_mut()
-                    .get_mut(table)
-                    .unwrap()
-                    .column_mut(health)
-                    .unwrap()
-                    .push(Health(value))
-            };
-        }
+        let components = r.get::<ComponentRegistry>().unwrap();
+        let (table, row) = components.location(entity).expect("it settled");
+        let id = components
+            .storage_id(&std::any::TypeId::of::<Health>())
+            .unwrap();
+        let column = components
+            .tables()
+            .get(table)
+            .unwrap()
+            .column(id)
+            .expect("its column exists");
 
-        // The map holds nothing for this entity, so only the column can
-        // answer. That is the whole point of the fixture.
-        resources.insert(components);
+        assert_eq!(unsafe { column.get::<Health>(row.index()) }.unwrap().0, 77);
     }
 
     #[test]
     fn for_each_reads_the_column() {
         let mut r = setup();
         let entity = spawn_entity(&mut r, 1);
-        only_in_a_column(&mut r, entity, 77);
+        add_cpu_component(&mut r, entity, Health(77));
 
         let mut seen = Vec::new();
         Query::<&Health>::new(&r).for_each(|h| seen.push(h.0));
@@ -466,14 +458,14 @@ mod columns {
         assert_eq!(seen, vec![77], "read from the column, not the map");
     }
 
-    /// 🔴 The iterator and `for_each` must read the same place. One
-    /// following the column and the other not would make an entity visible
-    /// to half the engine and absent from the other half, silently.
+    /// 🔴 The iterator and `for_each` must read the same place. One following the column and the
+    /// other not would make an entity visible to half the engine and absent from the other half,
+    /// silently.
     #[test]
     fn iter_reads_the_column_too() {
         let mut r = setup();
         let entity = spawn_entity(&mut r, 1);
-        only_in_a_column(&mut r, entity, 77);
+        add_cpu_component(&mut r, entity, Health(77));
 
         let seen: Vec<u32> = Query::<&Health>::new(&r).iter().map(|h| h.0).collect();
 
@@ -484,7 +476,7 @@ mod columns {
     fn a_mutable_query_reaches_the_column() {
         let mut r = setup();
         let entity = spawn_entity(&mut r, 1);
-        only_in_a_column(&mut r, entity, 77);
+        add_cpu_component(&mut r, entity, Health(77));
 
         Query::<&mut Health>::new(&r).for_each(|h| h.0 += 1);
         let seen: Vec<u32> = Query::<&Health>::new(&r).iter().map(|h| h.0).collect();
@@ -492,16 +484,33 @@ mod columns {
         assert_eq!(seen, vec![78], "the write landed in the column");
     }
 
-    /// The map is still the answer for everything that has not moved, which
-    /// during the migration is everything.
+    /// The inbox is still the answer for an entity filed by hand, which every test that builds a
+    /// world without the funnel does.
     #[test]
-    fn the_map_still_answers_when_there_is_no_column() {
+    fn the_inbox_still_answers() {
         let mut r = setup();
         let entity = spawn_entity(&mut r, 1);
-        add_cpu_component(&mut r, entity, Health(5));
+        park_component(&mut r, entity, Health(5));
 
         let seen: Vec<u32> = Query::<&Health>::new(&r).iter().map(|h| h.0).collect();
 
         assert_eq!(seen, vec![5]);
+    }
+
+    /// A column and an inbox at once: two entities of the same archetype, one settled and one not.
+    /// Both have to come out of the same walk.
+    #[test]
+    fn both_homes_in_one_walk() {
+        let mut r = setup();
+        let settled = spawn_entity(&mut r, 1);
+        let parked = spawn_entity(&mut r, 2);
+        add_cpu_component(&mut r, settled, Health(10));
+        park_component(&mut r, parked, Health(20));
+
+        let mut seen: Vec<u32> = Vec::new();
+        Query::<&Health>::new(&r).for_each(|h| seen.push(h.0));
+        seen.sort_unstable();
+
+        assert_eq!(seen, vec![10, 20]);
     }
 }

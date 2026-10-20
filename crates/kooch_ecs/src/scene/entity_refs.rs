@@ -116,7 +116,7 @@ pub(super) fn assign_ids_to_referenced(resources: &mut Resources) -> HashMap<Ent
 
     if let Some(components) = resources.get_mut::<ComponentRegistry>() {
         components.register_cpu_reflected::<PersistentId>();
-        if let Some(storage) = components.get_cpu_mut::<PersistentId>() {
+        if let Some(mut storage) = components.get_cpu_mut::<PersistentId>() {
             for &(entity, id) in &fresh {
                 storage.insert(entity, PersistentId::new(id));
             }
@@ -202,7 +202,7 @@ pub(super) fn adopt_ids(resources: &mut Resources) {
     }
 
     if let Some(components) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = components.get_cpu_mut::<PersistentId>()
+        && let Some(mut storage) = components.get_cpu_mut::<PersistentId>()
     {
         for &(entity, id) in &repaired {
             storage.insert(entity, PersistentId::new(id));

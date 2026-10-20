@@ -37,7 +37,7 @@ fn world_with_a_link(count: usize) -> (Resources, Entity, Entity) {
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<Link>();
-        if let Some(storage) = registry.get_cpu_mut::<Link>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<Link>() {
             storage.insert(
                 source,
                 Link {
@@ -52,7 +52,7 @@ fn world_with_a_link(count: usize) -> (Resources, Entity, Entity) {
         && let Some(current) = archetypes.entity_archetype(source)
     {
         let next = archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<Link>());
-        archetypes.register_entity(source, next);
+        archetypes.register_at(source, next, None);
     }
 
     (resources, source, target)
@@ -225,7 +225,7 @@ fn two_references_in_one_component_both_survive() {
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<Pair>();
-        if let Some(storage) = registry.get_cpu_mut::<Pair>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<Pair>() {
             storage.insert(
                 holder,
                 Pair {
@@ -239,7 +239,7 @@ fn two_references_in_one_component_both_survive() {
         && let Some(current) = archetypes.entity_archetype(holder)
     {
         let next = archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<Pair>());
-        archetypes.register_entity(holder, next);
+        archetypes.register_at(holder, next, None);
     }
 
     let document = SceneDocument::from_ecs(&mut resources);

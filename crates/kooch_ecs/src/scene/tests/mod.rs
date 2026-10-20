@@ -153,12 +153,12 @@ pub(super) fn add_to_archetype(
         Some(current) => current,
         None => {
             let empty = archetypes.get_or_create(Default::default());
-            archetypes.register_entity(entity, empty);
+            archetypes.register_at(entity, empty, None);
             empty
         }
     };
     let next = archetypes.archetype_after_add_dynamic(current, type_id);
-    archetypes.register_entity(entity, next);
+    archetypes.register_at(entity, next, None);
 }
 
 /// Runs `emit` with a local log buffer installed, and returns what it said.

@@ -5,4 +5,4 @@ mod registry;
 #[cfg(test)]
 mod tests;
 
-pub use registry::ArchetypeRegistry;
+pub use registry::{ArchetypeRegistry, Where};

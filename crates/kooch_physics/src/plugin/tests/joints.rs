@@ -173,7 +173,7 @@ fn editing_a_joint_rebuilds_it() {
     physics_sync_system(&mut resources);
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<Joint>()
+        && let Some(mut storage) = registry.get_cpu_mut::<Joint>()
         && let Some(spec) = storage.get_mut(joint)
     {
         spec.kind = JOINT_REVOLUTE;

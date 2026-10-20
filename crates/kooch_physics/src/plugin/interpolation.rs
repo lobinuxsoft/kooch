@@ -109,7 +109,7 @@ pub fn interpolate_bodies(resources: &mut Resources) {
     };
     let mut moved: Vec<Entity> = Vec::new();
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(transforms) = registry.get_cpu_mut::<Transform>()
+        && let Some(mut transforms) = registry.get_cpu_mut::<Transform>()
     {
         for (&entity, _) in poses.poses.iter() {
             let Some((position, rotation)) = poses.at(entity, alpha) else {

@@ -99,7 +99,7 @@ pub(super) fn spawn_placeholder(resources: &mut Resources, name: String) -> crat
     };
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<crate::name::Name>();
-        if let Some(storage) = registry.get_cpu_mut::<crate::name::Name>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<crate::name::Name>() {
             storage.insert(entity, crate::name::Name { value: name });
         }
     }
@@ -210,7 +210,7 @@ pub(super) fn rebuild_children(spawned: &[crate::entity::Entity], resources: &mu
         entities.push(child);
         if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
             registry.register_cpu_reflected::<Children>();
-            if let Some(storage) = registry.get_cpu_mut::<Children>() {
+            if let Some(mut storage) = registry.get_cpu_mut::<Children>() {
                 storage.insert(parent, Children { entities });
             }
         }
@@ -228,7 +228,7 @@ pub(super) fn tag_with_scene(
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<SceneMember>();
-        if let Some(storage) = registry.get_cpu_mut::<SceneMember>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<SceneMember>() {
             storage.insert(entity, SceneMember::new(scene));
         }
     }

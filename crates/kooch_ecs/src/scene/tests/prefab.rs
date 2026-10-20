@@ -21,10 +21,10 @@ fn parent_child(
         let registry = resources.get_mut::<ComponentRegistry>().unwrap();
         registry.register_cpu_reflected::<Parent>();
         registry.register_cpu_reflected::<Children>();
-        if let Some(storage) = registry.get_cpu_mut::<Parent>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<Parent>() {
             storage.insert(child, Parent { entity: parent });
         }
-        if let Some(storage) = registry.get_cpu_mut::<Children>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<Children>() {
             storage.insert(
                 parent,
                 Children {
@@ -45,7 +45,7 @@ fn named(
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
     registry.register_cpu_reflected::<crate::name::Name>();
     registry.insert_default_reflected(&std::any::TypeId::of::<crate::name::Name>(), entity);
-    if let Some(storage) = registry.get_cpu_mut::<crate::name::Name>()
+    if let Some(mut storage) = registry.get_cpu_mut::<crate::name::Name>()
         && let Some(value) = storage.get_mut(entity)
     {
         value.value = name.to_owned();

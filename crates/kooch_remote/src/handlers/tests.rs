@@ -27,10 +27,10 @@ fn attach(
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
     registry.register_cpu_reflected::<Parent>();
     registry.register_cpu_reflected::<Children>();
-    if let Some(storage) = registry.get_cpu_mut::<Parent>() {
+    if let Some(mut storage) = registry.get_cpu_mut::<Parent>() {
         storage.insert(child, Parent { entity: parent });
     }
-    if let Some(storage) = registry.get_cpu_mut::<Children>() {
+    if let Some(mut storage) = registry.get_cpu_mut::<Children>() {
         let existing = storage.get(parent).map(|c| c.entities.clone());
         let mut entities = existing.unwrap_or_default();
         entities.push(child);
@@ -99,16 +99,16 @@ fn stop_puts_an_authored_value_back() {
     {
         let registry = resources.get_mut::<ComponentRegistry>().unwrap();
         registry.insert_default_reflected(&std::any::TypeId::of::<Transform>(), entity);
-        let storage = registry.get_cpu_mut::<Transform>().unwrap();
+        let mut storage = registry.get_cpu_mut::<Transform>().unwrap();
         let mut authored = Transform::default();
         authored.position = glam::Vec3::new(1.0, 2.0, 3.0);
         storage.insert(entity, authored);
     }
     let arch = resources.get_mut::<ArchetypeRegistry>().unwrap();
     let empty = arch.get_or_create(Default::default());
-    arch.register_entity(entity, empty);
+    arch.register_at(entity, empty, None);
     let next = arch.archetype_after_add::<Transform>(empty);
-    arch.register_entity(entity, next);
+    arch.register_at(entity, next, None);
 
     set_playing(&mut resources, true).expect("play");
 
@@ -167,9 +167,9 @@ fn stop_tells_the_caller_the_world_moved_back() {
     }
     let arch = resources.get_mut::<ArchetypeRegistry>().unwrap();
     let empty = arch.get_or_create(Default::default());
-    arch.register_entity(entity, empty);
+    arch.register_at(entity, empty, None);
     let next = arch.archetype_after_add::<Transform>(empty);
-    arch.register_entity(entity, next);
+    arch.register_at(entity, next, None);
 
     let move_to = |resources: &mut Resources, x: f32| {
         resources

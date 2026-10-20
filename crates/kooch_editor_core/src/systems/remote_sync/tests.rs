@@ -114,9 +114,9 @@ fn insert_transform(resources: &mut Resources, entity: Entity) {
         return;
     };
     let empty = archetypes.get_or_create(Default::default());
-    archetypes.register_entity(entity, empty);
+    archetypes.register_at(entity, empty, None);
     let next = archetypes.archetype_after_add::<Transform>(empty);
-    archetypes.register_entity(entity, next);
+    archetypes.register_at(entity, next, None);
 }
 
 /// Connects an editor-side `RemoteState` and mirrors once.
@@ -164,7 +164,7 @@ fn drag_it_to(resources: &mut Resources, state: &RemoteState, position: Vec3) {
         .and_then(|s| state.mirror.local_of(s.id))
         .expect("nothing mirrored");
     if let Some(reg) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = reg.get_cpu_mut::<Transform>()
+        && let Some(mut storage) = reg.get_cpu_mut::<Transform>()
         && let Some(t) = storage.get_mut(local)
     {
         t.position = position;

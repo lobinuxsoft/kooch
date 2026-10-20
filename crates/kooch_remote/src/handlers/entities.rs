@@ -184,7 +184,7 @@ pub(super) fn spawn(
     add_default(resources, entity, TypeId::of::<Transform>());
 
     if let Some(name) = name
-        && let Some(storage) = resources
+        && let Some(mut storage) = resources
             .get_mut::<ComponentRegistry>()
             .and_then(|r| r.get_cpu_mut::<Name>())
         && let Some(n) = storage.get_mut(entity)
@@ -219,7 +219,7 @@ pub(super) fn tag_with_scene(resources: &mut Resources, entity: Entity, scene: k
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<SceneMember>();
-        if let Some(storage) = registry.get_cpu_mut::<SceneMember>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<SceneMember>() {
             storage.insert(entity, SceneMember::new(scene));
         }
     }

@@ -47,19 +47,9 @@ fn insert<T: Component>(resources: &mut Resources, entity: Entity, value: T) {
     {
         storage.insert(entity, value);
     }
-    let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() else {
-        return;
-    };
-    let current = match archetypes.entity_archetype(entity) {
-        Some(current) => current,
-        None => {
-            let empty = archetypes.get_or_create(Default::default());
-            archetypes.register_entity(entity, empty);
-            empty
-        }
-    };
-    let next = archetypes.archetype_after_add_dynamic(current, TypeId::of::<T>());
-    archetypes.register_entity(entity, next);
+    // Through the funnel: the archetype change is what moves the value into its column (#891).
+    kooch_ecs::move_entity::arrives(resources, entity);
+    kooch_ecs::move_entity::gained(resources, entity, TypeId::of::<T>());
 }
 
 /// A 4 m cube at `at`, and the solver told about it.

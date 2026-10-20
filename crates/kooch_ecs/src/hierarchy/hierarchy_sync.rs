@@ -49,7 +49,7 @@ pub fn hierarchy_sync_system(resources: &mut kooch_core::resource::Resources) {
 
     // Update or insert Children for entities that should have them.
     for (parent_entity, children_list) in &expected {
-        if let Some(storage) = registry.get_cpu_mut::<Children>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<Children>() {
             if let Some(existing) = storage.get_mut(*parent_entity) {
                 existing.entities.clone_from(children_list);
             } else {
@@ -67,8 +67,8 @@ pub fn hierarchy_sync_system(resources: &mut kooch_core::resource::Resources) {
     // Clear Children for entities that no longer have any children.
     for entity in &entities_with_children {
         if !expected.contains_key(entity) {
-            if let Some(storage) = registry.get_cpu_mut::<Children>() {
-                storage.remove(*entity);
+            if let Some(mut storage) = registry.get_cpu_mut::<Children>() {
+                storage.unpark(*entity);
             }
             lost_children.push(*entity);
         }

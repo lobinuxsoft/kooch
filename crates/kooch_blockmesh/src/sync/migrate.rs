@@ -34,7 +34,7 @@ pub fn migrate_block_sources(resources: &mut Resources) {
         };
         let faces = mesh.face_count();
         if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-            && let Some(storage) = registry.get_cpu_mut::<Block>()
+            && let Some(mut storage) = registry.get_cpu_mut::<Block>()
             && let Some(block) = storage.get_mut(entity)
         {
             block.mesh = mesh;

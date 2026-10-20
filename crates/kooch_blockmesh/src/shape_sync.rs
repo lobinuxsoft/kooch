@@ -52,7 +52,7 @@ fn set_mesh(resources: &mut Resources, entity: Entity, shape: &BlockShape) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
         && let Some(block) = registry
             .get_cpu_mut::<Block>()
-            .and_then(|storage| storage.get_mut(entity))
+            .and_then(|storage| storage.into_mut(entity))
     {
         block.mesh = mesh;
     }

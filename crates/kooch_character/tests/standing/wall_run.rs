@@ -113,7 +113,7 @@ fn a_wall_jump_keeps_the_run() {
 
     let before = position(&resources, hero);
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<Jump>()
+        && let Some(mut storage) = registry.get_cpu_mut::<Jump>()
         && let Some(jump) = storage.get_mut(hero)
     {
         jump.wanted = true;

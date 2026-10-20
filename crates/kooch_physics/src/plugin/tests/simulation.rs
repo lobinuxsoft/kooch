@@ -247,7 +247,7 @@ fn a_moved_static_moves_its_collision() {
 
     // Moved mid-play, the way a lift or a level-streaming step moves one.
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<Transform>()
+        && let Some(mut storage) = registry.get_cpu_mut::<Transform>()
     {
         storage.insert(floor, Transform::from_position(Vec3::ZERO));
     }

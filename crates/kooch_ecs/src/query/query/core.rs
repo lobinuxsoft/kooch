@@ -68,15 +68,11 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
             })
             .collect();
 
-        // The table behind each of them, once and not per entity. `find`
-        // rather than `get_or_insert`: looking must not mint a table.
+        // The table behind each of them, once and not per entity. The archetype already knows
+        // which one serves it — the funnel recorded it the first time an entity settled there.
         let matched_tables: Vec<Option<&Table>> = matched_archetypes
             .iter()
-            .map(|arch| {
-                archetypes
-                    .table_for(arch.id(), registry)
-                    .and_then(|id| archetypes.tables().get(id))
-            })
+            .map(|arch| arch.table().and_then(|id| registry.tables().get(id)))
             .collect();
 
         // SAFETY: We've verified the component types exist and the access
@@ -100,7 +96,6 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
             fetch: &self.fetch,
             archetypes: &self.matched_archetypes,
             tables: &self.matched_tables,
-            registry: self.archetypes,
             archetype_idx: 0,
             entity_idx: 0,
             _marker: PhantomData,
@@ -126,23 +121,20 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
     }
 
     /// Applies a function to each matching entity's data.
+    ///
+    /// 🔴 The row comes from the walk, not from a map. `entities` and `rows` are parallel lists on
+    /// the archetype, so a two-component pass costs two pointer additions per entity instead of
+    /// two hashes (#891).
     pub fn for_each(&self, mut func: impl FnMut(Q::Item<'w>)) {
         for (archetype, table) in self.matched_archetypes.iter().zip(&self.matched_tables) {
-            for &entity in archetype.entities() {
-                let at = self.at(*table, entity);
+            for (&entity, &row) in archetype.entities().iter().zip(archetype.rows()) {
+                let at = table.zip(row).map(|(table, row)| (table, row));
                 // SAFETY: Archetype guarantees required components exist.
                 if let Some(item) = unsafe { Q::fetch(&self.fetch, entity, at) } {
                     func(item);
                 }
             }
         }
-    }
-
-    /// Where `entity`'s values live in `table`, if they live in one.
-    #[inline]
-    fn at(&self, table: Option<&'w Table>, entity: Entity) -> crate::query::fetch::Row<'w> {
-        let table = table?;
-        Some((table, self.archetypes.row_of(entity)?))
     }
 
     #[inline]
@@ -160,8 +152,8 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
     /// (e.g. an optional override component checked via [`Self::get`]).
     pub fn for_each_entity(&self, mut func: impl FnMut(Entity, Q::Item<'w>)) {
         for (archetype, table) in self.matched_archetypes.iter().zip(&self.matched_tables) {
-            for &entity in archetype.entities() {
-                let at = self.at(*table, entity);
+            for (&entity, &row) in archetype.entities().iter().zip(archetype.rows()) {
+                let at = table.zip(row).map(|(table, row)| (table, row));
                 // SAFETY: Archetype guarantees required components exist.
                 if let Some(item) = unsafe { Q::fetch(&self.fetch, entity, at) } {
                     func(entity, item);

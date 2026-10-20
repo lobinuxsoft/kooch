@@ -149,7 +149,7 @@ fn add_health(resources: &mut Resources, entity: Entity, hp: u32, max_hp: u32) {
     let archetypes = resources.get_mut::<ArchetypeRegistry>().unwrap();
     if let Some(current) = archetypes.entity_archetype(entity) {
         let new_arch = archetypes.archetype_after_add_dynamic(current, type_id);
-        archetypes.register_entity(entity, new_arch);
+        archetypes.register_at(entity, new_arch, None);
     }
 }
 

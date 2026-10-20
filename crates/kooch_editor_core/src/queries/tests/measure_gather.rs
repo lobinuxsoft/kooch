@@ -78,7 +78,7 @@ fn dense_world() -> Resources {
                 entity,
                 PersistentId::new(EntityGuid::new(index as u64 + 1).expect("nonzero")),
             );
-        archetypes.register_entity(entity, archetype);
+        archetypes.register_at(entity, archetype, None);
     }
 
     r.insert(alloc);

@@ -32,7 +32,7 @@ fn global_x(resources: &Resources, entity: Entity) -> f32 {
 
 fn moved(resources: &mut Resources, entity: Entity, x: f32) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(transforms) = registry.get_cpu_mut::<Transform>()
+        && let Some(mut transforms) = registry.get_cpu_mut::<Transform>()
     {
         transforms.insert(entity, at(x));
     }
@@ -49,7 +49,7 @@ fn world() -> (Resources, Entity, Entity, Entity) {
     registry.register_cpu_reflected::<Children>();
 
     let (body, child, other) = (allocator.spawn(), allocator.spawn(), allocator.spawn());
-    let transforms = registry.get_cpu_mut::<Transform>().unwrap();
+    let mut transforms = registry.get_cpu_mut::<Transform>().unwrap();
     transforms.insert(body, at(0.0));
     transforms.insert(child, at(1.0));
     transforms.insert(other, at(100.0));
@@ -63,7 +63,7 @@ fn world() -> (Resources, Entity, Entity, Entity) {
             entities: vec![child],
         },
     );
-    let globals = registry.get_cpu_mut::<GlobalTransform>().unwrap();
+    let mut globals = registry.get_cpu_mut::<GlobalTransform>().unwrap();
     for entity in [body, child, other] {
         globals.insert(entity, GlobalTransform::default());
     }
@@ -103,7 +103,7 @@ fn nothing_else_is_touched() {
 fn a_parented_root_builds_on_what_is_published() {
     let (mut resources, body, child, _) = world();
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(globals) = registry.get_cpu_mut::<GlobalTransform>()
+        && let Some(mut globals) = registry.get_cpu_mut::<GlobalTransform>()
     {
         globals.insert(
             body,

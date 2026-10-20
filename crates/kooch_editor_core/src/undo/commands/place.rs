@@ -49,7 +49,7 @@ pub(super) fn adopt(resources: &mut Resources, entity: Entity, scene: kooch_core
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.register_cpu_reflected::<SceneMember>();
-        if let Some(storage) = registry.get_cpu_mut::<SceneMember>() {
+        if let Some(mut storage) = registry.get_cpu_mut::<SceneMember>() {
             storage.insert(entity, SceneMember::new(scene));
         }
     }
@@ -99,7 +99,7 @@ pub(super) fn drop_at(
         None => world,
     };
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<kooch_ecs::Transform>()
+        && let Some(mut storage) = registry.get_cpu_mut::<kooch_ecs::Transform>()
         && let Some(transform) = storage.get_mut(entity)
     {
         transform.position = local;

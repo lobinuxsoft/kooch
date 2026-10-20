@@ -84,7 +84,7 @@ pub fn resolve_aims(resources: &mut Resources) {
     let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
         return;
     };
-    let Some(aims) = registry.get_cpu_mut::<ThirdPersonAim>() else {
+    let Some(mut aims) = registry.get_cpu_mut::<ThirdPersonAim>() else {
         return;
     };
     for (entity, looking_at, aim_target) in resolved {

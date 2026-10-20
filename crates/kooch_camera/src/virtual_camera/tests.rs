@@ -982,7 +982,7 @@ fn the_body_numbers_reach_their_component() {
         kooch_ecs::entity::Entity::new(1, 0),
         kooch_ecs::entity::Entity::new(2, 0),
     );
-    let storage = registry.get_cpu_mut::<VirtualCamera>().unwrap();
+    let mut storage = registry.get_cpu_mut::<VirtualCamera>().unwrap();
     storage.insert(
         orbital,
         VirtualCamera {
@@ -1003,8 +1003,8 @@ fn the_body_numbers_reach_their_component() {
     );
     // The entities exist in the world, which is what the migration has to add to.
     let empty = archetypes.get_or_create(Default::default());
-    archetypes.register_entity(orbital, empty);
-    archetypes.register_entity(shouldered, empty);
+    archetypes.register_at(orbital, empty, None);
+    archetypes.register_at(shouldered, empty, None);
     resources.insert(archetypes);
     resources.insert(registry);
 
@@ -1084,7 +1084,7 @@ fn the_named_modes_become_components() {
                 ..Default::default()
             },
         );
-        archetypes.register_entity(entity, empty);
+        archetypes.register_at(entity, empty, None);
     }
     resources.insert(archetypes);
     resources.insert(registry);

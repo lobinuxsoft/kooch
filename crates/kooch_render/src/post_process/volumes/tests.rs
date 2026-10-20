@@ -146,7 +146,7 @@ mod scene {
                     .get_cpu_mut::<PostProcessVolume>()
                     .expect("registered")
                     .insert(entity, volume);
-                archetypes.register_entity(entity, archetype);
+                archetypes.register_at(entity, archetype, None);
                 entity
             })
             .collect();
