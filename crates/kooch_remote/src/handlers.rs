@@ -519,10 +519,6 @@ fn update_archetype_add(resources: &mut Resources, entity: Entity, type_id: Type
     kooch_ecs::move_entity::gained(resources, entity, type_id);
 }
 
-/// Moves an entity to the archetype it belongs in after removing `type_id`.
-fn update_archetype_remove(resources: &mut Resources, entity: Entity, type_id: TypeId) {
-    kooch_ecs::move_entity::lost(resources, entity, type_id);
-}
 
 mod entities;
 mod scenes;

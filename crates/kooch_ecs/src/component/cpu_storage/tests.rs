@@ -14,7 +14,7 @@ fn insert_and_get() {
 
     storage.insert(e, Health(100));
     assert_eq!(storage.get(e).unwrap().0, 100);
-    assert!(storage.contains(e));
+    assert!(storage.get(e).is_some());
     assert_eq!(storage.len(), 1);
 }
 
@@ -37,8 +37,8 @@ fn remove_returns_value() {
     storage.insert(e, Health(50));
     let removed = storage.remove(e);
     assert_eq!(removed.unwrap().0, 50);
-    assert!(!storage.contains(e));
-    assert!(storage.is_empty());
+    assert!(storage.get(e).is_none());
+    assert_eq!(storage.len(), 0);
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn entity_keyed_by_index_and_generation() {
 
     storage.insert(e_gen0, Health(10));
     // Different generation = different entity key.
-    assert!(!storage.contains(e_gen1));
+    assert!(storage.get(e_gen1).is_none());
     storage.insert(e_gen1, Health(20));
     assert_eq!(storage.len(), 2);
 }
@@ -103,5 +103,5 @@ fn any_storage_remove_entity() {
 
     let any_storage: &mut dyn AnyStorage = &mut storage;
     any_storage.remove_entity(e);
-    assert!(storage.is_empty());
+    assert_eq!(storage.len(), 0);
 }

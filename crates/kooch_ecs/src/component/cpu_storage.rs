@@ -49,21 +49,10 @@ impl<T: Component> ComponentStorage<T> {
         self.data.get_mut(&entity)
     }
 
-    /// Returns `true` if this storage has a component for `entity`.
-    pub fn contains(&self, entity: Entity) -> bool {
-        self.data.contains_key(&entity)
-    }
-
     /// Number of entities with this component.
     #[inline]
     pub fn len(&self) -> usize {
         self.data.len()
-    }
-
-    /// Returns `true` if no entities have this component.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
     }
 
     /// Iterates over all `(entity, component)` pairs.
