@@ -66,13 +66,7 @@ fn a_changed_shape_rebuilds() {
     sync_shapes(&mut resources);
     let loaded = mesh_of(&resources, entity);
 
-    if let Some(storage) = resources
-        .get_mut::<ComponentRegistry>()
-        .and_then(|registry| registry.get_cpu_mut::<BlockShape>())
-        && let Some(shape) = storage.get_mut(entity)
-    {
-        *shape = cube(4.0);
-    }
+    reshape(&mut resources, entity, cube(4.0));
     sync_shapes(&mut resources);
 
     let rebuilt = mesh_of(&resources, entity);
@@ -95,4 +89,34 @@ fn a_loaded_shape_is_kept() {
         0,
         "a load rebuilt the geometry"
     );
+}
+
+/// 🔴 A derive is not an edit. Marking the scene unsaved here put an asterisk on a level nobody
+/// had touched, and told the author to save geometry that was already on disk.
+#[test]
+fn a_rebuild_marks_nothing() {
+    let (mut resources, entity) = world();
+    let mut manager = kooch_ecs::SceneManager::new();
+    let scene = manager.new_scene();
+    resources.insert(manager);
+    add(&mut resources, entity, kooch_ecs::SceneMember::new(scene));
+
+    sync_shapes(&mut resources);
+    reshape(&mut resources, entity, cube(4.0));
+    sync_shapes(&mut resources);
+
+    let dirty = resources
+        .get::<kooch_ecs::SceneManager>()
+        .is_some_and(|manager| manager.any_dirty());
+    assert!(!dirty, "the derive marked the scene unsaved");
+}
+
+fn reshape(resources: &mut Resources, entity: Entity, shape: BlockShape) {
+    if let Some(storage) = resources
+        .get_mut::<ComponentRegistry>()
+        .and_then(|registry| registry.get_cpu_mut::<BlockShape>())
+        && let Some(held) = storage.get_mut(entity)
+    {
+        *held = shape;
+    }
 }

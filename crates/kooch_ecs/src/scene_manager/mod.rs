@@ -147,9 +147,17 @@ impl SceneManager {
     }
 
     /// Records that one open scene has edits not on disk.
+    ///
+    /// 🔴 Logs the gesture that asked. An asterisk that appears on its own — on a load, on a
+    /// refresh — is a scene the author is told they edited and did not, and reading the code has
+    /// never been enough to find which system did it.
+    #[track_caller]
     pub fn mark_scene_dirty(&mut self, id: Guid) -> bool {
         match self.scenes.iter_mut().find(|scene| scene.id == id) {
             Some(scene) => {
+                if !scene.dirty {
+                    tracing::debug!(%id, at = %std::panic::Location::caller(), "scene marked unsaved");
+                }
                 scene.dirty = true;
                 true
             }
