@@ -3,7 +3,6 @@
 use std::any::TypeId;
 use std::collections::HashMap;
 
-use crate::archetype_registry::ArchetypeRegistry;
 use crate::entity::Entity;
 
 use super::children::Children;
@@ -81,18 +80,10 @@ pub fn hierarchy_sync_system(resources: &mut kooch_core::resource::Resources) {
     // -- Phase 3: Sync archetypes for entities that gained/lost Children.
     let children_tid = TypeId::of::<Children>();
 
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-        for entity in gained_children {
-            if let Some(current) = archetypes.entity_archetype(entity) {
-                let new_arch = archetypes.archetype_after_add_dynamic(current, children_tid);
-                archetypes.register_entity(entity, new_arch);
-            }
-        }
-        for entity in lost_children {
-            if let Some(current) = archetypes.entity_archetype(entity) {
-                let new_arch = archetypes.archetype_after_remove_dynamic(current, children_tid);
-                archetypes.register_entity(entity, new_arch);
-            }
-        }
+    for entity in gained_children {
+        crate::move_entity::gained(resources, entity, children_tid);
+    }
+    for entity in lost_children {
+        crate::move_entity::lost(resources, entity, children_tid);
     }
 }

@@ -131,12 +131,7 @@ fn set_order(resources: &mut Resources, entity: Entity, value: u32) {
     if !grew {
         return;
     }
-    if let Some(archetypes) = resources.get_mut::<crate::archetype_registry::ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let next = archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<Order>());
-        archetypes.register_entity(entity, next);
-    }
+    crate::move_entity::gained(resources, entity, std::any::TypeId::of::<Order>());
 }
 
 /// Whether `candidate` is inside `root`'s subtree.
