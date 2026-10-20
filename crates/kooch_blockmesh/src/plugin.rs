@@ -8,8 +8,8 @@ use kooch_core::stage::Stage;
 use kooch_ecs::component::ComponentRegistry;
 
 use crate::{
-    BentMeshes, Block, BlockShape, BuiltBlocks, SplineDeform, SplineSweep, sync_blocks,
-    sync_deforms,
+    BentMeshes, Block, BlockShape, BuiltBlocks, BuiltShapes, SplineDeform, SplineSweep,
+    sync_blocks, sync_deforms, sync_shapes,
 };
 
 /// Registers [`Block`] and keeps every block's mesh and collider in step
@@ -26,6 +26,7 @@ impl Plugin for BlockPlugin {
                 registry.register_cpu_reflected::<SplineDeform>();
             }
             resources.insert(BuiltBlocks::default());
+            resources.insert(BuiltShapes::default());
             resources.insert(BentMeshes::default());
         });
         // 🔴 A block's collider is geometry the solver reads, so it is built in `PrePhysics` and
@@ -39,6 +40,11 @@ impl Plugin for BlockPlugin {
             Order::before("physics_sync_system"),
             sync_blocks,
         );
+        // 🔴 Before `sync_blocks`, which turns the geometry this produces into a render mesh and a
+        // collider: one stage later and a reshaped block is a frame behind its own collider. Here
+        // rather than in the editor because the side that owns the world has to derive it — see
+        // the module note (#1567).
+        app.add_ordered(Stage::PrePhysics, Order::before("sync_blocks"), sync_shapes);
         // Beside `sync_blocks` and for the same reason: a bent mesh is geometry a level is built
         // from, so it exists while the scene is stopped, which is exactly when it is looked at.
         app.add_ordered(

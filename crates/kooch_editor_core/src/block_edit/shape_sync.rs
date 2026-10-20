@@ -1,44 +1,16 @@
-//! Keeping a parametric block's geometry in step with its [`BlockShape`] (#1106).
+//! The editor's half of a parametric block (#1106).
+//!
+//! 🔴 The derive itself moved to the engine in #1567 — [`kooch_blockmesh::sync_shapes`] runs in
+//! `PrePhysics` wherever the world lives, so the project rebuilds its own geometry instead of
+//! receiving parameters it cannot act on. What is left here is the one gesture the engine cannot
+//! know about: giving up the parameters.
 
-use std::collections::HashMap;
-
-use kooch_blockmesh::{Block, BlockShape};
+use kooch_blockmesh::BlockShape;
 use kooch_core::resource::Resources;
 use kooch_ecs::component::{ComponentNames, ComponentRegistry};
 use kooch_ecs::entity::Entity;
-use kooch_ecs::query::Query;
 
 use crate::actions::EditorAction;
-
-/// The parameters each shaped block was last built from.
-#[derive(Default)]
-pub(crate) struct BuiltShapes(HashMap<Entity, BlockShape>);
-
-/// Rebuilds every block whose shape parameters changed since they were last seen. A first sighting
-/// only records: the scene already holds that shape, and rebuilding it on load would dirty it.
-pub(crate) fn sync_block_shapes(resources: &mut Resources) {
-    let mut shaped = Vec::new();
-    Query::<(&BlockShape, &Block)>::new(resources)
-        .for_each_entity(|entity, (shape, _)| shaped.push((entity, *shape)));
-
-    let mut built = resources.remove::<BuiltShapes>().unwrap_or_default();
-    built
-        .0
-        .retain(|entity, _| shaped.iter().any(|(seen, ..)| seen == entity));
-    for (entity, shape) in shaped {
-        if built
-            .0
-            .insert(entity, shape)
-            .is_some_and(|last| last != shape)
-        {
-            let mesh = shape.build();
-            if super::set_shape(resources, entity, &mesh) {
-                super::touch(resources, entity);
-            }
-        }
-    }
-    resources.insert(built);
-}
 
 /// Removes the parameters from a block edited by hand, so the next parameter change cannot
 /// overwrite the edit. `None` when the block has none.

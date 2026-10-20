@@ -54,3 +54,19 @@ fn propagation_precedes_the_sync() {
         "the sync at {sync} reads transforms propagated at {propagation}",
     );
 }
+
+/// 🔴 That the engine derives a block's geometry from its parameters **at all**. Red before #1567:
+/// the step lived only in the editor, so a project kept the parameters and handed the old geometry
+/// back on its next snapshot. Before `sync_blocks`, which builds the collider from what it writes.
+#[test]
+fn shapes_precede_the_geometry() {
+    let mut app = App::new();
+    app.add_plugin(kooch_ecs::plugin::EcsPlugin);
+    app.add_plugin(crate::BlockPlugin);
+    let shapes = at(&app, "sync_shapes").expect("sync_shapes is in PrePhysics");
+    let blocks = at(&app, "sync_blocks").expect("sync_blocks is in PrePhysics");
+    assert!(
+        shapes < blocks,
+        "a reshaped block is built at {blocks}, before its parameters are read at {shapes}",
+    );
+}

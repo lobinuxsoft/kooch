@@ -1,5 +1,6 @@
 //! Handles that drag a [`BlockShape`] field in the viewport (#1150). A drag is one field edit, so
-//! the block regenerates through `shape_sync`, and undo and the wire come with the `SetField`.
+//! the block regenerates through `kooch_blockmesh::sync_shapes`, and undo and the wire come with
+//! the `SetField`.
 
 use glam::{Vec3, Vec4};
 use kooch_blockmesh::BlockShape;
