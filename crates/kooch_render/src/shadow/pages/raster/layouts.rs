@@ -65,7 +65,7 @@ pub(super) fn compact_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             uniform_entry(0, true, c),
             // Binding 1 held the hash table's keys and is retired: the flat table's entry index IS
             // the page id. 🔴 Writable now: the compaction records each page's place in `page_list`
-            // back into its table entry, which is the only pass that knows both. See `PAGE_CELL`.
+            // back into its table entry, which is the only pass that knows both. See `PAGE_READ`.
             buffer_entry(2, false, c),
             buffer_entry(3, false, c),
             buffer_entry(4, false, c),
@@ -77,6 +77,9 @@ pub(super) fn compact_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             // budget again.
             buffer_entry(8, true, c),
             buffer_entry(9, false, c),
+            // The table's other half: the listing word moved there so the widest binding is three
+            // words a page rather than six, which is what the light count was capped by (#1579).
+            buffer_entry(12, false, c),
         ],
     })
 }

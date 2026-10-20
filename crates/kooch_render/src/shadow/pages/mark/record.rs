@@ -161,6 +161,7 @@ impl PageMarker {
                 },
                 buffer_entry(9, &self.rank),
                 buffer_entry(10, self.pool.slots()),
+                buffer_entry(13, self.pool.work()),
                 buffer_entry(11, self.pool.alloc()),
             ],
         });

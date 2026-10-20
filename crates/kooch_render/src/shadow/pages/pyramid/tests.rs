@@ -1,5 +1,5 @@
 use super::*;
-use crate::shadow::pages::pool::PAGE_CELL;
+use crate::shadow::pages::pool::{PAGE_READ, PAGE_WORK};
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::default();
@@ -27,27 +27,32 @@ fn table_with(
     side: u32,
     levels: u32,
     at: (u32, u32, u32),
-) -> wgpu::Buffer {
+) -> (wgpu::Buffer, wgpu::Buffer) {
     let entries = (side * side * levels) as usize;
     // Every entry starts UNLISTED, which is what the compaction leaves
     // behind for the pages it did not list. Zero would read as
     // "listing 0" and put every cached page in the pyramid.
-    let mut words = vec![0u32; entries * PAGE_CELL as usize];
+    // The table is two buffers since #1579: the slot is in `read`, the listing in `work`.
+    let mut read = vec![0u32; entries * PAGE_READ as usize];
+    let mut work = vec![0u32; entries * PAGE_WORK as usize];
     for entry in 0..entries {
-        words[entry * PAGE_CELL as usize + 2] = u32::MAX;
+        work[entry * PAGE_WORK as usize + 1] = u32::MAX;
     }
     let page = at.0 * side * side + at.2 * side + at.1;
     // Entries store `slot + 1`, so any non-zero word is resident.
-    words[page as usize * PAGE_CELL as usize] = 1;
-    words[page as usize * PAGE_CELL as usize + 2] = LISTING;
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: (words.len() * 4) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&words));
-    buffer
+    read[page as usize * PAGE_READ as usize] = 1;
+    work[page as usize * PAGE_WORK as usize + 1] = LISTING;
+    let upload = |words: &[u32]| {
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: (words.len() * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buffer, 0, bytemuck::cast_slice(words));
+        buffer
+    };
+    (upload(&read), upload(&work))
 }
 
 /// One mip of one layer, read back with the row padding wgpu requires.
@@ -131,10 +136,10 @@ fn a_listed_page_lights_its_ancestors() {
 
     let pyramid = PagePyramid::new(&device, config, clipmap);
     let at = (1u32, 5u32, 9u32);
-    let table = table_with(&device, &queue, side, clipmap.levels, at);
+    let (table, work) = table_with(&device, &queue, side, clipmap.levels, at);
 
     let mut encoder = device.create_command_encoder(&Default::default());
-    pyramid.build(&device, &queue, &mut encoder, &table, 0);
+    pyramid.build(&device, &queue, &mut encoder, &table, &work, 0);
     queue.submit([encoder.finish()]);
 
     for mip in 0..PagePyramid::mip_count(side) {
@@ -184,24 +189,30 @@ fn a_cached_page_stays_dark() {
     };
     let side = config.side(0);
     let entries = (side * side * clipmap.levels) as usize;
-    let mut words = vec![0u32; entries * PAGE_CELL as usize];
     // Every page resident, every one of them cached: a slot in the
-    // pool, no listing.
+    // pool, no listing. Two buffers since #1579.
+    let mut read = vec![0u32; entries * PAGE_READ as usize];
+    let mut work_words = vec![0u32; entries * PAGE_WORK as usize];
     for entry in 0..entries {
-        words[entry * PAGE_CELL as usize] = entry as u32 + 1;
-        words[entry * PAGE_CELL as usize + 2] = u32::MAX;
+        read[entry * PAGE_READ as usize] = entry as u32 + 1;
+        work_words[entry * PAGE_WORK as usize + 1] = u32::MAX;
     }
-    let table = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: (words.len() * 4) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&table, 0, bytemuck::cast_slice(&words));
+    let upload = |words: &[u32]| {
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: (words.len() * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buffer, 0, bytemuck::cast_slice(words));
+        buffer
+    };
+    let table = upload(&read);
+    let work = upload(&work_words);
 
     let pyramid = PagePyramid::new(&device, config, clipmap);
     let mut encoder = device.create_command_encoder(&Default::default());
-    pyramid.build(&device, &queue, &mut encoder, &table, 0);
+    pyramid.build(&device, &queue, &mut encoder, &table, &work, 0);
     queue.submit([encoder.finish()]);
 
     let top = PagePyramid::mip_count(side) - 1;
@@ -255,26 +266,33 @@ fn the_pyramid_never_misses_a_page() {
     let resident = [(0u32, 0u32), (5u32, 9u32), (6u32, 9u32), (15u32, 2u32)];
 
     let entries = (side * side * clipmap.levels) as usize;
-    let mut words = vec![0u32; entries * PAGE_CELL as usize];
+    // Two buffers since #1579: the slot is in `read`, the listing in `work`.
+    let mut read = vec![0u32; entries * PAGE_READ as usize];
+    let mut work_words = vec![0u32; entries * PAGE_WORK as usize];
     for entry in 0..entries {
-        words[entry * PAGE_CELL as usize + 2] = u32::MAX;
+        work_words[entry * PAGE_WORK as usize + 1] = u32::MAX;
     }
     for (listing, &(x, y)) in resident.iter().enumerate() {
         let page = level * side * side + y * side + x;
-        words[page as usize * PAGE_CELL as usize] = 1;
-        words[page as usize * PAGE_CELL as usize + 2] = listing as u32;
+        read[page as usize * PAGE_READ as usize] = 1;
+        work_words[page as usize * PAGE_WORK as usize + 1] = listing as u32;
     }
-    let table = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: (words.len() * 4) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&table, 0, bytemuck::cast_slice(&words));
+    let upload = |words: &[u32]| {
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: (words.len() * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buffer, 0, bytemuck::cast_slice(words));
+        buffer
+    };
+    let table = upload(&read);
+    let work = upload(&work_words);
 
     let pyramid = PagePyramid::new(&device, config, clipmap);
     let mut encoder = device.create_command_encoder(&Default::default());
-    pyramid.build(&device, &queue, &mut encoder, &table, 0);
+    pyramid.build(&device, &queue, &mut encoder, &table, &work, 0);
     queue.submit([encoder.finish()]);
 
     // Every rectangle up to 4 pages a side, everywhere on the grid.

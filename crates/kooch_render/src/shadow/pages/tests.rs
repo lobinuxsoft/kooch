@@ -293,7 +293,7 @@ fn the_flat_table_is_megabytes_not_108() {
     let clipmap = ClipmapConfig::default();
     let slots = super::mark::padded_lights(101) + 1;
     let entries = super::mark::span(config, clipmap, slots);
-    let bytes = entries * super::pool::PAGE_CELL as u64 * 4;
+    let bytes = entries * super::pool::PAGE_WIDEST as u64 * 4;
     // SIX words an entry: the slot, the frame last requested, the listing, the content generation,
     // the receivers' ask, and the frame the page was ALLOCATED.
     assert!(
@@ -562,7 +562,7 @@ fn a_scene_with_no_casters_is_empty() {
 fn the_table_fits_the_device() {
     let config = PageConfig::default();
     let clipmap = ClipmapConfig::default();
-    let cell = u64::from(super::pool::PAGE_CELL) * 4;
+    let cell = u64::from(super::pool::PAGE_WIDEST) * 4;
 
     // The engine's own portable floor and up — see `TARGET_MAX_STORAGE_BUFFER_BINDING_SIZE`.
     for cap in [128u64 << 20, 256 << 20, 1 << 30] {
@@ -581,11 +581,27 @@ fn the_table_fits_the_device() {
 /// 🔴 And a device too small for even the sun says so rather than asking for a buffer it knows is
 /// too big. That request is what returns an INVALID buffer and makes every later submit fail with
 /// no cause named.
+///
+/// The boundary is DERIVED, not written down: splitting the cell in #1579 halved it, and a
+/// hardcoded cap silently stopped testing anything.
 #[test]
 fn a_sunless_cap_says_so() {
+    let config = PageConfig::default();
+    let clipmap = ClipmapConfig::default();
+    let views = 8u32;
+    let cell = u64::from(super::pool::PAGE_WIDEST) * 4;
+    // What the sun's clipmap tail alone costs across every view.
+    let sun =
+        u64::from(clipmap.levels) * u64::from(config.side(0)).pow(2) * u64::from(views) * cell;
+
     assert_eq!(
-        super::mark::slots_for_cap(32 << 20, PageConfig::default(), ClipmapConfig::default(), 8),
+        super::mark::slots_for_cap(sun - cell, config, clipmap, views),
         None,
+        "one cell under the sun's own cost and it still asked",
+    );
+    assert!(
+        super::mark::slots_for_cap(sun, config, clipmap, views).is_some(),
+        "the sun exactly fits and it gave up",
     );
 }
 
@@ -594,7 +610,7 @@ fn a_sunless_cap_says_so() {
 fn the_cap_is_not_wasteful() {
     let config = PageConfig::default();
     let clipmap = ClipmapConfig::default();
-    let cell = u64::from(super::pool::PAGE_CELL) * 4;
+    let cell = u64::from(super::pool::PAGE_WIDEST) * 4;
     let cap = 128u64 << 20;
 
     let slots = super::mark::slots_for_cap(cap, config, clipmap, 2).expect("the floor fits");

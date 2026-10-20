@@ -262,21 +262,21 @@ fn the_age_view_paints_missing_content() {
         .unwrap_or(source.len());
     let body = &source[start..end];
     assert!(
-        body.contains("inti_page_slots[page * PAGE_CELL + 3u] == 0u"),
-        "white has to mean NO CONTENT — word 3 — not `frame - age`",
+        body.contains("inti_page_slots[page * PAGE_READ + PAGE_STAMP] == 0u"),
+        "white has to mean NO CONTENT — the stamp — not `frame - age`",
     );
     let white = body
         .find("return vec3<f32>(1.0);")
         .expect("the view still paints white somewhere");
     assert!(
-        body.contains("PAGE_CELL + 5u"),
+        body.contains("PAGE_WORK + PAGE_BORN"),
         "the fade has to read the ALLOCATION frame, not the request frame",
     );
     assert!(
         !body.contains("since - 1u"),
         "`since - 1u` at zero is four billion on a u32, and clamps every pixel to the floor",
     );
-    let born = body.find("PAGE_CELL + 5u").expect("checked above");
+    let born = body.find("PAGE_WORK + PAGE_BORN").expect("checked above");
     assert!(
         white < born,
         "the content test has to come FIRST, or the age shadows it again",

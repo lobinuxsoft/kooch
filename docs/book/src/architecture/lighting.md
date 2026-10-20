@@ -357,24 +357,38 @@ light count while residency is bounded by the physical pool. At 3 008 lights it 
 to index 48 KiB** of resident pages — 6 288× the thing it addresses — and past the device's
 `max_storage_buffer_binding_size` the buffer comes back invalid and the shadows vanish.
 
-So the count is **capped by what the device can bind**, and the lights that fit keep their shadows:
+**The table is two buffers**, split by which pass touches a word rather than by what the word means:
 
-```
-the page table does not fit this many lights on this device;
-the rest cast no shadow  shadowed=1305 asked=3008
-```
+| buffer | words | who reads it |
+|---|---|---|
+| `shadow_page_read` | slot, content stamp, LOD hint | the shading, the marking, the compaction |
+| `shadow_page_work` | frame requested, listing, frame allocated | only the page passes, plus the debug view |
+
+The binding limit is spent on the **widest** of the two, so halving the cell doubles the lights that
+fit — and the shading now reads a stride of three instead of six, so one cache line serves five
+neighbouring pages instead of two.
 
 | binding limit | 1 view (a game) | 2 views (the editor) |
 |---|---|---|
-| 128 MiB — the engine's portable floor | ~2 613 lights | ~1 306 lights |
-| 256 MiB | ~5 226 lights | ~2 613 lights |
+| 128 MiB — the engine's portable floor | 2 613 → **5 226 lights** | 1 306 → **2 613 lights** |
+| 256 MiB | 5 226 → **10 453 lights** | 2 613 → **5 226 lights** |
+
+Past that the count is **capped by what the device can bind** and the lights that fit keep their
+shadows:
+
+```
+the page table does not fit this many lights on this device;
+the rest cast no shadow  shadowed=2612 asked=3008
+```
 
 The editor runs two cameras, so it caps at half of what a build does. The warning is printed **once**
 per count, not per frame.
 
-⚠️ Still a cap, not a solution: the table is sized by the address space rather than by residency,
-and #1579 step 2 is the light-slot indirection that decouples them. Nothing may put the old
-per-pixel hash back — it measured 10.4 ms against 0.884 ms for the whole shadow track.
+⚠️ Still a constant factor, not a decoupling: the table is sized by the address space rather than by
+residency. Going further needs a per-light indirection keyed on **residency**, which only the GPU
+knows — so it costs a frame of lag the first time a light needs a block, and that is visible.
+🔴 Nothing may put the old per-pixel hash back: it measured 10.4 ms against 0.884 ms for the whole
+shadow track.
 
 ### Seeing what the shadow system did
 

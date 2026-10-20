@@ -285,6 +285,7 @@ impl MeshletRenderStage {
                 uniform: raster.uniform_buffer(),
                 uniform_span: raster.uniform_span(slice),
                 slots: page_pool.slots(),
+                work: page_pool.work(),
                 atlas: raster.atlas(),
             },
         );

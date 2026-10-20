@@ -315,18 +315,18 @@ fn inti_page_age_debug(world_position: vec3<f32>) -> vec3<f32> {
         if page >= inti_pages.pool.x {
             return vec3<f32>(0.0);
         }
-        if inti_page_slots[page * PAGE_CELL] == PAGE_ABSENT {
+        if inti_page_slots[page * PAGE_READ + PAGE_SLOT] == PAGE_ABSENT {
             continue;
         }
 
         // 🔴 White is a page with no content (word 3 is zero until drawn). It used to be "requested
         // this frame", which is every visible page, so the whole screen went white.
-        if inti_page_slots[page * PAGE_CELL + 3u] == 0u {
+        if inti_page_slots[page * PAGE_READ + PAGE_STAMP] == 0u {
             return vec3<f32>(1.0);
         }
         // Frames since allocation — word 5, written only by `page_stamp` (word 1 is refreshed every
         // frame). ⚠️ Unsigned, so the subtraction saturates instead of wrapping to four billion.
-        let born = inti_page_slots[page * PAGE_CELL + 5u];
+        let born = inti_page_work[page * PAGE_WORK + PAGE_BORN];
         let since = select(0u, inti_pages.views.w - born, inti_pages.views.w >= born);
 
         var hue = vec3<f32>(0.6);

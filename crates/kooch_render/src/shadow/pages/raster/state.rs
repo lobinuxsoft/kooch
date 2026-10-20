@@ -288,6 +288,7 @@ impl PageRasterizer {
                 entry(7, &self.draw_args),
                 entry(8, &self.gens),
                 entry(9, &self.dirty),
+                entry(12, page_pool.work()),
             ],
         })
     }

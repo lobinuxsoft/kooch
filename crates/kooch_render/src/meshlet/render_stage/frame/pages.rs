@@ -230,6 +230,7 @@ impl MeshletRenderStage {
                 // the table, the atlas and the uniform are all this frame's.
                 uniform_span: raster.uniform_span(page_view_index(view_id)),
                 slots: pool.slots(),
+                work: pool.work(),
                 atlas: raster.atlas(),
             },
         );

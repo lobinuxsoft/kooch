@@ -43,6 +43,7 @@ pub struct GpuLights {
     /// part of the binding's identity.
     page_uniform_span: (u64, u64),
     page_slots: Option<wgpu::Buffer>,
+    page_work: Option<wgpu::Buffer>,
     page_atlas: Option<wgpu::TextureView>,
     /// Bound when nothing pages: zeroed, so `sun.w` reads "no paging" rather than looking up an
     /// empty table.
@@ -98,6 +99,7 @@ impl GpuLights {
         self.page_uniform_span = pages.uniform_span;
         self.page_uniform = Some(pages.uniform.clone());
         self.page_slots = Some(pages.slots.clone());
+        self.page_work = Some(pages.work.clone());
         self.page_atlas = Some(pages.atlas.clone());
         self.rebuild_bind_group(device);
     }
@@ -111,6 +113,7 @@ impl GpuLights {
         self.page_uniform = None;
         self.page_uniform_span = (0, 0);
         self.page_slots = None;
+        self.page_work = None;
         self.page_atlas = None;
         self.rebuild_bind_group(device);
     }
@@ -138,6 +141,7 @@ impl GpuLights {
                     (0, 0)
                 },
                 slots: self.page_slots.as_ref().unwrap_or(&self.dummy_page_buffer),
+                work: self.page_work.as_ref().unwrap_or(&self.dummy_page_buffer),
                 atlas: self.page_atlas.as_ref().unwrap_or(&self.dummy_page_atlas),
             },
         );
@@ -384,6 +388,8 @@ pub struct PageBinding<'a> {
     /// `write_buffer`s to one range in a frame hand both passes the second (#853).
     pub uniform_span: (u64, u64),
     pub slots: &'a wgpu::Buffer,
+    /// The table's other half: only the pages debug view reads it (#1579).
+    pub work: &'a wgpu::Buffer,
     pub atlas: &'a wgpu::TextureView,
 }
 
@@ -447,6 +453,10 @@ fn create_bind_group(
             wgpu::BindGroupEntry {
                 binding: 10,
                 resource: pages.slots.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 12,
+                resource: pages.work.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 11,

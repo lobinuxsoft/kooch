@@ -1,10 +1,12 @@
 // page_compact.wgsl — the resident pages, as a list the GPU can dispatch over (#866).
 
 @group(0) @binding(0) var<uniform> raster: PageRaster;
-// The flat table: `PAGE_CELL` words per virtual page — `slot + 1` (`PAGE_ABSENT` = not resident),
+// The flat table the shading also reads: `PAGE_READ` words per virtual page — `slot + 1`
 // the age, the listing. It is the marking pass's buffer and this reads it with the same stride or
 // it reads an age as a slot.
-@group(0) @binding(2) var<storage, read_write> table_slots: array<u32>;
+@group(0) @binding(2) var<storage, read_write> table_read: array<u32>;
+// The other half of the same table (#1579).
+@group(0) @binding(12) var<storage, read_write> table_work: array<u32>;
 // `x` the virtual page, `y` its physical slot. Bucketed: level `L` owns `[L * chain.z, (L + 1) *
 // chain.z)`. Four words per listing: the page, its slot, the furthest receiver this frame recorded
 // on it (#940, f32 bits, 0 = none), and a spare.
@@ -44,13 +46,13 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let entry = raster.views.x * raster.views.y + gid.x;
-    let stored = table_slots[entry * PAGE_CELL];
+    let stored = table_read[entry * PAGE_READ + PAGE_SLOT];
     if stored == PAGE_ABSENT {
         return;
     }
     // Whatever listing this entry carried belongs to a compaction that
     // is over.
-    table_slots[entry * PAGE_CELL + 2u] = PAGE_UNLISTED;
+    table_work[entry * PAGE_WORK + PAGE_LISTING] = PAGE_UNLISTED;
     // The entry index IS the virtual page id.
     let page = entry;
     let id = page_decode(
@@ -103,7 +105,7 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
         // 0 means "no content" and must never match a generation.
         gen = gen | 1u;
     }
-    let stamp = table_slots[entry * PAGE_CELL + 3u];
+    let stamp = table_read[entry * PAGE_READ + PAGE_STAMP];
     if stamp == gen {
         atomicAdd(&page_counts[buckets + 4u], 1u);
         return;
@@ -139,12 +141,12 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
     // The way back: a pass that computes a page KEY can now reach the
     // entry the draw indexes, without walking every resident page to
-    // find it. See `PAGE_CELL`.
-    table_slots[entry * PAGE_CELL + 2u] = listing;
+    // find it. See `PAGE_READ` and `PAGE_WORK`.
+    table_work[entry * PAGE_WORK + PAGE_LISTING] = listing;
     // Listed means "drawn this frame", which is when the content becomes this generation's. Stamped
     // here rather than after the draw because nothing between the two can fail — the one thing that
     // can, a pair-list overflow, is counted and handled by the CPU bumping the scene generation.
-    table_slots[entry * PAGE_CELL + 3u] = select(gen, PAGE_EMPTY, !id.is_sun && survivors == 0u);
+    table_read[entry * PAGE_READ + PAGE_STAMP] = select(gen, PAGE_EMPTY, !id.is_sun && survivors == 0u);
     let d = atomicAdd(&dirty[0], 1u);
     if d + 1u < arrayLength(&dirty) {
         atomicStore(&dirty[1u + d], stored - 1u);
@@ -160,10 +162,10 @@ fn cs_invalidate(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let entry = raster.views.x * raster.views.y + gid.x;
-    if table_slots[entry * PAGE_CELL] == PAGE_ABSENT {
+    if table_read[entry * PAGE_READ + PAGE_SLOT] == PAGE_ABSENT {
         return;
     }
-    if table_slots[entry * PAGE_CELL + 3u] == 0u {
+    if table_read[entry * PAGE_READ + PAGE_STAMP] == 0u {
         return;
     }
     let count = u32(moved[0].x);
@@ -199,7 +201,7 @@ fn cs_invalidate(@builtin(global_invocation_id) gid: vec3<u32>) {
             hit = distance(sphere.xyz, light.position) <= sphere.w + light.range;
         }
         if hit {
-            table_slots[entry * PAGE_CELL + 3u] = 0u;
+            table_read[entry * PAGE_READ + PAGE_STAMP] = 0u;
             return;
         }
     }
@@ -284,12 +286,12 @@ fn cs_lod_offsets(@builtin(global_invocation_id) gid: vec3<u32>) {
         let at = base + up * per_level + coarse.y * side + coarse.x;
         // Readable, not merely resident: a page with no content stamp
         // holds a clear, and a clear reads as "nothing occludes".
-        if table_slots[at * PAGE_CELL] != PAGE_ABSENT
-            && table_slots[at * PAGE_CELL + 3u] != 0u
+        if table_read[at * PAGE_READ + PAGE_SLOT] != PAGE_ABSENT
+            && table_read[at * PAGE_READ + PAGE_STAMP] != 0u
         {
             found = step;
             break;
         }
     }
-    table_slots[entry * PAGE_CELL + PAGE_LOD] = found;
+    table_read[entry * PAGE_READ + PAGE_LOD] = found;
 }

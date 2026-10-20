@@ -136,8 +136,14 @@ impl PageRasterizer {
             let stride = super::mark::stride(self.config, self.clipmap);
             let span = super::mark::span(self.config, self.clipmap, sun_slot + 1);
             let base = u32::try_from(view as u64 * span).unwrap_or(u32::MAX) + sun_slot * stride;
-            self.pyramid
-                .build(device, queue, encoder, page_pool.slots(), base);
+            self.pyramid.build(
+                device,
+                queue,
+                encoder,
+                page_pool.slots(),
+                page_pool.work(),
+                base,
+            );
         }
 
         close(track, pages_query, encoder);
