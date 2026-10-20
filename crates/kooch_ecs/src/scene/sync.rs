@@ -175,12 +175,7 @@ fn spawn_returning_as(
                     inserted = registry.insert_default_reflected(&type_id, entity);
                 }
                 if inserted {
-                    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                        if let Some(current) = archetypes.entity_archetype(entity) {
-                            let new_arch = archetypes.archetype_after_add_dynamic(current, type_id);
-                            archetypes.register_entity(entity, new_arch);
-                        }
-                    }
+                    crate::move_entity::gained(resources, entity, type_id);
                 }
             }
 
@@ -249,12 +244,7 @@ fn spawn_returning_as(
                     }
                 }
                 // Update the archetype to include Parent.
-                if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                    if let Some(current) = archetypes.entity_archetype(*entity) {
-                        let new_arch = archetypes.archetype_after_add_dynamic(current, parent_tid);
-                        archetypes.register_entity(*entity, new_arch);
-                    }
-                }
+                crate::move_entity::gained(resources, *entity, parent_tid);
             }
         }
     }
@@ -403,8 +393,8 @@ pub(crate) fn despawn_entities(resources: &mut Resources, entities: &[crate::ent
         if let Some(alloc) = resources.get_mut::<EntityAllocator>() {
             alloc.despawn(entity);
         }
-        if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-            archetypes.unregister_entity(entity);
+        {
+            crate::move_entity::drop_entity(resources, entity);
         }
         if let Some(components) = resources.get_mut::<ComponentRegistry>() {
             components.remove_entity(entity);

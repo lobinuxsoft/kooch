@@ -503,13 +503,7 @@ fn mark(resources: &mut Resources, entity: Entity, source: Entity) {
             storage.insert(entity, Placed { source });
         }
     }
-    if let Some(archetypes) = resources.get_mut::<crate::archetype_registry::ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let next =
-            archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<Placed>());
-        archetypes.register_entity(entity, next);
-    }
+    crate::move_entity::gained(resources, entity, std::any::TypeId::of::<Placed>());
 }
 
 #[cfg(test)]
