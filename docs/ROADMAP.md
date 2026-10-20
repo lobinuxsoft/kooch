@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-10-18 — 🎯 **The spline is finished, and a bend turned out to lie to the LOD selector.** Everything the owner set as the goal for this stretch — curve operations, sweeps, mesh deformation, block shapes — is closed: #1447 (resample, subdivide, reverse, trim, fillet), #1505 (hollow sweeps), #1446 (a mesh bent along the curve), #1152 (profile *and* steps). The one that was not on anybody's list is **#1531**: a deformed mesh keeps the `lod_error` `meshopt` measured on its source, and the selector only ever multiplies that by the **transform's** scale — which a deformed entity leaves at 1. A 4 m bar stretched over a 32 m curve reported an eighth of the error it really had and held a coarse LOD eight times too close. 🔴 The shape that keeps recurring is now at **nine** instances: *a value was already in hand, and the code asked a shared world for it instead.* The spline work added one more reading of it — `sync_sweeps` runs **before** the handles, so a swept mesh flushes a frame late and files its own undo step; the fix was not a delay but `rides_along`, which says the mesh is not something the author did.
+Last updated 2026-10-20 — 🎯 **The editor went from 29 to 140 FPS on the same scene, and the number came from an instrument rather than an argument.** The owner reported a drop past 4,000 entities and asked about batching physics; physics was 3.29 ms and the GPU was idle, and a `puffin` capture named `editor: gather frame data` at **29.9 of 40.4 ms** on the main thread — the Inspector walking every entity, every frame, to display one. #1563 caches that snapshot on revisions and #1564 made the revisions precise enough to be worth caching on: frame 34.58 → **7.12 ms**, CPU render 31.29 → **5.55**. Beside it #1087 closed — the meshlet pool had a free list at last, and writes a dirty range instead of six whole buffers. 🔴 The lesson that cost the most is new in kind: **a field added to a serialized type with `#[serde(default)]` does not break loading, it breaks the derived `PartialEq`** — and `sweep_sync` used that equality as its guard, so every scene written before #1565 opens already marked unsaved and "Discard Changes" reads as a no-op (#1570). The same type had three different answers to "did this change?", two hashing geometry and one counting identity, with nothing holding them together.
 
 ---
 
@@ -206,6 +206,82 @@ what the engine did before any of this existed, for the reason
 `settings.rs:510` argues at length: a serde default is not a
 recommendation, it is what an old file silently becomes. A project that
 wants these values sets them.
+
+---
+
+## 🎯 2026-10-20 — the editor got five times faster, and a serde default broke an equality nobody was watching
+
+### What shipped
+
+**The performance arc, measured end to end on a 4,129-entity scene.** The owner reported a
+drop past 4,000 entities and asked whether physics could be batched. It was not physics
+(3.29 ms) and not the GPU (idle at 6.98 ms against 31.29 ms of CPU render). A `puffin`
+capture named the culprit outright: **`editor: gather frame data` at 29.9 of 40.4 ms on the
+main thread** — the Inspector's frame snapshot walking every entity, every frame, to display
+one.
+
+| | before | #1563 | #1564 |
+|---|---|---|---|
+| frame | 34.58 ms | 20.01 | **7.12** |
+| render (CPU) | 31.29 ms | 19.21 | **5.55** |
+| main thread | 40.41 ms | 28.00 | **7.76** |
+| `editor: gather frame data` | 29.91 ms | 5.51 | **out of the top 25** |
+| FPS | 29 | 50 | **140** |
+
+**#1561 → #1563 — the snapshot is cached on revisions.** A tree that did not change and a
+selection that did not move do not need a new snapshot per frame. **#1564** is the half that
+made it work: the revisions were being bumped on pure *lookups* — `get_or_create` on an
+existing archetype, `register_entity` into the same one, `get_mut` on a miss — so the cache
+missed roughly one frame in five and the gather still cost 5.5 ms. Precision in a change
+counter is not a nicety; an imprecise one is a cache that does not exist.
+
+**#1087 → #1559/#1560 — the meshlet pool stopped leaking and stopped re-uploading itself.**
+`register` was append-only and `replace_mesh` abandoned the old bytes: every rebuild leaked,
+128 MiB and the render died. Now a first-fit free list with coalescing and alignment
+(`Holes`), per-array dirty ranges (`Touched`), persistent GPU buffers and **ranged**
+`write_buffer` instead of recreating six storage buffers whole on every edited frame.
+
+**#1526 → #1557 — faces extrude along another entity's curve**, in three corrections. The
+first two versions respected the shape and not the knots, and stayed green through both
+because the tests used a straight curve from the origin — a test that holds nothing still is
+a test that measures nothing. Rewritten to start at the face's own centre, and `sweep::ring`
+is the reference the result has to match.
+
+**#891 → #1566 — one way to move an entity between archetypes.** All 57 archetype sites
+across five crates now go through `move_entity.rs`, behaviour unchanged. Written as a funnel
+first *because* the direct attempt broke 24 tests: `Table::push_entity` claims a row, but
+`Column::push<T>` needs the concrete type, so relocating and writing have to be one
+operation — in one place.
+
+**#1567 → #1568/#1569 — a block's geometry is derived where the world lives.** The step from
+`BlockShape` to `Block.mesh` ran only in the editor, so with a project connected it wrote
+into the mirror and nothing else: the parameters crossed the wire, the geometry did not, and
+the project's next snapshot handed the old mesh back. Dragging a shape handle looked right
+until the moment you let go. `sync_shapes` moved into `BlockPlugin`, before `sync_blocks`,
+which builds the collider from what it writes.
+
+**The editor's affordances, #1543/#1545.** Buttons that read as labels were not a styling
+preference: sampling the screenshot's pixels showed the Inspector's background was *the same
+grey egui fills buttons with*. Fixed globally in `style.rs`, and the panel that paints over
+it is #1544. A reusable skill came out of the research rather than a one-off patch.
+
+### The lesson
+
+🔴 **A field added to a serialized type with `#[serde(default)]` does not break loading — it
+breaks the derived `PartialEq`.** #1565 gave `BlockMesh` stable face ids. `sweep_sync` used
+`current == *mesh` as its last word on whether anything changed. Every scene written earlier
+loads with `face_ids` empty while `sweep()` rebuilds them filled, so the guard never holds:
+a thousand corners down the wire on **every load**, a scene marked unsaved the moment it
+opens, and a "Discard Changes" that reads as a no-op because the asterisk returns before it
+can be seen leaving. Filed as #1570.
+
+The same type had **three** answers to "did this change?" — two hashing geometry, one
+counting identity, and nothing holding them together. That divergence is what let the bug in.
+
+🔴 **And a derive is not an edit.** Marking the scene unsaved from inside the geometry derive
+put an asterisk on a level nobody had touched. The gesture that changed the parameters is the
+edit. `mark_scene_dirty` now names its caller, because reading the code has repeatedly not
+been enough to find which system dirtied a scene on its own.
 
 ---
 
