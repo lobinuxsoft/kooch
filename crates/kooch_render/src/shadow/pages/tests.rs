@@ -551,3 +551,55 @@ fn a_scene_with_no_casters_is_empty() {
         .is_empty()
     );
 }
+
+// -- The device-fit cap (#1579) --------------------------------------------
+
+/// 🔴 The table is one cell per addressable page, so the light count sets its size while residency
+/// is bounded by the pool. Past the device's binding limit `create_buffer` hands back an INVALID
+/// buffer and every submit after it fails with no cause named — four validation errors a frame,
+/// for ever, with the shadows gone.
+#[test]
+fn the_table_fits_the_device() {
+    let config = PageConfig::default();
+    let clipmap = ClipmapConfig::default();
+    let cell = u64::from(super::pool::PAGE_CELL) * 4;
+
+    // The engine's own portable floor and up — see `TARGET_MAX_STORAGE_BUFFER_BINDING_SIZE`.
+    for cap in [128u64 << 20, 256 << 20, 1 << 30] {
+        for views in [1u32, 2, 8] {
+            let slots = super::mark::slots_for_cap(cap, config, clipmap, views)
+                .expect("the floor holds the sun");
+            let bytes = super::mark::span(config, clipmap, slots) * u64::from(views) * cell;
+            assert!(
+                bytes <= cap,
+                "cap {cap} / {views} views: {slots} slots want {bytes} bytes",
+            );
+        }
+    }
+}
+
+/// 🔴 And a device too small for even the sun says so rather than asking for a buffer it knows is
+/// too big. That request is what returns an INVALID buffer and makes every later submit fail with
+/// no cause named.
+#[test]
+fn a_sunless_cap_says_so() {
+    assert_eq!(
+        super::mark::slots_for_cap(32 << 20, PageConfig::default(), ClipmapConfig::default(), 8),
+        None,
+    );
+}
+
+/// And it spends the room it has rather than giving up: one more slot would not fit.
+#[test]
+fn the_cap_is_not_wasteful() {
+    let config = PageConfig::default();
+    let clipmap = ClipmapConfig::default();
+    let cell = u64::from(super::pool::PAGE_CELL) * 4;
+    let cap = 128u64 << 20;
+
+    let slots = super::mark::slots_for_cap(cap, config, clipmap, 2).expect("the floor fits");
+    let over = super::mark::span(config, clipmap, slots + 1) * 2 * cell;
+
+    assert!(slots > 2, "it capped to the sun alone");
+    assert!(over > cap, "{} slots would still have fitted", slots + 1);
+}

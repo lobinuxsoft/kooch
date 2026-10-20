@@ -350,6 +350,32 @@ nothing, and was reverted. Only averaging fixes it, spatially or
 temporally, and temporally is #732. Bevy has the same seam and leaves it
 to their TAA.
 
+### How many lights can cast one (#1579)
+
+The virtual page table is **one cell per addressable page per light**, so its size grows with the
+light count while residency is bounded by the physical pool. At 3 008 lights it wanted **294.8 MiB
+to index 48 KiB** of resident pages — 6 288× the thing it addresses — and past the device's
+`max_storage_buffer_binding_size` the buffer comes back invalid and the shadows vanish.
+
+So the count is **capped by what the device can bind**, and the lights that fit keep their shadows:
+
+```
+the page table does not fit this many lights on this device;
+the rest cast no shadow  shadowed=1305 asked=3008
+```
+
+| binding limit | 1 view (a game) | 2 views (the editor) |
+|---|---|---|
+| 128 MiB — the engine's portable floor | ~2 613 lights | ~1 306 lights |
+| 256 MiB | ~5 226 lights | ~2 613 lights |
+
+The editor runs two cameras, so it caps at half of what a build does. The warning is printed **once**
+per count, not per frame.
+
+⚠️ Still a cap, not a solution: the table is sized by the address space rather than by residency,
+and #1579 step 2 is the light-slot indirection that decouples them. Nothing may put the old
+per-pixel hash back — it measured 10.4 ms against 0.884 ms for the whole shadow track.
+
 ### Seeing what the shadow system did
 
 Three debug views, because "no light reaches this" and "something shadows
