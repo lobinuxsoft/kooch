@@ -31,7 +31,7 @@ impl EntityCommands<'_> {
                 components.get_cpu_mut::<T>().unwrap().insert(entity, value);
                 let current = archetypes.entity_archetype(entity).unwrap();
                 let new_arch = archetypes.archetype_after_add::<T>(current);
-                archetypes.register_entity(entity, new_arch);
+                crate::move_entity::move_in(components, archetypes, entity, new_arch);
             },
         ));
         self
@@ -47,7 +47,7 @@ impl EntityCommands<'_> {
                 components.get_cpu_mut::<T>().unwrap().insert(entity, value);
                 let current = archetypes.entity_archetype(entity).unwrap();
                 let new_arch = archetypes.archetype_after_add::<T>(current);
-                archetypes.register_entity(entity, new_arch);
+                crate::move_entity::move_in(components, archetypes, entity, new_arch);
             },
         ));
         self

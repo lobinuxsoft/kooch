@@ -28,10 +28,7 @@ impl Commands {
             .get_mut::<EntityAllocator>()
             .expect("EntityAllocator not found in Resources")
             .spawn();
-        resources
-            .get_mut::<ArchetypeRegistry>()
-            .expect("ArchetypeRegistry not found in Resources")
-            .register_entity(entity, ArchetypeId::EMPTY);
+        crate::move_entity::move_entity(resources, entity, ArchetypeId::EMPTY);
 
         EntityBuilder {
             entity,
@@ -76,9 +73,7 @@ impl Commands {
                     }
                 }
                 Command::Despawn(entity) => {
-                    // Remove from archetype tracking.
-                    archetypes.unregister_entity(entity);
-                    // Remove all components.
+                    crate::move_entity::drop_in(&mut components, &mut archetypes, entity);
                     components.remove_entity(entity);
                     // Mark slot as dead in allocator.
                     if let Some(alloc) = resources.get_mut::<EntityAllocator>() {
@@ -90,7 +85,12 @@ impl Commands {
                     // Transition archetype.
                     if let Some(current) = archetypes.entity_archetype(entity) {
                         let new_arch = archetypes.archetype_after_remove_dynamic(current, type_id);
-                        archetypes.register_entity(entity, new_arch);
+                        crate::move_entity::move_in(
+                            &mut components,
+                            &mut archetypes,
+                            entity,
+                            new_arch,
+                        );
                     }
                 }
             }

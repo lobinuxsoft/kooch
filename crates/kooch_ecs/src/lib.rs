@@ -17,6 +17,7 @@ pub mod impulse;
 pub mod light_consts;
 pub mod lod_force_level;
 pub mod mesh_renderer;
+pub mod move_entity;
 pub mod name;
 pub mod order;
 pub mod orthographic_camera;

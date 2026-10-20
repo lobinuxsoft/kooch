@@ -2,7 +2,6 @@
 
 use std::any::TypeId;
 
-use crate::archetype_registry::ArchetypeRegistry;
 use crate::component::ComponentRegistry;
 use crate::entity::Entity;
 use crate::hierarchy::Parent;
@@ -116,12 +115,7 @@ pub fn reparent(resources: &mut Resources, entity: Entity, new_parent: Option<En
             }
             if needs_archetype_add {
                 let parent_tid = TypeId::of::<Parent>();
-                if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-                    && let Some(current) = archetypes.entity_archetype(entity)
-                {
-                    let new_arch = archetypes.archetype_after_add_dynamic(current, parent_tid);
-                    archetypes.register_entity(entity, new_arch);
-                }
+                crate::move_entity::gained(resources, entity, parent_tid);
             }
         }
         None => {
@@ -129,12 +123,7 @@ pub fn reparent(resources: &mut Resources, entity: Entity, new_parent: Option<En
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                 registry.remove_component(entity, &parent_tid);
             }
-            if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-                && let Some(current) = archetypes.entity_archetype(entity)
-            {
-                let new_arch = archetypes.archetype_after_remove_dynamic(current, parent_tid);
-                archetypes.register_entity(entity, new_arch);
-            }
+            crate::move_entity::lost(resources, entity, parent_tid);
         }
     }
 }

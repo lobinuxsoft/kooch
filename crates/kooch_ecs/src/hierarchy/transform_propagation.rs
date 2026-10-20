@@ -4,7 +4,6 @@ use std::any::TypeId;
 
 use glam::Mat4;
 
-use crate::archetype_registry::ArchetypeRegistry;
 use crate::entity::Entity;
 
 use super::children::Children;
@@ -113,16 +112,9 @@ pub fn transform_propagation_system(resources: &mut kooch_core::resource::Resour
     // Sync archetypes for entities that gained GlobalTransform. Without
     // this, the component sits in storage but no archetype lists it,
     // which means queries iterating by archetype never see it.
-    if !gained_gt.is_empty()
-        && let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-    {
-        let gt_tid = TypeId::of::<GlobalTransform>();
-        for entity in gained_gt {
-            if let Some(current) = archetypes.entity_archetype(entity) {
-                let new_arch = archetypes.archetype_after_add_dynamic(current, gt_tid);
-                archetypes.register_entity(entity, new_arch);
-            }
-        }
+    let gt_tid = TypeId::of::<GlobalTransform>();
+    for entity in gained_gt {
+        crate::move_entity::gained(resources, entity, gt_tid);
     }
 }
 
