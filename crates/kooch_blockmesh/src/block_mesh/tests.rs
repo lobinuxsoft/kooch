@@ -329,3 +329,26 @@ fn a_mesh_without_ids_keeps_working() {
     seen.dedup();
     assert_eq!(seen.len(), ids.len(), "a new face took an id somebody held");
 }
+
+/// 🔴 Identity is not shape. A scene written before #1565 loads with the ids empty, and counting
+/// them made it differ from its own rebuild for ever — so `sweep_sync` re-sent the block on every
+/// load and marked the level unsaved (#1570).
+#[test]
+fn ids_are_not_shape() {
+    let mesh = BlockMesh::cuboid(Vec3::ONE);
+    let mut legacy = mesh.clone();
+    legacy.face_ids.clear();
+    legacy.next_face_id = 0;
+
+    assert!(!mesh.face_ids.is_empty(), "the rebuild hands out ids");
+    assert_eq!(mesh, legacy, "two meshes of one shape read as different");
+}
+
+/// And the geometry still decides: a moved corner is a different mesh.
+#[test]
+fn a_moved_corner_differs() {
+    let mesh = BlockMesh::cuboid(Vec3::ONE);
+    let mut moved = mesh.clone();
+    moved.positions[0].x += 1.0;
+    assert_ne!(mesh, moved);
+}
