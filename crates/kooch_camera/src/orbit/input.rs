@@ -54,7 +54,7 @@ pub fn read_orbit_input(resources: &mut Resources) {
     let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
         return;
     };
-    let Some(orbits) = registry.get_cpu_mut::<CameraOrbit>() else {
+    let Some(mut orbits) = registry.get_cpu_mut::<CameraOrbit>() else {
         return;
     };
     for ask in &asked {

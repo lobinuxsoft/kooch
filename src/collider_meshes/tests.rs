@@ -33,7 +33,7 @@ fn with_collider(resources: &mut Resources, collider: Collider) {
     commands.apply(resources);
     resources.insert(commands);
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<Collider>()
+        && let Some(mut storage) = registry.get_cpu_mut::<Collider>()
     {
         storage.insert(entity, collider);
     }

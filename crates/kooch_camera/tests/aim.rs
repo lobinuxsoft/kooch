@@ -43,7 +43,7 @@ fn world() -> Resources {
 fn insert<T: Component>(resources: &mut Resources, entity: Entity, value: T) {
     use std::any::TypeId;
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(storage) = registry.get_cpu_mut::<T>()
+        && let Some(mut storage) = registry.get_cpu_mut::<T>()
     {
         storage.insert(entity, value);
     }
