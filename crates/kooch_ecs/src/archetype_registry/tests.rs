@@ -315,6 +315,15 @@ fn only_structure_moves_the_revision() {
     assert_eq!(reg.archetype_count(), 2);
     assert_eq!(reg.revision(), settled);
 
+    // 🔴 Neither is a call that asks for what is already true. Both of these are lookups on the
+    // path a frame takes, and bumping on them invalidated the editor's snapshot every frame.
+    let mut same = BTreeSet::new();
+    same.insert(TypeId::of::<Position>());
+    assert_eq!(reg.get_or_create(same), id);
+    reg.register_entity(entity(1), id);
+    reg.unregister_entity(entity(2));
+    assert_eq!(reg.revision(), settled, "nothing changed");
+
     reg.unregister_entity(entity(1));
     assert_ne!(reg.revision(), settled, "an entity left its archetype");
 }

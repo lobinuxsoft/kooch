@@ -50,9 +50,13 @@ impl<T: Component> ComponentStorage<T> {
     /// Returns a mutable reference to the component, if present.
     pub fn get_mut(&mut self, entity: Entity) -> Option<&mut T> {
         // Handing out `&mut` counts as a write: whether the caller changes anything is not
-        // knowable here, and a missed bump is a panel that stops updating.
-        self.revision += 1;
-        self.data.get_mut(&entity)
+        // knowable here, and a missed bump is a panel that stops updating. A miss hands out
+        // nothing, so it is not one.
+        let value = self.data.get_mut(&entity);
+        if value.is_some() {
+            self.revision += 1;
+        }
+        value
     }
 
     /// Returns `true` if this storage has a component for `entity`.
