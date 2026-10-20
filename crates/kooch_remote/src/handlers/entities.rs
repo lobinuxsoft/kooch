@@ -159,10 +159,7 @@ pub(super) fn remove_component(
     let entity = resolve_entity(resources, entity)?;
     let type_id = resolve_component(resources, component)?;
 
-    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-        registry.remove_component(entity, &type_id);
-    }
-    update_archetype_remove(resources, entity, type_id);
+    kooch_ecs::move_entity::take_by_id(resources, entity, type_id);
     Ok(())
 }
 

@@ -33,10 +33,7 @@ impl EditorCommand for AddComponentCommand {
     }
 
     fn undo(&mut self, resources: &mut Resources) {
-        if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-            registry.remove_component(self.entity, &self.type_id);
-        }
-        kooch_ecs::move_entity::lost(resources, self.entity, self.type_id);
+        kooch_ecs::move_entity::take_by_id(resources, self.entity, self.type_id);
     }
 
     fn description(&self) -> &str {
@@ -69,10 +66,7 @@ impl RemoveComponentCommand {
 
 impl EditorCommand for RemoveComponentCommand {
     fn execute(&mut self, resources: &mut Resources) {
-        if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-            registry.remove_component(self.entity, &self.type_id);
-        }
-        kooch_ecs::move_entity::lost(resources, self.entity, self.type_id);
+        kooch_ecs::move_entity::take_by_id(resources, self.entity, self.type_id);
     }
 
     fn undo(&mut self, resources: &mut Resources) {

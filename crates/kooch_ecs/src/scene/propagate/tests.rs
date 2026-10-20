@@ -29,7 +29,7 @@ fn plan_against(instance: &PrefabInstance, document: &SceneDocument) -> Vec<Plan
     let entity = Entity::new(0, 0);
     let mut writes = Vec::new();
     for component in &document.entities[0].components {
-        if instance.owns_component(0, &component.type_name) {
+        if !propagates(instance, 0, &component.type_name) {
             continue;
         }
         for (field, value) in &component.fields {
@@ -139,6 +139,8 @@ fn the_components_that_hold_an_instance_together_are_never_removed() {
         // `Order` is on every instance and in no prefab document, which is the exact shape this
         // list is for. Editing a prefab would have reshuffled every instance of it (#961).
         "kooch_ecs::order::Order",
+        // 🔴 Which entity this is, not what it is like. See `identity_is_not_propagated`.
+        "kooch_ecs::persistent_id::PersistentId",
     ] {
         assert!(is_bookkeeping(name), "{name} would have been stripped");
     }
@@ -201,4 +203,28 @@ fn placed_counts_as_bookkeeping() {
     assert!(is_bookkeeping("Placed"));
     // Something the prefab genuinely dropped still goes.
     assert!(!is_bookkeeping("test::Health"));
+}
+
+/// 🔴 A prefab has no identity to hand out. Writing its own `PersistentId` onto every instance made
+/// all of them claim it, and every reference resolves by id — `many_lights` has 36 instances of one
+/// prefab and the repair logged 280 clashes on a single load (#712).
+#[test]
+fn identity_is_not_propagated() {
+    let mut document = document();
+    document.entities[0].components.push(ComponentDescription {
+        type_name: "kooch_ecs::persistent_id::PersistentId".into(),
+        fields: vec![("id".into(), ReflectValue::U64(3))],
+    });
+
+    let writes = plan_against(&PrefabInstance::default(), &document);
+
+    assert!(
+        !writes.iter().any(|w| w.component.ends_with("PersistentId")),
+        "the prefab handed out its own identity"
+    );
+    assert_eq!(
+        writes.len(),
+        2,
+        "it stopped propagating the real fields too"
+    );
 }

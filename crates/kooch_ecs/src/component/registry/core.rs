@@ -415,10 +415,14 @@ impl ComponentRegistry {
         displaced
     }
 
-    /// Removes a single component from `entity` by `TypeId`.
+    /// Removes a single component from `entity` by `TypeId`, **from the inbox only**.
     ///
-    /// Does nothing if the type is not registered or the entity doesn't have it.
-    pub fn remove_component(&mut self, entity: Entity, type_id: &TypeId) {
+    /// 🔴 Crate-private, and reached through [`move_entity::take_by_id`](crate::move_entity::take_by_id).
+    /// On its own this is half a removal: a settled value lives in a table column, and a column
+    /// loses a row only when the whole table does. The archetype change that moves the row is what
+    /// destroys the value, so the two are one gesture. Three call sites did only this half and the
+    /// component stayed on the entity (#891).
+    pub(crate) fn remove_component(&mut self, entity: Entity, type_id: &TypeId) {
         let Some(id) = self.ids.get(type_id).copied() else {
             return;
         };

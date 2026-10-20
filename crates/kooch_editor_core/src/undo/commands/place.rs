@@ -65,10 +65,7 @@ pub(super) fn disown(resources: &mut Resources, entity: Entity) {
     use kooch_ecs::SceneMember;
 
     let type_id = TypeId::of::<SceneMember>();
-    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-        registry.remove_component(entity, &type_id);
-    }
-    kooch_ecs::move_entity::lost(resources, entity, type_id);
+    kooch_ecs::move_entity::take_by_id(resources, entity, type_id);
 }
 
 /// Puts a freshly spawned entity where the cursor asked for, in its parent's space.

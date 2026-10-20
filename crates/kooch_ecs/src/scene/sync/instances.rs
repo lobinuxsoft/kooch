@@ -136,10 +136,9 @@ pub(super) fn apply_overrides(
         let is_removal = entry.address.field == crate::prefab_instance::WHOLE_COMPONENT;
         match (is_removal, entry.value) {
             // A component the user took off this instance.
+            // The archetype goes with the value, or the component is still there (#891).
             (true, _) => {
-                if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-                    registry.remove_component(entity, &type_id);
-                }
+                crate::move_entity::take_by_id(resources, entity, type_id);
             }
             // A field the user changed.
             (false, Some(value)) => {

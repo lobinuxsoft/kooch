@@ -69,8 +69,9 @@ pub fn plan(resources: &Resources, prefab: Guid) -> (Vec<PlannedWrite>, Vec<Plan
             for component in &described.components {
                 // A component the prefab grew since this instance was placed. The instance has to
                 // grow it too, or the change reaches every instance except as the one thing people
-                // most often change about a prefab.
-                if instance.owns_component(index, &component.type_name) {
+                // most often change about a prefab. Identity is the exception: a prefab has none to
+                // hand out.
+                if !propagates(&instance, index, &component.type_name) {
                     continue;
                 }
                 let missing = !has_component(resources, entity, &component.type_name);
@@ -133,6 +134,28 @@ pub fn plan(resources: &Resources, prefab: Guid) -> (Vec<PlannedWrite>, Vec<Plan
     (writes, removals)
 }
 
+/// Whether the prefab's version of this component is the instance's to take.
+///
+/// One function, consulted by both planners **and by the test that checks them** — the planning
+/// rule had a second copy in the tests, and that is how identity got propagated for this long.
+fn propagates(instance: &PrefabInstance, index: usize, type_name: &str) -> bool {
+    !is_identity(type_name) && !instance.owns_component(index, type_name)
+}
+
+/// Components that say **which** entity this is rather than what it is like.
+///
+/// 🔴 A prefab cannot describe identity. Writing its own [`PersistentId`] onto every instance makes
+/// all of them claim the same one, and every reference resolves by id — so a child naming one lands
+/// under whichever entity a map happened to yield. `many_lights` has 36 instances of one prefab and
+/// the repair in `adopt_ids` logged **280 clashes** on a single load, two per instance per pass
+/// (#712).
+fn is_identity(type_name: &str) -> bool {
+    matches!(
+        type_name.rsplit("::").next().unwrap_or(type_name),
+        "PersistentId"
+    )
+}
+
 /// Components that hold the instance together rather than describing it.
 fn is_bookkeeping(type_name: &str) -> bool {
     matches!(
@@ -150,7 +173,7 @@ fn is_bookkeeping(type_name: &str) -> bool {
             // a prefab has no siblings. Propagating over it would reshuffle every instance of a
             // prefab the moment somebody edited it (#961).
             | "Order"
-    )
+    ) || is_identity(type_name)
 }
 
 /// Every component the live entity currently carries, by full type path.
@@ -211,10 +234,10 @@ pub fn apply(resources: &mut Resources, writes: &[PlannedWrite], removals: &[Pla
         let type_id = resources
             .get::<crate::component::ComponentRegistry>()
             .and_then(|registry| registry.type_id_by_name(&removal.component));
-        if let Some(type_id) = type_id
-            && let Some(registry) = resources.get_mut::<crate::component::ComponentRegistry>()
-        {
-            registry.remove_component(removal.entity, &type_id);
+        // The archetype goes with the value: the component's value lives in a table column, and a
+        // column loses a row only when the whole table does (#891).
+        if let Some(type_id) = type_id {
+            crate::move_entity::take_by_id(resources, removal.entity, type_id);
         }
     }
     for write in writes {
@@ -385,8 +408,9 @@ fn plan_for(
         for component in &described.components {
             // Reverting restores the prefab's fields, not the user's
             // decision to drop a component — that is its own override and
-            // is released by the same revert if it was asked for.
-            if instance.owns_component(index, &component.type_name) {
+            // is released by the same revert if it was asked for. Nor does it restore an identity
+            // the prefab never owned.
+            if !propagates(instance, index, &component.type_name) {
                 continue;
             }
             for (field, value) in &component.fields {
