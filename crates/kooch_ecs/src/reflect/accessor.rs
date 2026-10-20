@@ -39,6 +39,12 @@ pub(crate) trait ReflectAccessor: Send + Sync {
     /// Returns `true` if inserted successfully.
     fn insert_default_into(&self, storage: &mut dyn AnyStorage, entity: Entity) -> bool;
 
+    /// Overwrites the component **at** `value` with a fresh default.
+    ///
+    /// For an entity whose value already lives in a table column, where inserting into the inbox
+    /// would give the component two values (#891).
+    unsafe fn write_default(&self, value: *mut u8);
+
     /// Returns the inspector visibility for this component type.
     fn inspector_visibility(&self) -> InspectorVisibility;
 
@@ -122,6 +128,11 @@ impl<T: Reflect> ReflectAccessor for TypedReflectAccessor<T> {
 
     fn insert_default_into(&self, storage: &mut dyn AnyStorage, entity: Entity) -> bool {
         (self.inserter)(storage, entity)
+    }
+
+    unsafe fn write_default(&self, value: *mut u8) {
+        // SAFETY: the caller guarantees `value` points to a live `T` and holds exclusive access.
+        unsafe { *value.cast::<T>() = T::reflect_default() };
     }
 
     fn inspector_visibility(&self) -> InspectorVisibility {

@@ -11,7 +11,13 @@ use super::traits::{AnyStorage, Component};
 /// CPU-only component storage using a `HashMap<Entity, T>`.
 /// The **inbox** for one component type: values written before their archetype caught up with
 /// them, waiting to be promoted into a column (#891).
-pub struct ComponentStorage<T: Component> {
+///
+/// 🔴 Crate-private on purpose. A value has one home, and the two doors into this one
+/// — [`ComponentViewMut::insert`](crate::component::ComponentViewMut::insert) and
+/// `ComponentRegistry::insert_default_reflected` — both check for a column first. A third door
+/// would give a component two values, and which one a caller saw would depend on which door it
+/// came through: that is how every transform in a loaded scene ended up at the identity.
+pub(crate) struct ComponentStorage<T: Component> {
     data: HashMap<Entity, T>,
 }
 

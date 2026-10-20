@@ -206,13 +206,33 @@ impl ComponentRegistry {
         let Some(column) = held.column_mut(id) else {
             return;
         };
-        if column.len() > row.index() {
-            return;
-        }
+        let home = column.len() > row.index();
         let Some(slot) = self.slots.get_mut(id.index()) else {
             return;
         };
+        if home {
+            // 🔴 Already in its column, so anything parked for it is a second value — and which
+            // one a caller sees would depend on which door it came through. Drain it.
+            slot.storage.get_mut().remove_entity(entity);
+            return;
+        }
         slot.storage.get_mut().take_into(entity, column);
+    }
+
+    /// Whether any component holds **two** values for one entity: one in a column and one parked.
+    ///
+    /// The invariant the promotion keeps. A walk that reads both homes yields the entity twice, and
+    /// whichever comes last wins (#891).
+    pub fn no_stale_inbox(&self) -> bool {
+        self.slots.iter().enumerate().all(|(at, slot)| {
+            let id = StorageId(at as u32);
+            // SAFETY: `&self` is the shared access a read needs.
+            let storage = unsafe { &**slot.storage.get() };
+            self.tables.iter().all(|table| {
+                table.column(id).is_none()
+                    || !table.entities().iter().any(|entity| storage.holds(*entity))
+            })
+        })
     }
 
     /// Puts every one of `entity`'s values back into its inbox and drops its row.
@@ -610,21 +630,41 @@ impl ComponentRegistry {
             .collect()
     }
 
-    /// Inserts a default reflected component for an entity.
+    /// Inserts a default reflected component for an entity, or resets the one it has.
+    ///
+    /// 🔴 Into the column when the entity already has one. Into the inbox, the default would give
+    /// the component **two** values — the real one in its column and a default nobody asked for —
+    /// and the editor's mirror calls this on every snapshot it applies. A walk reading both homes
+    /// sees the entity twice, and the default comes last and wins (#891).
     pub fn insert_default_reflected(&mut self, type_id: &TypeId, entity: Entity) -> bool {
-        let Some(slot) = self.slot(type_id) else {
+        let Some(id) = self.ids.get(type_id).copied() else {
             return false;
         };
-        let Some(accessor) = slot.reflector.as_deref() else {
+        if self.slots[id.index()].reflector.is_none() {
             return false;
-        };
-        // SAFETY: We have &mut self, exclusive access guaranteed.
-        let storage = unsafe { &mut **slot.storage.get() };
-        let inserted = accessor.insert_default_into(storage, entity);
-        if inserted && let Some(id) = self.ids.get(type_id).copied() {
-            self.slots[id.index()].revision += 1;
         }
-        inserted
+        self.slots[id.index()].revision += 1;
+
+        // The value's ADDRESS first, so every borrow it needed is released before the accessor is
+        // reached — the same reason `reflect_set_field` does it this way.
+        let settled = self.entity_at.get(entity).and_then(|(table, row)| {
+            let column = self.tables.get(table)?.column(id)?;
+            // SAFETY: the column holds this component's type, and the
+            // pointer derives from the column's own allocation.
+            unsafe { column.value_ptr::<u8>(row.index()) }
+        });
+        let Some(accessor) = self.slots[id.index()].reflector.as_deref() else {
+            return false;
+        };
+
+        if let Some(value) = settled {
+            // SAFETY: `&mut self` is the exclusive access the write needs.
+            unsafe { accessor.write_default(value) };
+            return true;
+        }
+        // SAFETY: We have &mut self, exclusive access guaranteed.
+        let storage = unsafe { &mut **self.slots[id.index()].storage.get() };
+        accessor.insert_default_into(storage, entity)
     }
 
     // -- Type-erased storage access -------------------------------------------

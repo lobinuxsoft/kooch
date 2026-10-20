@@ -102,9 +102,13 @@ pub mod prelude {
 
     // What a game touches on day one. The prelude is the discovery surface
     // (`docs/CAPABILITIES.md`): missing from it reads like never built.
+    // 🔴 The views, not `ComponentStorage`. A component's value lives in a table column now, and
+    // the per-type map is the inbox behind it — crate-private, because a third door into it would
+    // give one component two values (#891).
+    pub use kooch_ecs::component::{ComponentView, ComponentViewMut};
     pub use kooch_ecs::{
-        Children, Commands, Component, ComponentId, ComponentRegistry, ComponentStorage, EcsPlugin,
-        Entity, EntityAllocator, GlobalTransform, MeshRenderer, Name, OrthographicCamera, Parent,
+        Children, Commands, Component, ComponentId, ComponentRegistry, EcsPlugin, Entity,
+        EntityAllocator, GlobalTransform, MeshRenderer, Name, OrthographicCamera, Parent,
         PerspectiveCamera, Reflect, SceneManager, Transform,
     };
     // Where a system binds into the frame, said at the system. Inert:
