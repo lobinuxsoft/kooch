@@ -38,7 +38,7 @@ pub fn read_when_input(resources: &mut Resources) {
     let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
         return;
     };
-    let Some(whens) = registry.get_cpu_mut::<CameraWhen>() else {
+    let Some(mut whens) = registry.get_cpu_mut::<CameraWhen>() else {
         return;
     };
     for (entity, held) in asked {
