@@ -248,3 +248,67 @@ fn the_empty_archetype_has_no_table() {
         "nothing to store, so nothing was built"
     );
 }
+
+/// 🔴 The invariant the port rests on, and the one nothing else can see breaking.
+#[test]
+fn the_funnel_keeps_the_rows_equal() {
+    let mut resources = world();
+    // 🔴 Every entity settles **first**, so the moves below leave from the middle of the table and
+    // actually drag someone into the hole. Moving the last row displaces nobody, and a scenario
+    // built that way passes with the refiling deleted.
+    for index in 1..6 {
+        let held = spawn(&mut resources, index);
+        give(&mut resources, held, Health(index));
+    }
+    give(&mut resources, entity(2), Speed(2.0));
+    give(&mut resources, entity(1), Speed(1.0));
+    super::drop_entity(&mut resources, entity(4));
+    super::lost(&mut resources, entity(2), TypeId::of::<Speed>());
+
+    let components = resources.get::<ComponentRegistry>().unwrap();
+    let archetypes = resources.get::<ArchetypeRegistry>().unwrap();
+    assert!(super::rows_agree(components, archetypes));
+}
+
+/// And it catches the bypass: filing an entity by hand leaves the two rows disagreeing, which is
+/// exactly the state that makes a query and `get_cpu` answer differently.
+#[test]
+fn filing_by_hand_breaks_them() {
+    let mut resources = world();
+    let held = spawn(&mut resources, 1);
+    give(&mut resources, held, Health(1));
+
+    let both = archetype_of(
+        &mut resources,
+        &[TypeId::of::<Health>(), TypeId::of::<Speed>()],
+    );
+    resources
+        .get_mut::<ArchetypeRegistry>()
+        .unwrap()
+        .register_at(held, both, None);
+
+    let components = resources.get::<ComponentRegistry>().unwrap();
+    let archetypes = resources.get::<ArchetypeRegistry>().unwrap();
+    assert!(
+        !super::rows_agree(components, archetypes),
+        "the check is blind"
+    );
+}
+
+/// A reused index must not inherit the row of whoever held the slot before it.
+#[test]
+fn a_reused_index_starts_clean() {
+    let mut resources = world();
+    let first = spawn(&mut resources, 1);
+    give(&mut resources, first, Health(1));
+    super::drop_entity(&mut resources, first);
+
+    let reused = Entity::new(1, 1);
+    let components = resources.get::<ComponentRegistry>().unwrap();
+    assert_eq!(components.location(reused), None);
+    assert_eq!(
+        components.get_cpu::<Health>().unwrap().get(reused),
+        None,
+        "it read the generation before it"
+    );
+}

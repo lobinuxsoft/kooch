@@ -3,7 +3,9 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::archetype::{Archetype, ArchetypeId};
 use crate::entity::Entity;
-use crate::storage::{TableId, TableRow};
+use crate::storage::TableRow;
+
+use super::filed::Filed;
 
 /// Where an entity is filed: which archetype, and which slot of it.
 ///
@@ -22,7 +24,7 @@ pub struct ArchetypeRegistry {
     /// All known archetypes.
     archetypes: HashMap<ArchetypeId, Archetype>,
     /// Entity → the archetype and slot holding it.
-    located: HashMap<Entity, Where>,
+    located: Filed,
     /// Cache: `(from_archetype, +component_type)` → `to_archetype`.
     add_transitions: HashMap<(ArchetypeId, TypeId), ArchetypeId>,
     /// Cache: `(from_archetype, -component_type)` → `to_archetype`.
@@ -40,7 +42,7 @@ impl ArchetypeRegistry {
 
         Self {
             archetypes,
-            located: HashMap::new(),
+            located: Filed::default(),
             add_transitions: HashMap::new(),
             remove_transitions: HashMap::new(),
             revision: 0,
@@ -79,13 +81,13 @@ impl ArchetypeRegistry {
 
     /// Returns the archetype an entity currently belongs to.
     pub fn entity_archetype(&self, entity: Entity) -> Option<ArchetypeId> {
-        self.located.get(&entity).map(|at| at.archetype)
+        self.located.get(entity).map(|at| at.archetype)
     }
 
     /// Where `entity` is filed, archetype and slot.
     #[inline]
     pub fn located(&self, entity: Entity) -> Option<Where> {
-        self.located.get(&entity).copied()
+        self.located.get(entity)
     }
 
     /// The table row holding `entity`'s values, if it has one.
@@ -93,13 +95,6 @@ impl ArchetypeRegistry {
     pub fn row_of(&self, entity: Entity) -> Option<TableRow> {
         let at = self.located(entity)?;
         self.archetypes.get(&at.archetype)?.row_at(at.at)
-    }
-
-    /// The table serving the archetype `entity` is filed under, if one has been built.
-    #[inline]
-    pub fn table_of_entity(&self, entity: Entity) -> Option<TableId> {
-        let at = self.located(entity)?;
-        self.archetypes.get(&at.archetype)?.table()
     }
 
     /// Moves an entity into `archetype_id`, recording which table row holds its values.
@@ -121,7 +116,7 @@ impl ArchetypeRegistry {
         archetype_id: ArchetypeId,
         row: Option<TableRow>,
     ) {
-        if let Some(old) = self.located.get(&entity).copied() {
+        if let Some(old) = self.located.get(entity) {
             if old.archetype == archetype_id {
                 // Already there: only the row can have changed, and that is not a structural
                 // change — nothing watching the world's shape has to look again.
@@ -137,13 +132,7 @@ impl ArchetypeRegistry {
             Some(archetype) => archetype.add_entity(entity, row),
             None => 0,
         };
-        self.located.insert(
-            entity,
-            Where {
-                archetype: archetype_id,
-                at,
-            },
-        );
+        self.located.set(entity, archetype_id, at);
         self.revision += 1;
     }
 
@@ -161,7 +150,7 @@ impl ArchetypeRegistry {
     ///
     /// Returns the archetype it was removed from, or `None` if untracked.
     pub fn unregister_entity(&mut self, entity: Entity) -> Option<ArchetypeId> {
-        let at = self.located.remove(&entity)?;
+        let at = self.located.take(entity)?;
         self.revision += 1;
         self.vacate(at);
         Some(at.archetype)
@@ -174,7 +163,7 @@ impl ArchetypeRegistry {
             .get_mut(&at.archetype)
             .and_then(|archetype| archetype.remove_at(at.at));
         if let Some(other) = dragged {
-            self.located.insert(other, at);
+            self.located.set(other, at.archetype, at.at);
         }
     }
 
@@ -256,13 +245,7 @@ impl ArchetypeRegistry {
         self.located.clear();
         for (&archetype, held) in &self.archetypes {
             for (at, &entity) in held.entities().iter().enumerate() {
-                self.located.insert(
-                    entity,
-                    Where {
-                        archetype,
-                        at: at as u32,
-                    },
-                );
+                self.located.set(entity, archetype, at as u32);
             }
         }
     }

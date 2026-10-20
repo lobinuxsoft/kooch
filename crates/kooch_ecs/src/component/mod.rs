@@ -2,6 +2,7 @@
 
 pub mod cpu_storage;
 pub mod dynamic_types;
+pub mod locations;
 pub mod names;
 #[cfg(feature = "dynamic")]
 pub mod plugin_bridge;
@@ -12,6 +13,7 @@ pub mod view;
 
 pub use cpu_storage::ComponentStorage;
 pub use dynamic_types::{DynamicField, DynamicType, DynamicTypeRegistry};
+pub use locations::Locations;
 pub use names::{ComponentId, ComponentNames};
 pub use registry::{ComponentRegistry, Settled};
 pub use storage_id::StorageId;

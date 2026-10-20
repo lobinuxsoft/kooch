@@ -166,20 +166,6 @@ impl Archetype {
         self.rows.swap_remove(at);
         self.entities.get(at).copied()
     }
-
-    /// Removes an entity from this archetype using swap-remove.
-    ///
-    /// Returns `true` if the entity was found and removed. Prefer [`Self::remove_at`]: this one
-    /// scans, and the registry already knows the slot.
-    pub fn remove_entity(&mut self, entity: Entity) -> bool {
-        match self.entities.iter().position(|e| *e == entity) {
-            Some(at) => {
-                self.remove_at(at as u32);
-                true
-            }
-            None => false,
-        }
-    }
 }
 
 #[cfg(test)]

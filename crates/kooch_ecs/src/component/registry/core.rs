@@ -11,6 +11,7 @@ use crate::reflect::{
 };
 
 use crate::component::cpu_storage::ComponentStorage;
+use crate::component::locations::Locations;
 use crate::component::storage_id::StorageId;
 use crate::component::traits::{AnyStorage, Component};
 use crate::component::view::{ComponentView, ComponentViewMut};
@@ -54,7 +55,7 @@ pub struct ComponentRegistry {
     /// Where component VALUES live, for the ones that have moved (#891).
     pub(super) tables: Tables,
     /// Which table row holds an entity's values, once they live in one.
-    pub(super) entity_at: HashMap<Entity, (TableId, TableRow)>,
+    pub(super) entity_at: Locations,
 }
 
 // SAFETY: All public methods either take `&mut self` (exclusive access) or
@@ -70,7 +71,7 @@ impl ComponentRegistry {
             slots: Vec::new(),
             ids: HashMap::new(),
             tables: Tables::new(),
-            entity_at: HashMap::new(),
+            entity_at: Locations::default(),
         }
     }
 
@@ -92,7 +93,7 @@ impl ComponentRegistry {
     /// Where `entity`'s values live, if they live in a table.
     #[inline]
     pub fn location(&self, entity: Entity) -> Option<(TableId, TableRow)> {
-        self.entity_at.get(&entity).copied()
+        self.entity_at.get(entity)
     }
 
     /// The table serving `components`, **without creating one**.
@@ -228,7 +229,7 @@ impl ComponentRegistry {
     /// That is the difference between a move that could not finish and a component the entity gave
     /// up: the first keeps its values, the second must not.
     pub fn unsettle_but(&mut self, entity: Entity, keep: &[StorageId]) -> Option<Entity> {
-        let (table, row) = self.entity_at.remove(&entity)?;
+        let (table, row) = self.entity_at.take(entity)?;
         let held = self.tables.get_mut(table)?;
         // The slots are indexed by `StorageId`, so the drain can reach each one by index without
         // borrowing the whole registry — which the closure cannot do while the table is borrowed.
@@ -245,7 +246,7 @@ impl ComponentRegistry {
             }
         });
         if let Some(other) = displaced {
-            self.entity_at.insert(other, (table, row));
+            self.entity_at.set(other, table, row);
         }
         displaced
     }
@@ -255,7 +256,7 @@ impl ComponentRegistry {
     fn place(&mut self, entity: Entity, components: &[StorageId]) -> Option<TableRow> {
         let table = self.table_of(components);
         let row = self.tables.get_mut(table)?.push_entity(entity);
-        self.entity_at.insert(entity, (table, row));
+        self.entity_at.set(entity, table, row);
         Some(row)
     }
 
@@ -279,9 +280,9 @@ impl ComponentRegistry {
 
         let (landed, displaced) = self.tables.move_row(source, row, target);
         if let Some(other) = displaced {
-            self.entity_at.insert(other, (source, row));
+            self.entity_at.set(other, source, row);
         }
-        self.entity_at.insert(entity, (target, landed));
+        self.entity_at.set(entity, target, landed);
         (Some(landed), displaced)
     }
 
@@ -386,10 +387,10 @@ impl ComponentRegistry {
     /// Unlike [`Self::unsettle`] the values are **not** handed back to the maps: this is a despawn,
     /// and nothing is going to read them again.
     pub fn drop_row(&mut self, entity: Entity) -> Option<Entity> {
-        let (table, row) = self.entity_at.remove(&entity)?;
+        let (table, row) = self.entity_at.take(entity)?;
         let displaced = self.tables.get_mut(table)?.swap_remove(row);
         if let Some(other) = displaced {
-            self.entity_at.insert(other, (table, row));
+            self.entity_at.set(other, table, row);
         }
         displaced
     }
@@ -523,16 +524,12 @@ impl ComponentRegistry {
             .ids
             .get(type_id)
             .ok_or(ReflectError::ComponentNotFound)?;
-        let column_value = self
-            .entity_at
-            .get(&entity)
-            .copied()
-            .and_then(|(table, row)| {
-                let column = self.tables.get(table)?.column(slot)?;
-                // SAFETY: the column holds this component's type, and the
-                // pointer derives from the column's own allocation.
-                unsafe { column.value_ptr::<u8>(row.index()) }
-            });
+        let column_value = self.entity_at.get(entity).and_then(|(table, row)| {
+            let column = self.tables.get(table)?.column(slot)?;
+            // SAFETY: the column holds this component's type, and the
+            // pointer derives from the column's own allocation.
+            unsafe { column.value_ptr::<u8>(row.index()) }
+        });
 
         let target = match column_value {
             Some(value) => value,

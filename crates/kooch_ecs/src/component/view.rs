@@ -7,16 +7,15 @@
 //!
 //! So these views look in the column first and the map second. That is a lookup, not a preference.
 
-use std::collections::HashMap;
-
 use crate::component::cpu_storage::ComponentStorage;
+use crate::component::locations::Locations;
 use crate::component::storage_id::StorageId;
 use crate::component::traits::Component;
 use crate::entity::Entity;
-use crate::storage::{Table, TableId, TableRow, Tables};
+use crate::storage::{Table, Tables};
 
-/// Where one entity's values live, if they live in a table.
-type At = HashMap<Entity, (TableId, TableRow)>;
+/// Where every entity's values live, if they live in a table.
+type At = Locations;
 
 /// A read-only view of every value of one component type.
 pub struct ComponentView<'a, T: Component> {
@@ -41,7 +40,7 @@ impl<T: Component> Copy for ComponentView<'_, T> {}
 impl<'a, T: Component> ComponentView<'a, T> {
     /// The value for `entity`, if it has one.
     pub fn get(&self, entity: Entity) -> Option<&'a T> {
-        if let Some((table, row)) = self.entity_at.get(&entity).copied()
+        if let Some((table, row)) = self.entity_at.get(entity)
             && let Some(column) = self.tables.get(table).and_then(|held| held.column(self.id))
         {
             // SAFETY: the column was built for the component `id` names, which is `T`.
@@ -96,7 +95,7 @@ impl<'a, T: Component> ComponentViewMut<'a, T> {
     /// temporary and [`Self::get_mut`]'s borrow would die with it.
     pub fn into_mut(self, entity: Entity) -> Option<&'a mut T> {
         *self.revision += 1;
-        if let Some((table, row)) = self.entity_at.get(&entity).copied()
+        if let Some((table, row)) = self.entity_at.get(entity)
             && let Some(column) = self
                 .tables
                 .get_mut(table)
@@ -113,7 +112,7 @@ impl<T: Component> ComponentViewMut<'_, T> {
     /// The value for `entity`, if it has one.
     pub fn get(&self, entity: Entity) -> Option<&T> {
         if let Some(column) = self.column_of(entity) {
-            let (_, row) = self.entity_at[&entity];
+            let (_, row) = self.entity_at.get(entity)?;
             // SAFETY: the column holds `T`, and the row is this registry's own.
             return unsafe { column.get::<T>(row.index()) };
         }
@@ -125,7 +124,7 @@ impl<T: Component> ComponentViewMut<'_, T> {
     /// Counts as a write: whether the caller changes anything is not knowable here, and a missed
     /// bump is a panel that stops updating. A miss hands out nothing, so it is not one.
     pub fn get_mut(&mut self, entity: Entity) -> Option<&mut T> {
-        if let Some((table, row)) = self.entity_at.get(&entity).copied()
+        if let Some((table, row)) = self.entity_at.get(entity)
             && let Some(column) = self
                 .tables
                 .get_mut(table)
@@ -149,7 +148,7 @@ impl<T: Component> ComponentViewMut<'_, T> {
     /// change that would build the column has not happened yet.
     pub fn insert(&mut self, entity: Entity, value: T) -> Option<T> {
         *self.revision += 1;
-        if let Some((table, row)) = self.entity_at.get(&entity).copied()
+        if let Some((table, row)) = self.entity_at.get(entity)
             && let Some(column) = self
                 .tables
                 .get_mut(table)
@@ -219,7 +218,7 @@ impl<T: Component> ComponentViewMut<'_, T> {
 
     /// The column holding `entity`'s value, if it is in one.
     fn column_of(&self, entity: Entity) -> Option<&crate::storage::Column> {
-        let (table, _) = self.entity_at.get(&entity).copied()?;
+        let (table, _) = self.entity_at.get(entity)?;
         self.tables.get(table)?.column(self.id)
     }
 }

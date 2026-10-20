@@ -84,11 +84,11 @@ fn add_and_remove_entity() {
     assert_eq!(arch.len(), 2);
     assert_eq!(arch.entities(), &[e1, e2]);
 
-    assert!(arch.remove_entity(e1));
+    assert_eq!(arch.remove_at(0), Some(e2), "e2 was dragged into the hole");
     assert_eq!(arch.len(), 1);
     assert_eq!(arch.entities(), &[e2]);
 
-    assert!(!arch.remove_entity(e1));
+    assert_eq!(arch.remove_at(5), None, "a slot past the end");
 }
 
 #[test]
@@ -102,9 +102,12 @@ fn swap_remove_preserves_density() {
     arch.add_entity(e2, None);
     arch.add_entity(e3, None);
 
-    // Removing e1 should swap e3 into position 0.
-    arch.remove_entity(e1);
+    // Removing e1 should swap e3 into position 0, and say so.
+    assert_eq!(
+        arch.remove_at(0),
+        Some(e3),
+        "the displaced entity is reported"
+    );
     assert_eq!(arch.len(), 2);
-    assert!(arch.entities().contains(&e2));
-    assert!(arch.entities().contains(&e3));
+    assert_eq!(arch.entities(), &[e3, e2]);
 }

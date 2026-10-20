@@ -68,7 +68,7 @@ fn world(count: u32, fragment: u32) -> (Resources, std::time::Duration) {
 
 /// Milliseconds a pass would cost per frame at this count, which is the number that decides whether
 /// a scene holds 60 FPS.
-fn per_pass(resources: &Resources, count: u32) -> std::time::Duration {
+fn per_pass(resources: &Resources) -> std::time::Duration {
     let mut sum = 0.0f32;
     for _ in 0..3 {
         Query::<(&Position, &Velocity)>::new(resources).for_each(|(p, v)| sum += p.x + v.x);
@@ -87,7 +87,7 @@ fn per_pass(resources: &Resources, count: u32) -> std::time::Duration {
 fn query_cost() {
     for count in [1_000u32, 10_000, 100_000, 1_000_000] {
         let (resources, spawned) = world(count, 0);
-        let each = per_pass(&resources, count);
+        let each = per_pass(&resources);
         println!(
             "{count:>9} entities · 2 components · {each:>10.3?} per pass \
              · {:>6.2} ns/entity · spawn {spawned:>10.3?}",
@@ -102,7 +102,7 @@ fn query_cost() {
 fn fragmented_cost() {
     for fragment in [2u32, 8, 64] {
         let (resources, _) = world(100_000, fragment);
-        let each = per_pass(&resources, 100_000);
+        let each = per_pass(&resources);
         println!(
             "  100000 entities · 2 archetypes (1 in {fragment} has a third component) \
              · {each:>10.3?} per pass · {:>6.2} ns/entity",

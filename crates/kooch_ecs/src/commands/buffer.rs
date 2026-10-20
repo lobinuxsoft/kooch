@@ -3,7 +3,6 @@
 use kooch_core::resource::Resources;
 
 use crate::allocator::EntityAllocator;
-use crate::archetype::ArchetypeId;
 use crate::archetype_registry::ArchetypeRegistry;
 use crate::component::registry::ComponentRegistry;
 
