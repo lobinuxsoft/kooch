@@ -810,13 +810,7 @@ fn added<T: kooch_ecs::component::Component + kooch_ecs::reflect::Reflect>(
             storage.insert(entity, value);
         }
     }
-    if let Some(archetypes) =
-        resources.get_mut::<kooch_ecs::archetype_registry::ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let next = archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<T>());
-        archetypes.register_entity(entity, next);
-    }
+    kooch_ecs::move_entity::gained(resources, entity, std::any::TypeId::of::<T>());
 }
 
 /// How many body components `entity` carries. More than one is two answers to one question, and

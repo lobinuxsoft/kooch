@@ -516,22 +516,12 @@ fn set_playing(resources: &mut Resources, playing: bool) -> Result<(), RemoteErr
 
 /// Moves an entity to the archetype it belongs in after adding `type_id`.
 fn update_archetype_add(resources: &mut Resources, entity: Entity, type_id: TypeId) {
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let new_arch = archetypes.archetype_after_add_dynamic(current, type_id);
-        archetypes.register_entity(entity, new_arch);
-    }
+    kooch_ecs::move_entity::gained(resources, entity, type_id);
 }
 
 /// Moves an entity to the archetype it belongs in after removing `type_id`.
 fn update_archetype_remove(resources: &mut Resources, entity: Entity, type_id: TypeId) {
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let new_arch = archetypes.archetype_after_remove_dynamic(current, type_id);
-        archetypes.register_entity(entity, new_arch);
-    }
+    kooch_ecs::move_entity::lost(resources, entity, type_id);
 }
 
 mod entities;

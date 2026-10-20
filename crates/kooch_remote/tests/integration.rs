@@ -79,9 +79,9 @@ fn test_socket_name() -> String {
 
 #[path = "integration/requests.rs"]
 mod requests;
-#[path = "integration/wire.rs"]
-mod wire;
 #[path = "integration/scenes.rs"]
 mod scenes;
 #[path = "integration/structure.rs"]
 mod structure;
+#[path = "integration/wire.rs"]
+mod wire;
