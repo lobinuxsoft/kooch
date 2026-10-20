@@ -57,9 +57,7 @@ impl EditorCommand for DespawnCommand {
         if let Some(alloc) = resources.get_mut::<EntityAllocator>() {
             alloc.despawn(self.entity);
         }
-        if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-            archetypes.unregister_entity(self.entity);
-        }
+        kooch_ecs::move_entity::drop_entity(resources, self.entity);
         if let Some(components) = resources.get_mut::<ComponentRegistry>() {
             components.remove_entity(self.entity);
         }
@@ -80,9 +78,11 @@ impl EditorCommand for DespawnCommand {
         }
 
         // Re-register into EMPTY archetype first.
-        if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-            archetypes.register_entity(self.entity, kooch_ecs::archetype::ArchetypeId::EMPTY);
-        }
+        kooch_ecs::move_entity::move_entity(
+            resources,
+            self.entity,
+            kooch_ecs::archetype::ArchetypeId::EMPTY,
+        );
 
         // Restore all components from snapshots.
         for type_id in &self.component_types {
@@ -93,12 +93,7 @@ impl EditorCommand for DespawnCommand {
             }
             if inserted {
                 // Transition archetype.
-                if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                    if let Some(current) = archetypes.entity_archetype(self.entity) {
-                        let new_arch = archetypes.archetype_after_add_dynamic(current, *type_id);
-                        archetypes.register_entity(self.entity, new_arch);
-                    }
-                }
+                kooch_ecs::move_entity::gained(resources, self.entity, *type_id);
             }
         }
 

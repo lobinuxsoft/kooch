@@ -25,7 +25,6 @@ use crate::components::KIND_STATIC;
 use kooch_core::resource::Resources;
 use kooch_core::run_state::Playing;
 use kooch_core::time::Time;
-use kooch_ecs::archetype_registry::ArchetypeRegistry;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::transform::Transform;
@@ -426,20 +425,12 @@ fn sync_archetypes(resources: &mut Resources, gained: &[Entity], orphans: &[Enti
     if gained.is_empty() && orphans.is_empty() {
         return;
     }
-    let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() else {
-        return;
-    };
+    let solver = std::any::TypeId::of::<SolverBody>();
     for &entity in gained {
-        if let Some(current) = archetypes.entity_archetype(entity) {
-            let next = archetypes.archetype_after_add::<SolverBody>(current);
-            archetypes.register_entity(entity, next);
-        }
+        kooch_ecs::move_entity::gained(resources, entity, solver);
     }
     for &entity in orphans {
-        if let Some(current) = archetypes.entity_archetype(entity) {
-            let next = archetypes.archetype_after_remove::<SolverBody>(current);
-            archetypes.register_entity(entity, next);
-        }
+        kooch_ecs::move_entity::lost(resources, entity, solver);
     }
 }
 

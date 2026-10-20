@@ -293,7 +293,6 @@ fn insert_reflected<T: Component + crate::reflect::Reflect + Clone>(
     entity: crate::entity::Entity,
     value: T,
 ) {
-    use crate::archetype_registry::ArchetypeRegistry;
     use crate::component::ComponentRegistry;
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
@@ -302,12 +301,7 @@ fn insert_reflected<T: Component + crate::reflect::Reflect + Clone>(
             storage.insert(entity, value);
         }
     }
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let next = archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<T>());
-        archetypes.register_entity(entity, next);
-    }
+    crate::move_entity::gained(resources, entity, std::any::TypeId::of::<T>());
 }
 
 #[cfg(test)]

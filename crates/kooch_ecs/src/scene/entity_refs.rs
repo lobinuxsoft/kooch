@@ -126,13 +126,8 @@ pub(super) fn assign_ids_to_referenced(resources: &mut Resources) -> HashMap<Ent
     // The archetype has to learn about the new component or nothing will
     // find it — including the save walk that is about to run.
     let persistent_tid = TypeId::of::<PersistentId>();
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-        for &(entity, _) in &fresh {
-            if let Some(current) = archetypes.entity_archetype(entity) {
-                let next = archetypes.archetype_after_add_dynamic(current, persistent_tid);
-                archetypes.register_entity(entity, next);
-            }
-        }
+    for &(entity, _) in &fresh {
+        crate::move_entity::gained(resources, entity, persistent_tid);
     }
 
     ids.extend(fresh);

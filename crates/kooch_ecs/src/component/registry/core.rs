@@ -85,6 +85,62 @@ impl ComponentRegistry {
         self.tables.find(components)
     }
 
+    /// The table serving `components`, built on first ask.
+    ///
+    /// The tables come out of `self` for the call: building a column needs the registry that knows
+    /// how, and that is the same `self` the tables live in.
+    pub fn table_of(&mut self, components: &[StorageId]) -> TableId {
+        let mut tables = std::mem::take(&mut self.tables);
+        let table = tables.get_or_insert(self, components);
+        self.tables = tables;
+        table
+    }
+
+    /// Gives `entity` a row in the table serving `components`, with every value defaulted — the
+    /// caller writes them into the columns it just gained.
+    pub fn place(&mut self, entity: Entity, components: &[StorageId]) -> Option<TableRow> {
+        let table = self.table_of(components);
+        let row = self.tables.get_mut(table)?.push_entity(entity);
+        self.entity_at.insert(entity, (table, row));
+        Some(row)
+    }
+
+    /// Moves `entity` into the table serving `components`, carrying the values both tables hold and
+    /// destroying the ones it is losing.
+    ///
+    /// 🔴 A row that moves drags the last row into the hole it left, so the entity that was there
+    /// is re-filed here. Miss that and it reads another entity's components, silently.
+    pub fn relocate(&mut self, entity: Entity, components: &[StorageId]) -> Option<TableRow> {
+        let Some((source, row)) = self.location(entity) else {
+            return self.place(entity, components);
+        };
+        let target = self.table_of(components);
+        if source == target {
+            return Some(row);
+        }
+
+        let (landed, displaced) = self.tables.move_row(source, row, target);
+        if let Some(other) = displaced {
+            self.entity_at.insert(other, (source, row));
+        }
+        self.entity_at.insert(entity, (target, landed));
+        Some(landed)
+    }
+
+    /// Drops `entity`'s row and the values in it. `false` when it had none.
+    pub fn evict(&mut self, entity: Entity) -> bool {
+        let Some((table, row)) = self.entity_at.remove(&entity) else {
+            return false;
+        };
+        let Some(displaced) = self.tables.get_mut(table).map(|t| t.swap_remove(row)) else {
+            return false;
+        };
+        if let Some(other) = displaced {
+            self.entity_at.insert(other, (table, row));
+        }
+        true
+    }
+
     /// The table and row holding `entity`'s values, resolved for reading.
     fn at(&self, entity: Entity) -> Option<(&Table, TableRow)> {
         let (table, row) = self.location(entity)?;

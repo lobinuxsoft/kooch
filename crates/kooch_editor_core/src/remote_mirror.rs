@@ -3,7 +3,6 @@
 use std::collections::{HashMap, HashSet};
 
 use kooch_core::resource::Resources;
-use kooch_ecs::archetype_registry::ArchetypeRegistry;
 use kooch_ecs::commands::Commands;
 use kooch_ecs::component::{Component, ComponentRegistry};
 use kooch_ecs::dynamic_components::DynamicComponents;
@@ -342,12 +341,7 @@ fn remove_component(resources: &mut Resources, entity: Entity, type_name: &str) 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.remove_component(entity, &type_id);
     }
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let new_arch = archetypes.archetype_after_remove_dynamic(current, type_id);
-        archetypes.register_entity(entity, new_arch);
-    }
+    kooch_ecs::move_entity::lost(resources, entity, type_id);
 }
 
 /// Records which scene a mirrored entity belongs to, or that it belongs to none.
@@ -376,13 +370,7 @@ fn set_scene(resources: &mut Resources, entity: Entity, scene: Option<kooch_core
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                 registry.remove_component(entity, &type_id::<kooch_ecs::SceneMember>());
             }
-            if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-                && let Some(current) = archetypes.entity_archetype(entity)
-            {
-                let without = archetypes
-                    .archetype_after_remove_dynamic(current, type_id::<kooch_ecs::SceneMember>());
-                archetypes.register_entity(entity, without);
-            }
+            kooch_ecs::move_entity::lost(resources, entity, type_id::<kooch_ecs::SceneMember>());
         }
     }
 }
@@ -412,22 +400,12 @@ fn clear_parent(resources: &mut Resources, child: Entity) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
         registry.remove_component(child, &type_id::<Parent>());
     }
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(child)
-    {
-        let new_arch = archetypes.archetype_after_remove_dynamic(current, type_id::<Parent>());
-        archetypes.register_entity(child, new_arch);
-    }
+    kooch_ecs::move_entity::lost(resources, child, type_id::<Parent>());
 }
 
 /// Moves `entity` to the archetype it belongs in after adding `type_id`.
 fn update_archetype_add(resources: &mut Resources, entity: Entity, type_id: std::any::TypeId) {
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let new_arch = archetypes.archetype_after_add_dynamic(current, type_id);
-        archetypes.register_entity(entity, new_arch);
-    }
+    kooch_ecs::move_entity::gained(resources, entity, type_id);
 }
 
 fn type_id<T: 'static>() -> std::any::TypeId {

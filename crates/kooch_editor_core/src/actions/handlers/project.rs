@@ -232,9 +232,7 @@ pub(super) fn handle_close_project(resources: &mut Resources, undo_stack: &mut U
         if let Some(alloc) = resources.get_mut::<EntityAllocator>() {
             alloc.despawn(*entity);
         }
-        if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-            archetypes.unregister_entity(*entity);
-        }
+        kooch_ecs::move_entity::drop_entity(resources, *entity);
         if let Some(components) = resources.get_mut::<ComponentRegistry>() {
             components.remove_entity(*entity);
         }

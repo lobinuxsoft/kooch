@@ -103,13 +103,11 @@ pub(super) fn spawn_placeholder(resources: &mut Resources, name: String) -> crat
             storage.insert(entity, crate::name::Name { value: name });
         }
     }
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let next = archetypes
-            .archetype_after_add_dynamic(current, std::any::TypeId::of::<crate::name::Name>());
-        archetypes.register_entity(entity, next);
-    }
+    crate::move_entity::gained(
+        resources,
+        entity,
+        std::any::TypeId::of::<crate::name::Name>(),
+    );
     entity
 }
 
@@ -177,12 +175,7 @@ pub(super) fn add_to_archetype(
     entity: crate::entity::Entity,
     type_id: std::any::TypeId,
 ) {
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let next = archetypes.archetype_after_add_dynamic(current, type_id);
-        archetypes.register_entity(entity, next);
-    }
+    crate::move_entity::gained(resources, entity, type_id);
 }
 
 /// Fills in `Children` for a freshly spawned set from their `Parent`.
@@ -239,11 +232,5 @@ pub(super) fn tag_with_scene(
             storage.insert(entity, SceneMember::new(scene));
         }
     }
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>()
-        && let Some(current) = archetypes.entity_archetype(entity)
-    {
-        let next =
-            archetypes.archetype_after_add_dynamic(current, std::any::TypeId::of::<SceneMember>());
-        archetypes.register_entity(entity, next);
-    }
+    crate::move_entity::gained(resources, entity, std::any::TypeId::of::<SceneMember>());
 }

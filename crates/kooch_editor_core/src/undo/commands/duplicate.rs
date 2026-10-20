@@ -2,7 +2,6 @@
 
 use kooch_core::resource::Resources;
 use kooch_ecs::allocator::EntityAllocator;
-use kooch_ecs::archetype_registry::ArchetypeRegistry;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
 
@@ -50,9 +49,7 @@ impl EditorCommand for DuplicateCommand {
             if let Some(alloc) = resources.get_mut::<EntityAllocator>() {
                 alloc.despawn(entity);
             }
-            if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-                archetypes.unregister_entity(entity);
-            }
+            kooch_ecs::move_entity::drop_entity(resources, entity);
             if let Some(components) = resources.get_mut::<ComponentRegistry>() {
                 components.remove_entity(entity);
             }

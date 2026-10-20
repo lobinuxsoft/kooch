@@ -448,14 +448,9 @@ fn adopt_unowned(resources: &mut Resources, scene: Guid) {
             }
         }
     }
-    if let Some(archetypes) = resources.get_mut::<ArchetypeRegistry>() {
-        let member_tid = std::any::TypeId::of::<SceneMember>();
-        for &entity in &orphans {
-            if let Some(current) = archetypes.entity_archetype(entity) {
-                let next = archetypes.archetype_after_add_dynamic(current, member_tid);
-                archetypes.register_entity(entity, next);
-            }
-        }
+    let member_tid = std::any::TypeId::of::<SceneMember>();
+    for &entity in &orphans {
+        crate::move_entity::gained(resources, entity, member_tid);
     }
 }
 
