@@ -174,6 +174,14 @@ impl BlockMesh {
         if self.face_starts.is_empty() {
             self.face_starts.push(0);
         }
+        // The ids a mesh loaded without them answers with, made real, so the new face gets one
+        // past them instead of colliding with one (#1550).
+        while self.face_ids.len() < self.face_count() {
+            self.face_ids.push(self.face_ids.len() as u32);
+        }
+        let id = self.take_face_id();
+        self.face_ids.push(id);
+
         self.face_corners.extend_from_slice(corners);
         self.face_starts.push(self.face_corners.len() as u32);
         (self.face_starts.len() - 2) as u32

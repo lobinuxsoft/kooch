@@ -290,3 +290,42 @@ fn a_face_cannot_be_scaled_to_nothing() {
     let corner = cube.positions()[corners[0] as usize];
     assert!((corner - pivot).length() > 0.0, "the face collapsed");
 }
+
+/// A saved run points at an id, so an extrude must leave the ids already handed out alone.
+#[test]
+fn old_faces_keep_their_ids() {
+    let mut mesh = unit_cube();
+    let before: Vec<u32> = (0..mesh.face_count())
+        .filter_map(|face| mesh.face_id(face))
+        .collect();
+    mesh.extrude(&[0], glam::Vec3::Z).expect("extruded");
+
+    let after: Vec<u32> = (0..mesh.face_count())
+        .filter_map(|face| mesh.face_id(face))
+        .collect();
+    assert_eq!(
+        &after[..before.len()],
+        &before[..],
+        "the old faces kept theirs"
+    );
+    assert_eq!(mesh.face_of_id(before[0]), Some(0));
+    assert_eq!(after.len(), before.len() + 1, "the new face has one too");
+}
+
+/// A mesh saved before ids existed answers with the positions it had, and carries on past them.
+#[test]
+fn a_mesh_without_ids_keeps_working() {
+    let mut mesh = unit_cube();
+    mesh.face_ids.clear();
+    mesh.next_face_id = 0;
+    assert_eq!(mesh.face_id(2), Some(2));
+
+    mesh.extrude(&[0], glam::Vec3::Z).expect("extruded");
+    let ids: Vec<u32> = (0..mesh.face_count())
+        .filter_map(|face| mesh.face_id(face))
+        .collect();
+    let mut seen = ids.clone();
+    seen.sort_unstable();
+    seen.dedup();
+    assert_eq!(seen.len(), ids.len(), "a new face took an id somebody held");
+}

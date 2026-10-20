@@ -30,6 +30,16 @@ pub struct BlockMesh {
     #[serde(default)]
     #[reflect(hidden)]
     pub(crate) face_starts: Vec<u32>,
+    /// One id per face, in the same order. What a saved reference to a face points at, since the
+    /// position is only stable while nothing removes a face (#1550).
+    #[serde(default)]
+    #[reflect(hidden)]
+    pub(crate) face_ids: Vec<u32>,
+    /// The next id to hand out. Never reused: an id that comes back means a different face
+    /// answering to a reference that outlived its own.
+    #[serde(default)]
+    #[reflect(hidden)]
+    pub(crate) next_face_id: u32,
 }
 
 /// The eight corners of a cuboid, indexed so bit 0 is +X, bit 1 is +Y
@@ -76,6 +86,8 @@ impl BlockMesh {
         Self {
             positions,
             face_corners,
+            face_ids: (0..CUBOID_FACES.len() as u32).collect(),
+            next_face_id: CUBOID_FACES.len() as u32,
             face_starts,
         }
     }
@@ -100,6 +112,8 @@ impl BlockMesh {
         Some(Self {
             positions,
             face_corners,
+            face_ids: (0..faces.len() as u32).collect(),
+            next_face_id: faces.len() as u32,
             face_starts,
         })
     }
@@ -119,6 +133,37 @@ impl BlockMesh {
         let start = *self.face_starts.get(index)? as usize;
         let end = *self.face_starts.get(index + 1)? as usize;
         self.face_corners.get(start..end)
+    }
+
+    /// The stable id of face `index`, or `None` when the face does not exist.
+    ///
+    /// A mesh saved before ids existed has none. Its faces answer with their position, which is
+    /// the id they would have been given, so an old scene keeps working without a migration pass.
+    pub fn face_id(&self, index: usize) -> Option<u32> {
+        if index >= self.face_count() {
+            return None;
+        }
+        Some(
+            self.face_ids
+                .get(index)
+                .copied()
+                .unwrap_or_else(|| index as u32),
+        )
+    }
+
+    /// Where the face carrying `id` is now, or `None` when it is gone — a rebuilt shape keeps no
+    /// face it was not given.
+    pub fn face_of_id(&self, id: u32) -> Option<usize> {
+        (0..self.face_count()).find(|index| self.face_id(*index) == Some(id))
+    }
+
+    /// An id nothing has held, for a face about to be appended.
+    pub(crate) fn take_face_id(&mut self) -> u32 {
+        // `max` covers a mesh loaded without ids: its faces answer with their positions, so the
+        // counter has to start past them or the next face would collide with one.
+        let id = self.next_face_id.max(self.face_count() as u32);
+        self.next_face_id = id + 1;
+        id
     }
 
     /// Iterates every face's corners in storage order.
