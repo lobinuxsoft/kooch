@@ -1,6 +1,6 @@
 //! Component storage for the ECS.
 
-pub mod cpu_storage;
+pub(crate) mod cpu_storage;
 pub mod dynamic_types;
 pub mod locations;
 pub mod names;
@@ -11,7 +11,6 @@ pub mod storage_id;
 pub(crate) mod traits;
 pub mod view;
 
-pub use cpu_storage::ComponentStorage;
 pub use dynamic_types::{DynamicField, DynamicType, DynamicTypeRegistry};
 pub use locations::Locations;
 pub use names::{ComponentId, ComponentNames};

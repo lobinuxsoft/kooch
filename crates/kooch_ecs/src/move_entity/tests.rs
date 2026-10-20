@@ -12,8 +12,10 @@ use crate::component::{ComponentRegistry, StorageId};
 use crate::entity::Entity;
 use crate::storage::TableRow;
 
-#[derive(Debug, PartialEq)]
-struct Health(u32);
+#[derive(Debug, Default, PartialEq, crate::Reflect)]
+struct Health {
+    hp: u32,
+}
 impl Component for Health {}
 
 #[derive(Debug, PartialEq)]
@@ -27,7 +29,7 @@ fn entity(index: u32) -> Entity {
 fn world() -> Resources {
     let mut resources = Resources::new();
     let mut components = ComponentRegistry::new();
-    components.register_cpu::<Health>();
+    components.register_cpu_reflected::<Health>();
     components.register_cpu::<Speed>();
     resources.insert(components);
     resources.insert(ArchetypeRegistry::new());
@@ -76,7 +78,7 @@ fn row_of(resources: &Resources, held: Entity) -> Option<TableRow> {
 fn a_gained_value_reaches_its_column() {
     let mut resources = world();
     let held = spawn(&mut resources, 1);
-    give(&mut resources, held, Health(7));
+    give(&mut resources, held, Health { hp: 7 });
 
     let (health, _) = ids(&resources);
     let components = resources.get::<ComponentRegistry>().unwrap();
@@ -90,7 +92,7 @@ fn a_gained_value_reaches_its_column() {
 
     assert_eq!(
         unsafe { column.get::<Health>(row.index()) },
-        Some(&Health(7))
+        Some(&Health { hp: 7 })
     );
     assert_eq!(column.len(), 1, "the inbox was drained, not copied");
 }
@@ -100,8 +102,8 @@ fn the_archetype_hands_out_the_row() {
     let mut resources = world();
     let first = spawn(&mut resources, 1);
     let second = spawn(&mut resources, 2);
-    give(&mut resources, first, Health(1));
-    give(&mut resources, second, Health(2));
+    give(&mut resources, first, Health { hp: 1 });
+    give(&mut resources, second, Health { hp: 2 });
 
     assert_eq!(row_of(&resources, first), Some(TableRow(0)));
     assert_eq!(row_of(&resources, second), Some(TableRow(1)));
@@ -113,8 +115,8 @@ fn the_archetype_hands_out_the_row() {
 fn a_move_fixes_the_displaced() {
     let mut resources = world();
     let (first, second) = (spawn(&mut resources, 1), spawn(&mut resources, 2));
-    give(&mut resources, first, Health(1));
-    give(&mut resources, second, Health(2));
+    give(&mut resources, first, Health { hp: 1 });
+    give(&mut resources, second, Health { hp: 2 });
 
     // `first` leaves the health-only table, so `second` is dragged into row 0.
     give(&mut resources, first, Speed(9.0));
@@ -131,7 +133,7 @@ fn a_move_fixes_the_displaced() {
         .unwrap();
     assert_eq!(
         unsafe { column.get::<Health>(row.index()) },
-        Some(&Health(2))
+        Some(&Health { hp: 2 })
     );
 }
 
@@ -139,7 +141,7 @@ fn a_move_fixes_the_displaced() {
 fn a_move_carries_the_shared_values() {
     let mut resources = world();
     let held = spawn(&mut resources, 1);
-    give(&mut resources, held, Health(5));
+    give(&mut resources, held, Health { hp: 5 });
     give(&mut resources, held, Speed(2.5));
 
     let (health, speed) = ids(&resources);
@@ -149,7 +151,7 @@ fn a_move_carries_the_shared_values() {
 
     assert_eq!(
         unsafe { table.column(health).unwrap().get::<Health>(row.index()) },
-        Some(&Health(5)),
+        Some(&Health { hp: 5 }),
         "the value it already had came along"
     );
     assert_eq!(
@@ -163,7 +165,7 @@ fn a_move_carries_the_shared_values() {
 fn a_lost_component_loses_its_value() {
     let mut resources = world();
     let held = spawn(&mut resources, 1);
-    give(&mut resources, held, Health(5));
+    give(&mut resources, held, Health { hp: 5 });
     give(&mut resources, held, Speed(2.5));
 
     super::lost(&mut resources, held, TypeId::of::<Speed>());
@@ -185,7 +187,7 @@ fn a_lost_component_loses_its_value() {
 fn a_missing_value_cancels_the_move() {
     let mut resources = world();
     let held = spawn(&mut resources, 1);
-    give(&mut resources, held, Health(5));
+    give(&mut resources, held, Health { hp: 5 });
 
     // The archetype gains `Speed` with nothing written for it.
     let both = archetype_of(
@@ -198,7 +200,7 @@ fn a_missing_value_cancels_the_move() {
     let components = resources.get::<ComponentRegistry>().unwrap();
     assert_eq!(
         components.get_cpu::<Health>().unwrap().get(held),
-        Some(&Health(5)),
+        Some(&Health { hp: 5 }),
         "the value it did have went back to the inbox rather than being lost"
     );
 }
@@ -207,8 +209,8 @@ fn a_missing_value_cancels_the_move() {
 fn a_despawn_frees_the_row() {
     let mut resources = world();
     let (first, second) = (spawn(&mut resources, 1), spawn(&mut resources, 2));
-    give(&mut resources, first, Health(1));
-    give(&mut resources, second, Health(2));
+    give(&mut resources, first, Health { hp: 1 });
+    give(&mut resources, second, Health { hp: 2 });
 
     super::drop_entity(&mut resources, first);
 
@@ -226,8 +228,8 @@ fn one_set_gets_one_table() {
     let mut resources = world();
     let first = spawn(&mut resources, 1);
     let second = spawn(&mut resources, 2);
-    give(&mut resources, first, Health(1));
-    give(&mut resources, second, Health(2));
+    give(&mut resources, first, Health { hp: 1 });
+    give(&mut resources, second, Health { hp: 2 });
 
     let components = resources.get::<ComponentRegistry>().unwrap();
     assert_eq!(
@@ -258,7 +260,7 @@ fn the_funnel_keeps_the_rows_equal() {
     // built that way passes with the refiling deleted.
     for index in 1..6 {
         let held = spawn(&mut resources, index);
-        give(&mut resources, held, Health(index));
+        give(&mut resources, held, Health { hp: index });
     }
     give(&mut resources, entity(2), Speed(2.0));
     give(&mut resources, entity(1), Speed(1.0));
@@ -276,7 +278,7 @@ fn the_funnel_keeps_the_rows_equal() {
 fn filing_by_hand_breaks_them() {
     let mut resources = world();
     let held = spawn(&mut resources, 1);
-    give(&mut resources, held, Health(1));
+    give(&mut resources, held, Health { hp: 1 });
 
     let both = archetype_of(
         &mut resources,
@@ -300,7 +302,7 @@ fn filing_by_hand_breaks_them() {
 fn a_reused_index_starts_clean() {
     let mut resources = world();
     let first = spawn(&mut resources, 1);
-    give(&mut resources, first, Health(1));
+    give(&mut resources, first, Health { hp: 1 });
     super::drop_entity(&mut resources, first);
 
     let reused = Entity::new(1, 1);
@@ -311,4 +313,52 @@ fn a_reused_index_starts_clean() {
         None,
         "it read the generation before it"
     );
+}
+
+/// 🔴 What the editor's mirror does on **every** snapshot: default the component, then write the
+/// fields over it. Twice in a row has to leave one value, not two.
+#[test]
+fn a_reapplied_snapshot_keeps_one() {
+    let mut resources = world();
+    let held = spawn(&mut resources, 1);
+    give(&mut resources, held, Health { hp: 7 });
+    let health = TypeId::of::<Health>();
+
+    for pass in 0..3u32 {
+        let components = resources.get_mut::<ComponentRegistry>().unwrap();
+        components.insert_default_reflected(&health, held);
+        components
+            .reflect_set_field(&health, held, "hp", crate::ReflectValue::U32(pass + 10))
+            .expect("the field takes the write");
+
+        let view = components.get_cpu::<Health>().unwrap();
+        assert_eq!(view.iter().count(), 1, "pass {pass} left two values");
+        assert_eq!(
+            view.get(held).map(|h| h.hp),
+            Some(pass + 10),
+            "pass {pass} read a default instead of the value written"
+        );
+        assert!(
+            components.no_stale_inbox(),
+            "pass {pass} parked a second value"
+        );
+    }
+}
+
+/// 🔴 A default written over a value that already lives in a column lands in the inbox, and then
+/// the component has TWO values: the column's, and a default nobody asked for. `iter` yields the
+/// entity twice and whichever comes last wins — which is how every transform in a loaded scene
+/// ended up at the identity.
+#[test]
+fn a_second_default_does_not_double() {
+    let mut resources = world();
+    let held = spawn(&mut resources, 1);
+    give(&mut resources, held, Health { hp: 7 });
+
+    let components = resources.get_mut::<ComponentRegistry>().unwrap();
+    components.insert_default_reflected(&TypeId::of::<Health>(), held);
+
+    let view = components.get_cpu::<Health>().unwrap();
+    assert_eq!(view.len(), 1, "the component has two values");
+    assert_eq!(view.iter().count(), 1, "the walk sees the entity twice");
 }
