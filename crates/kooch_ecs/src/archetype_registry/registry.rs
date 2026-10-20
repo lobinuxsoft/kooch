@@ -86,12 +86,14 @@ impl ArchetypeRegistry {
 
     /// Returns the archetype for a component set, creating it if needed.
     pub fn get_or_create(&mut self, components: BTreeSet<TypeId>) -> ArchetypeId {
-        self.revision += 1;
         let id = ArchetypeId::from_components(&components);
 
-        self.archetypes
-            .entry(id)
-            .or_insert_with(|| Archetype::new(components));
+        // Only the `create` half is a change. This is a lookup on every call where the archetype
+        // already exists, and bumping there invalidated the editor's snapshot every frame (#1561).
+        if let std::collections::hash_map::Entry::Vacant(slot) = self.archetypes.entry(id) {
+            slot.insert(Archetype::new(components));
+            self.revision += 1;
+        }
 
         id
     }
@@ -108,8 +110,8 @@ impl ArchetypeRegistry {
 
     /// Moves an entity into the given archetype.
     pub fn register_entity(&mut self, entity: Entity, archetype_id: ArchetypeId) {
-        self.revision += 1;
         if let Some(old_id) = self.entity_archetype.get(&entity).copied() {
+            // Already there: nothing moved, so nothing watching this has to look again.
             if old_id == archetype_id {
                 return;
             }
@@ -123,14 +125,15 @@ impl ArchetypeRegistry {
         }
 
         self.entity_archetype.insert(entity, archetype_id);
+        self.revision += 1;
     }
 
     /// Removes an entity from its current archetype entirely.
     ///
     /// Returns the archetype it was removed from, or `None` if untracked.
     pub fn unregister_entity(&mut self, entity: Entity) -> Option<ArchetypeId> {
-        self.revision += 1;
         if let Some(old_id) = self.entity_archetype.remove(&entity) {
+            self.revision += 1;
             if let Some(archetype) = self.archetypes.get_mut(&old_id) {
                 archetype.remove_entity(entity);
             }
@@ -186,10 +189,10 @@ impl ArchetypeRegistry {
         archetype: ArchetypeId,
         components: &ComponentRegistry,
     ) -> Option<TableRow> {
-        self.revision += 1;
         let Some(row) = self.row_of(entity) else {
             return self.place(entity, archetype, components);
         };
+        self.revision += 1;
         let from = self.entity_archetype.get(&entity).copied()?;
         let source = self.table_of(from, components)?;
         let target = self.table_of(archetype, components)?;
@@ -315,7 +318,6 @@ impl ArchetypeRegistry {
     /// Removes empty archetypes (except `EMPTY`) and invalidates transition cache entries that
     /// reference them.
     pub fn gc_empty_archetypes(&mut self) -> usize {
-        self.revision += 1;
         let to_remove: Vec<ArchetypeId> = self
             .archetypes
             .iter()
@@ -324,6 +326,9 @@ impl ArchetypeRegistry {
             .collect();
 
         let count = to_remove.len();
+        if count > 0 {
+            self.revision += 1;
+        }
         for id in &to_remove {
             self.archetypes.remove(id);
         }
