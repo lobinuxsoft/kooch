@@ -338,10 +338,7 @@ fn remove_component(resources: &mut Resources, entity: Entity, type_name: &str) 
         return;
     };
 
-    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-        registry.remove_component(entity, &type_id);
-    }
-    kooch_ecs::move_entity::lost(resources, entity, type_id);
+    kooch_ecs::move_entity::take_by_id(resources, entity, type_id);
 }
 
 /// Records which scene a mirrored entity belongs to, or that it belongs to none.
@@ -367,10 +364,7 @@ fn set_scene(resources: &mut Resources, entity: Entity, scene: Option<kooch_core
             update_archetype_add(resources, entity, type_id::<kooch_ecs::SceneMember>());
         }
         None => {
-            if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-                registry.remove_component(entity, &type_id::<kooch_ecs::SceneMember>());
-            }
-            kooch_ecs::move_entity::lost(resources, entity, type_id::<kooch_ecs::SceneMember>());
+            kooch_ecs::move_entity::take::<kooch_ecs::SceneMember>(resources, entity);
         }
     }
 }
@@ -397,10 +391,7 @@ fn clear_parent(resources: &mut Resources, child: Entity) {
         // refresh for every root entity in the scene.
         return;
     }
-    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-        registry.remove_component(child, &type_id::<Parent>());
-    }
-    kooch_ecs::move_entity::lost(resources, child, type_id::<Parent>());
+    kooch_ecs::move_entity::take::<Parent>(resources, child);
 }
 
 /// Moves `entity` to the archetype it belongs in after adding `type_id`.

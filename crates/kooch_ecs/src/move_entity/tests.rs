@@ -362,3 +362,51 @@ fn a_second_default_does_not_double() {
     assert_eq!(view.len(), 1, "the component has two values");
     assert_eq!(view.iter().count(), 1, "the walk sees the entity twice");
 }
+
+/// 🔴 The shape `assign_missing_ids` uses: write a value for **every** entity first, then promote
+/// them one at a time. Each entity has to come back out with its own value.
+#[test]
+fn a_batch_of_inboxes_promotes_right() {
+    let mut resources = world();
+    let held: Vec<Entity> = (1..40).map(|i| spawn(&mut resources, i)).collect();
+
+    // Everyone settles into the speed-only table first, so the gains below leave from the middle.
+    for (i, &entity) in held.iter().enumerate() {
+        give(&mut resources, entity, Speed(i as f32));
+    }
+
+    {
+        let components = resources.get_mut::<ComponentRegistry>().unwrap();
+        let mut view = components.get_cpu_mut::<Health>().unwrap();
+        for (i, &entity) in held.iter().enumerate() {
+            view.insert(entity, Health { hp: i as u32 });
+        }
+    }
+    for &entity in &held {
+        super::gained(&mut resources, entity, TypeId::of::<Health>());
+    }
+
+    let components = resources.get::<ComponentRegistry>().unwrap();
+    let view = components.get_cpu::<Health>().unwrap();
+    let wrong: Vec<_> = held
+        .iter()
+        .enumerate()
+        .filter(|&(i, &entity)| view.get(entity).map(|h| h.hp) != Some(i as u32))
+        .map(|(i, &entity)| (i, entity, view.get(entity).map(|h| h.hp)))
+        .collect();
+    assert!(
+        wrong.is_empty(),
+        "entities read someone else's value: {wrong:?}"
+    );
+
+    let paired: Vec<(u32, u32)> = view.iter().map(|(e, h)| (e.index(), h.hp)).collect();
+    assert_eq!(
+        paired.len(),
+        held.len(),
+        "the walk lost or doubled entities"
+    );
+    for (index, hp) in paired {
+        assert_eq!(index, hp + 1, "the walk paired {index} with {hp}");
+    }
+    assert!(components.no_stale_inbox());
+}

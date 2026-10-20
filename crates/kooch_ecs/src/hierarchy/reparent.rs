@@ -120,10 +120,7 @@ pub fn reparent(resources: &mut Resources, entity: Entity, new_parent: Option<En
         }
         None => {
             let parent_tid = TypeId::of::<Parent>();
-            if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
-                registry.remove_component(entity, &parent_tid);
-            }
-            crate::move_entity::lost(resources, entity, parent_tid);
+            crate::move_entity::take_by_id(resources, entity, parent_tid);
         }
     }
 }
