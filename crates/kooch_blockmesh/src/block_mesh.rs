@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// The three lists are hidden from the Inspector: nobody edits five thousand vertices by hand, and
 /// a row per item every frame is what would make a blockout unusable. The gizmos are how they are
 /// edited.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, kooch_ecs::Reflect)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, kooch_ecs::Reflect)]
 pub struct BlockMesh {
     /// Corner positions, shared between the faces that meet there. The
     /// unit of editing: dragging a vertex moves one entry here and every
@@ -40,6 +40,24 @@ pub struct BlockMesh {
     #[serde(default)]
     #[reflect(hidden)]
     pub(crate) next_face_id: u32,
+}
+
+/// Two meshes are equal when they are the same **shape**.
+///
+/// 🔴 `face_ids` and `next_face_id` are identity, not geometry, and the one caller that asks whether
+/// a mesh changed means geometry (`sweep_sync`). Counting them made every scene written before
+/// #1565 differ from its own rebuild for ever — the ids are `#[serde(default)]`, so such a file
+/// loads with the lists empty — and the sweep re-sent its block on every load, marking a level
+/// unsaved that nobody had touched (#1570).
+///
+/// This also puts the three answers to "did this change?" back in agreement:
+/// [`revision_of`](crate::sync_blocks) and the editor's `digest` already hashed geometry alone.
+impl PartialEq for BlockMesh {
+    fn eq(&self, other: &Self) -> bool {
+        self.positions == other.positions
+            && self.face_corners == other.face_corners
+            && self.face_starts == other.face_starts
+    }
 }
 
 /// The eight corners of a cuboid, indexed so bit 0 is +X, bit 1 is +Y
