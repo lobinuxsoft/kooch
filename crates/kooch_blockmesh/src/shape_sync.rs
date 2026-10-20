@@ -20,8 +20,11 @@ pub struct BuiltShapes(HashMap<Entity, BlockShape>);
 /// Rebuilds every block whose shape parameters changed since they were last seen.
 ///
 /// A first sighting only records: the scene already holds that geometry, and rebuilding it on load
-/// would dirty every block in the level. A block edited by hand keeps its work by losing
-/// `BlockShape` altogether, which is what the editor's `bake` is for.
+/// would overwrite geometry the author had every right to leave diverged. A block edited by hand
+/// keeps its work by losing `BlockShape` altogether, which is what the editor's `bake` is for.
+///
+/// 🔴 Marks nothing unsaved. A derive correcting its own geometry is not an author's edit — the
+/// gesture that changed the parameters is, and that is the `SetField` that dirties the scene.
 pub fn sync_shapes(resources: &mut Resources) {
     let mut shaped = Vec::new();
     Query::<(&BlockShape, &Block)>::new(resources)
@@ -31,51 +34,27 @@ pub fn sync_shapes(resources: &mut Resources) {
     built
         .0
         .retain(|entity, _| shaped.iter().any(|(seen, ..)| seen == entity));
-    let mut rebuilt = Vec::new();
     for (entity, shape) in shaped {
         if built
             .0
             .insert(entity, shape)
             .is_some_and(|last| last != shape)
-            && set_mesh(resources, entity, &shape)
         {
-            rebuilt.push(entity);
+            set_mesh(resources, entity, &shape);
         }
     }
     resources.insert(built);
-    for entity in rebuilt {
-        touch(resources, entity);
-    }
 }
 
-/// Writes the built geometry onto the block. `false` when the entity has no `Block` to write.
-fn set_mesh(resources: &mut Resources, entity: Entity, shape: &BlockShape) -> bool {
+/// Writes the built geometry onto the block. Quiet when the entity has no `Block` to write.
+fn set_mesh(resources: &mut Resources, entity: Entity, shape: &BlockShape) {
     let mesh = shape.build();
-    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
-        return false;
-    };
-    let Some(block) = registry
-        .get_cpu_mut::<Block>()
-        .and_then(|storage| storage.get_mut(entity))
-    else {
-        return false;
-    };
-    block.mesh = mesh;
-    true
-}
-
-/// Marks the rebuilt block's scene unsaved. Only ever reached when the parameters changed, which is
-/// an authored edit — a scene that loads and derives nothing stays clean.
-fn touch(resources: &mut Resources, entity: Entity) {
-    let Some(scene) = resources
-        .get::<ComponentRegistry>()
-        .and_then(|registry| registry.get_cpu::<kooch_ecs::SceneMember>()?.get(entity))
-        .map(|member| member.scene)
-    else {
-        return;
-    };
-    if let Some(manager) = resources.get_mut::<kooch_ecs::SceneManager>() {
-        manager.mark_scene_dirty(scene);
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>()
+        && let Some(block) = registry
+            .get_cpu_mut::<Block>()
+            .and_then(|storage| storage.get_mut(entity))
+    {
+        block.mesh = mesh;
     }
 }
 
