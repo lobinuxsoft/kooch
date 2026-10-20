@@ -42,11 +42,11 @@ pub(super) fn apply_viewport_edits(
     // Before anything can drag: a painted element selection under a gated handle looks grabbable
     // and records nothing.
     crate::block_edit::drop_selection_unless_editing(resources, overlay.element_mode, playing);
-    // A shape parameter edited in the Inspector reshapes its block this frame.
+    // 🔴 A shape parameter no longer reshapes its block here: `kooch_blockmesh::sync_shapes` does
+    // it in `PrePhysics`, on whichever side owns the world (#1567).
     if !playing {
-        crate::block_edit::shape_sync::sync_block_shapes(resources);
-        // Beside it and gated the same way: during Play the project's own world is the truth, and
-        // an editor rebuilding geometry over it would be showing its own answer (#1482).
+        // Gated because during Play the project's own world is the truth, and an editor rebuilding
+        // geometry over it would be showing its own answer (#1482).
         crate::block_edit::sweep_sync::sync_sweeps(resources, actions);
         // After it: a sweep asks for its block components here, and the renderer they create has
         // no material until something gives it one (#1534). The entity it just asked for does not

@@ -13,6 +13,7 @@ mod extrude;
 mod generate;
 mod pick;
 mod plugin;
+mod shape_sync;
 mod shapes;
 mod sweep;
 mod sync;
@@ -28,6 +29,7 @@ pub use deform::{
 pub use extrude::Extruded;
 pub use pick::{Hit, Screen, edge_at, face_at, vertex_at};
 pub use plugin::BlockPlugin;
+pub use shape_sync::{BuiltShapes, sync_shapes};
 pub use shapes::Shape;
 pub use sweep::{
     PROFILE_CHOICES, PROFILE_ROUND, PROFILE_SQUARE, PROFILE_STEPS, SplineSweep, steps, sweep,
