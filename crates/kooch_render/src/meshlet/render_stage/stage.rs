@@ -83,6 +83,9 @@ pub struct MeshletRenderStage {
     /// [`Self::pool_dirty`] is set, which happens whenever [`Self::ensure_gpu_mesh`] introduces a
     /// new GUID. `None` until the first registration.
     pub(super) gpu_pool: Option<GpuGlobalMeshPool>,
+    /// The pool bind group, kept across frames and rebuilt only when `sync` replaced one of the
+    /// buffers it reads (#1558). `None` until the first frame that has a pool to bind.
+    pub(super) pool_binding: Option<crate::meshlet::gpu_meshlet::PoolBinding>,
     /// `true` when the CPU pool has changed since the last
     /// `gpu_pool` rebuild. Cheap to check before each frame.
     pub(super) pool_dirty: bool,

@@ -121,6 +121,7 @@ impl MeshletRenderStage {
             moved_casters: Vec::new(),
             point_cube_cache: Vec::new(),
             gpu_pool: None,
+            pool_binding: None,
             pool_dirty: false,
             unresolved: std::collections::HashSet::new(),
             meshlet_bgl,

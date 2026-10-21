@@ -284,6 +284,22 @@ show this — the self-time column in the tree is what makes it obvious.
 - ⚠️ **`frame` appears twice per editor frame**: the View and Game panels
   each render the scene, with their own cull and shadow passes.
 
+## The VRAM figure counts buffers, not pool contents
+
+`EngineVramTracker` is told about the mesh pool in exactly one place: where
+`GpuGlobalMeshPool::sync` creates or replaces a buffer. It reports
+`GpuGlobalMeshPool::bytes()` — the six buffers' own sizes — and not
+`GlobalMeshPool::byte_size()`, the CPU pool's contents.
+
+The two differ, in both directions. The buffers carry 2x growth slack and never
+shrink, so they are larger than the pool; and the pool reuses the ranges a
+released mesh left (#1087), so its size falls while nothing is freed on the GPU.
+Registering a mesh says nothing to the tracker: at that point no VRAM has moved.
+
+🔴 Until #1558 the pool reported CPU bytes through `add(saturating_sub(..))` on
+every edit, so the figure only ever climbed — an engine that looked like it
+leaked while the shrinking half went unreported.
+
 ## Profiling the game, which is the point of all of this
 
 Everything above measures the editor: this machine, plugged in, drawing a

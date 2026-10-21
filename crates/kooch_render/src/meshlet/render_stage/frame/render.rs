@@ -4,7 +4,7 @@ use kooch_core::resource::Resources;
 
 use crate::meshlet::cull::CullParams;
 use crate::meshlet::debug::{MeshletDebugMode, MeshletLodSettings};
-use crate::meshlet::gpu_meshlet::pool_meshlet_bind_group;
+use crate::meshlet::gpu_meshlet::{PoolBinding, PoolKeys, pool_meshlet_bind_group};
 use crate::meshlet::scene::SceneCullParams;
 use crate::view_camera::ViewCamera;
 
@@ -31,9 +31,19 @@ impl MeshletRenderStage {
             if self.pipeline.registered_count() == 0 {
                 return MeshletRenderStats::default();
             }
+            let before = self.gpu_pool.as_ref().map_or(0, |gpu| gpu.bytes());
             match self.gpu_pool.as_mut() {
                 Some(gpu) => gpu.sync(device, queue, self.pipeline.pool_mut()),
                 None => self.gpu_pool = Some(self.pipeline.pool_mut().upload(device, queue)),
+            }
+            // The mirror's own buffers are the pool's only VRAM, and this is the only place they
+            // are created or replaced — so the tracker is told here and nowhere else (#1558).
+            if let Some(tracker) = &self.vram_tracker {
+                let after = self.gpu_pool.as_ref().map_or(0, |gpu| gpu.bytes());
+                match after.checked_sub(before) {
+                    Some(grown) => tracker.add(grown),
+                    None => tracker.sub(before - after),
+                }
             }
             self.pool_dirty = false;
             tracing::debug!(
@@ -57,6 +67,28 @@ impl MeshletRenderStage {
         aspect: f32,
     ) -> MeshletRenderStats {
         self.render_with_assets(self.primary, device, queue, resources, camera, aspect)
+    }
+
+    /// The pool bind group, built once and kept until `sync` replaces a buffer it reads.
+    ///
+    /// 🔴 Returns a clone, not a borrow: the group is an `Arc` handle, and the frame path below
+    /// needs `&mut self` for the rest of the frame.
+    fn pool_binding(&mut self, device: &wgpu::Device) -> wgpu::BindGroup {
+        let pool = self.gpu_pool.as_ref().expect("checked above");
+        let keys = PoolKeys::of(pool);
+        if !self
+            .pool_binding
+            .as_ref()
+            .is_some_and(|held| held.keys == keys)
+        {
+            let group = pool_meshlet_bind_group(device, &self.meshlet_bgl, pool);
+            self.pool_binding = Some(PoolBinding { group, keys });
+        }
+        self.pool_binding
+            .as_ref()
+            .expect("just built")
+            .group
+            .clone()
     }
 
     /// Records + submits one frame against the current `gpu_pool`. Caller must have populated the
@@ -352,10 +384,7 @@ impl MeshletRenderStage {
         // Build the meshlet + material bind groups. The `gpu_pool`
         // re-borrow lives only as long as `meshlet_bg` construction;
         // after that the path methods own &mut self exclusively.
-        let meshlet_bg = {
-            let gpu_pool = self.gpu_pool.as_ref().expect("checked above");
-            pool_meshlet_bind_group(device, &self.meshlet_bgl, gpu_pool)
-        };
+        let meshlet_bg = self.pool_binding(device);
         // `MaterialPipeline` is the single source of truth for the material pool — see #447.
         let material_bg = resources
             .get::<crate::material::MaterialPipeline>()

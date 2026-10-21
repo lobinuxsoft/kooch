@@ -164,6 +164,19 @@ pub struct GpuGlobalMeshPool {
 }
 
 impl GpuGlobalMeshPool {
+    /// What the six buffers actually hold, which is what a VRAM figure means.
+    ///
+    /// 🔴 Not `GlobalMeshPool::byte_size`: the buffers carry `GROWTH` slack and never shrink, so
+    /// the CPU pool's size is neither what was allocated nor what is still held.
+    pub fn bytes(&self) -> u64 {
+        self.mesh_descriptors.size()
+            + self.meshlets.size()
+            + self.vertices.size()
+            + self.meshlet_vertices.size()
+            + self.meshlet_triangles.size()
+            + self.mesh_bounds.size()
+    }
+
     /// Bind-group layout: 5 storage buffers, all read-only, all visible to compute + vertex stages
     /// so the same bind group can drive cull + vbuf rasterization once the pool variant of those
     /// shaders lands.

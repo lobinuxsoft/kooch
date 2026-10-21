@@ -48,7 +48,8 @@ pub use dispatcher::{
 pub use drawer::MeshletDrawer;
 pub use generated::GeneratedMeshes;
 pub use gpu_meshlet::{
-    GpuMeshletMesh, binding, meshlet_bind_group, meshlet_bind_group_layout, pool_meshlet_bind_group,
+    GpuMeshletMesh, PoolBinding, PoolKeys, binding, meshlet_bind_group, meshlet_bind_group_layout,
+    pool_meshlet_bind_group,
 };
 pub use gpu_timers::MeshletGpuTimers;
 pub use loader::MeshletMeshLoader;

@@ -15,35 +15,23 @@ impl MeshletRenderStage {
     /// no-op.
     pub fn ensure_gpu_mesh(&mut self, _device: &wgpu::Device, guid: Guid, mesh: &MeshletMesh) {
         let before = self.pipeline.registered_count();
-        let bytes_before = self.pipeline.pool().byte_size();
         self.pipeline.register_mesh(guid, mesh);
-        let after = self.pipeline.registered_count();
-        if after > before {
+        if self.pipeline.registered_count() > before {
             self.pool_dirty = true;
-            // engine VRAM tracker (when wired). Idempotent calls to register_mesh with the same
-            // GUID return the cached handle without growing the pool, so `bytes_after ==
-            // bytes_before` and the diff is zero.
-            if let Some(tracker) = &self.vram_tracker {
-                let bytes_after = self.pipeline.pool().byte_size();
-                tracker.add(bytes_after.saturating_sub(bytes_before));
-            }
         }
     }
 
     /// Registers `mesh` under `guid`, replacing whatever was there, and marks the pool for a
     /// rebuild.
+    ///
+    /// 🔴 Says nothing to the VRAM tracker. The CPU pool reuses the ranges a released mesh left
+    /// (#1087), so it both grows and shrinks, and either way these bytes are not on the GPU yet —
+    /// the mirror's `sync` is what allocates, and what reports.
     pub fn replace_gpu_mesh(&mut self, guid: Guid, mesh: &MeshletMesh) {
-        let bytes_before = self.pipeline.pool().byte_size();
         self.pipeline.replace_mesh(guid, mesh);
         // Unconditionally: the pool's contents changed even when its
         // count did not, and the GPU mirror is what draws.
         self.pool_dirty = true;
-        // The growth, not the total — the pool only ever appends, so
-        // the difference is what this call actually cost.
-        if let Some(tracker) = &self.vram_tracker {
-            let bytes_after = self.pipeline.pool().byte_size();
-            tracker.add(bytes_after.saturating_sub(bytes_before));
-        }
     }
 
     /// Number of distinct meshlet meshes currently registered in the
