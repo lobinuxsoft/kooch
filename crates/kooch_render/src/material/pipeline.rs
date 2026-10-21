@@ -92,6 +92,10 @@ pub struct MaterialPipeline {
     capacity: u32,
 }
 
+/// Frames a texture may go unasked before it is dropped from the pool (#1589). Matches the mesh
+/// sweep: a second of nothing drawing with it is a decision, not a camera wobble.
+pub const TEXTURE_MAX_AGE: u32 = 60;
+
 impl MaterialPipeline {
     /// Builds a fresh pipeline with `DEFAULT_CAPACITY` slots and the fallback material
     /// pre-installed at slot 0. Uploads `capacity` copies of the white-diffuse default to the GPU
@@ -442,6 +446,54 @@ impl MaterialPipeline {
         }
     }
 
+    /// Which materials something is drawing with this frame.
+    ///
+    /// 🔴 Two sources, and both have to be here or a texture is evicted mid-frame: a visible
+    /// `MeshRenderer`, and a `PostProcess` effect that is on and weighted above zero. The
+    /// AssetDatabase is NOT a source — it lists every material file in the project, drawn or not.
+    fn drawn_materials(resources: &Resources) -> HashSet<Guid> {
+        use kooch_ecs::mesh_renderer::MeshRenderer;
+        use kooch_ecs::post_process::PostProcess;
+        use kooch_ecs::query::Query;
+
+        let mut asked = HashSet::new();
+        Query::<&MeshRenderer>::new(resources).for_each(|renderer| {
+            if let (true, Some(material)) = (renderer.visible, renderer.material) {
+                asked.insert(material);
+            }
+        });
+        Query::<&PostProcess>::new(resources).for_each(|post| {
+            if !post.enabled {
+                return;
+            }
+            asked.extend(
+                post.effects
+                    .iter()
+                    .filter_map(kooch_ecs::post_process::PostEffect::drawn),
+            );
+        });
+        asked
+    }
+
+    /// Every texture GUID the drawn materials name.
+    fn asked_textures(snapshots: &[(Guid, Material)], drawn: &HashSet<Guid>) -> HashSet<Guid> {
+        let mut asked = HashSet::new();
+        for (guid, mat) in snapshots.iter().filter(|(guid, _)| drawn.contains(guid)) {
+            let _ = guid;
+            let values = mat.values.values().filter_map(|value| match value {
+                ParamValue::Texture(guid) => *guid,
+                ParamValue::Number(_) => None,
+            });
+            asked.extend(
+                [mat.albedo, mat.normal, mat.metal_roughness]
+                    .into_iter()
+                    .flatten()
+                    .chain(values),
+            );
+        }
+        asked
+    }
+
     /// Loads every not-yet-uploaded texture GUID referenced by `snapshots` through the
     /// [`AssetServer`] and registers the decoded [`Image`]s in the [`MaterialTexturePool`].
     /// Deduplicates against both the current snapshot set and textures already resident.
@@ -474,23 +526,33 @@ impl MaterialPipeline {
                 self.texture_pool.evict(guid);
             }
         }
-        let mut pending: Vec<Guid> = Vec::new();
-        let mut seen: HashSet<Guid> = HashSet::new();
-        for (_, mat) in snapshots {
-            let values = mat.values.values().filter_map(|value| match value {
-                ParamValue::Texture(guid) => *guid,
-                ParamValue::Number(_) => None,
-            });
-            for guid in [mat.albedo, mat.normal, mat.metal_roughness]
-                .into_iter()
-                .flatten()
-                .chain(values)
-            {
-                if !self.texture_pool.contains(guid) && seen.insert(guid) {
-                    pending.push(guid);
+        // 🔴 Demand, not inventory (#1589). This used to walk every material in the project and
+        // upload its textures, so texture VRAM was a function of the project rather than the
+        // scene. Now only what something is drawing with is uploaded — and ageing the rest would
+        // be pointless without this half, because the next sync would re-upload whatever it evicted.
+        let drawn = Self::drawn_materials(resources);
+        let asked = Self::asked_textures(snapshots, &drawn);
+        let evicted = self.texture_pool.sweep(&asked, TEXTURE_MAX_AGE);
+        if !evicted.is_empty() {
+            // The upload is the VRAM half; the decoded `Image` is the RAM one.
+            if let Some(mut server) = resources.remove::<AssetServer>() {
+                for guid in &evicted {
+                    server.unload_by_guid::<Image>(*guid, resources);
                 }
+                resources.insert(server);
             }
+            tracing::debug!(
+                target: "kooch_render::material::sync",
+                evicted = evicted.len(),
+                live = self.texture_pool.len(),
+                "evicted textures nothing is drawing with",
+            );
         }
+        let pending: Vec<Guid> = asked
+            .iter()
+            .copied()
+            .filter(|guid| !self.texture_pool.contains(*guid))
+            .collect();
         if pending.is_empty() {
             return;
         }

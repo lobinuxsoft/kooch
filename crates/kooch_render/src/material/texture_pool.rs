@@ -1,7 +1,7 @@
 //! `MaterialTexturePool` — GPU-resident texture store keyed by asset [`Guid`], plus the
 //! per-material bind group the two-pass material shader consumes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use kooch_core::Guid;
 
@@ -19,6 +19,10 @@ pub struct MaterialTexturePool {
     fallback_white: GpuTexture,
     fallback_black: GpuTexture,
     fallback_normal: GpuTexture,
+    /// The frame each uploaded texture was last asked for. See [`Self::sweep`].
+    asked: HashMap<Guid, u32>,
+    /// Counts up for the life of the process, bumped once per sweep.
+    frame: u32,
     sampler: wgpu::Sampler,
     anisotropy: u16,
     bgl: wgpu::BindGroupLayout,
@@ -47,6 +51,8 @@ impl MaterialTexturePool {
         let bgl = Self::bind_group_layout(device);
 
         Self {
+            asked: HashMap::new(),
+            frame: 0,
             textures: HashMap::new(),
             fallback_white,
             fallback_black,
@@ -116,6 +122,32 @@ impl MaterialTexturePool {
     ) {
         let texture = GpuTexture::upload_with(device, queue, image, &mut self.mipmapper);
         self.textures.insert(guid, texture);
+    }
+
+    /// Records this frame's ask and drops whatever has gone unasked for `max_age` frames.
+    /// Returns the GUIDs dropped, so the caller can drop their decoded `Image`s too.
+    ///
+    /// 🔴 The age is what stops a texture being dropped and re-decoded every time a renderer
+    /// blinks — the same defence the mesh sweep and the shadow page pool rely on.
+    pub fn sweep(&mut self, asked: &HashSet<Guid>, max_age: u32) -> Vec<Guid> {
+        self.frame = self.frame.wrapping_add(1);
+        for guid in asked {
+            self.asked.insert(*guid, self.frame);
+        }
+        let stale: Vec<Guid> = self
+            .textures
+            .keys()
+            .filter(|guid| {
+                let last = self.asked.get(*guid).copied().unwrap_or(0);
+                self.frame.saturating_sub(last) > max_age
+            })
+            .copied()
+            .collect();
+        for guid in &stale {
+            self.textures.remove(guid);
+            self.asked.remove(guid);
+        }
+        stale
     }
 
     /// Drops the texture for `guid`, so the next sync uploads it again.

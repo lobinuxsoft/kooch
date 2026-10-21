@@ -340,13 +340,16 @@ fn an_unasked_mesh_is_released() {
     let held = pipeline.pool().byte_size();
 
     // Asked once, then never again. Short of the age it stays.
-    assert_eq!(pipeline.sweep(&[guid], 4), 0);
+    assert!(pipeline.sweep(&[guid], 4).is_empty());
     for _ in 0..4 {
-        assert_eq!(pipeline.sweep(&[], 4), 0, "released before its age was up");
+        assert!(
+            pipeline.sweep(&[], 4).is_empty(),
+            "released before its age was up"
+        );
     }
     assert_eq!(pipeline.registered_count(), 1);
 
-    assert_eq!(pipeline.sweep(&[], 4), 1);
+    assert_eq!(pipeline.sweep(&[], 4), vec![guid]);
     assert_eq!(pipeline.registered_count(), 0);
     assert!(
         pipeline.dead_bytes() >= held,
@@ -362,7 +365,7 @@ fn an_asked_mesh_stays() {
     let mut pipeline = MeshletPipeline::new();
     pipeline.register_mesh(guid, &mesh);
     for _ in 0..200 {
-        assert_eq!(pipeline.sweep(&[guid], 4), 0);
+        assert!(pipeline.sweep(&[guid], 4).is_empty());
     }
     assert!(pipeline.lookup(guid).is_some());
 }

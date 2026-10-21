@@ -97,11 +97,19 @@ impl MeshletRenderStage {
         let released = self
             .pipeline
             .sweep(&referenced, crate::meshlet::MESH_MAX_AGE);
-        if released > 0 {
+        if !released.is_empty() {
             self.pool_dirty = true;
+            // The pool slot is the GPU half; `Assets<MeshletMesh>` holds a second full copy in
+            // RAM, and the server's path cache would hand it back on the next load.
+            if let Some(mut server) = resources.remove::<AssetServer>() {
+                for guid in &released {
+                    server.unload_by_guid::<MeshletMesh>(*guid, resources);
+                }
+                resources.insert(server);
+            }
             tracing::debug!(
                 target: "kooch_render::meshlet::sync",
-                released,
+                released = released.len(),
                 live = self.pipeline.registered_count(),
                 "released meshes nothing asked to draw",
             );

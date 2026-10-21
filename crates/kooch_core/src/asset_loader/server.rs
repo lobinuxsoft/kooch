@@ -166,6 +166,29 @@ impl AssetServer {
         self.load::<T>(path, resources)
     }
 
+    /// Drops the loaded asset for `guid` and forgets its cached handle, so a later load re-reads
+    /// it from disk. Whether anything was holding it.
+    ///
+    /// 🔴 The caller must have stopped using the handle. Nothing reference-counts an asset, so
+    /// this is only safe from a sweep that has already established nothing is asking for it.
+    pub fn unload_by_guid<T: Asset>(&mut self, guid: Guid, resources: &mut Resources) -> bool {
+        let Some(path) = resources
+            .get::<AssetDatabase>()
+            .and_then(|db| db.entry(guid))
+            .map(|entry| entry.path.clone())
+        else {
+            return false;
+        };
+        let Some(handle) = self.get_cached::<T>(&path) else {
+            return false;
+        };
+        self.forget::<T>(&path);
+        resources
+            .get_mut::<crate::assets::Assets<T>>()
+            .and_then(|assets| assets.remove(handle))
+            .is_some()
+    }
+
     /// The asset's bytes, from a mounted pack or from disk, with no loader involved.
     pub fn read_bytes(&mut self, path: impl AsRef<Path>) -> AssetResult<Vec<u8>> {
         let path = self.resolve_path(path.as_ref());

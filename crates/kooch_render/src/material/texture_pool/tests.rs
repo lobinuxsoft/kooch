@@ -79,3 +79,32 @@ fn material_bind_group_builds_with_and_without_textures() {
     // Unregistered GUID silently falls back.
     let _bg_missing = pool.material_bind_group(&device, &slots(Some(Guid::new_v4())));
 }
+
+/// A texture nothing is drawing with is dropped, but only after it has stopped being asked for
+/// (#1589).
+#[test]
+fn an_unasked_texture_is_dropped() {
+    let Some((device, queue)) = try_acquire_device() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    let mut pool = MaterialTexturePool::new(&device, &queue);
+    let guid = Guid::new_v4();
+    pool.register(&device, &queue, guid, &checker(ImageFormat::Rgba8UnormSrgb));
+    let held = pool.device_bytes();
+
+    let asked: HashSet<Guid> = [guid].into_iter().collect();
+    assert!(pool.sweep(&asked, 4).is_empty());
+    for _ in 0..4 {
+        assert!(
+            pool.sweep(&HashSet::new(), 4).is_empty(),
+            "dropped before its age was up"
+        );
+    }
+    assert_eq!(pool.sweep(&HashSet::new(), 4), vec![guid]);
+    assert!(!pool.contains(guid));
+    assert!(
+        pool.device_bytes() < held,
+        "the texture left the map without its bytes going with it",
+    );
+}
