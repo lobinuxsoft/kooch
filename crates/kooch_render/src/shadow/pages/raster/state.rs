@@ -4,8 +4,17 @@ use super::*;
 
 impl PageRasterizer {
     /// Threads the compaction needs: one per entry of one view's span.
-    pub(super) fn compact_threads(&self, light_count: u32) -> u32 {
-        let slots = super::mark::padded_lights(light_count) + 1;
+    /// Threads the compaction walks: one per entry of this view's span.
+    ///
+    /// 🔴 Capped by the same `slots_that_fit` the TABLE was sized with. Sized from the raw light
+    /// count instead, this walked a span the table does not have — the pages past the cap read and
+    /// wrote clamped garbage, and at 3 008 lights the dispatch itself was 82 176 workgroups against
+    /// a 65 535 limit (#1579).
+    pub(super) fn compact_threads(&self, device: &wgpu::Device, light_count: u32) -> u32 {
+        let views = self.pool.view_count();
+        let room = super::mark::slots_that_fit(device, self.config, self.clipmap, views);
+        let asked = super::mark::padded_lights(light_count) + 1;
+        let slots = room.map_or(asked, |room| asked.min(room));
         u32::try_from(super::mark::span(self.config, self.clipmap, slots)).unwrap_or(u32::MAX)
     }
 
@@ -261,7 +270,9 @@ impl PageRasterizer {
         });
         pass.set_pipeline(&self.compact);
         pass.set_bind_group(0, &bind_group, &offset);
-        pass.dispatch_workgroups(self.compact_threads(lamps.len() as u32).div_ceil(64), 1, 1);
+        let (x, y) =
+            kooch_core::gpu::tiled_workgroups(self.compact_threads(device, lamps.len() as u32), 64);
+        pass.dispatch_workgroups(x, y, 1);
         pass.set_pipeline(&self.expand_args_pass);
         pass.dispatch_workgroups(self.buckets().div_ceil(64), 1, 1);
         // Without a pair list this only fixes the vertex count, which is

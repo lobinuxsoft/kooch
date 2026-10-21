@@ -216,15 +216,18 @@ impl PageMarker {
             // The seat passes (#942), in an order that is the algorithm: rank the demand, clear
             // what the plan does not fund, seat what it does. Dispatch boundaries are the barriers
             // between them.
-            let entries = u32::try_from(view_span)
-                .unwrap_or(u32::MAX)
-                .div_ceil(GROUP * GROUP);
+            // 🔴 Folded past 65 535 workgroups, like the cull's. A span this wide is reachable
+            // since the table split doubled the lights that fit (#1579).
+            let (seats_x, seats_y) = kooch_core::gpu::tiled_workgroups(
+                u32::try_from(view_span).unwrap_or(u32::MAX),
+                GROUP * GROUP,
+            );
             pass.set_pipeline(&self.plan);
             pass.dispatch_workgroups(1, 1, 1);
             pass.set_pipeline(&self.preempt);
-            pass.dispatch_workgroups(entries, 1, 1);
+            pass.dispatch_workgroups(seats_x, seats_y, 1);
             pass.set_pipeline(&self.adopt);
-            pass.dispatch_workgroups(entries, 1, 1);
+            pass.dispatch_workgroups(seats_x, seats_y, 1);
             pass.set_pipeline(&self.bias);
             pass.dispatch_workgroups(1, 1, 1);
             // After the marking has filled the bitmap; one group covers

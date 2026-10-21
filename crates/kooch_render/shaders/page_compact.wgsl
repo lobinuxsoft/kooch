@@ -38,14 +38,21 @@ const COMPACT_GROUP: u32 = 64u;
 const EXPAND_GROUP: u32 = 64u;
 
 @compute @workgroup_size(COMPACT_GROUP, 1, 1)
-fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn cs_compact(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
     // One thread per entry of THIS VIEW'S span. The table is flat and a view's entries are a
     // contiguous run, so the other cameras' pages are outside the dispatch rather than a
     // decode-and-skip — which is also why the "belongs to another view" counter is gone.
-    if gid.x >= raster.views.y {
+    //
+    // 🔴 Folded past 65 535 workgroups, the same shape the cull uses: at 3 008 lights this span was
+    // 82 176 workgroups against a 65 535 limit (#1579).
+    let within = gid.y * (groups.x * COMPACT_GROUP) + gid.x;
+    if within >= raster.views.y {
         return;
     }
-    let entry = raster.views.x * raster.views.y + gid.x;
+    let entry = raster.views.x * raster.views.y + within;
     let stored = table_read[entry * PAGE_READ + PAGE_SLOT];
     if stored == PAGE_ABSENT {
         return;
@@ -157,11 +164,16 @@ fn cs_compact(@builtin(global_invocation_id) gid: vec3<u32>) {
 // and the one it casts now (new bounds) both have to redraw. One thread per entry of THIS VIEW's
 // span, a loop over the handful of moved spheres inside it.
 @compute @workgroup_size(COMPACT_GROUP, 1, 1)
-fn cs_invalidate(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if gid.x >= raster.views.y {
+fn cs_invalidate(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    // Folded past 65 535 workgroups, the same shape the cull uses (#1579).
+    let within = gid.y * (groups.x * COMPACT_GROUP) + gid.x;
+    if within >= raster.views.y {
         return;
     }
-    let entry = raster.views.x * raster.views.y + gid.x;
+    let entry = raster.views.x * raster.views.y + within;
     if table_read[entry * PAGE_READ + PAGE_SLOT] == PAGE_ABSENT {
         return;
     }

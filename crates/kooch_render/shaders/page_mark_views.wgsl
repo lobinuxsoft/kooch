@@ -392,8 +392,12 @@ fn plan_view() {
 
 // Clears the seats the plan did not fund.
 @compute @workgroup_size(MARK_GROUP * MARK_GROUP, 1, 1)
-fn preempt_view(@builtin(global_invocation_id) id: vec3<u32>) {
-    let within = id.x;
+fn preempt_view(
+    @builtin(global_invocation_id) id: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    // Folded past 65 535 workgroups, the same shape the cull uses (#1579).
+    let within = id.y * (groups.x * MARK_GROUP * MARK_GROUP) + id.x;
     if within >= view_span() { return; }
     let entry = view_base() + within;
     let stored = atomicLoad(&table_read[entry * PAGE_READ + PAGE_SLOT]);
@@ -426,8 +430,12 @@ fn preempt_view(@builtin(global_invocation_id) id: vec3<u32>) {
 // competes for what the residents left of the quota, and everything past it is DENIED and counted —
 // the panel's answer to who the slice turned away.
 @compute @workgroup_size(MARK_GROUP * MARK_GROUP, 1, 1)
-fn adopt_view(@builtin(global_invocation_id) id: vec3<u32>) {
-    let within = id.x;
+fn adopt_view(
+    @builtin(global_invocation_id) id: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    // Folded past 65 535 workgroups, the same shape the cull uses (#1579).
+    let within = id.y * (groups.x * MARK_GROUP * MARK_GROUP) + id.x;
     if within >= view_span() { return; }
     let entry = view_base() + within;
     if !mark_test(entry) { return; }
