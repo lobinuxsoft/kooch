@@ -74,9 +74,18 @@ pub(crate) fn record(resources: &mut Resources, stage: Option<&MeshletRenderStag
         .get::<crate::undo::UndoStack>()
         .map_or(0, crate::undo::UndoStack::depth);
 
+    let memory = Memory::sample();
+
     tracing::info!(
         target: "kooch_editor::census",
         rss_mb,
+        heap_used = memory.heap_used,
+        heap_free = memory.heap_free,
+        heap_mmap = memory.heap_mmap,
+        rss_anon = memory.rss_anon,
+        rss_file = memory.rss_file,
+        rss_shmem = memory.rss_shmem,
+        fds = memory.fds,
         meshes,
         meshlets,
         images,
@@ -96,3 +105,57 @@ pub(crate) fn record(resources: &mut Resources, stage: Option<&MeshletRenderStag
 fn assets_len<T: kooch_core::assets::Asset>(resources: &Resources) -> usize {
     resources.get::<Assets<T>>().map_or(0, Assets::<T>::len)
 }
+
+/// Where the process's memory is, in MB, so one capture separates the candidates (#1592): a climbing
+/// `heap_used` or `heap_mmap` is a real leak, `heap_free` alone is fragmentation, `rss_file` /
+/// `rss_shmem` are mappings, `rss_anon` with both heap figures flat is memory that never went
+/// through malloc, `fds` is descriptors.
+///
+/// 🔴 glibc serves large allocations with `mmap`, so a leaked big buffer climbs `heap_mmap` and
+/// leaves `heap_used` still: a 64 MiB `Vec` measured 0 → 64 there and 0 → 0 in the arena.
+#[derive(Default)]
+struct Memory {
+    heap_used: u64,
+    heap_free: u64,
+    heap_mmap: u64,
+    rss_anon: u64,
+    rss_file: u64,
+    rss_shmem: u64,
+    fds: usize,
+}
+
+impl Memory {
+    fn sample() -> Self {
+        let mut memory = Self::default();
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        {
+            // SAFETY: `mallinfo2` takes no arguments, returns by value and only reads glibc's
+            // arena counters.
+            let info = unsafe { libc::mallinfo2() };
+            memory.heap_used = info.uordblks as u64 / MB;
+            memory.heap_free = info.fordblks as u64 / MB;
+            memory.heap_mmap = info.hblkhd as u64 / MB;
+        }
+        if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+            for line in status.lines() {
+                let kb = |line: &str| {
+                    line.split_whitespace()
+                        .nth(1)
+                        .and_then(|n| n.parse::<u64>().ok())
+                        .map_or(0, |kb| kb / 1024)
+                };
+                match line.split(':').next() {
+                    Some("RssAnon") => memory.rss_anon = kb(line),
+                    Some("RssFile") => memory.rss_file = kb(line),
+                    Some("RssShmem") => memory.rss_shmem = kb(line),
+                    _ => {}
+                }
+            }
+        }
+        memory.fds = std::fs::read_dir("/proc/self/fd").map_or(0, Iterator::count);
+        memory
+    }
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+const MB: u64 = 1024 * 1024;
