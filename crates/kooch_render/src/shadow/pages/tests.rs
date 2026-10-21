@@ -645,3 +645,49 @@ fn the_dispatch_matches_the_table() {
         }
     }
 }
+
+/// 🔴 A pass that walks a view's SPAN is dispatched over the light count, so past a few thousand
+/// lights it crosses the 65 535 workgroups-per-dimension limit and every frame logs a validation
+/// error with the shadows gone. The fold is `gid.y * (groups.x * GROUP) + gid.x`, which needs
+/// `@builtin(num_workgroups)` — so requiring the builtin is how a missing fold is caught.
+///
+/// Three shipped without it before this test existed: `cs_compact`, the seat passes, then
+/// `age_view`. Each one was found by a smoke test rather than here (#1579).
+#[test]
+fn every_span_pass_folds() {
+    let sources = [
+        (
+            "page_mark_views",
+            include_str!("../../../shaders/page_mark_views.wgsl"),
+        ),
+        (
+            "page_compact",
+            include_str!("../../../shaders/page_compact.wgsl"),
+        ),
+    ];
+    // 🔴 BOUNDS itself on the span, not merely reads it. `cs_lod_offsets` reads `views.y` to
+    // compute a base offset while being dispatched over the clipmap, and a test that cannot tell
+    // the two apart fails on code that is correct.
+    let walks_span = [">= view_span()", ">= raster.views.y"];
+
+    for (name, source) in sources {
+        for body in source.split("@compute").skip(1) {
+            let entry = body
+                .split_once("fn ")
+                .and_then(|(_, rest)| rest.split_once('('))
+                .map(|(entry, _)| entry.trim())
+                .unwrap_or("?");
+            // The entry point's own body, not the ones after it.
+            let own = body.split("\n@compute").next().unwrap_or(body);
+            let head = own.split_once(") {").map(|(head, _)| head).unwrap_or(own);
+            if !walks_span.iter().any(|needle| own.contains(needle)) {
+                continue;
+            }
+            assert!(
+                head.contains("num_workgroups"),
+                "{name}::{entry} walks the span without the 2-D fold, so it dies past 65 535 \
+                 workgroups — see #1579",
+            );
+        }
+    }
+}

@@ -307,8 +307,12 @@ fn paint_page(pixel: vec2<u32>, painted: vec2<u32>) {
 
 // Ages this view's table entries, and evicts the ones nothing has asked for in `max_age` frames.
 @compute @workgroup_size(MARK_GROUP * MARK_GROUP, 1, 1)
-fn age_view(@builtin(global_invocation_id) id: vec3<u32>) {
-    let within = id.x;
+fn age_view(
+    @builtin(global_invocation_id) id: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    // Folded past 65 535 workgroups, the same shape the cull uses (#1579).
+    let within = id.y * (groups.x * MARK_GROUP * MARK_GROUP) + id.x;
     if within >= view_span() { return; }
     let entry = view_base() + within;
     // The receiver bound (#940) is a per-FRAME quantity: this pass is the one thread per entry that

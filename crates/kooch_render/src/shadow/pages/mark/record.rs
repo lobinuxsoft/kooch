@@ -195,15 +195,17 @@ impl PageMarker {
             // The table is flat and a view's entries are contiguous, so
             // the ageing walks exactly this view's span — the other
             // camera's pages are outside the dispatch.
+            // 🔴 One fold, shared by every pass that walks the span, because this is the THIRD
+            // time a span-sized dispatch shipped unfolded: `cs_compact`, then the seat passes,
+            // then this one. A `div_ceil` written at the call site is a 65 535 wall waiting for a
+            // scene big enough (#1579).
+            let (span_x, span_y) = kooch_core::gpu::tiled_workgroups(
+                u32::try_from(view_span).unwrap_or(u32::MAX),
+                GROUP * GROUP,
+            );
             pass.set_pipeline(&self.clear);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(
-                u32::try_from(view_span)
-                    .unwrap_or(u32::MAX)
-                    .div_ceil(GROUP * GROUP),
-                1,
-                1,
-            );
+            pass.dispatch_workgroups(span_x, span_y, 1);
             pass.set_pipeline(&self.pipeline);
             let threads = (viewport.0.div_ceil(rate), viewport.1.div_ceil(rate));
             pass.dispatch_workgroups(threads.0.div_ceil(GROUP), threads.1.div_ceil(GROUP), 1);
@@ -216,18 +218,12 @@ impl PageMarker {
             // The seat passes (#942), in an order that is the algorithm: rank the demand, clear
             // what the plan does not fund, seat what it does. Dispatch boundaries are the barriers
             // between them.
-            // 🔴 Folded past 65 535 workgroups, like the cull's. A span this wide is reachable
-            // since the table split doubled the lights that fit (#1579).
-            let (seats_x, seats_y) = kooch_core::gpu::tiled_workgroups(
-                u32::try_from(view_span).unwrap_or(u32::MAX),
-                GROUP * GROUP,
-            );
             pass.set_pipeline(&self.plan);
             pass.dispatch_workgroups(1, 1, 1);
             pass.set_pipeline(&self.preempt);
-            pass.dispatch_workgroups(seats_x, seats_y, 1);
+            pass.dispatch_workgroups(span_x, span_y, 1);
             pass.set_pipeline(&self.adopt);
-            pass.dispatch_workgroups(seats_x, seats_y, 1);
+            pass.dispatch_workgroups(span_x, span_y, 1);
             pass.set_pipeline(&self.bias);
             pass.dispatch_workgroups(1, 1, 1);
             // After the marking has filled the bitmap; one group covers
