@@ -77,7 +77,7 @@ pub use scene::{
 };
 pub use stage_counters::{CullStageCounts, MeshletStageCounters};
 pub use surface::{SurfaceHit, base_triangles, ray_hit, support};
-pub use system::{MeshletPipeline, instance_at_origin};
+pub use system::{MESH_MAX_AGE, MeshletPipeline, instance_at_origin};
 pub use trim::{AlphaTrim, TRIM_SIDE};
 pub(crate) use vbuf64_stage::ShaderPipelines;
 pub use vbuf64_stage::{JITTER_BASE_PHASES, Jitter, ShadingRate, Vbuf64Stage};
