@@ -174,7 +174,7 @@ impl MeshletView {
         new_size: (u32, u32),
         new_render_size: (u32, u32),
         retire_index: usize,
-    ) -> i64 {
+    ) {
         assert!(
             new_size.0 > 0 && new_size.1 > 0,
             "MeshletView::resize requires non-zero dimensions"
@@ -217,7 +217,6 @@ impl MeshletView {
             self.triangle_density_texture.is_some(),
         );
 
-        let old_pyramid_bytes = self.pyramid_bytes();
         // Recreated only if they were already allocated: the lazy
         // pyramids stay lazy across a resize.
         let hiz_prev = self
@@ -256,8 +255,33 @@ impl MeshletView {
         }
         self.size = new_size;
         self.render_size = new_render_size;
+    }
 
-        self.pyramid_bytes() as i64 - old_pyramid_bytes as i64
+    /// What this view holds on the device: its attachments, its pyramids and its cull.
+    ///
+    /// 🔴 The textures' own sizes, not a bytes-per-pixel estimate — a view carries an optional
+    /// density target and an optional R64 stage, and an estimate silently omits both.
+    pub(crate) fn device_bytes(&self) -> u64 {
+        let textures = [
+            Some(&self.vbuf_texture),
+            Some(&self.depth_texture),
+            Some(&self.color_texture),
+            self.triangle_density_texture.as_ref(),
+        ];
+        let attachments: u64 = textures
+            .into_iter()
+            .flatten()
+            .map(kooch_core::gpu::texture_bytes)
+            .sum();
+        let retired: u64 = self
+            .retired_pyramids
+            .iter()
+            .flatten()
+            .map(|p| p.byte_size())
+            .sum();
+        // ⚠️ `vbuf64_stage` is not in here. Its twelve sub-passes own their own targets — TAA's
+        // history pairs, three upscalers, the half-rate buffers — and each needs its own answer.
+        attachments + self.pyramid_bytes() + retired + self.cull.device_bytes()
     }
 
     /// Bytes held by the two pyramids, zero while they are lazy.

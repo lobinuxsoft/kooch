@@ -31,19 +31,9 @@ impl MeshletRenderStage {
             if self.pipeline.registered_count() == 0 {
                 return MeshletRenderStats::default();
             }
-            let before = self.gpu_pool.as_ref().map_or(0, |gpu| gpu.bytes());
             match self.gpu_pool.as_mut() {
                 Some(gpu) => gpu.sync(device, queue, self.pipeline.pool_mut()),
                 None => self.gpu_pool = Some(self.pipeline.pool_mut().upload(device, queue)),
-            }
-            // The mirror's own buffers are the pool's only VRAM, and this is the only place they
-            // are created or replaced — so the tracker is told here and nowhere else (#1558).
-            if let Some(tracker) = &self.vram_tracker {
-                let after = self.gpu_pool.as_ref().map_or(0, |gpu| gpu.bytes());
-                match after.checked_sub(before) {
-                    Some(grown) => tracker.add(grown),
-                    None => tracker.sub(before - after),
-                }
             }
             self.pool_dirty = false;
             tracing::debug!(

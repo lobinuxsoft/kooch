@@ -128,6 +128,22 @@ impl MaterialTexturePool {
         self.textures.contains_key(&guid)
     }
 
+    /// What every uploaded texture holds on the device, mips and fallbacks included.
+    ///
+    /// 🔴 Usually the largest thing the engine owns, and until #1586 it was reported as zero.
+    pub fn device_bytes(&self) -> u64 {
+        let fallbacks = [
+            &self.fallback_white,
+            &self.fallback_black,
+            &self.fallback_normal,
+        ];
+        self.textures
+            .values()
+            .chain(fallbacks)
+            .map(|texture| kooch_core::gpu::texture_bytes(&texture.texture))
+            .sum()
+    }
+
     /// Number of registered (non-fallback) textures.
     pub fn len(&self) -> usize {
         self.textures.len()

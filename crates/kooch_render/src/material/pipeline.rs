@@ -241,6 +241,11 @@ impl MaterialPipeline {
 
     /// Read-only handle to the texture pool, for building per-material
     /// bind groups in the two-pass render path.
+    /// What materials hold on the device: every uploaded texture, plus the pool's two buffers.
+    pub fn device_bytes(&self) -> u64 {
+        self.texture_pool.device_bytes() + self.pool().device_bytes()
+    }
+
     pub fn texture_pool(&self) -> &MaterialTexturePool {
         &self.texture_pool
     }

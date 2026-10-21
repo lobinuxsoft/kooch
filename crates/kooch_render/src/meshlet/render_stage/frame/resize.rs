@@ -26,22 +26,11 @@ impl MeshletRenderStage {
         // Retired pyramids park in the current frame slot rather than dropping inline: the next
         // render rotates the index and clears the slot that is two frames old, by which point the
         // GPU is done with them. Mesa radv invalidates bind groups dropped while still in flight.
-        let pyramid_delta = view.resize(
+        view.resize(
             device,
             new_size,
             new_render_size,
             self.frame_bind_groups_index,
         );
-
-        if let Some(tracker) = &self.vram_tracker {
-            // A resize can free more than it allocates — shrinking the
-            // panel makes both pyramids smaller — so the delta is
-            // signed and each direction goes to its own call.
-            if pyramid_delta > 0 {
-                tracker.add(pyramid_delta as u64);
-            } else if pyramid_delta < 0 {
-                tracker.sub(pyramid_delta.unsigned_abs());
-            }
-        }
     }
 }

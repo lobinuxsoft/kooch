@@ -104,7 +104,7 @@ fn reject_overlay_creates_without_uncaptured_errors() {
     let meshlet_mesh = build_default_meshlets(&mesh).expect("build meshlets");
     let mut pool = GlobalMeshPool::new();
     let mesh_handle = pool.register(&meshlet_mesh);
-    let gpu_pool = pool.upload(&device);
+    let gpu_pool = pool.upload(&device, &queue);
 
     let scene = MeshletScene::new(&device, 1);
     scene.upload_instances(

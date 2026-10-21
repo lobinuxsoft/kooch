@@ -298,6 +298,11 @@ impl PageMarker {
     }
 
     /// The physical pool and its table.
+    /// What the marking side holds: the page table the pool owns.
+    pub fn device_bytes(&self) -> u64 {
+        self.pool.device_bytes()
+    }
+
     pub fn pool(&self) -> &PagePool {
         &self.pool
     }

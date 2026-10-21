@@ -47,7 +47,7 @@ pub(crate) fn build_rig() -> Option<BenchRig> {
     let mut pool = GlobalMeshPool::new();
     let handle = pool.register(&meshlet_mesh);
     let max_meshlets_per_mesh = pool.max_meshlets_per_mesh().max(1);
-    let gpu_pool = pool.upload(&device);
+    let gpu_pool = pool.upload(&device, &queue);
 
     let scene = MeshletScene::new(&device, 4);
     let instance = MeshInstance::new(Mat4::IDENTITY, handle.mesh_id, 0);

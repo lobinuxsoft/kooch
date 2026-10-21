@@ -154,7 +154,12 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .get::<crate::viewport::game::GameViewStats>()
         .map(|s| s.0)
         .unwrap_or_default();
-    let shader_costs = publish_gpu_stats(resources, &taken.gpu, &meshlet_stats);
+    let shader_costs = publish_gpu_stats(
+        resources,
+        &taken.gpu,
+        &meshlet_stats,
+        taken.meshlet_stage.as_ref(),
+    );
 
     taken.resize_targets();
     let toolbar = toolbar_info(resources, &taken.overlay, &undo_stack, is_playing);

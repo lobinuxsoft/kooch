@@ -159,10 +159,7 @@ impl MeshletScene {
         if required <= self.capacity {
             return;
         }
-        let new_capacity = required
-            .checked_next_power_of_two()
-            .unwrap_or(required)
-            .max(self.capacity.saturating_mul(2));
+        let new_capacity = kooch_core::gpu::grown(required, self.capacity);
         self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_scene_instances"),
             size: new_capacity as u64 * std::mem::size_of::<MeshInstance>() as u64,
@@ -178,6 +175,11 @@ impl MeshletScene {
             "grew the instance buffer",
         );
         self.capacity = new_capacity;
+    }
+
+    /// What the scene's instance mirror holds on the device.
+    pub fn device_bytes(&self) -> u64 {
+        kooch_core::gpu::buffer_bytes(&[&self.instance_buffer, &self.previous_transform_buffer])
     }
 
     pub fn previous_transform_buffer(&self) -> &wgpu::Buffer {

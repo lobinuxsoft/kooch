@@ -26,11 +26,21 @@ pub(super) fn publish_gpu_stats(
     resources: &mut Resources,
     gpu: &GpuContext,
     meshlet_stats: &MeshletRenderStats,
+    stage: Option<&MeshletRenderStage>,
 ) -> Vec<(String, f32)> {
-    let vram_bytes = resources
-        .get::<std::sync::Arc<kooch_render::EngineVramTracker>>()
-        .map(|t| t.bytes())
-        .unwrap_or(0);
+    // 🔴 Asked of the owners every frame rather than accumulated by them (#1586), and the stage
+    // comes in by argument: `Taken::take` has lifted it out of `Resources` by the time this runs,
+    // so asking the world for it would answer `None` every frame.
+    let vram_bytes = stage.map_or(0, MeshletRenderStage::device_bytes)
+        + resources
+            .get::<kooch_render::material::MaterialPipeline>()
+            .map_or(0, |materials| materials.device_bytes())
+        + resources
+            .get::<kooch_core::gpu::TargetPool>()
+            .map_or(0, kooch_core::gpu::TargetPool::bytes);
+    if let Some(tracker) = resources.get::<std::sync::Arc<kooch_render::EngineVramTracker>>() {
+        tracker.publish(vram_bytes);
+    }
     let shader_costs = resources
         .get::<kooch_core::gpu::GpuScopes>()
         .map(|scopes| {

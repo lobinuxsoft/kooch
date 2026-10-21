@@ -104,6 +104,11 @@ pub struct MaterialPool {
 }
 
 impl MaterialPool {
+    /// What the pool's two buffers hold on the device.
+    pub fn device_bytes(&self) -> u64 {
+        kooch_core::gpu::buffer_bytes(&[&self.buffer, &self.values])
+    }
+
     /// Builds a pool sized for `materials.len()` slots and uploads the
     /// initial values. `materials` must be non-empty — wgpu rejects
     /// zero-sized storage buffer bindings.

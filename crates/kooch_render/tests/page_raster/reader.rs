@@ -91,7 +91,7 @@ fn both_expansions_emit_the_same_pairs() {
     let meshlet_mesh = build_default_meshlets(&mesh).expect("cube builds");
     let mut pool = kooch_render::meshlet::GlobalMeshPool::new();
     let handle = pool.register(&meshlet_mesh);
-    let gpu_pool = pool.upload(&device);
+    let gpu_pool = pool.upload(&device, &queue);
     let meshlets_per_mesh = gpu_pool.max_meshlets_per_mesh.max(1);
 
     let instances = vec![
