@@ -198,5 +198,34 @@ pub fn pool_meshlet_bind_group(
     })
 }
 
+/// The four pool buffers the meshlet bind group reads, compared by identity.
+///
+/// 🔴 `GpuGlobalMeshPool::sync` replaces a buffer when the pool outgrows it, and a bind group over
+/// a replaced buffer reads freed memory. Same guard as `LampKeys` in the lamp cull.
+#[derive(PartialEq)]
+pub struct PoolKeys {
+    vertices: wgpu::Buffer,
+    meshlet_vertices: wgpu::Buffer,
+    meshlet_triangles: wgpu::Buffer,
+    meshlets: wgpu::Buffer,
+}
+
+impl PoolKeys {
+    pub fn of(pool: &super::pool::GpuGlobalMeshPool) -> Self {
+        Self {
+            vertices: pool.vertices.clone(),
+            meshlet_vertices: pool.meshlet_vertices.clone(),
+            meshlet_triangles: pool.meshlet_triangles.clone(),
+            meshlets: pool.meshlets.clone(),
+        }
+    }
+}
+
+/// A pool bind group kept across frames, with what it was built over (#1558).
+pub struct PoolBinding {
+    pub group: wgpu::BindGroup,
+    pub keys: PoolKeys,
+}
+
 #[cfg(test)]
 mod tests;
