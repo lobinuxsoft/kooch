@@ -6,15 +6,37 @@
 /// so that a cleared buffer is an empty table; eviction stores this.
 const PAGE_ABSENT: u32 = 0u;
 
-/// Words: slot + 1, frame requested, `page_list` index, content stamp (0 = none), `PAGE_LOD`, frame
-/// allocated. 🔴 A matching stamp keeps last frame's content for free. Interleaved: downlevel allows
-/// eight storage buffers.
-const PAGE_CELL: u32 = 6u;
+// The table is TWO buffers, split by which pass touches a word rather than by what a word means
+// (#1579). One cell of six words made the biggest binding six words per addressable page, and the
+// binding limit is what capped the shadowed light count — 294.8 MiB of table to index 48 KiB of
+// residency. Split, the widest binding is three, so twice the lights fit; and the shading reads a
+// stride of three instead of six, which is one cache line for five pages instead of two.
 
-/// Levels up to the first readable page, or `PAGE_NO_LOD`: a jump instead of up to 17 misses
-/// (Unreal's `LODOffset`). 🔴 In the receiver bound's old word — per-level bounds lost casters to
-/// climbing readers.
-const PAGE_LOD: u32 = 4u;
+/// Words per page in the table the SHADING reads. Mirrors `PAGE_READ` in `pool.rs`.
+const PAGE_READ: u32 = 3u;
+
+/// Words per page in the table only the PAGE PASSES touch.
+const PAGE_WORK: u32 = 3u;
+
+/// `read` word 0: the physical slot, plus one. 🔴 Plus one so a cleared buffer is an empty table.
+const PAGE_SLOT: u32 = 0u;
+
+/// `read` word 1: the content stamp, 0 = none. 🔴 A matching stamp keeps last frame's content free.
+const PAGE_STAMP: u32 = 1u;
+
+/// `read` word 2: levels up to the first readable page, or `PAGE_NO_LOD` — a jump instead of up to
+/// 17 misses (Unreal's `LODOffset`). 🔴 In the receiver bound's old word: per-level bounds lost
+/// casters to climbing readers.
+const PAGE_LOD: u32 = 2u;
+
+/// `work` word 0: the frame that requested the page.
+const PAGE_ASKED: u32 = 0u;
+
+/// `work` word 1: its place in the compacted page list.
+const PAGE_LISTING: u32 = 1u;
+
+/// `work` word 2: the frame it was allocated.
+const PAGE_BORN: u32 = 2u;
 
 /// No coarser level holds a readable page for this position.
 const PAGE_NO_LOD: u32 = 0xffffffffu;

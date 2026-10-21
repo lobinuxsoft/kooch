@@ -314,7 +314,7 @@ fn age_view(@builtin(global_invocation_id) id: vec3<u32>) {
     // The receiver bound (#940) is a per-FRAME quantity: this pass is the one thread per entry that
     // already runs first, so the reset rides it. Zero means "no receiver recorded", which every
     // reader treats as "never reject".
-    let stored = atomicLoad(&table_cells[entry * PAGE_CELL]);
+    let stored = atomicLoad(&table_read[entry * PAGE_READ + PAGE_SLOT]);
     if stored == PAGE_ABSENT { return; }
 
     // A rebuild empties the view outright — the pool's shape changed
@@ -328,7 +328,7 @@ fn age_view(@builtin(global_invocation_id) id: vec3<u32>) {
             return;
         }
     }
-    atomicStore(&table_cells[entry * PAGE_CELL], PAGE_ABSENT);
+    atomicStore(&table_read[entry * PAGE_READ + PAGE_SLOT], PAGE_ABSENT);
     page_release(stored - 1u);
     atomicAdd(&counters[12], 1u);
 }
@@ -396,7 +396,7 @@ fn preempt_view(@builtin(global_invocation_id) id: vec3<u32>) {
     let within = id.x;
     if within >= view_span() { return; }
     let entry = view_base() + within;
-    let stored = atomicLoad(&table_cells[entry * PAGE_CELL]);
+    let stored = atomicLoad(&table_read[entry * PAGE_READ + PAGE_SLOT]);
     if stored == PAGE_ABSENT { return; }
     let base = rank_base();
     if mark_test(entry) {
@@ -417,7 +417,7 @@ fn preempt_view(@builtin(global_invocation_id) id: vec3<u32>) {
         if spare != 0u && spare <= pages.pool.w { return; }
         atomicAdd(&rank_state[base + RANK_SPARE], 1u);
     }
-    atomicStore(&table_cells[entry * PAGE_CELL], PAGE_ABSENT);
+    atomicStore(&table_read[entry * PAGE_READ + PAGE_SLOT], PAGE_ABSENT);
     page_release(stored - 1u);
     atomicAdd(&counters[14], 1u);
 }
@@ -431,7 +431,7 @@ fn adopt_view(@builtin(global_invocation_id) id: vec3<u32>) {
     if within >= view_span() { return; }
     let entry = view_base() + within;
     if !mark_test(entry) { return; }
-    if atomicLoad(&table_cells[entry * PAGE_CELL]) != PAGE_ABSENT { return; }
+    if atomicLoad(&table_read[entry * PAGE_READ + PAGE_SLOT]) != PAGE_ABSENT { return; }
     let base = rank_base();
     let cutoff = atomicLoad(&rank_state[base + RANK_CUTOFF]);
     let rank = entry_rank(within);

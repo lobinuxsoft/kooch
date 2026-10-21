@@ -4,13 +4,13 @@ fn inti_page_lookup(page: u32) -> u32 {
     if page >= inti_pages.pool.x {
         return PAGE_MISS;
     }
-    let stored = inti_page_slots[page * PAGE_CELL];
+    let stored = inti_page_slots[page * PAGE_READ + PAGE_SLOT];
     if stored == PAGE_ABSENT {
         return PAGE_MISS;
     }
     // 🔴 Resident is not readable: stamp 0 means no content and the atlas answers lit. A miss lets
     // the walk climb, as Unreal; an older stamp still reads, and `PAGE_EMPTY` is a true "cleared".
-    if inti_page_slots[page * PAGE_CELL + 3u] == 0u {
+    if inti_page_slots[page * PAGE_READ + PAGE_STAMP] == 0u {
         return PAGE_MISS;
     }
     return stored - 1u;
@@ -266,7 +266,7 @@ fn inti_page_shadow(
         + floor_cell.y * side
         + floor_cell.x;
     if floor_page < inti_pages.pool.x {
-        let hint = inti_page_slots[floor_page * PAGE_CELL + PAGE_LOD];
+        let hint = inti_page_slots[floor_page * PAGE_READ + PAGE_LOD];
         if hint != PAGE_NO_LOD && level + hint < inti_pages.chain.x {
             level = level + hint;
         }

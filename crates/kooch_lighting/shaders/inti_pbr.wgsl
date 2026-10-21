@@ -198,10 +198,13 @@ struct IntiClusterCell {
 // Virtual shadow maps (#866); the page helpers come from `page_table.wgsl`, since the passes
 // filling this table live in another crate and must decode ids identically.
 @group({{INTI_GROUP}}) @binding(8) var<uniform> inti_pages: PageRaster;
-// The FLAT page table: `PAGE_CELL` words per virtual page, indexed by
+// The FLAT page table the shading reads: `PAGE_READ` words per virtual page, indexed by
 // the page id itself — `slot + 1` first, `PAGE_ABSENT` meaning "not
 // resident". Binding 9 held the hash's key array and is retired.
 @group({{INTI_GROUP}}) @binding(10) var<storage, read> inti_page_slots: array<u32>;
+// The table's other half (#1579): only the pages debug view reads it, for the frame a page was
+// allocated. Split so the widest binding is three words a page rather than six.
+@group({{INTI_GROUP}}) @binding(12) var<storage, read> inti_page_work: array<u32>;
 // 🔴 `textureLoad`, never a sampler: a filter cannot stop at a page border. An array with a layer
 // per view, so two viewports share the pool without clearing each other's pages.
 @group({{INTI_GROUP}}) @binding(11) var inti_page_atlas: texture_depth_2d_array;

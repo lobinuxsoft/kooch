@@ -10,7 +10,9 @@ struct PyramidShape {
 
 // ---------------------------------------------------------------- seed
 
-@group(1) @binding(0) var<storage, read> table_slots: array<u32>;
+@group(1) @binding(0) var<storage, read> table_read: array<u32>;
+// The other half of the same table (#1579).
+@group(1) @binding(2) var<storage, read> table_work: array<u32>;
 @group(1) @binding(1) var seed_dst: texture_storage_2d_array<r32uint, write>;
 
 /// Mip 0: one texel per page, holding `listing + 1` when the page is in THIS FRAME's compacted list
@@ -22,8 +24,8 @@ fn seed_pages(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let page = pyramid.shape.z + gid.z * side * side + gid.y * side + gid.x;
-    let listing = table_slots[page * PAGE_CELL + 2u];
-    let listed = table_slots[page * PAGE_CELL] != PAGE_ABSENT && listing != PAGE_UNLISTED;
+    let listing = table_work[page * PAGE_WORK + PAGE_LISTING];
+    let listed = table_read[page * PAGE_READ + PAGE_SLOT] != PAGE_ABSENT && listing != PAGE_UNLISTED;
     textureStore(
         seed_dst,
         vec2<i32>(vec2<u32>(gid.xy)),

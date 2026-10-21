@@ -444,7 +444,7 @@ pub(super) fn slots_for_cap(
     clipmap: ClipmapConfig,
     views: u32,
 ) -> Option<u32> {
-    let entries = cap / (u64::from(super::pool::PAGE_CELL) * 4);
+    let entries = cap / (u64::from(super::pool::PAGE_WIDEST) * 4);
     let per_view = entries / u64::from(views.max(1));
     let sun = u64::from(clipmap.levels) * u64::from(config.side(0)).pow(2);
     // 🔴 The sun's tail is not negotiable: without it there are no shadows at all, so a cap too
@@ -561,6 +561,9 @@ fn layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             storage(9, false),
             storage(10, false),
             storage(11, false),
+            // The table's other half (#1579): the words no shading pass reads, so the widest
+            // binding is three words a page rather than six.
+            storage(13, false),
         ],
     })
 }

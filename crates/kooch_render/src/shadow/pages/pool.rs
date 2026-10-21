@@ -2,10 +2,20 @@
 
 use super::PageConfig;
 
-/// Words per table entry — the slot, its age, its place in the compacted page list, and the content
-/// stamp the cache runs on. Mirrors `PAGE_CELL` in `page_table.wgsl`, which is where the reason
-/// lives.
-pub const PAGE_CELL: u32 = 6;
+/// Words per page in the table the SHADING reads: the slot, the content stamp, the LOD hint.
+/// Mirrors `PAGE_READ` in `page_table.wgsl`, which is where the reason lives.
+pub const PAGE_READ: u32 = 3;
+
+/// Words per page in the table only the PAGE PASSES touch: the frame requested, the listing, the
+/// frame allocated.
+pub const PAGE_WORK: u32 = 3;
+
+/// The widest of the two, which is what the device's binding limit is spent on (#1579).
+pub const PAGE_WIDEST: u32 = if PAGE_READ > PAGE_WORK {
+    PAGE_READ
+} else {
+    PAGE_WORK
+};
 
 /// `KOOCH_SHADOW_POOL_PAGES`, read once.
 pub fn pages_from_environment() -> u32 {
@@ -213,10 +223,17 @@ pub fn age_from_environment() -> u32 {
 
 /// The page table and the allocator's state, rebuilt when the pool is resized.
 pub struct PagePool {
-    /// The FLAT page table: `PAGE_CELL` words per VIRTUAL page, indexed
-    /// by the page id itself. See `page_table.wgsl` for the entry
-    /// layout and for why the hash this replaced is gone.
+    /// The FLAT page table the shading reads: `PAGE_READ` words per VIRTUAL page, indexed by the
+    /// page id itself. See `page_table.wgsl` for the layout and for why the hash this replaced is
+    /// gone.
     slots: wgpu::Buffer,
+
+    /// The same table's other half, touched only by the page passes.
+    ///
+    /// 🔴 Two buffers, split by which pass reads a word rather than by what the word means. One
+    /// cell of six words made the widest binding six words per addressable page, and the binding
+    /// limit is what capped the light count (#1579). Split, the widest is three.
+    work: wgpu::Buffer,
 
     /// `[high, free_count, free_slots...]` per view — see `alloc_base`
     /// in the shader.
@@ -244,7 +261,8 @@ impl PagePool {
             "the shadow page atlas is laid out",
         );
         Self {
-            slots: table_buffer(device, "shadow_page_cells", PAGE_CELL),
+            slots: table_buffer(device, "shadow_page_read", PAGE_READ),
+            work: table_buffer(device, "shadow_page_work", PAGE_WORK),
             alloc: table_buffer(
                 device,
                 "shadow_page_alloc",
@@ -281,7 +299,8 @@ impl PagePool {
         if entries <= self.entries {
             return false;
         }
-        self.slots = table_buffer(device, "shadow_page_cells", entries * PAGE_CELL);
+        self.slots = table_buffer(device, "shadow_page_read", entries * PAGE_READ);
+        self.work = table_buffer(device, "shadow_page_work", entries * PAGE_WORK);
         self.alloc = table_buffer(
             device,
             "shadow_page_alloc",
@@ -293,6 +312,11 @@ impl PagePool {
 
     pub fn slots(&self) -> &wgpu::Buffer {
         &self.slots
+    }
+
+    /// The half only the page passes touch.
+    pub fn work(&self) -> &wgpu::Buffer {
+        &self.work
     }
 
     pub fn alloc(&self) -> &wgpu::Buffer {

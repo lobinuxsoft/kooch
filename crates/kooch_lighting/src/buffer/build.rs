@@ -124,6 +124,19 @@ impl GpuLights {
                     },
                     count: None,
                 },
+                // The table's other half (#1579). Only the pages debug view reads it — for the
+                // frame a page was allocated — but it is bound here because that view shares this
+                // group. Splitting the cell is what halved the widest binding.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 12,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
                 wgpu::BindGroupLayoutEntry {
                     binding: 11,
                     visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
@@ -198,6 +211,7 @@ impl GpuLights {
                 uniform: &dummy_page_buffer,
                 uniform_span: (0, 0),
                 slots: &dummy_page_buffer,
+                work: &dummy_page_buffer,
                 atlas: &dummy_page_atlas,
             },
         );
@@ -213,6 +227,7 @@ impl GpuLights {
             page_uniform: None,
             page_uniform_span: (0, 0),
             page_slots: None,
+            page_work: None,
             page_atlas: None,
             dummy_page_buffer,
             dummy_page_atlas,

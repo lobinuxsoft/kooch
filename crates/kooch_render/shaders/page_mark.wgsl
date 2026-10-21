@@ -59,7 +59,9 @@ struct PageCell {
 // The page table, FLAT: the entry index IS the virtual page id, so the lookup the shading pass runs
 // per pixel per light is one load. `page_table.wgsl` holds the id arithmetic and the atlas layout —
 // everything the READER has to agree with, kept in one file so the two cannot drift.
-@group(0) @binding(10) var<storage, read_write> table_cells: array<atomic<u32>>;
+@group(0) @binding(10) var<storage, read_write> table_read: array<atomic<u32>>;
+// The other half of the same table: words no shading pass reads (#1579).
+@group(0) @binding(13) var<storage, read_write> table_work: array<atomic<u32>>;
 // The allocator's own state, laid out per view: `[high, free_count, free_slots...]` repeated every
 // `slice + 2` words.
 @group(0) @binding(11) var<storage, read_write> alloc: array<atomic<u32>>;
@@ -109,29 +111,29 @@ fn rank_local(level: u32) -> u32 {
     return min(pages.chain.w + (pages.chain.z - 1u - level), RANKS - 1u);
 }
 
-// The words of a table entry. `PAGE_CELL` is in `page_table.wgsl`
+// The words of a table entry. `PAGE_READ` and `PAGE_WORK` are in `page_table.wgsl`
 // because the READER indexes the same buffer. The first word stores
 // `slot + 1`; this unwraps it and is only called on a resident entry.
 fn page_slot(entry: u32) -> u32 {
-    return atomicLoad(&table_cells[entry * PAGE_CELL]) - 1u;
+    return atomicLoad(&table_read[entry * PAGE_READ + PAGE_SLOT]) - 1u;
 }
 
 fn page_age(entry: u32) -> u32 {
-    return atomicLoad(&table_cells[entry * PAGE_CELL + 1u]);
+    return atomicLoad(&table_work[entry * PAGE_WORK + PAGE_ASKED]);
 }
 
 fn page_stamp(entry: u32, slot: u32, frame: u32) {
-    atomicStore(&table_cells[entry * PAGE_CELL], slot + 1u);
-    atomicStore(&table_cells[entry * PAGE_CELL + 1u], frame);
+    atomicStore(&table_read[entry * PAGE_READ + PAGE_SLOT], slot + 1u);
+    atomicStore(&table_work[entry * PAGE_WORK + PAGE_ASKED], frame);
     // A fresh claim has no content: whatever the slot held belonged to
     // whoever held it last. Zero is "never drawn" to the cache.
-    atomicStore(&table_cells[entry * PAGE_CELL + 3u], 0u);
+    atomicStore(&table_read[entry * PAGE_READ + PAGE_STAMP], 0u);
     // 🔴 The frame this page was ALLOCATED, and the only place it is written.
-    atomicStore(&table_cells[entry * PAGE_CELL + 5u], frame);
+    atomicStore(&table_work[entry * PAGE_WORK + PAGE_BORN], frame);
 }
 
 fn page_refresh(entry: u32, frame: u32) {
-    atomicStore(&table_cells[entry * PAGE_CELL + 1u], frame);
+    atomicStore(&table_work[entry * PAGE_WORK + PAGE_ASKED], frame);
 }
 
 const NO_PAGE: u32 = 0xffffffffu;
@@ -206,7 +208,7 @@ fn page_touch(page: u32) -> u32 {
         return PAGE_MISS;
     }
     let frame = pages.life.x;
-    let stored = atomicLoad(&table_cells[page * PAGE_CELL]);
+    let stored = atomicLoad(&table_read[page * PAGE_READ + PAGE_SLOT]);
     if stored != PAGE_ABSENT {
         page_refresh(page, frame);
         atomicAdd(&counters[7], 1u);

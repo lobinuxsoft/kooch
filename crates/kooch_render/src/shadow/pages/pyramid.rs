@@ -113,6 +113,17 @@ impl PagePyramid {
                     count: None,
                 },
                 storage_entry(1),
+                // The listing word moved to the table's other half (#1579).
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let reduce_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -199,6 +210,8 @@ impl PagePyramid {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         table: &wgpu::Buffer,
+        // The table's other half, which carries the listing word (#1579).
+        work: &wgpu::Buffer,
         base: u32,
     ) {
         let groups = |extent: u32| extent.div_ceil(GROUP).max(1);
@@ -237,6 +250,10 @@ impl PagePyramid {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(&self.mips[0]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: work.as_entire_binding(),
                 },
             ],
         });
