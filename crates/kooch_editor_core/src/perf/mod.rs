@@ -1,6 +1,7 @@
 //! Editor performance HUD — counters Resource + per-metric systems (#463).
 
 pub(crate) mod breakdown;
+pub(crate) mod census;
 pub(crate) mod persistence;
 pub(crate) mod sys_metrics;
 pub(crate) mod timing;
