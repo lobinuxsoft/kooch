@@ -90,6 +90,22 @@ impl MeshletRenderStage {
             // ask the server for a `.block`.
             .filter(|guid| reads_as_mesh(resources, *guid))
             .collect();
+        // 🔴 Before the frame's instances are built, and before the early return below: a mesh
+        // nothing has asked to draw for a second goes back to the pool (#1589). `referenced`
+        // already skips invisible renderers, so a despawned entity, a closed scene and a hidden
+        // renderer are the same event to this.
+        let released = self
+            .pipeline
+            .sweep(&referenced, crate::meshlet::MESH_MAX_AGE);
+        if released > 0 {
+            self.pool_dirty = true;
+            tracing::debug!(
+                target: "kooch_render::meshlet::sync",
+                released,
+                live = self.pipeline.registered_count(),
+                "released meshes nothing asked to draw",
+            );
+        }
         if !referenced.is_empty() {
             tracing::debug!(
                 target: "kooch_render::meshlet::sync",

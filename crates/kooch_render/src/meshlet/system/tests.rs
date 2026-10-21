@@ -328,3 +328,41 @@ fn a_compacted_mesh_survives() {
         );
     }
 }
+
+/// A mesh nothing asks to draw goes back to the pool — but only after it has stopped being asked
+/// for a while, because a renderer that blinks must not cost a re-upload (#1589).
+#[test]
+fn an_unasked_mesh_is_released() {
+    let mesh = build_default_meshlets(&cube_mesh()).expect("meshlets");
+    let guid = Guid::new_v4();
+    let mut pipeline = MeshletPipeline::new();
+    pipeline.register_mesh(guid, &mesh);
+    let held = pipeline.pool().byte_size();
+
+    // Asked once, then never again. Short of the age it stays.
+    assert_eq!(pipeline.sweep(&[guid], 4), 0);
+    for _ in 0..4 {
+        assert_eq!(pipeline.sweep(&[], 4), 0, "released before its age was up");
+    }
+    assert_eq!(pipeline.registered_count(), 1);
+
+    assert_eq!(pipeline.sweep(&[], 4), 1);
+    assert_eq!(pipeline.registered_count(), 0);
+    assert!(
+        pipeline.dead_bytes() >= held,
+        "the slot was dropped from the registry without its ranges going back",
+    );
+}
+
+/// A mesh that keeps being asked for is never released, however long the session runs.
+#[test]
+fn an_asked_mesh_stays() {
+    let mesh = build_default_meshlets(&cube_mesh()).expect("meshlets");
+    let guid = Guid::new_v4();
+    let mut pipeline = MeshletPipeline::new();
+    pipeline.register_mesh(guid, &mesh);
+    for _ in 0..200 {
+        assert_eq!(pipeline.sweep(&[guid], 4), 0);
+    }
+    assert!(pipeline.lookup(guid).is_some());
+}

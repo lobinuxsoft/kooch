@@ -23,9 +23,20 @@ use super::trim::{AlphaTrim, TrimPair};
 pub struct MeshletPipeline {
     pool: GlobalMeshPool,
     registry: HashMap<Guid, MeshHandle>,
+    /// The frame each registered GUID was last asked to draw. See [`Self::sweep`].
+    asked: HashMap<Guid, u32>,
+    /// Counts up for the life of the process, bumped once per sweep.
+    frame: u32,
     /// Which masked pairs draw a cut mesh instead of discarding per pixel (#452).
     pub trim: AlphaTrim,
 }
+
+/// Frames a mesh may go unasked before its slot goes back to the pool (#1589).
+///
+/// 🔴 The whole defence against thrash. Evicting on the first unasked frame would re-upload a mesh
+/// every time a renderer blinks — the reallocation storm #1558 measured and removed. One second at
+/// 60 Hz, the same threshold the shadow page pool evicts on.
+pub const MESH_MAX_AGE: u32 = 60;
 
 impl MeshletPipeline {
     pub fn new() -> Self {
@@ -75,6 +86,35 @@ impl MeshletPipeline {
         self.registry.insert(guid, mesh_handle);
         self.defragment();
         mesh_handle
+    }
+
+    /// Records this frame's ask and releases whatever has gone unasked for [`MESH_MAX_AGE`].
+    /// Returns how many slots went back to the pool.
+    ///
+    /// 🔴 Must run before the frame's instances are built. `GlobalMeshPool::release` hands the
+    /// `mesh_id` out again on the very next `register`, so the GUID leaves `registry` in the same
+    /// breath and nothing is left resolving it.
+    pub fn sweep(&mut self, referenced: &[Guid], max_age: u32) -> usize {
+        self.frame = self.frame.wrapping_add(1);
+        for guid in referenced {
+            self.asked.insert(*guid, self.frame);
+        }
+        let stale: Vec<Guid> = self
+            .registry
+            .keys()
+            .filter(|guid| {
+                let last = self.asked.get(*guid).copied().unwrap_or(0);
+                self.frame.saturating_sub(last) > max_age
+            })
+            .copied()
+            .collect();
+        for guid in &stale {
+            if let Some(handle) = self.registry.remove(guid) {
+                self.pool.release(handle.mesh_id);
+            }
+            self.asked.remove(guid);
+        }
+        stale.len()
     }
 
     /// Repacks the pool once its holes outweigh what is in use.
