@@ -41,6 +41,12 @@ pub(super) fn publish_gpu_stats(
     if let Some(tracker) = resources.get::<std::sync::Arc<kooch_render::EngineVramTracker>>() {
         tracker.publish(vram_bytes);
     }
+    // Temporary, until #1592 names its leak. Here because this is the one place that already holds
+    // both the stage and `Resources` at the same time.
+    let rss = resources
+        .get::<crate::perf::EditorPerfStats>()
+        .map_or(0, |stats| stats.ram_rss_mb);
+    crate::perf::census::record(resources, stage, rss);
     let shader_costs = resources
         .get::<kooch_core::gpu::GpuScopes>()
         .map(|scopes| {
