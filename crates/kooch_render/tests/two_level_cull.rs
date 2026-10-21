@@ -32,7 +32,7 @@ fn rig(device: wgpu::Device, queue: wgpu::Queue, places: &[Vec3]) -> Rig {
     let mut pool = GlobalMeshPool::new();
     let cube_handle = pool.register(&cube);
     let sphere_handle = pool.register(&sphere);
-    let gpu_pool = pool.upload(&device);
+    let gpu_pool = pool.upload(&device, &queue);
     let per_mesh = gpu_pool.max_meshlets_per_mesh.max(1);
 
     // Every instance but the last is a cube; the sphere is what makes
@@ -238,7 +238,7 @@ fn both_culls_agree_down_the_lod_chain() {
     let mut pool = GlobalMeshPool::new();
     let chain_handle = pool.register(&chain);
     let cube_handle = pool.register(&cube);
-    let gpu_pool = pool.upload(&device);
+    let gpu_pool = pool.upload(&device, &queue);
     let per_mesh = gpu_pool.max_meshlets_per_mesh.max(1);
 
     // Down the z axis, so consecutive copies sit at different projected
@@ -357,7 +357,7 @@ fn a_scaled_instance_keeps_its_bounds() {
     let mut pool = GlobalMeshPool::new();
     let cube_handle = pool.register(&cube);
     let sphere_handle = pool.register(&sphere);
-    let gpu_pool = pool.upload(&device);
+    let gpu_pool = pool.upload(&device, &queue);
     let per_mesh = gpu_pool.max_meshlets_per_mesh.max(1);
 
     // Big and off to the side: at scale 1 its centre is outside the

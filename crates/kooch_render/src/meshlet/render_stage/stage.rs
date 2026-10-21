@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use kooch_core::Guid;
 
@@ -20,7 +19,6 @@ use super::super::stage_counters::MeshletStageCounters;
 use super::super::system::MeshletPipeline;
 use super::super::vis_buffer::MeshletVisRasterizer;
 use super::config::MeshletRenderStageConfig;
-use crate::perf::EngineVramTracker;
 
 /// End-to-end meshlet render stage. See module docs for the per-frame flow.
 pub struct MeshletRenderStage {
@@ -153,9 +151,4 @@ pub struct MeshletRenderStage {
     /// that is the contact-shadow jitter (#735): without it the dither pattern is frozen into the
     /// image and reads as a texture rather than as noise.
     pub(super) frames_recorded: u32,
-
-    /// Cross-module engine VRAM counter (#463.5). Optional — `None` means the editor / game has not
-    /// registered a tracker and the stage skips bookkeeping. Wired via [`Self::set_vram_tracker`]
-    /// at startup.
-    pub(super) vram_tracker: Option<Arc<EngineVramTracker>>,
 }

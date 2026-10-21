@@ -114,10 +114,7 @@ impl MeshletRenderStage {
         let alloc = classic_shadow_alloc(&settings);
         let nothing_casts = sun.is_none() && spots.is_empty() && points.is_empty();
         if !settings.enabled || nothing_casts || self.shadow_alloc != alloc {
-            if let Some(released) = self.shadows.take() {
-                if let Some(tracker) = self.vram_tracker.as_ref() {
-                    tracker.sub(released.atlas_bytes());
-                }
+            if self.shadows.take().is_some() {
                 tracing::debug!(
                     target: "kooch_render::shadow",
                     "released the shadow atlas",
@@ -155,9 +152,6 @@ impl MeshletRenderStage {
                     self.config.meshlet_capacity,
                     super::super::super::DEFAULT_MAX_TRIANGLES as u32,
                 );
-                if let Some(tracker) = self.vram_tracker.as_ref() {
-                    tracker.add(pass.atlas_bytes());
-                }
                 self.shadow_alloc = alloc;
                 self.shadows.insert(pass)
             }

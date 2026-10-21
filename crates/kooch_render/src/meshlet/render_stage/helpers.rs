@@ -1,13 +1,3 @@
-/// Approximate bytes occupied by the stage's three render targets at
-/// the given resolution. Used by [`MeshletRenderStage::set_vram_tracker`]
-/// to seed the counter with what `new()` already allocated.
-pub(crate) fn render_target_byte_estimate(size: (u32, u32)) -> u64 {
-    let pixels = size.0 as u64 * size.1 as u64;
-    // vbuf: R32Uint = 4 bpp; depth: Depth32Float = 4 bpp;
-    // color: Rgba8Unorm = 4 bpp. Total: 12 bytes/pixel.
-    pixels * 12
-}
-
 /// Creates a `TextureAspect::DepthOnly` view of a depth attachment so
 /// the same texture can be sampled by the Hi-Z builder while the
 /// `_view` (with `aspect: All`) drives the render pass attachment.

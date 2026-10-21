@@ -81,7 +81,6 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     // resize, …). The Arc is also inserted as a Resource further down so the perf HUD's update path
     // reads from the same shared counter.
     let vram_tracker = std::sync::Arc::new(kooch_render::EngineVramTracker::new());
-    meshlet_stage.set_vram_tracker(vram_tracker.clone());
     let meshlet_blit = MeshletBlit::new(
         gpu.device(),
         gpu.format(),

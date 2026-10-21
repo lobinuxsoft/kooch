@@ -110,7 +110,7 @@ fn three_instances_pick_distinct_lod_bands() {
          got 0 groups — bump grid subdivisions or LodConfig"
     );
     let meshlets_per_mesh = pool.max_meshlets_per_mesh();
-    let gpu_pool = pool.upload(&device);
+    let gpu_pool = pool.upload(&device, &queue);
 
     // Three instances of the same mesh on -Z. Distances chosen so the selector has clear signal: 5
     // m, 80 m, 1500 m.

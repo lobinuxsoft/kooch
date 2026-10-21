@@ -25,7 +25,7 @@ fn atomic_pool_cull_drops_off_frustum_aabb() {
     // Build a single-mesh pool the atomic path can dispatch over.
     let mut pool = GlobalMeshPool::new();
     let mesh_handle = pool.register(&meshlet_mesh);
-    let gpu_pool = pool.upload(&device);
+    let gpu_pool = pool.upload(&device, &queue);
     let meshlets_per_mesh = gpu_pool.max_meshlets_per_mesh.max(1);
 
     // 4 instances: 0/1 in front of cam, 2 behind camera, 3 way to the right outside a 45° FOV. The

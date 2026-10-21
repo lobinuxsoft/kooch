@@ -273,6 +273,11 @@ impl PagePool {
         }
     }
 
+    /// What the page table holds on the device — not the atlas, which the rasterizer owns.
+    pub fn device_bytes(&self) -> u64 {
+        kooch_core::gpu::buffer_bytes(&[&self.slots, &self.work, &self.alloc])
+    }
+
     pub fn config(&self) -> PoolConfig {
         self.config
     }

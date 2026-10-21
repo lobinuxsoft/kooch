@@ -337,6 +337,28 @@ impl PageRasterizer {
         self.pool.atlas_bytes(self.config)
     }
 
+    /// What the rasterizer holds: the atlas and its own buffers. The page table belongs to
+    /// [`super::mark::PageMarker`], which answers for it.
+    ///
+    /// 🔴 The atlas alone is `DEFAULT_PAGES * page_bytes()` — 128 MiB at the defaults, which is
+    /// more than every other allocation the engine reported put together before #1586.
+    pub fn device_bytes(&self) -> u64 {
+        kooch_core::gpu::texture_bytes(&self.atlas)
+            + kooch_core::gpu::buffer_bytes(&[
+                &self.uniform,
+                &self.page_list,
+                &self.counts,
+                &self.expand_args,
+                &self.draw_args,
+                &self.pairs,
+                &self.visible_counts,
+                &self.levels,
+                &self.gens,
+                &self.dirty,
+                &self.moved,
+            ])
+    }
+
     /// The uniform every page pass reads, including the shading model
     /// that samples what this draws.
     pub fn uniform_buffer(&self) -> &wgpu::Buffer {

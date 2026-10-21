@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use super::super::DEFAULT_MAX_TRIANGLES;
 use super::super::deferred::MeshletDeferredShader;
 use super::super::dispatcher::{MeshletCull, MeshletCullPipelines};
@@ -9,11 +7,9 @@ use super::super::scene::MeshletScene;
 use super::super::system::MeshletPipeline;
 use super::super::vis_buffer::MeshletVisRasterizer;
 use super::config::MeshletRenderStageConfig;
-use super::helpers::render_target_byte_estimate;
 use super::stage::MeshletRenderStage;
 use super::stage::ViewId;
 use crate::hi_z::HiZ;
-use crate::perf::EngineVramTracker;
 
 impl MeshletRenderStage {
     pub fn new(device: &wgpu::Device, config: MeshletRenderStageConfig) -> Self {
@@ -136,7 +132,6 @@ impl MeshletRenderStage {
             // are available.
             gpu_timers: MeshletGpuTimers::new_disabled_for_default(),
             frames_recorded: 0,
-            vram_tracker: None,
             frame_bind_groups: [Vec::new(), Vec::new(), Vec::new()],
             frame_bind_groups_index: 0,
         }
@@ -158,26 +153,31 @@ impl MeshletRenderStage {
         self.views[self.primary].hiz_curr.as_ref()
     }
 
-    /// Wires a shared engine VRAM tracker (#463.5). Called once at startup from the editor / game
-    /// runtime; subsequent buffer + texture creations / pool registrations the stage controls will
-    /// bump the counter so the perf HUD can report a meaningful engine footprint.
-    pub fn set_vram_tracker(&mut self, tracker: Arc<EngineVramTracker>) {
-        // Account for the persistent attachments we already created in `new()` — vbuf, depth,
-        // color. Hi-Z pyramids are lazy (`None` until the SPD orchestrator #486 turns them on); the
-        // pyramid allocation will bump the tracker on its own when it runs.
-        let attachment_bytes = render_target_byte_estimate(self.views[self.primary].size);
-        let pyramid_bytes = self.views[self.primary]
-            .hiz_prev
-            .as_ref()
-            .map(|p| p.byte_size())
-            .unwrap_or(0)
-            + self.views[self.primary]
-                .hiz_curr
+    /// What this stage holds on the device, summed from the owners rather than counted by them.
+    ///
+    /// 🔴 A sum, not a running total. Every `add` / `sub` pair this replaced was a chance to
+    /// report a growth and forget the shrink, which is exactly how the figure came to miss
+    /// 128 MiB of shadow pages (#1586).
+    ///
+    /// ⚠️ Does not reach into `Vbuf64Stage`: its upscalers, TAA history and half-rate targets each
+    /// own their own, and none of them answers yet.
+    pub fn device_bytes(&self) -> u64 {
+        let views: u64 = self.views.iter().map(|(_, view)| view.device_bytes()).sum();
+        views
+            + self.scene.device_bytes()
+            + self
+                .gpu_pool
                 .as_ref()
-                .map(|p| p.byte_size())
-                .unwrap_or(0);
-        tracker.add(attachment_bytes + pyramid_bytes);
-        self.vram_tracker = Some(tracker);
+                .map_or(0, crate::meshlet::GpuGlobalMeshPool::bytes)
+            + self.shadows.as_ref().map_or(0, |pass| pass.atlas_bytes())
+            + self
+                .page_marker
+                .as_ref()
+                .map_or(0, |marker| marker.device_bytes())
+            + self
+                .page_raster
+                .as_ref()
+                .map_or(0, |raster| raster.device_bytes())
     }
 
     /// Activates the GPU frame timer (#463.4). Call this once at startup from the editor / game

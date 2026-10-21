@@ -124,6 +124,25 @@ impl MeshletCull {
     /// Storage capacity (in meshlets) of the visible-output buffer.
     /// Use [`Self::ensure_capacity`] before dispatching to grow the
     /// buffer when a scene exceeds the current allocation.
+    /// What this view's cull holds on the device.
+    pub fn device_bytes(&self) -> u64 {
+        kooch_core::gpu::buffer_bytes(&[
+            &self.params_buffer,
+            &self.hi_z_params_buffer,
+            &self.scene_params_buffer,
+            &self.visible_meshlets,
+            &self.visible_count,
+            &self.culled_meshlets,
+            &self.culled_count,
+            &self.indirect_args,
+            &self.group_max_err,
+            &self.reject_reasons,
+            &self.stage_counters,
+            &self.chunks,
+            &self.chunk_args,
+        ])
+    }
+
     pub fn capacity(&self) -> u32 {
         self.capacity
     }
@@ -146,10 +165,7 @@ impl MeshletCull {
         if required <= self.group_capacity {
             return;
         }
-        let new_capacity = required
-            .checked_next_power_of_two()
-            .unwrap_or(required)
-            .max(self.group_capacity.saturating_mul(2));
+        let new_capacity = kooch_core::gpu::grown(required, self.group_capacity);
         self.group_max_err = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_group_max_err"),
             size: new_capacity as u64 * 4,
@@ -171,10 +187,7 @@ impl MeshletCull {
         if required <= self.chunk_capacity {
             return;
         }
-        let new_capacity = required
-            .checked_next_power_of_two()
-            .unwrap_or(required)
-            .max(self.chunk_capacity.saturating_mul(2));
+        let new_capacity = kooch_core::gpu::grown(required, self.chunk_capacity);
         self.chunks = Self::chunk_buffer(device, new_capacity);
         tracing::info!(
             target: "kooch_render::meshlet::cull",
@@ -207,10 +220,7 @@ impl MeshletCull {
         if required <= self.capacity {
             return;
         }
-        let new_capacity = required
-            .checked_next_power_of_two()
-            .unwrap_or(required)
-            .max(self.capacity.saturating_mul(2));
+        let new_capacity = kooch_core::gpu::grown(required, self.capacity);
         let visible_meshlets = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_visible_ids"),
             size: new_capacity as u64 * 4,

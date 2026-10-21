@@ -172,10 +172,13 @@ impl Default for HudVisibility {
 }
 
 impl HudVisibility {
-    /// Whether the OS is worth asking about CPU and memory this frame. Whether the OS is worth
-    /// asking about CPU and memory this frame: the Performance tab is open with its System section
-    /// expanded, or the System overlay card is on the game viewport.
+    /// Whether the OS is worth asking about CPU and memory this frame: the Performance tab is
+    /// open with its System section expanded, the System overlay card is on the game viewport, or
+    /// the info card is — it draws RSS too.
+    ///
+    /// 🔴 Every reader of `ram_rss_mb` has to be named here. The info card was not, so it drew a
+    /// permanent `RAM: 0 MB` for as long as it existed (#1586).
     pub(crate) fn wants_system_metrics(self) -> bool {
-        (self.panel_visible && self.system_section) || self.pinned.system
+        (self.panel_visible && self.system_section) || self.pinned.system || self.info_card
     }
 }

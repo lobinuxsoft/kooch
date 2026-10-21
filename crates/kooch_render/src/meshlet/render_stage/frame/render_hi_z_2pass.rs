@@ -50,9 +50,6 @@ impl MeshletRenderStage {
                 self.views[view_id].render_size.0,
                 self.views[view_id].render_size.1,
             );
-            if let Some(tracker) = &self.vram_tracker {
-                tracker.add(pyr.byte_size());
-            }
             self.views[view_id].hiz_prev = Some(pyr);
         }
         if self.views[view_id].hiz_curr.is_none() {
@@ -63,9 +60,6 @@ impl MeshletRenderStage {
                 self.views[view_id].render_size.0,
                 self.views[view_id].render_size.1,
             );
-            if let Some(tracker) = &self.vram_tracker {
-                tracker.add(pyr.byte_size());
-            }
             self.views[view_id].hiz_curr = Some(pyr);
         }
 

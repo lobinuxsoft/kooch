@@ -1,13 +1,10 @@
-/// The growth policy, without a device. What matters is that it
-/// reaches the requirement and does not creep up one slot at a time.
+/// The real policy, without a device — reimplementing it here would pass while the engine
+/// diverged, which is what this file used to do.
 fn grown(from: u32, required: u32) -> u32 {
-    if required <= from {
-        return from;
+    match required <= from {
+        true => from,
+        false => kooch_core::gpu::grown(required, from),
     }
-    required
-        .checked_next_power_of_two()
-        .unwrap_or(required)
-        .max(from.saturating_mul(2))
 }
 
 /// The case that panicked: 608 instances against the default 256.

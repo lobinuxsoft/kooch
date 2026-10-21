@@ -284,21 +284,35 @@ show this — the self-time column in the tree is what makes it obvious.
 - ⚠️ **`frame` appears twice per editor frame**: the View and Game panels
   each render the scene, with their own cull and shadow passes.
 
-## The VRAM figure counts buffers, not pool contents
+## The VRAM figure is a sum, not a counter
 
-`EngineVramTracker` is told about the mesh pool in exactly one place: where
-`GpuGlobalMeshPool::sync` creates or replaces a buffer. It reports
-`GpuGlobalMeshPool::bytes()` — the six buffers' own sizes — and not
-`GlobalMeshPool::byte_size()`, the CPU pool's contents.
+`EngineVramTracker` holds one number and `publish` overwrites it. Once a frame,
+`publish_gpu_stats` asks the owners what they hold and stores the total:
 
-The two differ, in both directions. The buffers carry 2x growth slack and never
-shrink, so they are larger than the pool; and the pool reuses the ranges a
-released mesh left (#1087), so its size falls while nothing is freed on the GPU.
-Registering a mesh says nothing to the tracker: at that point no VRAM has moved.
+| Owner | `device_bytes()` covers |
+|---|---|
+| `MeshletRenderStage` | every view's attachments, Hi-Z pyramids (live and retired), that view's cull buffers, the scene's instance mirror, the mesh pool's six buffers, the classic shadow atlas and cube array, the page table, and the page atlas |
+| `MaterialPipeline` | every uploaded texture with its mips, the three fallbacks, and the pool's two buffers |
+| `TargetPool` | whatever plugin passes allocated through it |
 
-🔴 Until #1558 the pool reported CPU bytes through `add(saturating_sub(..))` on
-every edit, so the figure only ever climbed — an engine that looked like it
-leaked while the shrinking half went unreported.
+Each is the buffers' and textures' **own** sizes, not the data in them: a pool
+carries growth slack and never shrinks, so what it was asked to store is not
+what it took.
+
+🔴 **It used to be `add` / `sub`, called from nine places.** Any site that
+reported a growth and forgot the matching shrink could only push the figure up,
+and any allocation nobody remembered to report was invisible. Both happened: the
+mesh pool reported CPU bytes through `add(saturating_sub(..))` so it never came
+down, and the virtual shadow atlas — **128 MiB at the defaults**, more than
+everything else combined — was never reported at all, for as long as it existed.
+
+Asking the owners is the only arrangement where forgetting is impossible. When
+you add a buffer to a subsystem, put it in that subsystem's `device_bytes()`;
+there is nowhere else to put it.
+
+⚠️ **`Vbuf64Stage` does not answer yet.** Its twelve sub-passes own their own
+targets — TAA's history pairs, three upscalers, the half-rate buffers — and none
+of them has a `device_bytes()`. That share is still missing from the figure.
 
 ## Profiling the game, which is the point of all of this
 

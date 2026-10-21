@@ -21,3 +21,14 @@ fn vram_tracked_mb_truncates_correctly() {
     s.vram_tracked_bytes = 5 * 1024 * 1024 + 512; // 5 MB + a bit
     assert_eq!(s.vram_tracked_mb(), 5);
 }
+
+/// A card that draws RSS has to ask for it, or it draws a zero forever (#1586).
+#[test]
+fn the_info_card_wants_metrics() {
+    let hud = super::HudVisibility {
+        info_card: true,
+        panel_visible: false,
+        ..Default::default()
+    };
+    assert!(hud.wants_system_metrics());
+}
