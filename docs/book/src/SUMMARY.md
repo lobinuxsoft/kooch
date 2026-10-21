@@ -24,6 +24,7 @@
 
 - [Crate Graph](./architecture/crate-graph.md)
 - [Component Storage](./architecture/component-storage.md)
+- [Resource Lifetime](./architecture/resource-lifetime.md)
 - [Render Pipeline](./architecture/render-pipeline.md)
 - [Lighting — Inti](./architecture/lighting.md)
 - [Frame Pacing](./architecture/frame-pacing.md)

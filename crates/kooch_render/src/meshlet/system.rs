@@ -89,12 +89,13 @@ impl MeshletPipeline {
     }
 
     /// Records this frame's ask and releases whatever has gone unasked for [`MESH_MAX_AGE`].
-    /// Returns how many slots went back to the pool.
+    /// Returns the GUIDs whose slots went back to the pool, so the caller can drop their assets
+    /// too — the pool is the GPU half and `Assets<MeshletMesh>` is the other.
     ///
     /// 🔴 Must run before the frame's instances are built. `GlobalMeshPool::release` hands the
     /// `mesh_id` out again on the very next `register`, so the GUID leaves `registry` in the same
     /// breath and nothing is left resolving it.
-    pub fn sweep(&mut self, referenced: &[Guid], max_age: u32) -> usize {
+    pub fn sweep(&mut self, referenced: &[Guid], max_age: u32) -> Vec<Guid> {
         self.frame = self.frame.wrapping_add(1);
         for guid in referenced {
             self.asked.insert(*guid, self.frame);
@@ -114,7 +115,7 @@ impl MeshletPipeline {
             }
             self.asked.remove(guid);
         }
-        stale.len()
+        stale
     }
 
     /// Repacks the pool once its holes outweigh what is in use.
