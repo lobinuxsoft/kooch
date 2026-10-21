@@ -619,3 +619,29 @@ fn the_cap_is_not_wasteful() {
     assert!(slots > 2, "it capped to the sun alone");
     assert!(over > cap, "{} slots would still have fitted", slots + 1);
 }
+
+/// 🔴 The compaction walks one thread per entry, so its span and the TABLE's span have to be the
+/// same number. Sized from the raw light count instead, it walked pages the table does not have —
+/// and at 3 008 lights the dispatch was 82 176 workgroups against a 65 535 limit (#1579).
+#[test]
+fn the_dispatch_matches_the_table() {
+    let config = PageConfig::default();
+    let clipmap = ClipmapConfig::default();
+    let cap = 128u64 << 20;
+
+    for views in [1u32, 2, 8] {
+        let room = super::mark::slots_for_cap(cap, config, clipmap, views).expect("the floor fits");
+        for asked in [64u32, 2048, 3009, 100_000] {
+            let slots = (super::mark::padded_lights(asked) + 1).min(room);
+            let span = super::mark::span(config, clipmap, slots);
+            assert!(
+                slots <= room,
+                "{asked} lights / {views} views walked {slots} slots against a table of {room}",
+            );
+            // And whatever the span, the dispatch folds inside one dimension.
+            let (x, _) =
+                kooch_core::gpu::tiled_workgroups(u32::try_from(span).unwrap_or(u32::MAX), 64);
+            assert!(x <= kooch_core::gpu::MAX_WORKGROUPS_PER_DIM);
+        }
+    }
+}

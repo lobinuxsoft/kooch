@@ -115,13 +115,17 @@ impl PageRasterizer {
             //     stamp and redraws like a fresh one.
             pass.set_pipeline(&self.invalidate);
             pass.set_bind_group(0, &bound.invalidate, &[uniform_offset]);
-            pass.dispatch_workgroups(self.compact_threads(light_count).div_ceil(64), 1, 1);
+            let (x, y) =
+                kooch_core::gpu::tiled_workgroups(self.compact_threads(device, light_count), 64);
+            pass.dispatch_workgroups(x, y, 1);
             // 2. The flat table becomes a dense list, bucketed by
             //    octave — the dispatch covers exactly this camera's
             //    span, so the other view's pages are never walked.
             pass.set_pipeline(&self.compact);
             pass.set_bind_group(0, &bound.compact, &[uniform_offset]);
-            pass.dispatch_workgroups(self.compact_threads(light_count).div_ceil(64), 1, 1);
+            let (x, y) =
+                kooch_core::gpu::tiled_workgroups(self.compact_threads(device, light_count), 64);
+            pass.dispatch_workgroups(x, y, 1);
             // 2b. The reader's jump table, after the compaction because
             //     "readable" means stamped and the stamp is what the
             //     compaction writes.
