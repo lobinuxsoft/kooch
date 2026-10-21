@@ -9,7 +9,8 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-10-20 — 🎯 **The editor went from 29 to 140 FPS on the same scene, and the number came from an instrument rather than an argument.** The owner reported a drop past 4,000 entities and asked about batching physics; physics was 3.29 ms and the GPU was idle, and a `puffin` capture named `editor: gather frame data` at **29.9 of 40.4 ms** on the main thread — the Inspector walking every entity, every frame, to display one. #1563 caches that snapshot on revisions and #1564 made the revisions precise enough to be worth caching on: frame 34.58 → **7.12 ms**, CPU render 31.29 → **5.55**. Beside it #1087 closed — the meshlet pool had a free list at last, and writes a dirty range instead of six whole buffers. 🔴 The lesson that cost the most is new in kind: **a field added to a serialized type with `#[serde(default)]` does not break loading, it breaks the derived `PartialEq`** — and `sweep_sync` used that equality as its guard, so every scene written before #1565 opens already marked unsaved and "Discard Changes" reads as a no-op (#1570). The same type had three different answers to "did this change?", two hashing geometry and one counting identity, with nothing holding them together.
+Last updated 2026-10-21 — 🎯 **One pass over a million entities went from 66.5 ms — four whole frames — to 2.98 ms, and spawning that million from 52.3 s to 0.63 s.** #891 finally landed: the component values left the per-type `HashMap<Entity, T>` for dense table columns, and the archetype hands out the **row** rather than a key, so a query reads it from the walk instead of asking a map. The cost per entity is now **flat** from a thousand to a million — the old rise was the hash losing the cache, not the work — and fragmenting the archetypes costs nothing. 🔴 **The issue's own plan was wrong about the hard part and reading the history is what caught it.** It had the 51 insert sites rewritten to push a typed value; they are untouched, because every site in this engine writes the value and *then* changes the archetype, so `AnyStorage::take_into` is monomorphised and the funnel promotes a value it cannot name. The same discipline saved the shadow work: #1579 first said "make the page table sparse", and `2a7ad5b7` had deleted exactly that hash because the shading measured **10.4 ms** against 0.884 ms for the whole shadow track. The table became **two buffers** instead, split by which pass touches a word, which doubled the lights that can cast (1 306 → 2 613 in the editor) and made the shading *faster* — a stride of three instead of six. 🔴 And the lesson that cost the most is about method, not code: **fixing the site the log names without auditing the file costs one smoke test per round.** The same unfolded dispatch surfaced four times, the last one on the line directly above the two I had just fixed. What closed it was a test, not more care.
+
 
 ---
 
@@ -208,6 +209,88 @@ recommendation, it is what an old file silently becomes. A project that
 wants these values sets them.
 
 ---
+
+## 🎯 2026-10-21 — a million entities, twice the shadowed lights, and four rounds of the same mistake
+
+### The ECS stopped asking a map where a value is (#891)
+
+`ComponentStorage<T>` was a `HashMap<Entity, T>` and the archetype stored identities, so a
+two-component query cost **two hashes per entity** and every hit jumped to an address the prefetcher
+never saw. The engine was archetype-indexed and HashMap-backed: it kept the matching benefit and
+gave up the one that makes it fast.
+
+| | before | after |
+|---|---|---|
+| query, 2 components, 1k / 10k / 100k | 18.8 / 19.8 / 29.3 ns per entity | **2.9 / 2.7 / 3.0 ns** |
+| query, **1 000 000** entities | 66.55 ns — **66.5 ms, four frames at 60 FPS** | **2.98 ns — 2.98 ms** |
+| spawn, 1 000 000 entities | **52.3 s** | **0.63 s** |
+| 4 components, 100k | — | 5.31 ns (1.33 per component) |
+
+Flat from a thousand to a million, and fragmenting the archetypes — one entity in 2, in 8, in 64
+carrying a third component — costs nothing.
+
+🔴 **The plan's last step was 51 hand edits and turned out to be none.** It assumed the insert sites
+had to push a typed value into a column, because `Column::push<T>` needs the concrete type and the
+archetype site has only a `TypeId`. But every site here writes the value *first* and changes the
+archetype second, so the value is already in hand — it just has no name there. `AnyStorage::take_into`
+is monomorphised, so the funnel promotes a value it cannot name. Not one insert site changed.
+
+The map stayed as the **inbox** for a value whose archetype has not caught up with it; the column is
+the home; the archetype change promotes it and drains the inbox. `get_cpu` returns a view that looks
+in the column first, which is why six hundred call sites kept reading the truth.
+
+Three things now make the old failure modes impossible rather than unlikely: `register_entity` is
+gone (an archetype cannot change without the row moving), `ComponentStorage` is crate-private (a
+value cannot get a second home), and `move_entity::take` is the only complete removal — three sites
+were doing half of one.
+
+### The shadow page table is two buffers, not one cell of six words (#1579)
+
+Scaling `many_lights` past ~1 300 lights killed the renderer: the table wanted **294.8 MiB to index
+48 KiB** of resident pages — 6 288× the thing it addresses — and past the device's binding limit
+wgpu hands back an *invalid* buffer, after which every submit fails naming a label and no cause.
+Four validation errors a frame, for ever, with the shadows gone.
+
+🔴 The issue first prescribed the hash that `2a7ad5b7` had deleted for a measured reason: 10.4 ms of
+shading against 0.884 ms for the whole shadow track, an open-addressed probe chain walked per pixel
+per light. The scope was rewritten before any code. The table split by **which pass touches a word**
+instead:
+
+| buffer | words | read by |
+|---|---|---|
+| `shadow_page_read` | slot, content stamp, LOD hint | shading, marking, compaction |
+| `shadow_page_work` | frame requested, listing, frame allocated | the page passes and the debug view |
+
+The limit is spent on the widest of the two, so the ceiling doubled — **1 306 → 2 613** shadowed
+lights in the editor, 2 613 → 5 226 in a build — and the shading reads a stride of three instead of
+six, so one cache line serves five neighbouring pages where it served two. Past the ceiling the
+count is now **capped** and said once, rather than the renderer dying in silence.
+
+### A prefab has no identity to hand out (#712, half)
+
+`is_bookkeeping` was consulted only on propagation's *removal* side, so the write side pushed the
+prefab's own `PersistentId` onto every instance. 36 instances of one prefab logged **280 identity
+clashes** on a single load. It survived since the engine rename because **the planning rule had a
+second copy in the tests** — `plan_against` reimplemented it, so no test exercised the real
+decision. Both now call one function.
+
+### 🔴 The lesson: fix the file, not the line the log names
+
+The same unfolded compute dispatch surfaced **four times** — `cs_compact`, then the two seat passes,
+then `age_view`, which sits on the line *directly above* the two just fixed, in the same compute
+pass. Each round cost the owner a smoke test.
+
+What closed it is a test: `every_span_pass_folds` requires `@builtin(num_workgroups)` from any
+`@compute` entry point that **bounds itself** on a view's span, because that builtin is the fold's
+only ingredient. When it then flagged a fifth candidate that had been dismissed by reasoning, the
+test was wrong and the code was right — `cs_lod_offsets` reads the span for a base offset without
+being dispatched over it. The invariant is "bounds itself on", not "mentions".
+
+Two smaller ones from the same day, both now written into the issue workflow: **`--all-targets`
+hides dead code**, because a test counts as a user and `dead_code` never fires — a plain
+`cargo build --release` found in two minutes what every check had called clean. And **features off by
+default hide whole files**, so a green `--workspace` check is green over a subset; four sites shipped
+broken that way and the owner found them on the first Rebuild.
 
 ## 🎯 2026-10-20 — the editor got five times faster, and a serde default broke an equality nobody was watching
 
