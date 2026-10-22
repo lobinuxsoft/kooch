@@ -74,3 +74,7 @@ dlss = ["dep:dlss_wgpu"]
 
 [dev-dependencies]
 libloading.workspace = true
+
+# `malloc_trim`: what lets RSS fall after the engine frees (#1589).
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+libc = "0.2"

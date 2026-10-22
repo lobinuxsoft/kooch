@@ -75,6 +75,8 @@ pub struct MaterialPipeline {
     /// GPU texture store + per-material bind group factory for the
     /// two-pass material shader. Populated during sync alongside `pool`.
     texture_pool: MaterialTexturePool,
+    /// Set when a sync dropped textures, until [`Self::take_released`] reads it.
+    released: bool,
     registry: HashMap<Guid, u32>,
     /// Per-slot textures in group-4 order, parallel to the GPU pool slots: the PBR maps, or a custom
     /// shader's declared textures. The render builds each material's bind group from it.
@@ -116,6 +118,7 @@ impl MaterialPipeline {
         Self {
             pool,
             texture_pool,
+            released: false,
             registry: HashMap::new(),
             slot_textures,
             slot_shaders: vec![None],
@@ -245,6 +248,12 @@ impl MaterialPipeline {
 
     /// Read-only handle to the texture pool, for building per-material
     /// bind groups in the two-pass render path.
+    /// Whether a sync dropped textures since the last call — so the frame can hand the freed heap
+    /// back to the OS once, however many sweeps released (#1589).
+    pub fn take_released(&mut self) -> bool {
+        std::mem::take(&mut self.released)
+    }
+
     /// What materials hold on the device: every uploaded texture, plus the pool's two buffers.
     pub fn device_bytes(&self) -> u64 {
         self.texture_pool.device_bytes() + self.pool().device_bytes()
@@ -534,6 +543,7 @@ impl MaterialPipeline {
         let asked = Self::asked_textures(snapshots, &drawn);
         let evicted = self.texture_pool.sweep(&asked, TEXTURE_MAX_AGE);
         if !evicted.is_empty() {
+            self.released = true;
             // The upload is the VRAM half; the decoded `Image` is the RAM one.
             if let Some(mut server) = resources.remove::<AssetServer>() {
                 for guid in &evicted {
