@@ -97,7 +97,11 @@ impl MeshletPipeline {
     /// breath and nothing is left resolving it.
     pub fn sweep(&mut self, referenced: &[Guid], max_age: u32) -> Vec<Guid> {
         self.frame = self.frame.wrapping_add(1);
-        for guid in referenced {
+        // 🔴 A cut is published under its own GUID and no renderer names it, so without this it
+        // aged out a second after it was baked and the instance fell back to the uncut mesh in
+        // silence — and `AlphaTrim` remembered it, so it was never cut again.
+        let cuts: Vec<Guid> = self.trim.cuts_of(referenced).collect();
+        for guid in referenced.iter().chain(&cuts) {
             self.asked.insert(*guid, self.frame);
         }
         let stale: Vec<Guid> = self
@@ -114,6 +118,13 @@ impl MeshletPipeline {
                 self.pool.release(handle.mesh_id);
             }
             self.asked.remove(guid);
+        }
+        // 🔴 A scene change releases most of the pool at once, and holes nothing asks for are never
+        // refilled: 7.2 MB of holes were held for 170 KB of live meshes. Safe here for the same
+        // reason the release is — the registry is repointed before any instance is built.
+        if !stale.is_empty() {
+            self.trim.forget(&stale);
+            self.defragment();
         }
         stale
     }

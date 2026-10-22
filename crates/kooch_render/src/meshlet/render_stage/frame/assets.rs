@@ -53,12 +53,14 @@ impl MeshletRenderStage {
         // is uploaded by the same call, so the cut mesh draws on the next frame (#452).
         self.trim_static_masks(device, queue, resources);
 
+        let mut textures_freed = false;
         // Material pool sync first: the meshlet scene system reads
         // `MaterialPipeline.lookup_or_fallback` when assembling `MeshInstance.material_id`, so any
         // newly-picked GUID has to be in the registry before the cull dispatch fires.
         if let Some(mut material_pipeline) = resources.remove::<crate::material::MaterialPipeline>()
         {
             material_pipeline.sync_from_resources(device, queue, resources);
+            textures_freed = material_pipeline.take_released();
             resources.insert(material_pipeline);
         } else {
             tracing::debug!(
@@ -112,6 +114,17 @@ impl MeshletRenderStage {
                 released = released.len(),
                 live = self.pipeline.registered_count(),
                 "released meshes nothing asked to draw",
+            );
+        }
+        // Once per frame, and only on a frame that freed something: a scene change, a deletion.
+        if textures_freed || !released.is_empty() {
+            let took = kooch_core::memory::return_freed();
+            tracing::info!(
+                target: "kooch_render::memory",
+                meshes = released.len(),
+                textures = textures_freed,
+                ms = took.as_secs_f32() * 1000.0,
+                "returned freed heap to the OS",
             );
         }
         if !referenced.is_empty() {

@@ -352,8 +352,8 @@ fn an_unasked_mesh_is_released() {
     assert_eq!(pipeline.sweep(&[], 4), vec![guid]);
     assert_eq!(pipeline.registered_count(), 0);
     assert!(
-        pipeline.dead_bytes() >= held,
-        "the slot was dropped from the registry without its ranges going back",
+        pipeline.pool().byte_size() < held,
+        "the slot left the registry but the pool kept its bytes",
     );
 }
 
@@ -368,4 +368,65 @@ fn an_asked_mesh_stays() {
         assert!(pipeline.sweep(&[guid], 4).is_empty());
     }
     assert!(pipeline.lookup(guid).is_some());
+}
+
+/// A sweep that empties most of the pool compacts it, instead of keeping the holes for a mesh that
+/// may never come (#1589): measured, 7.2 MB of holes held for 170 KB of live meshes.
+#[test]
+fn a_sweep_compacts_the_holes() {
+    let mesh = build_default_meshlets(&cube_mesh()).expect("meshlets");
+    let kept = Guid::new_v4();
+    let mut pipeline = MeshletPipeline::new();
+    pipeline.register_mesh(kept, &mesh);
+    for _ in 0..8 {
+        pipeline.register_mesh(Guid::new_v4(), &mesh);
+    }
+    // Only `kept` is asked for; the other eight were never asked, which counts from frame 0.
+    for _ in 0..4 {
+        assert!(pipeline.sweep(&[kept], 4).is_empty());
+    }
+    assert_eq!(pipeline.sweep(&[kept], 4).len(), 8);
+
+    assert_eq!(
+        pipeline.dead_bytes(),
+        0,
+        "the released ranges stayed as holes"
+    );
+    let handle = pipeline
+        .lookup(kept)
+        .expect("the live mesh survives the repack");
+    assert!(
+        (handle.mesh_id as usize) < pipeline.pool().mesh_descriptors.len(),
+        "the registry points past the repacked pool",
+    );
+}
+
+/// A cut is drawn whenever its source is, though no renderer names it: the sweep has to keep it,
+/// and forget it once it does go so the source is cut again on its return (#1589).
+#[test]
+fn a_cut_lives_with_its_source() {
+    let mesh = build_default_meshlets(&cube_mesh()).expect("meshlets");
+    let (source, material, cut) = (Guid::new_v4(), Guid::new_v4(), Guid::new_v4());
+    let mut pipeline = MeshletPipeline::new();
+    pipeline.register_mesh(source, &mesh);
+    pipeline.register_mesh(cut, &mesh);
+    pipeline.trim.remember(source, material, 1, Some(cut));
+
+    for _ in 0..20 {
+        assert!(
+            pipeline.sweep(&[source], 4).is_empty(),
+            "the cut was swept while its source drew"
+        );
+    }
+    assert_eq!(pipeline.trim.mesh_for(source, material), Some(cut));
+
+    for _ in 0..5 {
+        pipeline.sweep(&[], 4);
+    }
+    assert!(pipeline.lookup(cut).is_none());
+    assert_eq!(
+        pipeline.trim.mesh_for(source, material),
+        None,
+        "a released cut was still remembered, so its source would never be cut again",
+    );
 }
