@@ -2602,6 +2602,7 @@ dependencies = [
  "kooch_pack",
  "kooch_plugin_api",
  "kooch_plugin_render",
+ "libc",
  "libloading",
  "pollster",
  "profiling",
