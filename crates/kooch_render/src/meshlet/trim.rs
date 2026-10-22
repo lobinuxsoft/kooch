@@ -95,6 +95,20 @@ impl AlphaTrim {
         self.settling = None;
     }
 
+    /// The cuts whose source mesh is in `drawn`: drawn too, though no renderer names them.
+    pub fn cuts_of<'a>(&'a self, drawn: &'a [Guid]) -> impl Iterator<Item = Guid> + 'a {
+        self.trims
+            .iter()
+            .filter(|((source, _), _)| drawn.contains(source))
+            .filter_map(|(_, trim)| trim.mesh)
+    }
+
+    /// Drops every pair whose cut was released, so its source is cut again when it next draws.
+    pub fn forget(&mut self, released: &[Guid]) {
+        self.trims
+            .retain(|_, trim| trim.mesh.is_none_or(|cut| !released.contains(&cut)));
+    }
+
     /// Whether the pair has no trim, or one cut from other values.
     fn stale(&self, pair: &TrimPair) -> bool {
         self.trims
