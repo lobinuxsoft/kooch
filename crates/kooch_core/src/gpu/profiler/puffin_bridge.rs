@@ -8,7 +8,15 @@ mod tests;
 
 /// Reports one finished GPU frame into the global profiler's current
 /// frame. No-op when nothing in the batch carried a timestamp.
+///
+/// 🔴 And a no-op while nobody is recording, the gate puffin's own scopes already have. puffin only
+/// empties its current frame in `new_frame`, which a host calls while recording; reporting anyway
+/// piled every GPU frame of the session into one buffer — 62 MiB in the editor, faster the more it
+/// redrew (#1592).
 pub fn report(results: &[GpuTimerQueryResult]) {
+    if !puffin::are_scopes_on() {
+        return;
+    }
     let Some(offset_ns) = clock_offset(results) else {
         return;
     };

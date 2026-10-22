@@ -309,3 +309,65 @@ fn a_pass_scope_is_timed() {
         scopes.totals().collect::<Vec<_>>()
     );
 }
+
+/// Nothing reaches puffin while nobody is recording (#1592). puffin only empties its current frame in
+/// `new_frame`, which a host calls while recording; a bridge that reported anyway piled every GPU
+/// frame of the session into one buffer — 62 MiB and climbing in the editor.
+#[test]
+fn idle_scopes_stay_out() {
+    let _guard = PUFFIN.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((device, queue)) = timestamp_device() else {
+        eprintln!("skipped: no adapter with timestamp queries");
+        return;
+    };
+    let mut scopes = GpuScopes::new(&device, &queue).expect("profiler settings are valid");
+    // Whatever earlier tests left in the current frame goes first.
+    puffin::set_scopes_on(true);
+    puffin::GlobalProfiler::lock().new_frame();
+    puffin::set_scopes_on(false);
+
+    for _ in 0..8 {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let query = scopes.begin("idle pass", &mut encoder);
+        busy_copy(&device, &mut encoder);
+        scopes.end(&mut encoder, query);
+        scopes.resolve(&mut encoder);
+        queue.submit(Some(encoder.finish()));
+        let _ = device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(30)),
+        });
+        scopes.end_frame(&queue);
+    }
+
+    let frames: Arc<Mutex<Vec<Arc<puffin::FrameData>>>> = Arc::default();
+    let sink = {
+        let frames = Arc::clone(&frames);
+        puffin::GlobalProfiler::lock().add_sink(Box::new(move |frame| {
+            frames.lock().unwrap().push(frame);
+        }))
+    };
+    puffin::set_scopes_on(true);
+    puffin::GlobalProfiler::lock().new_frame();
+    puffin::set_scopes_on(false);
+    puffin::GlobalProfiler::lock().remove_sink(sink);
+
+    let piled: usize = frames
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|frame| frame.unpacked().ok())
+        .flat_map(|frame| {
+            frame
+                .thread_streams
+                .iter()
+                .filter(|(info, _)| info.name == "GPU")
+                .map(|(_, stream)| stream.num_scopes)
+                .collect::<Vec<_>>()
+        })
+        .sum();
+    assert_eq!(
+        piled, 0,
+        "{piled} GPU scopes were held while nobody was recording"
+    );
+}
