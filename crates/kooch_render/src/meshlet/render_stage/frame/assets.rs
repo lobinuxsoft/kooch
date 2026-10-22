@@ -119,7 +119,7 @@ impl MeshletRenderStage {
         // Once per frame, and only on a frame that freed something: a scene change, a deletion.
         if textures_freed || !released.is_empty() {
             let took = kooch_core::memory::return_freed();
-            tracing::info!(
+            tracing::debug!(
                 target: "kooch_render::memory",
                 meshes = released.len(),
                 textures = textures_freed,

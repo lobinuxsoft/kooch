@@ -172,7 +172,7 @@ impl MeshletCull {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        tracing::info!(
+        tracing::debug!(
             target: "kooch_render::meshlet::cull",
             old_capacity = self.group_capacity,
             new_capacity,
@@ -189,7 +189,7 @@ impl MeshletCull {
         }
         let new_capacity = kooch_core::gpu::grown(required, self.chunk_capacity);
         self.chunks = Self::chunk_buffer(device, new_capacity);
-        tracing::info!(
+        tracing::debug!(
             target: "kooch_render::meshlet::cull",
             old_capacity = self.chunk_capacity,
             new_capacity,
