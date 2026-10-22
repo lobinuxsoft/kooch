@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-10-21 — 🎯 **One pass over a million entities went from 66.5 ms — four whole frames — to 2.98 ms, and spawning that million from 52.3 s to 0.63 s.** #891 finally landed: the component values left the per-type `HashMap<Entity, T>` for dense table columns, and the archetype hands out the **row** rather than a key, so a query reads it from the walk instead of asking a map. The cost per entity is now **flat** from a thousand to a million — the old rise was the hash losing the cache, not the work — and fragmenting the archetypes costs nothing. 🔴 **The issue's own plan was wrong about the hard part and reading the history is what caught it.** It had the 51 insert sites rewritten to push a typed value; they are untouched, because every site in this engine writes the value and *then* changes the archetype, so `AnyStorage::take_into` is monomorphised and the funnel promotes a value it cannot name. The same discipline saved the shadow work: #1579 first said "make the page table sparse", and `2a7ad5b7` had deleted exactly that hash because the shading measured **10.4 ms** against 0.884 ms for the whole shadow track. The table became **two buffers** instead, split by which pass touches a word, which doubled the lights that can cast (1 306 → 2 613 in the editor) and made the shading *faster* — a stride of three instead of six. 🔴 And the lesson that cost the most is about method, not code: **fixing the site the log names without auditing the file costs one smoke test per round.** The same unfolded dispatch surfaced four times, the last one on the line directly above the two I had just fixed. What closed it was a test, not more care.
+Last updated 2026-10-22 — 🎯 **Moving the mouse over the editor no longer eats memory, closing a scene gives it back, and the VRAM figure is finally true.** The HUD had shown 5 MB in every scene: it counted four render targets and never heard of the 128 MiB shadow page atlas or a single material texture. It now asks each owner what it holds instead of being told by nine call sites, and that honest number is what exposed everything after it. There was **no unload path at all** — `Assets::remove` was called only by its own tests — so every scene a session opened was held forever; meshes and textures are now released when nothing has asked to draw them for a second, and textures are uploaded on demand (5 for `character_test`, not the project's 78). RAM climbed ~1 MB/s under a moving mouse: the GPU profiler bridge fed puffin every frame while nobody was recording, and puffin only empties its frame when recording. Freed is not returned, either — glibc kept 53 MB inside the process until `malloc_trim` handed it back. The heavy scene now costs **569 MB on the first visit and 569 on the last**. 🔴 And the lesson is about method: **eight hypotheses fell by reading, and the culprit had been read twice and cleared.** A 40-line allocator hook that printed a backtrace when a buffer crossed 8 MiB named it on the first run.
 
 
 ---
@@ -209,6 +209,70 @@ recommendation, it is what an old file silently becomes. A project that
 wants these values sets them.
 
 ---
+
+## 🎯 2026-10-22 — memory that comes back, and a VRAM figure that is not lying
+
+**What the user gets:** the editor no longer grows while you work in it, switching scenes back and
+forth costs the same the tenth time as the first, and the VRAM in the HUD is a number you can act on.
+
+### The figure was a counter, so it could only be wrong upward (#1586)
+
+`EngineVramTracker` was mutated by `add` / `sub` from nine places. A site that reported a growth and
+forgot the shrink pushed it up forever; an allocation nobody reported was invisible. Both happened:
+**the 128 MiB virtual shadow atlas was never reported at all** — 26× the 5 MB the HUD showed. Now
+the figure is a sum asked of the owners once a frame (`device_bytes()` on the stage, the material
+pipeline and the target pool), and forgetting is impossible because there is nowhere else to put a
+buffer.
+
+Shared on the way: `kooch_core::gpu::grown`, `buffer_bytes`, `texture_bytes`. The growth formula had
+four hand-written copies — and a fifth inside a test that reimplemented the policy it claimed to
+test.
+
+### There was no unload path (#1589)
+
+Loading another scene despawned entities and touched **no asset cache and no GPU pool**. Every free
+path existed; nobody called them. Now one rule covers deletion, scene change and hidden renderers:
+**a resource nothing has asked to draw for 60 frames is released** — the same rule the shadow page
+pool already used. Measured on a scene change: meshes in the pool 13 → 3, textures 5 → 1, and their
+decoded copies in RAM with them.
+
+Textures were driven by the **AssetDatabase**, i.e. every material in the project, so they were
+uploaded whether drawn or not. They are now uploaded on demand: `character_test` holds **5**, not 78.
+
+Two bugs of my own were found by measuring the fix: a sweep that released but never compacted (7.2 MB
+of holes for 170 KB of live meshes), and the sweep throwing away **every alpha-trim cut a second after
+it was baked** — visually identical, so only the census could see it.
+
+### The RAM leak: a profiler nobody was looking at (#1592)
+
+~1 MB/s under a moving mouse. A census of every container came back flat; `mallinfo2` showed one
+buffer doubling 7 → 15 → 31 → 62 MiB. A temporary `#[global_allocator]` that prints a backtrace when
+a `realloc` crosses 8 MiB named it on the first run: `GpuScopes::end_frame` →
+`puffin_bridge::report` → `GlobalProfiler::report_user_scopes`. puffin only empties its frame in
+`new_frame`, which the editor calls only while recording; the bridge reported regardless. It now has
+the gate puffin's own scopes always had. It grew faster over the Edit View because the editor redraws
+on demand — **it was never the input, it was how many frames were drawn.**
+
+### Freed is not returned (#1589)
+
+After a scene change `heap_free` went 3 → 53 MB while RSS did not move: glibc keeps freed heap for
+reuse. `kooch_core::memory::return_freed` calls `malloc_trim` once, only on a frame that released
+something — 197 MB trapped beneath a live block went back to 1 MB in 4 ms.
+
+| | before | after |
+|---|---|---|
+| bytes written per edit, 400 meshes | 417 600 | **1 044** |
+| VRAM in the HUD | 5 MB, every scene | the real figure, moving with the scene |
+| `heap_mmap` under a moving mouse | 0 → 62 MB, doubling | **0** |
+| heavy scene, first vs last visit | — | **569 / 569 MB** |
+
+### Still open
+
+- ~108 MB of heap is a fixed cost of having **any** scene open, not yet attributed; most likely the
+  driver's compiled pipelines, which no Rust-side hook can see (#1589 · 1g).
+- Startup still decodes every image in the project into RAM (#1589 · 1c).
+- `Vbuf64Stage` does not report its VRAM yet (#1586).
+- The virtual-shadow acceptance suite has not compiled since the page cell was split (#1587).
 
 ## 🎯 2026-10-21 — a million entities, twice the shadowed lights, and four rounds of the same mistake
 
