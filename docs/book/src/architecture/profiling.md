@@ -463,6 +463,23 @@ while another is open is *not* its child; `begin_child` is. Left to
 `begin`, a pass and the pass containing it come back as siblings and
 their times read as additive.
 
+### 🔴 The bridge reports only while something is recording
+
+`puffin_bridge::report` hands each finished GPU frame to
+`GlobalProfiler::report_user_scopes`, which **appends** to puffin's current
+frame. The only thing that empties it is `GlobalProfiler::new_frame`, and the
+editor calls that only while recording.
+
+Until #1592 the bridge reported regardless, so with the profiler idle — the
+normal state — every GPU frame of the session piled into one buffer nobody took:
+62 MiB and climbing, faster the more the editor redrew. It is gated on
+`puffin::are_scopes_on()` now, the gate puffin's own `profile_scope!` has always
+had; the bridge had stepped round it by calling `GlobalProfiler` directly.
+
+Anything else that feeds `GlobalProfiler` by hand needs the same gate. The HUD's
+GPU time is computed from the results before the bridge, so it does not depend
+on recording.
+
 ### The GPU clock is not puffin's clock
 
 A GPU timestamp's absolute value is undefined — `wgpu-profiler` says so

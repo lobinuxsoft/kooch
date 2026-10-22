@@ -204,11 +204,6 @@ impl AssetServer {
             .map(|key| Handle::<T>::from_key(*key))
     }
 
-    /// How many path → handle associations are cached. For the leak census (#1592).
-    pub fn cached_count(&self) -> usize {
-        self.cache.len()
-    }
-
     /// Drops every cached path → handle association without touching the
     /// `Assets<T>` storage. Use after a hot-reload pass that re-inserted
     /// fresh assets.

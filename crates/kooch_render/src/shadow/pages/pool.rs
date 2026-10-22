@@ -247,19 +247,32 @@ impl PagePool {
     pub fn new(device: &wgpu::Device, config: PoolConfig) -> Self {
         // 🔴 Said out loud because a BUILD has no Shadow pages panel, and the layer split only ever
         // happens in a build: the pool is divided between views, so the editor's two cameras never
-        // cross a layer boundary.
-        tracing::info!(
-            target: "kooch_render::shadow",
-            pages = config.pages,
-            views = config.view_count(),
-            per_row = config.per_row(),
-            per_layer = config.slice(),
-            layers_per_view = config.layers_per_view(),
-            layers = config.layers(),
-            slots_per_view = config.slots(),
-            total = config.total(),
-            "the shadow page atlas is laid out",
-        );
+        // cross a layer boundary. Once per process: every scene change rebuilds the pool, and a
+        // layout repeated on each one buried the console.
+        static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        macro_rules! layout {
+            ($level:expr) => {
+                tracing::event!(
+                    target: "kooch_render::shadow",
+                    $level,
+                    pages = config.pages,
+                    views = config.view_count(),
+                    per_row = config.per_row(),
+                    per_layer = config.slice(),
+                    layers_per_view = config.layers_per_view(),
+                    layers = config.layers(),
+                    slots_per_view = config.slots(),
+                    total = config.total(),
+                    "the shadow page atlas is laid out",
+                )
+            };
+        }
+        // `event!` takes its level as a constant, hence the macro rather than a variable.
+        if SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            layout!(tracing::Level::DEBUG);
+        } else {
+            layout!(tracing::Level::INFO);
+        }
         Self {
             slots: table_buffer(device, "shadow_page_read", PAGE_READ),
             work: table_buffer(device, "shadow_page_work", PAGE_WORK),

@@ -107,7 +107,7 @@ fn read_epoch(resources: &Resources) -> u32 {
     let seen = (u64::from(manager.is_some()) << 32) | u64::from(epoch);
     static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
     if LAST.swap(seen, std::sync::atomic::Ordering::Relaxed) != seen {
-        tracing::info!(
+        tracing::debug!(
             target: "kooch_render::shadow",
             found = manager.is_some(),
             epoch,

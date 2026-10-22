@@ -108,7 +108,7 @@ impl MeshletRenderStage {
         // the pages are given back so the next frame draws them under the new masks (#1220).
         let masks = shadow_masks(sun_shadow_layers, self.lights.uploaded());
         if self.page_masks.is_some_and(|before| before != masks) {
-            tracing::info!(
+            tracing::debug!(
                 target: "kooch_render::shadow",
                 "a light's shadow layers changed; the pages are drawn again",
             );

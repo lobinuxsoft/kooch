@@ -47,7 +47,7 @@ impl PageMarker {
             // 🔴 The TABLE goes with them, and it did not (#973).
             self.pool.clear(encoder);
             self.life.rebuilt = true;
-            tracing::info!(
+            tracing::debug!(
                 target: "kooch_render::shadow",
                 slots,
                 views,
