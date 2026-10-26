@@ -95,7 +95,12 @@ pub struct RemoteSession {
 impl RemoteSession {
     /// Launches `cargo run -- --remote` for the project at `manifest_path` and returns a session in
     /// [`ConnectionState::Connecting`].
-    pub fn launch(manifest_path: &Path, engine_root: Option<&Path>) -> std::io::Result<Self> {
+    /// `launch_env` is the project's Settings → Launch environment; the editor's own variables win.
+    pub fn launch(
+        manifest_path: &Path,
+        engine_root: Option<&Path>,
+        launch_env: &[(String, String)],
+    ) -> std::io::Result<Self> {
         let output = Arc::new(Mutex::new(Vec::new()));
 
         // A name unique to this launch. The old fixed port meant an orphaned project — one that
@@ -119,25 +124,25 @@ impl RemoteSession {
             .stderr(Stdio::piped())
             // Held for the session's life: the kernel closes it when the editor dies however it
             // dies, and the host exits on the end-of-file (#647).
-            .stdin(Stdio::piped())
-            .env(kooch_remote::lifeline::LIFELINE_ENV, "1");
-        if let Some(engine_root) = engine_root {
-            cmd.env("KOOCH_ENGINE_ROOT", engine_root);
-        }
-        if let Some(project_root) = manifest_path.parent() {
-            cmd.env("KOOCH_PROJECT_ROOT", project_root);
+            .stdin(Stdio::piped());
+        let project_root = manifest_path.parent();
+        if let Some(project_root) = project_root {
             // `cargo run --manifest-path` does NOT move the child's working directory to the
             // manifest's folder — it inherits the editor's.
             cmd.current_dir(project_root);
         }
-        cmd.env(NAME_ENV, &socket);
-        if std::env::var_os("RUST_LOG").is_none() {
-            cmd.env("RUST_LOG", "info");
+        // The same environment the Play-in-a-process path builds: this host is where Play runs, so
+        // a variable typed in Settings has to reach it (#1610).
+        let inherited_logs = std::env::var_os("RUST_LOG").is_some();
+        for (key, value) in
+            crate::play_state::game_env(launch_env, engine_root, project_root, inherited_logs)
+        {
+            cmd.env(key, value);
         }
-        // Unconditional, unlike the filter above: the editor reads this rather than a person, and a
-        // formatted line arrives as one opaque string that loses the level and target the Console
-        // filters on.
-        cmd.env("KOOCH_LOG_FORMAT", "json");
+        // After the launch environment, so nothing typed there can redirect the socket or cut the
+        // lifeline.
+        cmd.env(NAME_ENV, &socket)
+            .env(kooch_remote::lifeline::LIFELINE_ENV, "1");
 
         let mut child = cmd.spawn()?;
         let lifeline = child.stdin.take();

@@ -32,7 +32,7 @@ pub fn parse_launch_env(raw: &str) -> Vec<(String, String)> {
 }
 
 /// The environment a launched game gets, in the order it is applied.
-fn game_env(
+pub(crate) fn game_env(
     launch_env: &[(String, String)],
     engine_root: Option<&Path>,
     project_root: Option<&Path>,

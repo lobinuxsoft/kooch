@@ -110,7 +110,7 @@ pub(super) fn draw_launch_env(
         .data(|d| d.get_temp::<String>(buffer_id))
         .unwrap_or_else(|| current.to_owned());
 
-    ui.label("Launch environment — variables the Play button gives this project's game:");
+    ui.label("Launch environment — variables this project's game gets:");
     if ui.text_edit_singleline(&mut buf).changed() {
         ctx.data_mut(|d| d.insert_temp(buffer_id, buf.clone()));
     }
@@ -150,6 +150,8 @@ pub(super) fn draw_launch_env(
          editor's and override anything typed here — the Console cannot read \
          the game's output without the last one.",
     );
+    // The host Play runs in starts with the project, so a change waits for the next one (#1610).
+    ui.weak("Applied when the project opens: reopen it after changing these.");
 }
 
 /// What this machine is missing before a project can build.
