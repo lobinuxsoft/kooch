@@ -29,7 +29,6 @@ fn world() -> Resources {
 /// Spawns one entity authored in `scene`, archetype included.
 fn spawn_in(resources: &mut Resources, scene: kooch_core::Guid) {
     use kooch_ecs::SceneMember;
-    use kooch_ecs::archetype_registry::ArchetypeRegistry;
     use kooch_ecs::component::ComponentRegistry;
 
     let mut commands = resources.remove::<kooch_ecs::commands::Commands>().unwrap();
