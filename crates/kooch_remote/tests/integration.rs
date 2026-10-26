@@ -26,6 +26,8 @@ use kooch_remote::server::RemoteServer;
 /// `Transform` registered as reflected components.
 fn ecs() -> Resources {
     let mut resources = Resources::new();
+    // The scene tests write under the temp dir, so that is their project.
+    resources.insert(kooch_remote::SceneRoot(std::env::temp_dir()));
     resources.insert(EntityAllocator::new());
     resources.insert(ComponentRegistry::new());
     resources.insert(ArchetypeRegistry::new());

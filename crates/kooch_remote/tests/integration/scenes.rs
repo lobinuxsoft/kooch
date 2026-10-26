@@ -454,3 +454,30 @@ fn an_unsaved_scene_refuses_to_revert() {
         other => panic!("list: {other:?}"),
     }
 }
+
+/// 🔴 Whatever reaches the socket gets no file write outside the project (#647).
+#[test]
+fn a_save_outside_the_project_is_refused() {
+    let mut resources = ecs();
+    resources.insert(kooch_ecs::SceneManager::new());
+    let project = std::env::temp_dir().join("kooch_remote_confined");
+    std::fs::create_dir_all(&project).expect("temp dir");
+    resources.insert(kooch_remote::SceneRoot(project));
+
+    let response = handle(
+        &Request {
+            id: 1,
+            notify: false,
+            method: Method::SaveScene {
+                path: "../escaped.scene".into(),
+                scene: None,
+            },
+        },
+        &mut resources,
+    );
+
+    match response.payload {
+        ResponsePayload::Error(kooch_remote::protocol::RemoteError::BadRequest { .. }) => {}
+        other => panic!("a write outside the project was not refused: {other:?}"),
+    }
+}

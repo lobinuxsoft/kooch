@@ -3,9 +3,11 @@
 use super::*;
 
 pub(super) fn load_scene(resources: &mut Resources, path: &str) -> Result<(), RemoteError> {
-    match load_through_manager(resources, path) {
+    let path = crate::scene_root::confined(resources, path)?;
+    let path = path.to_string_lossy();
+    match load_through_manager(resources, &path) {
         Some(result) => result?,
-        None => load_directly(resources, path)?,
+        None => load_directly(resources, &path)?,
     }
     // Refreshes prefab copies left stale while this scene was closed — here, where the scene
     // arrives.
@@ -59,7 +61,7 @@ pub(super) fn load_scene_additive(
     resources: &mut Resources,
     path: &str,
 ) -> Result<kooch_core::Guid, RemoteError> {
-    let path = std::path::PathBuf::from(path);
+    let path = crate::scene_root::confined(resources, path)?;
     let mut manager = resources
         .remove::<kooch_ecs::SceneManager>()
         .ok_or_else(|| RemoteError::Unavailable {
@@ -116,6 +118,7 @@ pub(super) fn save_scene(
     path: &str,
     scene: Option<kooch_core::Guid>,
 ) -> Result<(), RemoteError> {
+    let target = crate::scene_root::confined(resources, path)?;
     let Some(mut manager) = resources.remove::<kooch_ecs::SceneManager>() else {
         // Refused rather than falling back to writing everything alive:
         // that fallback is the bug this function exists to remove, and a
@@ -125,7 +128,7 @@ pub(super) fn save_scene(
         });
     };
     let result = match scene.or_else(|| manager.active_id()) {
-        Some(id) => match manager.save_scene_as(id, std::path::PathBuf::from(path), resources) {
+        Some(id) => match manager.save_scene_as(id, target, resources) {
             Ok(()) => {
                 tracing::info!("scene {id} saved to {path}");
                 Ok(())

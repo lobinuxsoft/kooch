@@ -47,3 +47,22 @@ fn an_older_config_still_loads() {
         ron::from_str("(recent_projects: [])").expect("a config without the field");
     assert!(config.launch_env.is_empty());
 }
+
+/// 🔴 A shipped game opens no socket (#647): the remote server lives only behind `editor`.
+#[test]
+fn a_game_build_has_no_remote() {
+    let main = super::generate_main_rs("demo");
+    assert!(
+        !main.contains("kooch_remote"),
+        "the game binary names the remote"
+    );
+    let manifest = super::generate_cargo_toml_for_test("demo", "../kooch");
+    let game = manifest
+        .lines()
+        .find(|line| line.starts_with("game = "))
+        .expect("a game feature");
+    assert!(
+        !game.contains("remote"),
+        "the game feature pulls the remote: {game}"
+    );
+}

@@ -21,6 +21,7 @@ pub(super) fn save_prefab(
     entity: EntityId,
     path: &str,
 ) -> Result<(), RemoteError> {
+    let target = crate::scene_root::confined(resources, path)?;
     let entity = resolve_entity(resources, entity)?;
     let document = SceneDocument::from_ecs_subtree(resources, entity);
     // A prefab file promises exactly one root — the invariant its extension
@@ -31,7 +32,7 @@ pub(super) fn save_prefab(
     })?;
     // Writes the `.meta` alongside, so the prefab is a registered asset the
     // moment it exists rather than the first time something loads it.
-    kooch_ecs::scene::prefab::save(&document, path.as_ref())
+    kooch_ecs::scene::prefab::save(&document, &target)
         .map(|_| ())
         .map_err(|e| RemoteError::SceneError {
             detail: e.to_string(),
@@ -56,7 +57,8 @@ pub(super) fn instantiate_prefab(
     resources: &mut Resources,
     path: &str,
 ) -> Result<EntityId, RemoteError> {
-    let prefab = SceneDocument::load(path.as_ref()).map_err(|e| RemoteError::SceneError {
+    let source = crate::scene_root::confined(resources, path)?;
+    let prefab = SceneDocument::load(&source).map_err(|e| RemoteError::SceneError {
         detail: e.to_string(),
     })?;
 
