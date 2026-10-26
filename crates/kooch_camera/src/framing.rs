@@ -212,7 +212,7 @@ impl RotationComposer {
         // easing is exponential and promises nothing — but because a correction that ramps to
         // nothing at the dead zone's edge approaches it and never arrives: the target parks in the
         // soft band, a third of the way out, for ever. Measured at 0.134 against the edge's 0.1.
-        let share = match state.last.abs_diff_eq(target, STILL) {
+        let wanted = match state.last.abs_diff_eq(target, STILL) {
             true => Vec2::ONE,
             false => Vec2::new(ramp(at.x, dead.x, soft.x), ramp(at.y, dead.y, soft.y)),
         };
@@ -222,7 +222,10 @@ impl RotationComposer {
             crate::virtual_camera::settled(dt, self.damping.x),
             crate::virtual_camera::settled(dt, self.damping.y),
         );
-        frame.rotation = turned(frame.rotation, owed * share * alpha, up);
+        // Eased towards, never jumped to: stepping 0.14 → 1 the frame the target stopped multiplied
+        // that frame's turn by 7, a ~5° jolt (#1616).
+        state.share += (wanted - state.share) * alpha;
+        frame.rotation = turned(frame.rotation, owed * state.share * alpha, up);
         state.last = target;
     }
 }
@@ -288,17 +291,22 @@ pub(crate) fn past(at: Vec2, half: Vec2) -> Vec2 {
     Vec2::new(beyond(at.x, half.x), beyond(at.y, half.y))
 }
 
-/// One vcam's framing in flight: where the target was last step, which is the whole of it — the
-/// correction itself is read off the camera's own orientation.
+/// One vcam's framing in flight: where the target was last step and how much of the owed angle it
+/// was correcting — the correction itself is read off the camera's own orientation.
 #[derive(Debug, Clone, Copy)]
 pub struct Framed {
     last: Vec3,
+    /// How much of the owed angle a step corrects, eased between the moving ramp and the whole.
+    share: Vec2,
 }
 
 impl Framed {
     /// Framed on a target that has not moved yet.
     pub fn at(target: Vec3) -> Self {
-        Self { last: target }
+        Self {
+            last: target,
+            share: Vec2::ONE,
+        }
     }
 }
 
