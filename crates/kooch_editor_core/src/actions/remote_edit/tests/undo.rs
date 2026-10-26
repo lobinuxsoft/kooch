@@ -334,8 +334,6 @@ fn a_paste_is_built_and_undone() {
 /// look like it did nothing.
 #[test]
 fn a_block_edit_keeps_its_before() {
-    use kooch_ecs::reflect::Reflect;
-
     let mut editor = ecs();
     editor
         .get_mut::<ComponentRegistry>()

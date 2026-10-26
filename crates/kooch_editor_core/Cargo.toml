@@ -102,3 +102,12 @@ required-features = ["profiling"]
 [[example]]
 name = "capture_remote"
 required-features = ["profiling"]
+
+# Both read a puffin capture, which only exists with the profiler on.
+[[test]]
+name = "capture_names"
+required-features = ["profiling"]
+
+[[test]]
+name = "remote_shader_costs"
+required-features = ["profiling"]

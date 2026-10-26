@@ -71,7 +71,7 @@ fn apply_rebuilds_entities_hierarchy_and_parks_unknowns() {
     let mut resources = ecs();
     let mut mirror = RemoteMirror::new();
 
-    mirror.apply(&snapshot(), &mut resources);
+    mirror.apply(&snapshot(), None, &mut resources);
 
     // Both entities exist locally.
     let rig = mirror.local_of(eid(0)).expect("rig mirrored");
@@ -109,7 +109,7 @@ fn reapply_replaces_the_previous_mirror() {
     let mut resources = ecs();
     let mut mirror = RemoteMirror::new();
 
-    mirror.apply(&snapshot(), &mut resources);
+    mirror.apply(&snapshot(), None, &mut resources);
 
     // A second snapshot with a single, different entity.
     let next = vec![EntitySnapshot {
@@ -122,7 +122,7 @@ fn reapply_replaces_the_previous_mirror() {
             fields: vec![],
         }],
     }];
-    mirror.apply(&next, &mut resources);
+    mirror.apply(&next, None, &mut resources);
 
     // The old ids are gone; the new one is present.
     assert!(mirror.local_of(eid(0)).is_none());
@@ -152,13 +152,13 @@ fn reapply_keeps_local_entities_stable() {
     let mut resources = ecs();
     let mut mirror = RemoteMirror::new();
 
-    mirror.apply(&snapshot(), &mut resources);
+    mirror.apply(&snapshot(), None, &mut resources);
     let before = mirror.local_of(eid(1)).expect("mesh mirrored");
 
     // The project moved the mesh; everything else is unchanged.
     let mut next = snapshot();
     next[1].components[0].fields = vec![("position".into(), ReflectValue::Vec3(glam::Vec3::Y))];
-    mirror.apply(&next, &mut resources);
+    mirror.apply(&next, None, &mut resources);
 
     assert_eq!(
         mirror.local_of(eid(1)),
@@ -180,13 +180,13 @@ fn reapply_drops_components_the_project_removed() {
     let mut resources = ecs();
     let mut mirror = RemoteMirror::new();
 
-    mirror.apply(&snapshot(), &mut resources);
+    mirror.apply(&snapshot(), None, &mut resources);
     let mesh = mirror.local_of(eid(1)).expect("mesh mirrored");
 
     // Both of the mesh's components are gone on the next pull.
     let mut next = snapshot();
     next[1].components.clear();
-    mirror.apply(&next, &mut resources);
+    mirror.apply(&next, None, &mut resources);
 
     assert!(
         resources
@@ -213,7 +213,7 @@ fn a_vanished_parent_is_cleared_from_the_mirror() {
     let mut resources = ecs();
     let mut mirror = RemoteMirror::new();
 
-    mirror.apply(&snapshot(), &mut resources);
+    mirror.apply(&snapshot(), None, &mut resources);
     let mesh = mirror.local_of(eid(1)).expect("mesh mirrored");
 
     // The fixture nests the mesh under the rig.
@@ -228,7 +228,7 @@ fn a_vanished_parent_is_cleared_from_the_mirror() {
     // The project flattens it.
     let mut next = snapshot();
     next[1].parent = None;
-    mirror.apply(&next, &mut resources);
+    mirror.apply(&next, None, &mut resources);
 
     assert!(
         resources
@@ -254,14 +254,14 @@ fn a_changed_parent_is_followed() {
         scene: None,
         components: vec![],
     });
-    mirror.apply(&initial, &mut resources);
+    mirror.apply(&initial, None, &mut resources);
 
     let mesh = mirror.local_of(eid(1)).expect("mesh mirrored");
     let other = mirror.local_of(eid(2)).expect("other mirrored");
 
     let mut next = initial.clone();
     next[1].parent = Some(eid(2));
-    mirror.apply(&next, &mut resources);
+    mirror.apply(&next, None, &mut resources);
 
     let parent = resources
         .get::<ComponentRegistry>()
@@ -322,7 +322,7 @@ fn an_entity_reference_is_translated_into_the_mirror() {
         },
     ];
 
-    mirror.apply(&snapshot, &mut resources);
+    mirror.apply(&snapshot, None, &mut resources);
 
     let local_target = mirror.local_of(target).expect("the target is mirrored");
     let local_holder = mirror.local_of(holder).expect("the holder is mirrored");
@@ -377,7 +377,7 @@ fn a_reference_to_a_later_entity_is_translated_too() {
         },
     ];
 
-    mirror.apply(&snapshot, &mut resources);
+    mirror.apply(&snapshot, None, &mut resources);
 
     let local_target = mirror.local_of(eid(6)).expect("the target is mirrored");
     let joint = resources
@@ -404,6 +404,7 @@ fn a_mirrored_entity_keeps_its_scene() {
             scene: Some(scene),
             components: vec![],
         }],
+        None,
         &mut r,
     );
 
@@ -432,8 +433,8 @@ fn a_mirrored_entity_can_leave_its_scene() {
         }]
     };
 
-    mirror.apply(&with_scene(Some(scene)), &mut r);
-    mirror.apply(&with_scene(None), &mut r);
+    mirror.apply(&with_scene(Some(scene)), None, &mut r);
+    mirror.apply(&with_scene(None), None, &mut r);
 
     let entity = mirror.local_of(eid(0)).expect("the entity was mirrored");
     let still_there = r
