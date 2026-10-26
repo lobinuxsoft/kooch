@@ -32,6 +32,12 @@ the project rather than the scene, paid whether or not anything drew them. The
 upload is demand-driven now, which is what makes the sweep mean anything: ageing
 without it would evict exactly what the next sync re-uploads.
 
+🔴 **Startup identifies, it does not decode.** Opening a project gives every mesh
+and image its `.meta` and its `AssetDatabase` entry (`AssetServer::identify`)
+and loads none of them. Decoding them all there put every image in the project
+in RAM for the whole session, outside anything the sweep walks: 78 images held
+for a scene that drew 5.
+
 ## Two things that will bite
 
 🔴 **`MAX_AGE` is the defence against thrash, not a tuning knob.** Evicting on

@@ -264,6 +264,13 @@ impl AssetServer {
         Ok(reloaded)
     }
 
+    /// Gives `path` its `.meta` and its `AssetDatabase` entry as a `T`, without decoding it — so a
+    /// later [`Self::load_by_guid`] finds it, and nothing is held until something asks (#1589).
+    pub fn identify<T: Asset>(&self, path: impl AsRef<Path>, resources: &mut Resources) {
+        let path = self.resolve_path(path.as_ref());
+        Self::ensure_guid_identity(&path, resources, type_name::<T>());
+    }
+
     /// Guarantees that `path` has a `.meta` sidecar with a stable [`Guid`] and the recorded
     /// `asset_type` set to `type_name`, and that, if an `AssetDatabase` resource is present, the
     /// resulting `(guid, path, type_name)` triple is registered.
