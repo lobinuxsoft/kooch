@@ -111,3 +111,7 @@ required-features = ["profiling"]
 [[test]]
 name = "remote_shader_costs"
 required-features = ["profiling"]
+
+# For the leak census (#1592): glibc's own account of the heap, to tell a leak from fragmentation.
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+libc = "0.2"
