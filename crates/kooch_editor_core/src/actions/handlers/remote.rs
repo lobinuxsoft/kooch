@@ -22,10 +22,19 @@ pub(super) fn handle_rebuild_and_run(resources: &mut Resources) {
 pub(super) fn start_remote_session(resources: &mut Resources) {
     crate::actions::register_scripts(resources);
 
-    let Some((manifest_path, engine_root)) = resources.get::<ProjectState>().and_then(|ps| {
-        let project = ps.active_project.as_ref()?;
-        Some((project.root_path.join("Cargo.toml"), ps.engine_root.clone()))
-    }) else {
+    let Some((manifest_path, engine_root, launch_env)) =
+        resources.get::<ProjectState>().and_then(|ps| {
+            let project = ps.active_project.as_ref()?;
+            let env = crate::play_state::parse_launch_env(
+                ps.editor_config.launch_env_for(&project.root_path),
+            );
+            Some((
+                project.root_path.join("Cargo.toml"),
+                ps.engine_root.clone(),
+                env,
+            ))
+        })
+    else {
         tracing::error!("remote: no active project");
         return;
     };
@@ -37,7 +46,7 @@ pub(super) fn start_remote_session(resources: &mut Resources) {
         return;
     }
 
-    match RemoteSession::launch(&manifest_path, engine_root.as_deref()) {
+    match RemoteSession::launch(&manifest_path, engine_root.as_deref(), &launch_env) {
         Ok(session) => {
             if let Some(state) = resources.get_mut::<RemoteState>() {
                 // A fresh attempt, so the banner does not show the
