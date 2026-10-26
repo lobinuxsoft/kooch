@@ -36,8 +36,8 @@ fn tick(backend: &mut RemoteInputBackend, ticks: usize) -> Vec<Frame> {
         .collect()
 }
 
-/// 🔴 Host faster than the editor: one snapshot spans several frames, and `just_pressed` is kept
-/// across them (#711), so the edge repeats until superseded.
+/// 🔴 Host faster than the editor: one snapshot spans several frames, and the edge must still be
+/// seen once — a game reading `just_pressed` in Play has to behave as it does in its build.
 #[test]
 fn one_snapshot_three_ticks() {
     let mut backend = RemoteInputBackend::new();
@@ -48,11 +48,7 @@ fn one_snapshot_three_ticks() {
     let presses: usize = frames.iter().map(|f| f.presses).sum();
     let edges = frames.iter().filter(|f| f.edge).count();
     assert_eq!(presses, 1, "the queue handed out the press more than once");
-    assert_eq!(
-        edges, 3,
-        "the edge is live for every frame the snapshot spans — by design (#711), \
-         and the reason a consumer must derive its own edge rather than read this",
-    );
+    assert_eq!(edges, 1, "one press read as just_pressed on {edges} frames");
 }
 
 /// The issue's own guess: the editor sends faster than the host ticks,

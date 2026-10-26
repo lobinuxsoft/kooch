@@ -484,6 +484,10 @@ impl kooch_core::plugin::Plugin for InputRemotePlugin {
         let backend: Box<dyn kooch_input::InputBackend> =
             Box::new(kooch_input::RemoteInputBackend::new());
         app.insert_resource(backend);
+        // The host has no `InputPlugin`, so this is its frame boundary: without it no edge ever
+        // expired and the event queue grew for the whole Play session (#766).
+        app.add_event::<kooch_input::InputEvent>();
+        app.add_system(kooch_core::stage::Stage::Input, pump_remote_input);
         app.add_system(
             kooch_core::stage::Stage::Startup,
             |resources: &mut kooch_core::resource::Resources| {
@@ -516,6 +520,23 @@ impl kooch_core::plugin::Plugin for InputRemotePlugin {
 
     fn name(&self) -> &str {
         "InputRemotePlugin"
+    }
+}
+
+/// The host's half of `InputPlugin`'s frame: publish the edges the snapshots brought, hand the
+/// events to the game.
+#[cfg(all(feature = "input", feature = "remote"))]
+fn pump_remote_input(resources: &mut kooch_core::resource::Resources) {
+    let Some(backend) = resources.get_mut::<Box<dyn kooch_input::InputBackend>>() else {
+        return;
+    };
+    backend.begin_frame();
+    let events = backend.poll();
+    if let Some(buffer) = resources.get_mut::<kooch_core::event::Events<kooch_input::InputEvent>>()
+    {
+        for event in events {
+            buffer.send(event);
+        }
     }
 }
 
