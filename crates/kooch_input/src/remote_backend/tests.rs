@@ -12,6 +12,7 @@ fn snapshot_with_keys(keys: &[KeyCode]) -> InputSnapshot {
 fn a_key_that_appears_in_a_snapshot_reads_as_just_pressed() {
     let mut backend = RemoteInputBackend::new();
     backend.apply(&snapshot_with_keys(&[KeyCode::Space]));
+    backend.begin_frame();
 
     assert!(backend.is_pressed(KeyCode::Space));
     assert!(backend.just_pressed(KeyCode::Space));
@@ -23,6 +24,7 @@ fn a_key_still_held_next_snapshot_is_no_longer_just_pressed() {
     backend.apply(&snapshot_with_keys(&[KeyCode::Space]));
     backend.begin_frame();
     backend.apply(&snapshot_with_keys(&[KeyCode::Space]));
+    backend.begin_frame();
 
     assert!(backend.is_pressed(KeyCode::Space), "the key is still held");
     assert!(
@@ -37,6 +39,7 @@ fn a_key_missing_from_the_next_snapshot_reads_as_released() {
     backend.apply(&snapshot_with_keys(&[KeyCode::Space]));
     backend.begin_frame();
     backend.apply(&snapshot_with_keys(&[]));
+    backend.begin_frame();
 
     assert!(!backend.is_pressed(KeyCode::Space));
     assert!(backend.just_released(KeyCode::Space));
@@ -58,20 +61,22 @@ fn a_lost_frame_cannot_leave_a_key_stuck_down() {
     );
 }
 
-/// A host ticking faster than the editor sends must not expire an
-/// edge nobody has read yet — the #711 bug, one process over.
+/// The host's next frame sees the edge, however late the snapshot came; the one after does not,
+/// however long until the next snapshot (#766).
 #[test]
-fn an_edge_survives_host_frames_that_received_nothing() {
+fn an_edge_lasts_one_host_frame() {
     let mut backend = RemoteInputBackend::new();
     backend.apply(&snapshot_with_keys(&[KeyCode::Space]));
 
     backend.begin_frame();
-    backend.begin_frame();
-    backend.begin_frame();
-
     assert!(
         backend.just_pressed(KeyCode::Space),
-        "three host frames with no new snapshot ate the keypress"
+        "the host never saw the press"
+    );
+    backend.begin_frame();
+    assert!(
+        !backend.just_pressed(KeyCode::Space),
+        "the press repeated on a frame no snapshot reached"
     );
 }
 

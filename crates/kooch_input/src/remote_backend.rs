@@ -153,6 +153,10 @@ pub struct RemoteInputBackend {
     pressed_keys: HashSet<KeyCode>,
     just_pressed_keys: HashSet<KeyCode>,
     just_released_keys: HashSet<KeyCode>,
+    /// Edges and motion applied since the last `begin_frame`, published by it for one frame.
+    pending_pressed: HashSet<KeyCode>,
+    pending_released: HashSet<KeyCode>,
+    pending_delta: Vec2,
     pressed_mouse: HashSet<MouseButton>,
     mouse_position: Vec2,
     mouse_delta: Vec2,
@@ -165,10 +169,10 @@ pub struct RemoteInputBackend {
 
 #[derive(Default)]
 struct PadState {
-    /// Edges derived in `apply` and expired there too, not in `begin_frame`, since the host ticks
-    /// faster than the editor sends.
     just_pressed: HashSet<GamepadButton>,
     just_released: HashSet<GamepadButton>,
+    pending_pressed: HashSet<GamepadButton>,
+    pending_released: HashSet<GamepadButton>,
     buttons: HashSet<GamepadButton>,
     axes: HashMap<GamepadAxis, f32>,
 }
@@ -179,20 +183,16 @@ impl RemoteInputBackend {
         Self::default()
     }
 
-    /// Replaces the held state with `snapshot`, deriving edges — **this** expires the previous
-    /// ones, not `begin_frame`.
+    /// Replaces the held state with `snapshot`. Its edges wait for the next `begin_frame`, which
+    /// shows them for exactly one host frame however many frames the snapshot spans (#766).
     pub fn apply(&mut self, snapshot: &InputSnapshot) {
-        self.just_pressed_keys.clear();
-        self.just_released_keys.clear();
-        self.mouse_delta = Vec2::ZERO;
-
         let incoming: HashSet<KeyCode> = snapshot.keys.iter().copied().collect();
         for &key in incoming.difference(&self.pressed_keys) {
-            self.just_pressed_keys.insert(key);
+            self.pending_pressed.insert(key);
             self.queued_events.push(InputEvent::KeyPressed(key));
         }
         for &key in self.pressed_keys.difference(&incoming) {
-            self.just_released_keys.insert(key);
+            self.pending_released.insert(key);
             self.queued_events.push(InputEvent::KeyReleased(key));
         }
         self.pressed_keys = incoming;
@@ -209,7 +209,7 @@ impl RemoteInputBackend {
         let position = Vec2::from(snapshot.mouse_position);
         let delta = Vec2::from(snapshot.mouse_delta);
         self.mouse_position = position;
-        self.mouse_delta = delta;
+        self.pending_delta += delta;
         self.mouse_velocity = Vec2::from(snapshot.mouse_velocity);
         if delta != Vec2::ZERO {
             self.queued_events
@@ -225,17 +225,15 @@ impl RemoteInputBackend {
             }
             let state = self.gamepads.entry(id).or_default();
             let incoming: HashSet<GamepadButton> = pad.buttons.iter().copied().collect();
-            state.just_pressed.clear();
-            state.just_released.clear();
             for &button in incoming.difference(&state.buttons) {
-                state.just_pressed.insert(button);
+                state.pending_pressed.insert(button);
                 self.queued_events.push(InputEvent::GamepadButtonPressed {
                     gamepad: id,
                     button,
                 });
             }
             for &button in state.buttons.difference(&incoming) {
-                state.just_released.insert(button);
+                state.pending_released.insert(button);
                 self.queued_events.push(InputEvent::GamepadButtonReleased {
                     gamepad: id,
                     button,
@@ -272,9 +270,15 @@ impl InputBackend for RemoteInputBackend {
         self.apply(snapshot);
     }
 
-    /// Deliberately does nothing: the processes tick independently, so a snapshot is the frame
-    /// boundary, expired by [`apply`](Self::apply), not by the host's frame (#711).
-    fn begin_frame(&mut self) {}
+    fn begin_frame(&mut self) {
+        self.just_pressed_keys = std::mem::take(&mut self.pending_pressed);
+        self.just_released_keys = std::mem::take(&mut self.pending_released);
+        self.mouse_delta = std::mem::take(&mut self.pending_delta);
+        for state in self.gamepads.values_mut() {
+            state.just_pressed = std::mem::take(&mut state.pending_pressed);
+            state.just_released = std::mem::take(&mut state.pending_released);
+        }
+    }
 
     fn poll(&mut self) -> Vec<InputEvent> {
         std::mem::take(&mut self.queued_events)

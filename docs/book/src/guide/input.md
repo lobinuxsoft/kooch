@@ -60,3 +60,7 @@ takes it again. Stopping or clicking another panel frees it too: the editor can 
 cursor back. The editor
 applies this to its own window whatever process is running the game, so it works the same locally
 and over a remote session.
+
+A game reads the same input under Play as in its build. The editor sends what it holds; the game
+process turns that into one frame of `just_pressed` per press and drains the input events once per
+frame, however fast each side runs.
