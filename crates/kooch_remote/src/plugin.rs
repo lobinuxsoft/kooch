@@ -72,21 +72,19 @@ impl Plugin for RemotePlugin {
     }
 }
 
-/// Paces the loop while playing to the fixed timestep: a host draws nothing, so faster frames find
-/// no step owed (#656). `After` is a ceiling; the socket still wakes it.
+/// While playing, the editor's pull starts each host frame, one per presented frame (#1427). The
+/// host's own clock only steps in when the editor stops pulling, so the game keeps simulating.
 fn pace_system(resources: &mut Resources) {
     if !Playing::is_playing(resources) {
         return;
     }
     report_frame_cost(resources);
-
-    let pace = match resources.get::<Time>() {
-        Some(time) => FramePace::After(time.until_next_fixed_step()),
-        // No clock to pace against; the pre-#656 behaviour.
-        None => FramePace::Continuous,
-    };
-    FrameRequest::raise(resources, pace);
+    FrameRequest::raise(resources, FramePace::After(STALL_CEILING));
 }
+
+/// Longest a playing host waits for the editor's next pull. Well above a presented frame, so it
+/// never competes with the pull at any rate the editor draws at.
+const STALL_CEILING: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// Environment variable enabling the frame-cost report — off, since the host's log lands in the
 /// editor's Console every frame (#656).

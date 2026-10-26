@@ -223,16 +223,6 @@ impl RotationComposer {
             crate::virtual_camera::settled(dt, self.damping.y),
         );
         frame.rotation = turned(frame.rotation, owed * share * alpha, up);
-        trace::write(trace::Row {
-            dt,
-            target,
-            camera: frame.position,
-            at,
-            owed,
-            share,
-            alpha,
-            rotation: frame.rotation,
-        });
         state.last = target;
     }
 }
@@ -329,8 +319,6 @@ impl Tracked {
         self.points.insert(entity, framed);
     }
 }
-
-mod trace;
 
 #[cfg(test)]
 mod tests;

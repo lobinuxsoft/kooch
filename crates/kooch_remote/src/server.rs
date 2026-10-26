@@ -174,14 +174,15 @@ fn serve_one(conn: Stream, tx: &Sender<PendingRequest>, waker: &FrameWaker) -> b
             if tx.send(pending).is_err() {
                 return false;
             }
+            if quiet {
+                // Queued and done: the reply lands on a dropped channel `handle` tolerates, freeing
+                // the listener for the next pull. No wake: a push rides the next pull's frame, and
+                // waking for it too gave Play uneven host frames per presented frame (#1427).
+                return true;
+            }
             // Wake after queuing, never before, or the loop could find nothing and sleep as the
             // request lands.
             waker.wake();
-            if quiet {
-                // Queued and done: the reply lands on a dropped channel `handle` tolerates, freeing
-                // the listener for the next pull.
-                return true;
-            }
             // Block until the main thread executes and answers. If the
             // reply channel drops, the caller gets nothing and times out.
             match reply_rx.recv() {
