@@ -60,6 +60,8 @@ pub struct RemoteSession {
     /// The project child process, if this session launched one. `None`
     /// when attached to an already-running server (tests, external run).
     child: Option<Child>,
+    /// The child's stdin, never written: dropping it is what tells the host the editor is gone.
+    _lifeline: Option<std::process::ChildStdin>,
     /// Captured child stdout/stderr, newest last.
     output: Arc<Mutex<Vec<String>>>,
     /// HTTP client bound to the project's server port.
@@ -114,7 +116,11 @@ impl RemoteSession {
             .arg("--")
             .arg("--remote")
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            // Held for the session's life: the kernel closes it when the editor dies however it
+            // dies, and the host exits on the end-of-file (#647).
+            .stdin(Stdio::piped())
+            .env(kooch_remote::lifeline::LIFELINE_ENV, "1");
         if let Some(engine_root) = engine_root {
             cmd.env("KOOCH_ENGINE_ROOT", engine_root);
         }
@@ -134,12 +140,14 @@ impl RemoteSession {
         cmd.env("KOOCH_LOG_FORMAT", "json");
 
         let mut child = cmd.spawn()?;
+        let lifeline = child.stdin.take();
         capture(child.stdout.take(), &output);
         capture(child.stderr.take(), &output);
 
         tracing::info!("remote project launching");
         Ok(Self {
             child: Some(child),
+            _lifeline: lifeline,
             output,
             client: Arc::new(RemoteClient::new(socket)),
             state: ConnectionState::Connecting,
@@ -160,6 +168,7 @@ impl RemoteSession {
     pub fn attach(socket: impl Into<String>) -> Self {
         Self {
             child: None,
+            _lifeline: None,
             output: Arc::new(Mutex::new(Vec::new())),
             client: Arc::new(RemoteClient::new(socket)),
             state: ConnectionState::Connecting,

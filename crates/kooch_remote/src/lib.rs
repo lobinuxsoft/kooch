@@ -4,6 +4,7 @@
 
 pub mod client;
 pub mod handlers;
+pub mod lifeline;
 pub mod plugin;
 /// Re-exported for extension authors: a handler's payload and result are
 /// `serde_json::Value`, and the crate that writes one should not have to
@@ -13,10 +14,12 @@ pub use serde_json;
 pub mod extensions;
 pub mod moved_cache;
 pub mod protocol;
+pub mod scene_root;
 pub mod server;
 pub mod snapshot_cache;
 
 pub use client::{CallStats, ClientError, MovedUpdate, RemoteClient};
 pub use plugin::RemotePlugin;
 pub use protocol::{Request, Response};
+pub use scene_root::SceneRoot;
 pub use server::{DEFAULT_NAME, NAME_ENV, RemoteServer};

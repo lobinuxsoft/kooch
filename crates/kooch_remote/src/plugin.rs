@@ -49,6 +49,10 @@ impl Plugin for RemotePlugin {
         match started {
             Ok(server) => {
                 app.insert_resource(server);
+                if !app.resources.contains::<crate::SceneRoot>() {
+                    app.insert_resource(crate::SceneRoot::from_env());
+                }
+                crate::lifeline::watch();
                 // #656 — under an editor nothing simulates between edits, so the baseline sleeps;
                 // the socket wakes it and Play overrides it.
                 app.insert_resource(FrameRequest::new(FramePace::Wait));

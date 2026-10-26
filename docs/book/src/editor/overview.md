@@ -35,6 +35,8 @@ gets them two ways at once:
 - It **launches the project** as a headless host (`--remote`) and drives it over a local
   socket. That host is where the world actually lives, so a system you wrote runs in *its*
   process while you watch the result in the editor's viewport.
+  The host lives exactly as long as the editor, however the editor exits, and reads or writes
+  scenes and prefabs only inside the project folder.
 
 > **Why the split exists.** Rust has no stable ABI, so a pre-built editor cannot simply link
 > a project compiled separately. The `dylib` gets around that by requiring the same compiler
