@@ -87,6 +87,10 @@ input and cross-thread wakes are read by it instead of starting one early.
 A mouse reports hundreds of moves a second, and each starting a frame was
 the uneven gap between presentations the cap exists to remove (#1425).
 
+Every source says *why* it wants a frame — input, another thread, a resize, a deadline — and one
+function, `WinitApp::want_frame`, decides whether to ask for it now. Nothing else calls
+`request_redraw`, so no source can break the rule on its own (#1607).
+
 ## The swapchain image is asked for last
 
 The game runtime's frame is two halves that need very different things.

@@ -28,6 +28,36 @@ use crate::handle::WindowHandle;
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WakeUp;
 
+/// Why a frame is wanted. Sources say why; [`WinitApp::want_frame`] decides when.
+#[derive(Clone, Copy)]
+enum Reason {
+    /// The window was just created.
+    Start,
+    /// A window event the UI has not drawn yet, by name.
+    Input(&'static str),
+    /// Another thread woke the loop.
+    Thread,
+    /// The window changed size or was asked to close.
+    Resize,
+    /// A `WaitUntil` deadline passed.
+    Deadline,
+    /// Uncapped and continuous: the next frame follows this one.
+    Spin,
+}
+
+impl Reason {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Input(event) => event,
+            Self::Thread => "another thread",
+            Self::Resize => "resize",
+            Self::Deadline => "deadline",
+            Self::Spin => "spin",
+        }
+    }
+}
+
 /// Bridges winit's event loop with the engine's frame-based game loop.
 ///
 /// Owns the `App` and drives the engine tick from `RedrawRequested` events.
@@ -41,10 +71,9 @@ pub(crate) struct WinitApp {
     /// Last pace logged, so the decision is reported on change rather
     /// than sixty times a second.
     last_pace: Option<FramePace>,
-    /// Name of the last window event that asked for a redraw, for the
-    /// same log line — "who woke it" is the question that matters when
-    /// an idle editor refuses to idle.
-    last_waker_event: &'static str,
+    /// Why the last frame was asked for, for the same log line — "who woke it" is the question
+    /// that matters when an idle editor refuses to idle.
+    woken_by: Reason,
     /// Waiting on a [`FrameCap`] deadline: the timer owns the next frame, and input or a wake from
     /// another thread is read by it rather than starting one early (#1425).
     paced: bool,
@@ -60,21 +89,23 @@ impl WinitApp {
             startup_complete: false,
             waker,
             last_pace: None,
-            last_waker_event: "none",
+            woken_by: Reason::Start,
             paced: false,
         }
     }
 
-    /// Asks for a frame unless the cap's timer already owns the next one: a mouse reports hundreds
-    /// of moves a second, and each starting a frame is the uneven gap the cap exists to remove.
-    fn wake(&self) {
-        if !self.paced {
-            self.request_redraw();
+    /// The one place a frame is asked for (#1607). While the cap's timer owns the next frame, a
+    /// reason that is not the timer is read by that frame instead of starting one early: a mouse
+    /// reports hundreds of moves a second, and each starting a frame broke the cadence (#1425).
+    fn want_frame(&mut self, reason: Reason) {
+        let now = match reason {
+            Reason::Start | Reason::Deadline | Reason::Spin => true,
+            Reason::Input(_) | Reason::Thread | Reason::Resize => !self.paced,
+        };
+        if !now {
+            return;
         }
-    }
-
-    /// Asks for one more frame, if there is a window to ask.
-    fn request_redraw(&self) {
+        self.woken_by = reason;
         if let Some(window) = &self.window {
             window.request_redraw();
         }
@@ -97,7 +128,7 @@ impl WinitApp {
         }
 
         if self.last_pace != Some(pace) {
-            tracing::debug!(?pace, woken_by = self.last_waker_event, "frame pacing");
+            tracing::debug!(?pace, woken_by = self.woken_by.name(), "frame pacing");
             self.last_pace = Some(pace);
         }
 
@@ -118,7 +149,7 @@ impl WinitApp {
                     }
                     None => {
                         event_loop.set_control_flow(ControlFlow::Poll);
-                        self.request_redraw();
+                        self.want_frame(Reason::Spin);
                     }
                 }
             }
@@ -189,15 +220,10 @@ impl WinitApp {
         if let Some(handlers) = self.app.resources.get_mut::<RawEventHandlers>() {
             handlers.dispatch(&*window, event);
         }
-        if wants_a_frame(event)
-            || matches!(
-                event,
-                WindowEvent::CloseRequested
-                    | WindowEvent::Resized(_)
-                    | WindowEvent::ScaleFactorChanged { .. }
-            )
-        {
-            self.wake();
+        if wants_a_frame(event) {
+            self.want_frame(Reason::Input(window_event_name(event)));
+        } else if matches!(event, WindowEvent::CloseRequested | WindowEvent::Resized(_)) {
+            self.want_frame(Reason::Resize);
         }
     }
 
@@ -222,14 +248,14 @@ impl ApplicationHandler<WakeUp> for WinitApp {
         // else reports: no window event arrives, so without this the
         // frame the deadline was set for never happens.
         if matches!(cause, StartCause::ResumeTimeReached { .. }) {
-            self.request_redraw();
+            self.want_frame(Reason::Deadline);
         }
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: WakeUp) {
         // Some other thread wants a frame — the remote server's listener,
         // parked on a reply only the main loop can produce.
-        self.wake();
+        self.want_frame(Reason::Thread);
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -293,8 +319,8 @@ impl ApplicationHandler<WakeUp> for WinitApp {
             self.startup_complete = true;
         }
 
-        window.request_redraw();
         self.window = Some(window);
+        self.want_frame(Reason::Start);
     }
 
     /// Device events go to the same handlers as window events: raw mouse motion is one, and it is
@@ -361,7 +387,7 @@ impl ApplicationHandler<WakeUp> for WinitApp {
                     });
                 }
                 tracing::debug!(width = size.width, height = size.height, "Window resized");
-                self.request_redraw();
+                self.want_frame(Reason::Resize);
             }
 
             WindowEvent::RedrawRequested => {
@@ -379,8 +405,7 @@ impl ApplicationHandler<WakeUp> for WinitApp {
             // An input the UI has not drawn yet, and while idle the only frame source. Listed, not
             // caught all: 966 `AxisMotion` and 212 `Moved` per 5 s drew nothing.
             other if wants_a_frame(&other) => {
-                self.last_waker_event = window_event_name(&other);
-                self.wake();
+                self.want_frame(Reason::Input(window_event_name(&other)))
             }
 
             _ => {}
