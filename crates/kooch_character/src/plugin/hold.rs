@@ -71,11 +71,17 @@ struct Planned {
     /// How far to bank while running a wall, and which way, or `None` — from the previous step's
     /// run, a frame of lag nobody sees.
     bank: Option<(Vec3, f32)>,
+    /// Not standing at the end of the previous step: a fall it is in, rather than ground it follows.
+    airborne: bool,
 }
 
 /// Rising faster than this, in m/s, the spring lets go — otherwise its damping fights a jump (at
 /// 18, a 5 m/s launch meets 90 m/s² back).
 const RISING: f32 = 0.5;
+
+/// Falling faster than this while airborne and above the ride height, the spring lets go too —
+/// otherwise it cancels gravity from the probe's reach down and the fall floats (#1064).
+const FALLING: f32 = 0.5;
 
 /// Sweeps for ground, holds the body at its ride height, keeps it
 /// upright, and writes [`Grounded`].
@@ -143,6 +149,7 @@ fn plan(resources: &Resources) -> Vec<Planned> {
     let touched = registry.get_cpu::<Touching>();
     let runs = resources.get::<Runs>();
     let running = registry.get_cpu::<crate::wall_run::WallRun>();
+    let grounded = registry.get_cpu::<Grounded>();
 
     // Read first, then ask the field: `gravity_up` walks the same
     // storages this is holding.
@@ -157,6 +164,7 @@ fn plan(resources: &Resources) -> Vec<Planned> {
         Sprint,
         bool,
         Option<(Vec3, f32)>,
+        bool,
     );
     let standing: Vec<Read> = controllers
         .iter()
@@ -187,6 +195,9 @@ fn plan(resources: &Resources) -> Vec<Planned> {
                     .zip(touched.and_then(|touched| touched.get(entity)))
                     .filter(|(_, touched)| touched.wall)
                     .map(|(spec, touched)| (touched.normal, spec.bank)),
+                grounded
+                    .and_then(|grounded| grounded.get(entity))
+                    .is_some_and(|grounded| !grounded.standing),
             ))
         })
         .collect();
@@ -194,7 +205,19 @@ fn plan(resources: &Resources) -> Vec<Planned> {
     standing
         .into_iter()
         .map(
-            |(entity, body, controller, position, rotation, facing, walk, sprint, walls, bank)| {
+            |(
+                entity,
+                body,
+                controller,
+                position,
+                rotation,
+                facing,
+                walk,
+                sprint,
+                walls,
+                bank,
+                airborne,
+            )| {
                 let pull = gravity_at(resources, position);
                 Planned {
                     entity,
@@ -211,6 +234,7 @@ fn plan(resources: &Resources) -> Vec<Planned> {
                     sprint,
                     walls,
                     bank,
+                    airborne,
                 }
             },
         )
@@ -305,10 +329,23 @@ fn hold_one(
         );
     }
     let speed = velocity.dot(plan.up);
+    let error = controller.ride_height - gap;
+
+    // Coming down from the air, still above the ride height: gravity's job. The spring takes over
+    // below it, which is where the landing dip lives. A walk down a slope was standing, so it stays.
+    if plan.airborne && speed < -FALLING && error < 0.0 {
+        return (
+            Grounded {
+                standing: false,
+                normal: under.normal,
+                distance: gap,
+            },
+            touching,
+        );
+    }
 
     // The spring pulls both ways, so the character follows the ground down a bump. Measured to the
     // contact point: on a slope the sweep's `t` understates the gap.
-    let error = controller.ride_height - gap;
     // Gravity is cancelled first, or the spring leans to hold the body and the rest height drifts
     // with every planet.
     let acceleration = plan.weight + error * controller.stiffness - speed * controller.damping;
