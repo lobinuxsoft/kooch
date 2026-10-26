@@ -108,6 +108,9 @@ fn main() {
 }
 ```
 
+A plugin type is built once per app. Adding one that `DefaultPlugins` already carries logs a
+warning and is ignored, so it does not register its systems a second time.
+
 No flags and no modes. Authoring lives in `src/editor.rs`, which is a second `[[bin]]`
 gated behind the `editor` feature, so this file cannot reach it.
 

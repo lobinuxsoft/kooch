@@ -67,6 +67,7 @@ pub trait PluginGroup {
 /// Builder for constructing a group of plugins.
 pub struct PluginGroupBuilder {
     plugins: Vec<Box<dyn Plugin>>,
+    types: Vec<std::any::TypeId>,
 }
 
 impl Default for PluginGroupBuilder {
@@ -80,11 +81,24 @@ impl PluginGroupBuilder {
     pub fn new() -> Self {
         Self {
             plugins: Vec::new(),
+            types: Vec::new(),
         }
     }
 
     /// Adds a plugin to the group.
+    ///
+    /// A second plugin of the same type is dropped: building one twice registers its systems twice,
+    /// and a doubled system runs silently (#673).
     pub fn add<P: Plugin + 'static>(mut self, plugin: P) -> Self {
+        let id = std::any::TypeId::of::<P>();
+        if self.types.contains(&id) {
+            tracing::warn!(
+                "plugin {} added twice to a group; the second is ignored",
+                plugin.name()
+            );
+            return self;
+        }
+        self.types.push(id);
         self.plugins.push(Box::new(plugin));
         self
     }
@@ -92,6 +106,11 @@ impl PluginGroupBuilder {
     /// Returns the plugins in this group.
     pub fn finish(self) -> Vec<Box<dyn Plugin>> {
         self.plugins
+    }
+
+    /// The plugins beside their types, so the app can refuse one it already built.
+    pub(crate) fn into_typed(self) -> impl Iterator<Item = (std::any::TypeId, Box<dyn Plugin>)> {
+        self.types.into_iter().zip(self.plugins)
     }
 }
 

@@ -78,3 +78,31 @@ fn minimal_plugins() {
     assert_eq!(plugins.len(), 1);
     assert_eq!(plugins[0].name(), "CorePlugin");
 }
+
+struct Counted(Arc<std::sync::atomic::AtomicU32>);
+
+impl Plugin for Counted {
+    fn build(&self, _app: &mut App) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+struct Twice(Arc<std::sync::atomic::AtomicU32>);
+
+impl PluginGroup for Twice {
+    fn build(self) -> PluginGroupBuilder {
+        PluginGroupBuilder::new()
+            .add(Counted(self.0.clone()))
+            .add(Counted(self.0))
+    }
+}
+
+/// A plugin built twice registers its systems twice: double gravity in a shipped game (#673).
+#[test]
+fn a_repeated_plugin_builds_once() {
+    let builds = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let mut app = App::new();
+    app.add_plugins(Twice(builds.clone()));
+    app.add_plugin(Counted(builds.clone()));
+    assert_eq!(builds.load(Ordering::SeqCst), 1);
+}
