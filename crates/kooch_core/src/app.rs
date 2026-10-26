@@ -41,6 +41,8 @@ pub struct App {
     pub schedule: Schedule,
     /// Pending plugins to be finished.
     pending_plugins: Vec<Box<dyn Plugin>>,
+    /// Types already built, so a plugin added twice is built once.
+    installed: std::collections::HashSet<std::any::TypeId>,
     /// Custom runner function.
     runner: Option<Runner>,
     /// Whether plugins have been finished.
@@ -62,6 +64,7 @@ impl App {
             resources: Resources::new(),
             schedule: Schedule::new(),
             pending_plugins: Vec::new(),
+            installed: std::collections::HashSet::new(),
             runner: None,
             plugins_finished: false,
         };
@@ -78,27 +81,36 @@ impl App {
         app
     }
 
-    /// Adds a plugin to the application.
+    /// Adds a plugin to the application. A type already added is ignored.
     pub fn add_plugin<P: Plugin + 'static>(&mut self, plugin: P) -> &mut Self {
+        self.install(std::any::TypeId::of::<P>(), Box::new(plugin));
+        self
+    }
+
+    /// Adds a group of plugins to the application.
+    pub fn add_plugins<G: PluginGroup>(&mut self, group: G) -> &mut Self {
+        for (id, plugin) in group.build().into_typed() {
+            self.install(id, plugin);
+        }
+        self
+    }
+
+    fn install(&mut self, id: std::any::TypeId, plugin: Box<dyn Plugin>) {
+        // Building twice registers every system twice: double gravity in a shipped game (#673).
+        if !self.installed.insert(id) {
+            tracing::warn!(
+                "plugin {} added twice; the second is ignored",
+                plugin.name()
+            );
+            return;
+        }
         // Everything the plugin schedules happens inside `build`, so bracketing it attributes every
         // system without a word at any `add_system` call site. Restored rather than reset: a plugin
         // may add another, and the inner one must not swallow the outer one's attribution.
         let outer = self.schedule.attribute_to(plugin.source());
         plugin.build(self);
         self.schedule.attribute_to(outer);
-        self.pending_plugins.push(Box::new(plugin));
-        self
-    }
-
-    /// Adds a group of plugins to the application.
-    pub fn add_plugins<G: PluginGroup>(&mut self, group: G) -> &mut Self {
-        for plugin in group.build().finish() {
-            let outer = self.schedule.attribute_to(plugin.source());
-            plugin.build(self);
-            self.schedule.attribute_to(outer);
-            self.pending_plugins.push(plugin);
-        }
-        self
+        self.pending_plugins.push(plugin);
     }
 
     /// Inserts a resource into the application.

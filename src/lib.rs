@@ -362,15 +362,6 @@ impl kooch_core::plugin::PluginGroup for DefaultPlugins {
         #[cfg(feature = "profiling")]
         let builder = builder.add(crate::profiler::ProfilingPlugin::default());
 
-        #[cfg(all(feature = "physics", feature = "gravity"))]
-        let builder = builder.add(kooch_gravity::GravityPlugin);
-
-        // After gravity, always: the spring cancels *this* step's pull,
-        // and cancelling last step's is a character that sinks whenever
-        // the field changes under it.
-        #[cfg(feature = "character")]
-        let builder = builder.add(kooch_character::CharacterPlugin);
-
         #[cfg(feature = "window")]
         let builder = builder.add(kooch_window::WindowPlugin::default());
 
