@@ -28,7 +28,7 @@ Three paces, in order of urgency:
 
 | Pace | Means | `ControlFlow` |
 |---|---|---|
-| `Continuous` | Something is animating or simulating | `Poll` + `request_redraw` |
+| `Continuous` | Something is animating or simulating | `WaitUntil` the `FrameCap` deadline; uncapped, `Poll` + `request_redraw` |
 | `After(d)` | Something is on a timer | `WaitUntil(now + d)` |
 | `Wait` | Nothing to draw | `Wait` |
 
@@ -81,6 +81,11 @@ for one. A `WaitUntil` deadline expiring reports through
 `StartCause::ResumeTimeReached`, and a cross-thread wake arrives as a
 winit user event — the proxy rather than `request_redraw`, because the
 proxy is the API documented to be callable from another thread.
+
+While a `FrameCap` deadline is pending, the timer owns the next frame:
+input and cross-thread wakes are read by it instead of starting one early.
+A mouse reports hundreds of moves a second, and each starting a frame was
+the uneven gap between presentations the cap exists to remove (#1425).
 
 ## The swapchain image is asked for last
 
