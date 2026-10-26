@@ -15,6 +15,8 @@ kooch_render.workspace = true
 kooch_window.workspace = true
 kooch_world.workspace = true
 tracing.workspace = true
+# Temporary, for #1589: names the line that holds each live byte.
+dhat = { version = "0.3", optional = true }
 
 [features]
 # 🔴 ON by default, and that is a rule rather than a convenience: an
@@ -34,3 +36,7 @@ default = ["profiling"]
 
 # See kooch_editor_core's feature of the same name.
 profiling = ["kooch_editor_core/profiling"]
+
+# Temporary, for #1589: a heap profile written to /tmp/kooch-dhat-heap.json when the editor closes.
+# Several times slower; build with `--features dhat-heap`.
+dhat-heap = ["dep:dhat"]

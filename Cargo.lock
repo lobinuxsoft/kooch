@@ -30,6 +30,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "addr2line"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b5d307320b3181d6d7954e663bd7c774a838b8220fe0593c86d9fb09f498b4b"
+dependencies = [
+ "gimli",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -405,6 +414,21 @@ name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
+
+[[package]]
+name = "backtrace"
+version = "0.3.76"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb531853791a215d7c62a30daf0dde835f381ab5de4589cfe7c649d2cbe92bd6"
+dependencies = [
+ "addr2line",
+ "cfg-if",
+ "libc",
+ "miniz_oxide",
+ "object",
+ "rustc-demangle",
+ "windows-link",
+]
 
 [[package]]
 name = "base64"
@@ -968,6 +992,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
 
 [[package]]
+name = "dhat"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98cd11d84628e233de0ce467de10b8633f4ddaecafadefc86e13b84b8739b827"
+dependencies = [
+ "backtrace",
+ "lazy_static",
+ "mintex",
+ "parking_lot",
+ "rustc-hash 1.1.0",
+ "serde",
+ "serde_json",
+ "thousands",
+]
+
+[[package]]
 name = "digest"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1439,14 +1479,14 @@ dependencies = [
 
 [[package]]
 name = "example_plugin"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "kooch_plugin_api",
 ]
 
 [[package]]
 name = "example_post_process"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "kooch_plugin_api",
  "kooch_plugin_render",
@@ -1806,6 +1846,12 @@ dependencies = [
  "web-sys",
  "windows 0.62.2",
 ]
+
+[[package]]
+name = "gimli"
+version = "0.32.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
 name = "gl_generator"
@@ -2510,7 +2556,7 @@ dependencies = [
 
 [[package]]
 name = "kooch"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "bytemuck",
  "glam 0.33.2",
@@ -2541,7 +2587,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_audio"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "glam 0.33.2",
  "kira",
@@ -2552,7 +2598,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_blockmesh"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "glam 0.33.2",
  "kooch_core",
@@ -2567,7 +2613,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_camera"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "glam 0.33.2",
  "kooch_core",
@@ -2580,7 +2626,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_character"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "glam 0.33.2",
  "kooch_core",
@@ -2592,7 +2638,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_core"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "bytemuck",
  "dlss_wgpu",
@@ -2620,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_ecs"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "bytemuck",
  "glam 0.33.2",
@@ -2637,7 +2683,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_ecs_macros"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2646,8 +2692,9 @@ dependencies = [
 
 [[package]]
 name = "kooch_editor"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
+ "dhat",
  "kooch_core",
  "kooch_ecs",
  "kooch_editor_core",
@@ -2659,7 +2706,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_editor_core"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2707,7 +2754,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_gizmos"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "bytemuck",
  "glam 0.33.2",
@@ -2720,7 +2767,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_gizmos_handles"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "glam 0.33.2",
  "kooch_gizmos",
@@ -2728,7 +2775,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_gravity"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "bytemuck",
  "glam 0.33.2",
@@ -2741,7 +2788,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_input"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "gilrs",
  "glam 0.33.2",
@@ -2757,7 +2804,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_lighting"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "bytemuck",
  "glam 0.33.2",
@@ -2771,7 +2818,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_pack"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "aes-gcm",
  "hkdf",
@@ -2783,7 +2830,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_physics"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "glam 0.33.2",
  "kooch_core",
@@ -2796,11 +2843,11 @@ dependencies = [
 
 [[package]]
 name = "kooch_plugin_api"
-version = "0.98.35"
+version = "0.98.36"
 
 [[package]]
 name = "kooch_plugin_render"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "kooch_plugin_api",
  "wgpu",
@@ -2808,7 +2855,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_remote"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "glam 0.33.2",
  "interprocess",
@@ -2821,7 +2868,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_render"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "base64 0.22.1",
  "bytemuck",
@@ -2850,7 +2897,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_window"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "image",
  "kooch_core",
@@ -2861,7 +2908,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_world"
-version = "0.98.35"
+version = "0.98.36"
 dependencies = [
  "bytemuck",
  "glam 0.33.2",
@@ -3097,6 +3144,12 @@ name = "mint"
 version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e53debba6bda7a793e5f99b8dacf19e626084f525f7829104ba9898f367d85ff"
+
+[[package]]
+name = "mintex"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c505b3e17ed6b70a7ed2e67fbb2c560ee327353556120d6e72f5232b6880d536"
 
 [[package]]
 name = "moxcms"
@@ -3675,6 +3728,15 @@ dependencies = [
  "objc2 0.5.2",
  "objc2-core-location",
  "objc2-foundation 0.2.2",
+]
+
+[[package]]
+name = "object"
+version = "0.37.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -4411,6 +4473,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustc-demangle"
+version = "0.1.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb"
+
+[[package]]
 name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5045,6 +5113,12 @@ dependencies = [
  "quote",
  "syn 3.0.6",
 ]
+
+[[package]]
+name = "thousands"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3bf63baf9f5039dadc247375c29eb13706706cfde997d0330d05aa63a77d8820"
 
 [[package]]
 name = "thread_local"
