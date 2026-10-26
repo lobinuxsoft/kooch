@@ -90,6 +90,8 @@ pub struct RemoteSession {
     schema: Vec<ComponentSchema>,
     /// Why the snapshot stopped tracking the project, or `None` while it tracks.
     stale: Option<String>,
+    /// Measurement for #1427, present only when the launch environment asks for it.
+    trace: Option<pull_trace::PullTrace>,
 }
 
 impl RemoteSession {
@@ -165,6 +167,7 @@ impl RemoteSession {
             pump: None,
             schema: Vec::new(),
             stale: None,
+            trace: pull_trace::PullTrace::from_launch_env(launch_env),
         })
     }
 
@@ -186,6 +189,7 @@ impl RemoteSession {
             pump: None,
             schema: Vec::new(),
             stale: None,
+            trace: None,
         }
     }
 
@@ -307,6 +311,7 @@ impl RemoteSession {
         };
         let mut pulled = Vec::new();
         pump.drain(&mut pulled);
+        let replies = pulled.len();
 
         let mut moved = Vec::new();
         let mut components = Vec::new();
@@ -344,6 +349,9 @@ impl RemoteSession {
             }
         }
         self.changed_last_refresh = !moved.is_empty() || !components.is_empty();
+        if let Some(trace) = self.trace.as_mut() {
+            trace.frame(replies, &moved);
+        }
         if structural {
             // The SNAPSHOT revision is the one that must not be trusted
             // now: the full pull that follows has to be a full one.
@@ -489,6 +497,8 @@ fn merge_into(
     // regardless of where it belongs.
     snapshot.sort_by_key(|e| e.id.index);
 }
+
+mod pull_trace;
 
 #[cfg(test)]
 mod merge_tests;
