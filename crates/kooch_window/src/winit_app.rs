@@ -45,6 +45,9 @@ pub(crate) struct WinitApp {
     /// same log line — "who woke it" is the question that matters when
     /// an idle editor refuses to idle.
     last_waker_event: &'static str,
+    /// Waiting on a [`FrameCap`] deadline: the timer owns the next frame, and input or a wake from
+    /// another thread is read by it rather than starting one early (#1425).
+    paced: bool,
 }
 
 impl WinitApp {
@@ -58,6 +61,15 @@ impl WinitApp {
             waker,
             last_pace: None,
             last_waker_event: "none",
+            paced: false,
+        }
+    }
+
+    /// Asks for a frame unless the cap's timer already owns the next one: a mouse reports hundreds
+    /// of moves a second, and each starting a frame is the uneven gap the cap exists to remove.
+    fn wake(&self) {
+        if !self.paced {
+            self.request_redraw();
         }
     }
 
@@ -89,20 +101,26 @@ impl WinitApp {
             self.last_pace = Some(pace);
         }
 
+        self.paced = false;
         match pace {
             FramePace::Continuous => {
-                // Capped, the loop still redraws every frame — it just stops starting the next one
-                // early, which is what keeps the gap between presentations even (#1425).
+                // Capped, the frame is asked for when the deadline passes (`new_events`), never
+                // now: a redraw queued here is delivered at once and the loop never sleeps (#1425).
                 match self
                     .app
                     .resources
                     .get_mut::<FrameCap>()
                     .and_then(|cap| cap.deadline(Instant::now()))
                 {
-                    Some(deadline) => event_loop.set_control_flow(ControlFlow::WaitUntil(deadline)),
-                    None => event_loop.set_control_flow(ControlFlow::Poll),
+                    Some(deadline) => {
+                        event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+                        self.paced = true;
+                    }
+                    None => {
+                        event_loop.set_control_flow(ControlFlow::Poll);
+                        self.request_redraw();
+                    }
                 }
-                self.request_redraw();
             }
             // A deadline far enough out to overflow the clock is a
             // deadline that never arrives; sleep rather than panic on
@@ -179,7 +197,7 @@ impl WinitApp {
                     | WindowEvent::ScaleFactorChanged { .. }
             )
         {
-            self.request_redraw();
+            self.wake();
         }
     }
 
@@ -211,7 +229,7 @@ impl ApplicationHandler<WakeUp> for WinitApp {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: WakeUp) {
         // Some other thread wants a frame — the remote server's listener,
         // parked on a reply only the main loop can produce.
-        self.request_redraw();
+        self.wake();
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -362,7 +380,7 @@ impl ApplicationHandler<WakeUp> for WinitApp {
             // caught all: 966 `AxisMotion` and 212 `Moved` per 5 s drew nothing.
             other if wants_a_frame(&other) => {
                 self.last_waker_event = window_event_name(&other);
-                self.request_redraw();
+                self.wake();
             }
 
             _ => {}
