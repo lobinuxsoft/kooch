@@ -7,8 +7,9 @@ use std::time::Duration;
 
 use kooch_remote::{MovedUpdate, RemoteClient};
 
-/// How many replies may wait for the editor before the worker parks.
-const INBOX_CAP: usize = 4;
+/// How many replies may wait for the editor before the worker parks. One: the editor drains once
+/// per presented frame, so each pull — and the host frame it wakes — is one presented frame (#1427).
+const INBOX_CAP: usize = 1;
 
 /// How long the worker waits before retrying a failed pull.
 const RETRY_DELAY: Duration = Duration::from_millis(100);

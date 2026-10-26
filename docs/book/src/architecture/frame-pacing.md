@@ -61,6 +61,13 @@ a reply only the main thread can produce, which is why the wake is not
 optional — without it, an editor asking a perfectly healthy project a
 question would hang until something unrelated produced a frame.
 
+While playing, **the editor's pull is the host's clock**: one pull per presented frame, and
+each pull wakes exactly one host frame. Input pushes do not wake it; they land on the next
+pull's frame. The host's own timer is only a 100 ms fallback for an editor that stopped
+pulling. Waking for every message used to give a presented frame one, two or three host
+frames, and a camera turn stuttered with that count (#1427). This lockstep only holds on
+one machine; a host across the network needs snapshot interpolation instead (#1604).
+
 ## Frames stopped being a clock
 
 Anything that said "every N frames" was reading a clock that no longer
