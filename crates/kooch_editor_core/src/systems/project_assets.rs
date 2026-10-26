@@ -75,9 +75,8 @@ pub fn scan_project_assets_system(resources: &mut Resources) {
                     "project asset scan complete",
                 );
             }
-            // eager_import_with walks the project's assets/ tree and loads every file with a
-            // recognised typed extension — generating fresh sidecars where missing and back-filling
-            // `asset_type` on legacy ones.
+            // eager_import_with walks the project's assets/ tree: every typed file gets a sidecar
+            // (fresh where missing, `asset_type` back-filled on legacy ones); only materials load.
             eager_import_with(resources, &assets_root);
         } else {
             tracing::debug!(

@@ -13,8 +13,8 @@ pub(super) fn eager_import_typed_assets(app: &mut App, root: &Path) {
     eager_import_with(resources, root);
 }
 
-/// Walks `root` recursively and loads every file with a recognised typed extension through the
-/// `AssetServer`.
+/// Walks `root` recursively: every mesh and image gets its `.meta` and database entry, every material
+/// is loaded (the material sync reads them all).
 pub fn eager_import_with(resources: &mut Resources, root: &Path) {
     let scanned = collect_typed_files(root);
     if scanned.is_empty() {
@@ -32,29 +32,15 @@ pub fn eager_import_with(resources: &mut Resources, root: &Path) {
         };
         let ext_lower = ext.to_ascii_lowercase();
         match ext_lower.as_str() {
+            // Identified, not decoded: a mesh or an image is loaded by GUID when something draws
+            // it. Decoding them all here held every image in the project for the whole session.
             "glb" | "gltf" => {
-                if let Err(e) = server.load::<MeshletMesh>(path, resources) {
-                    tracing::warn!(
-                        target: "kooch_render::plugin::assets",
-                        path = %path.display(),
-                        error = %e,
-                        "eager MeshletMesh import failed",
-                    );
-                } else {
-                    counts.meshlet += 1;
-                }
+                server.identify::<MeshletMesh>(path, resources);
+                counts.meshlet += 1;
             }
             "png" | "jpg" | "jpeg" => {
-                if let Err(e) = server.load::<Image>(path, resources) {
-                    tracing::warn!(
-                        target: "kooch_render::plugin::assets",
-                        path = %path.display(),
-                        error = %e,
-                        "eager Image import failed",
-                    );
-                } else {
-                    counts.image += 1;
-                }
+                server.identify::<Image>(path, resources);
+                counts.image += 1;
             }
             crate::material::MATERIAL_EXTENSION => {
                 // The discriminator this branch used to want turned out to be the file name: every
@@ -82,7 +68,7 @@ pub fn eager_import_with(resources: &mut Resources, root: &Path) {
             meshlet = counts.meshlet,
             image = counts.image,
             material = counts.material,
-            "eager-imported typed assets",
+            "identified typed assets",
         );
     }
 }
