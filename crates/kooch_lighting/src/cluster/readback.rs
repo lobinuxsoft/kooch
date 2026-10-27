@@ -77,7 +77,11 @@ impl ClusterReadback {
                 continue;
             }
             {
-                let view = slot.buffer.slice(..).get_mapped_range();
+                let view = slot
+                    .buffer
+                    .slice(..)
+                    .get_mapped_range()
+                    .expect("mapped buffer");
                 self.last = Some(*bytemuck::from_bytes::<ClusterDraw>(&view));
             }
             slot.buffer.unmap();

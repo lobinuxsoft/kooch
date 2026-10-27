@@ -252,7 +252,7 @@ fn render_passes(
     if let Some(mut scopes) = resources.remove::<kooch_core::gpu::GpuScopes>() {
         scopes.resolve(&mut encoder);
         gpu.queue().submit(Some(encoder.finish()));
-        frame.present();
+        gpu.queue().present(frame);
         // After every submit of the frame, never between them: an
         // encoder still holding open queries makes this fail.
         scopes.end_frame(gpu.queue());
@@ -261,7 +261,7 @@ fn render_passes(
     }
 
     gpu.queue().submit(Some(encoder.finish()));
-    frame.present();
+    gpu.queue().present(frame);
 }
 
 /// A pooled colour target the size and format of the swapchain, when there is a stack to run and

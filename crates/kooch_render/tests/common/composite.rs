@@ -158,7 +158,7 @@ fn read_depth(rig: &Rig, texture: &wgpu::Texture) -> Vec<f32> {
     rx.recv()
         .expect("the map answers")
         .expect("the map succeeds");
-    let bytes = slice.get_mapped_range().to_vec();
+    let bytes = slice.get_mapped_range().expect("mapped buffer").to_vec();
     let mut depth = Vec::with_capacity((SIZE * SIZE) as usize);
     for row in 0..SIZE {
         let at = (row * padded) as usize;

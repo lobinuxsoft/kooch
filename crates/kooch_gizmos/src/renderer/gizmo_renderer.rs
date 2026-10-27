@@ -95,7 +95,7 @@ impl GizmoRenderer {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[vertex_layout],
+                buffers: &[Some(vertex_layout)],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,

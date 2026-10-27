@@ -70,6 +70,7 @@ impl AnalyticSphereSampler {
         uniform_buffer
             .slice(..)
             .get_mapped_range_mut()
+            .expect("mapped buffer")
             .copy_from_slice(bytes);
         uniform_buffer.unmap();
         Self {

@@ -103,7 +103,11 @@ impl MeshletStageCounters {
             let mut state_guard = slot.state.lock().unwrap();
             if *state_guard == SlotState::Ready {
                 {
-                    let view = slot.buffer.slice(..).get_mapped_range();
+                    let view = slot
+                        .buffer
+                        .slice(..)
+                        .get_mapped_range()
+                        .expect("mapped buffer");
                     let words: &[u32] = bytemuck::cast_slice(&view);
                     self.last_frame_counts = Some([words[0], words[1], words[2], words[3]]);
                 }

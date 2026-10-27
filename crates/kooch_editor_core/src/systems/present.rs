@@ -33,7 +33,12 @@ pub(crate) fn present_editor_frame(
     };
 
     crate::os_windows::apply_textures(&mut overlay.renderer, gpu, &overlay.windows.live);
-    for (id, image_delta) in &full_output.textures_delta.set {
+    for (id, image_delta) in full_output
+        .textures_delta
+        .set
+        .iter()
+        .flat_map(|(id, ds)| ds.iter().map(move |d| (id, d)))
+    {
         overlay
             .renderer
             .update_texture(gpu.device(), gpu.queue(), *id, image_delta);
@@ -119,7 +124,7 @@ pub(crate) fn present_editor_frame(
     gpu.queue().submit(buffers);
     {
         profiling::scope!("surface present");
-        output.present();
+        gpu.queue().present(output);
     }
     // After every submit of the frame, never between them.
     if let Some(scopes) = scopes {

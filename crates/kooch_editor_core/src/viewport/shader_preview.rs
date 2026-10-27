@@ -499,7 +499,7 @@ impl ShaderPreview {
                 module: &module,
                 entry_point: Some("vs_preview"),
                 compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
+                buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: size_of::<PreviewVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &wgpu::vertex_attr_array![
@@ -508,7 +508,7 @@ impl ShaderPreview {
                         2 => Float32x2,
                         3 => Float32x4,
                     ],
-                }],
+                })],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &module,

@@ -191,7 +191,7 @@ fn vis_buffer_plus_deferred_paints_visible_cube_pixels() {
         timeout: Some(std::time::Duration::from_secs(30)),
     });
     rx.recv().unwrap().unwrap();
-    let bytes = slice.get_mapped_range().to_vec();
+    let bytes = slice.get_mapped_range().expect("mapped buffer").to_vec();
 
     let mut non_clear = 0usize;
     let mut max_channel = 0u8;

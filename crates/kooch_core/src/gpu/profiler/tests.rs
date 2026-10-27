@@ -22,6 +22,7 @@ fn timestamp_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
         force_fallback_adapter: false,
+        apply_limit_buckets: false,
     }))
     .ok()?;
     // The encoder form of a scope needs INSIDE_ENCODERS specifically.

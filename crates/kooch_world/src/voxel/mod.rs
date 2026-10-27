@@ -239,7 +239,7 @@ pub(crate) mod test_device {
             .expect("device poll");
         rx.recv().expect("readback channel").expect("map_async ok");
 
-        let view = slice.get_mapped_range();
+        let view = slice.get_mapped_range().expect("mapped buffer");
         let bytes = view.to_vec();
         drop(view);
         staging.unmap();

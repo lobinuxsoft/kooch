@@ -86,7 +86,7 @@ impl RasterReadback {
                 continue;
             }
             let words = {
-                let mapped = buffer.slice(..).get_mapped_range();
+                let mapped = buffer.slice(..).get_mapped_range().expect("mapped buffer");
                 bytemuck::cast_slice::<u8, u32>(&mapped).to_vec()
             };
             buffer.unmap();

@@ -167,7 +167,7 @@ fn meshlet_pipeline_renders_visible_cube_pixels() {
         timeout: Some(std::time::Duration::from_secs(30)),
     });
     rx.recv().unwrap().unwrap();
-    let bytes = slice.get_mapped_range().to_vec();
+    let bytes = slice.get_mapped_range().expect("mapped buffer").to_vec();
 
     let mut non_clear_pixels = 0usize;
     let mut max_brightness = 0u8;
@@ -325,7 +325,7 @@ fn meshlet_pipeline_renders_nothing_when_camera_faces_away() {
         timeout: Some(std::time::Duration::from_secs(30)),
     });
     rx.recv().unwrap().unwrap();
-    let bytes = slice.get_mapped_range().to_vec();
+    let bytes = slice.get_mapped_range().expect("mapped buffer").to_vec();
 
     let mut non_clear_pixels = 0usize;
     for y in 0..RT_HEIGHT {

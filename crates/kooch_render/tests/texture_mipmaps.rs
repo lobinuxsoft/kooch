@@ -62,7 +62,7 @@ fn read_level(
         submission_index: None,
         timeout: None,
     });
-    let data = slice.get_mapped_range();
+    let data = slice.get_mapped_range().expect("mapped buffer");
     let mut out = Vec::with_capacity((w * h * 4) as usize);
     for row in 0..h {
         let start = (row * padded) as usize;

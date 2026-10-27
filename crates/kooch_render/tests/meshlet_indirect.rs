@@ -41,7 +41,7 @@ fn read_indirect_args(
         timeout: Some(std::time::Duration::from_secs(30)),
     });
     rx.recv().unwrap().unwrap();
-    let bytes = slice.get_mapped_range();
+    let bytes = slice.get_mapped_range().expect("mapped buffer");
     *bytemuck::from_bytes::<DrawIndirectArgs>(&bytes)
 }
 

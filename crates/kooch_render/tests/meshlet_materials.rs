@@ -194,7 +194,7 @@ fn render_with_material(material_id: u32) -> Vec<u8> {
         timeout: Some(std::time::Duration::from_secs(30)),
     });
     rx.recv().unwrap().unwrap();
-    slice.get_mapped_range().to_vec()
+    slice.get_mapped_range().expect("mapped buffer").to_vec()
 }
 
 #[test]

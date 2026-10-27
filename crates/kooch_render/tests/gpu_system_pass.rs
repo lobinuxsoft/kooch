@@ -113,7 +113,11 @@ fn a_gpu_system_can_draw() {
         submission_index: None,
         timeout: None,
     });
-    let pixels = readback.slice(..).get_mapped_range().to_vec();
+    let pixels = readback
+        .slice(..)
+        .get_mapped_range()
+        .expect("mapped buffer")
+        .to_vec();
 
     assert_eq!(&pixels[0..4], &[255, 0, 0, 255], "the pass did not clear");
 }

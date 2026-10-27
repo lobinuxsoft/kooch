@@ -181,6 +181,11 @@ pub(crate) struct EditorTabViewer<'a> {
 impl<'a> TabViewer for EditorTabViewer<'a> {
     type Tab = EditorTab;
 
+    /// egui_dock 0.20's default; kept so the dock's stored per-tab state keeps its ids.
+    fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
+        egui::Id::new(self.title(tab).text())
+    }
+
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
         tab.to_string().into()
     }

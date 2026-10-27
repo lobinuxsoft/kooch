@@ -32,6 +32,7 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
                     force_fallback_adapter: false,
+                    apply_limit_buckets: false,
                 }))
                 .ok()?;
 
@@ -78,6 +79,7 @@ pub fn try_acquire_device_r64() -> Option<(wgpu::Device, wgpu::Queue)> {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
         force_fallback_adapter: false,
+        apply_limit_buckets: false,
     }))
     .ok()?;
     if !adapter.features().contains(required) {
@@ -122,6 +124,7 @@ pub fn try_acquire_device_with_timer() -> Option<(wgpu::Device, wgpu::Queue, wgp
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
         force_fallback_adapter: false,
+        apply_limit_buckets: false,
     }))
     .ok()?;
 
@@ -282,7 +285,7 @@ pub fn read_buffer_to_vec<T: Pod + Default + Clone>(
         timeout: Some(std::time::Duration::from_secs(30)),
     });
     rx.recv().unwrap().unwrap();
-    let bytes = slice.get_mapped_range();
+    let bytes = slice.get_mapped_range().expect("mapped buffer");
     let mut out = vec![T::default(); count as usize];
     out.as_mut_slice()
         .clone_from_slice(bytemuck::cast_slice::<u8, T>(&bytes));
@@ -316,7 +319,7 @@ pub fn read_u32(
         timeout: Some(std::time::Duration::from_secs(30)),
     });
     rx.recv().unwrap().unwrap();
-    let bytes = slice.get_mapped_range();
+    let bytes = slice.get_mapped_range().expect("mapped buffer");
     let mut buf = [0u8; 4];
     buf.copy_from_slice(&bytes);
     u32::from_le_bytes(buf)
@@ -367,7 +370,7 @@ pub fn read_rgba8(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Te
         submission_index: None,
         timeout: None,
     });
-    let data = slice.get_mapped_range();
+    let data = slice.get_mapped_range().expect("mapped buffer");
     let mut out = Vec::with_capacity((unpadded * h) as usize);
     for row in 0..h {
         let start = (row * padded) as usize;

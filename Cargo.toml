@@ -40,9 +40,8 @@ authors = ["lobinuxsoft"]
 # implement what a maintained crate covers, and these are pinned to the
 # versions this workspace already uses.
 #
-# 🔴 `wgpu-profiler` 0.28 is on wgpu 30; 0.27 is the one that matches
-# wgpu 29. Taking "latest" here is a compile error, not an upgrade.
-# `puffin_egui` 0.30 wants egui 0.35.0, which is ours exactly.
+# 🔴 `wgpu-profiler` moves with wgpu: 0.28 is the one on wgpu 30.
+# Taking another is a compile error, not an upgrade.
 #
 # The facade is what is called at every site, so the backend (puffin,
 # tracy, optick, superluminal) stays a cargo feature rather than a
@@ -52,7 +51,7 @@ profiling = "1"
 puffin = "0.20"
 puffin_egui = "0.30"
 puffin_http = "0.17"
-wgpu-profiler = { version = "0.27", default-features = false }
+wgpu-profiler = { version = "0.28", default-features = false }
 # Asset packs (#758): zstd wins ratio and decompression speed at once;
 # AES-GCM is authenticated, so a tampered pack fails loudly.
 zstd = "0.13"
@@ -65,13 +64,13 @@ sha2 = "0.11"
 # core dump.
 zeroize = { version = "1.9", features = ["derive"] }
 # GPU
-wgpu = "29"
+wgpu = "30"
 # NVIDIA DLSS through wgpu's Vulkan HAL (#536). Optional everywhere and
 # off by default: its build script links `libnvsdk_ngx` statically and
 # runs bindgen over NVIDIA's headers, so a build with this feature on
 # needs `DLSS_SDK` and `VULKAN_SDK` set. The version chart is exact —
-# dlss_wgpu 4.0.0 is the one pinned to wgpu 29 and DLSS SDK 310.5.3.
-dlss_wgpu = "=4.0.0"
+# dlss_wgpu 6.0.0 is the one on wgpu 30.
+dlss_wgpu = "=6.0.0"
 # Windowing
 winit = { version = "0.30", features = ["serde"] }
 # Math
@@ -92,7 +91,7 @@ gilrs = { version = "0.11", features = ["serde-serialize"] }
 # Scripting — `sync` feature makes Engine + AST + Dynamic Send + Sync,
 # required so ScriptingBackend impls can live in the engine's Resource set
 # Editor UI
-egui = "0.35"
+egui = "0.36"
 # `clipboard` is not optional in practice: without it `Clipboard::set_text`
 # compiles to an empty function, so Copy does nothing and says nothing —
 # `handle_platform_output` hands it the text and it is dropped on the floor.
@@ -101,15 +100,16 @@ egui = "0.35"
 #
 # `wayland` and `x11` name winit's backends. Left off, the editor depends
 # on some other crate happening to turn them on.
-egui-winit = { version = "0.35", default-features = false, features = [
+egui-winit = { version = "0.36", default-features = false, features = [
     "clipboard",
     "links",
     "wayland",
     "x11",
 ] }
-egui-wgpu = "0.35"
-egui_dock = { version = "0.20", features = ["serde"] }
-# Node graphs for egui (#1159). MIT/Apache-2.0, on egui 0.35 like the rest; 0.12 moved to 0.36.
+egui-wgpu = "0.36"
+# 0.21 is on egui 0.36 and there is no egui 0.37 release yet; egui waits for it.
+egui_dock = { version = "0.21", features = ["serde"] }
+# Node graphs for egui (#1159). MIT/Apache-2.0.
 # In-tree fork: the published crate has no selection setter and no node sizes (#1211).
 egui-snarl = { path = "crates/egui_snarl", features = ["serde"] }
 # Arithmetic in numeric fields: `9/2` instead of 4.5. MIT/Apache, and its
@@ -358,10 +358,10 @@ path = "examples/dynamic_plugin.rs"
 required-features = ["dynamic"]
 
 # ⚠️ TEMPORARY, and the exit condition is written down: `puffin_egui`
-# 0.30.0 as PUBLISHED pins egui 0.33.3, while this workspace is on 0.35.
+# 0.30.0 as PUBLISHED pins egui 0.33.3, while this workspace is on 0.36.
 # Two egui versions in one graph make `puffin_egui::egui::Ui` a different
-# type from ours and the panel cannot be drawn at all. Embark's `main`
-# migrated to egui 0.35 and has not been released.
+# type from ours and the panel cannot be drawn at all. `c81e9bb5` is the
+# last Embark `main` commit on egui 0.36 (the next one moves to 0.37).
 #
 # 🔴 It is a `patch` and not a plain git dependency on purpose. `puffin`
 # would otherwise exist twice — once from the registry, reached through
@@ -373,15 +373,8 @@ required-features = ["dynamic"]
 # compiled yesterday fail today for reasons no commit here explains.
 #
 # **Remove this section the moment puffin_egui ships a release built
-# against egui 0.35**, and take all three from crates.io again.
+# against our egui**, and take all three from crates.io again.
 [patch.crates-io]
-# 🔴 `profiling` 1.0.17 (released) depends on puffin ^0.19, and the panel
-# above is on 0.20. Two puffins mean two `GlobalProfiler`s: every scope
-# in the engine would record into one and the panel would read the other,
-# and the symptom is an empty flamegraph with nothing to blame. Their
-# master is 1.0.18 on puffin 0.20, unpublished — same story as the panel,
-# and it leaves with it.
-profiling = { git = "https://github.com/aclysma/profiling", rev = "da44bd1c5497c665c0f00e5d70594fc14d390b4b" }
-puffin = { git = "https://github.com/EmbarkStudios/puffin", rev = "ec04e7f6e9f5b420a969ee663b48896362a0eb00" }
-puffin_egui = { git = "https://github.com/EmbarkStudios/puffin", rev = "ec04e7f6e9f5b420a969ee663b48896362a0eb00" }
-puffin_http = { git = "https://github.com/EmbarkStudios/puffin", rev = "ec04e7f6e9f5b420a969ee663b48896362a0eb00" }
+puffin = { git = "https://github.com/EmbarkStudios/puffin", rev = "c81e9bb5e3839f516f3e56fe2d9e9649b5bdea86" }
+puffin_egui = { git = "https://github.com/EmbarkStudios/puffin", rev = "c81e9bb5e3839f516f3e56fe2d9e9649b5bdea86" }
+puffin_http = { git = "https://github.com/EmbarkStudios/puffin", rev = "c81e9bb5e3839f516f3e56fe2d9e9649b5bdea86" }

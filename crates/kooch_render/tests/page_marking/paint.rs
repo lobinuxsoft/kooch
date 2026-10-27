@@ -43,7 +43,7 @@ fn read_paint(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::Texture) 
     wait(device);
     rx.recv().unwrap().unwrap();
 
-    let mapped = buffer.slice(..).get_mapped_range();
+    let mapped = buffer.slice(..).get_mapped_range().expect("mapped buffer");
     let mut out = Vec::with_capacity((SIZE * SIZE) as usize);
     for y in 0..SIZE as usize {
         let start = y * padded as usize;
