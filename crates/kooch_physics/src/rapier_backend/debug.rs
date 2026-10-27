@@ -91,6 +91,7 @@ impl super::backend::RapierBackend {
             &self.impulse_joints,
             &self.multibody_joints,
             &self.narrow_phase,
+            &self.soft_bodies,
         );
     }
 }

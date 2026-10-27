@@ -23,6 +23,8 @@ pub struct RapierBackend {
     pub(super) colliders: ColliderSet,
     pub(super) impulse_joints: ImpulseJointSet,
     pub(super) multibody_joints: MultibodyJointSet,
+    // Always empty: the engine has no soft bodies, but rapier 0.36 asks for the set.
+    pub(super) soft_bodies: SoftBodySet,
     islands: IslandManager,
     broad_phase: DefaultBroadPhase,
     pub(super) narrow_phase: NarrowPhase,
@@ -52,6 +54,7 @@ impl RapierBackend {
             colliders: ColliderSet::new(),
             impulse_joints: ImpulseJointSet::new(),
             multibody_joints: MultibodyJointSet::new(),
+            soft_bodies: SoftBodySet::new(),
             islands: IslandManager::new(),
             broad_phase: DefaultBroadPhase::new(),
             narrow_phase: NarrowPhase::new(),

@@ -17,18 +17,18 @@ fn what_a_refresh_costs() {
     // frame pays.
     state
         .system
-        .refresh_cpu_specifics(CpuRefreshKind::new().with_cpu_usage());
+        .refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
 
     const SAMPLES: usize = 20;
     let start = std::time::Instant::now();
     for _ in 0..SAMPLES {
         state
             .system
-            .refresh_cpu_specifics(CpuRefreshKind::new().with_cpu_usage());
+            .refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
         state.system.refresh_processes_specifics(
             ProcessesToUpdate::Some(&[state.pid]),
             true,
-            ProcessRefreshKind::new().with_cpu().with_memory(),
+            ProcessRefreshKind::nothing().with_cpu().with_memory(),
         );
     }
     let per_refresh = start.elapsed().as_secs_f64() * 1000.0 / SAMPLES as f64;

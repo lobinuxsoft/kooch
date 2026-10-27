@@ -54,7 +54,7 @@ puffin_http = "0.17"
 wgpu-profiler = { version = "0.28", default-features = false }
 # Asset packs (#758): zstd wins ratio and decompression speed at once;
 # AES-GCM is authenticated, so a tampered pack fails loudly.
-zstd = "0.13"
+zstd = "0.14"
 aes-gcm = "0.11"
 # Subkey derivation, so one master key never does two jobs, and the
 # file tag can be derived rather than announced.
@@ -77,8 +77,8 @@ winit = { version = "0.30", features = ["serde"] }
 glam = { version = "0.33", features = ["bytemuck", "serde"] }
 # Utils
 bytemuck = { version = "1.21", features = ["derive"] }
-encase = { version = "0.10", features = ["glam"] }
-pollster = "0.4"
+encase = "0.13"
+pollster = "1"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
@@ -125,25 +125,25 @@ gltf = { version = "1.4", default-features = false, features = ["import", "utils
 # Blender's glTF Embedded export emits. Marshallow/data-encoding were
 # alternatives; `base64` is the de-facto Rust crate (used by reqwest,
 # ring, the `gltf` crate's own `import` feature, etc.).
-base64 = "0.22"
+base64 = "0.23"
 # Image decoding — PNG + JPEG only for PR-1; HDR/EXR/KTX2 follow up when
 # IBL / compressed pipelines arrive
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # Meshlet generation — Arseny Kapoulkine's meshoptimizer Rust bindings.
 # Industry standard, used by Bevy 0.16 virtual_geometry, UE5 Nanite-pipeline,
 # every meshlet-based renderer.
-meshopt = "0.6"
+meshopt = "0.7"
 # Physics — CPU rigid body solver. dimforge maintained, DOD internal,
 # industry-grade. wgrapier3d (GPU) is the future migration path — Dimforge
 # has WGSL broad-phase + constraint solvers running, and 2026 targets GPU
 # physics via rust-gpu sharing types with rapier. That path needs the
 # engine and rapier on the same glam, which is why glam is pinned to
 # whatever glamx (rapier's math layer) uses.
-rapier3d = { version = "0.34", features = ["simd-stable"] }
+rapier3d = "0.36"
 # File dialogs
-rfd = "0.15"
+rfd = "0.17"
 # Directories
-dirs = "6"
+dirs = "7"
 # Asset GUID — Unity-style 128-bit identity persisted in `<asset>.meta`
 # sidecars. v4 (random) feature for first-import generation; serde for
 # scene serialization round-trip.
@@ -152,13 +152,13 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # we ship TOML — same readable spirit, native Rust ecosystem).
 toml = "0.8"
 # Dynamic plugins
-libloading = "0.8"
+libloading = "0.9"
 # System metrics (CPU%, RAM RSS) for the editor performance HUD.
 # Cross-platform (Linux/Windows/macOS), used by Bevy's
 # SystemInformationDiagnosticsPlugin internally. Default features
 # pull in everything; we trim to just `system` (no networks/disks/
 # components) — keeps the dep light and binary small.
-sysinfo = { version = "0.32", default-features = false, features = ["system"] }
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 # Remote editor protocol — blocking HTTP server on a dedicated thread.
 # `interprocess` gives one API over Unix domain sockets and Windows
 # named pipes. Synchronous, matching the engine's own loop, and it keeps

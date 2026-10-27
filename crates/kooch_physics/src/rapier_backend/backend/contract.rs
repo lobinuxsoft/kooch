@@ -30,6 +30,7 @@ impl PhysicsBackend for RapierBackend {
             &mut self.colliders,
             &mut self.impulse_joints,
             &mut self.multibody_joints,
+            &mut self.soft_bodies,
             &mut self.ccd_solver,
             &(),             // physics hooks (#561 leaves these for later)
             &self.collector, // collected now, delivered after the step
@@ -125,8 +126,13 @@ impl PhysicsBackend for RapierBackend {
         // `wake_up: true` — the body's shape changed, so a sleeping body
         // has to re-evaluate contacts or it keeps colliding with a shape
         // that is gone.
-        self.colliders
-            .remove(collider_handle, &mut self.islands, &mut self.bodies, true);
+        self.colliders.remove(
+            collider_handle,
+            &mut self.islands,
+            &mut self.bodies,
+            &mut self.soft_bodies,
+            true,
+        );
     }
 
     fn collider_count(&self, body: BodyHandle) -> Option<usize> {
@@ -149,6 +155,7 @@ impl PhysicsBackend for RapierBackend {
             &mut self.colliders,
             &mut self.impulse_joints,
             &mut self.multibody_joints,
+            &mut self.soft_bodies,
             true, // remove attached colliders
         );
     }

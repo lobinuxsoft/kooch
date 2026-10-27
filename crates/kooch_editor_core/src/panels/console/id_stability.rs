@@ -140,6 +140,10 @@ fn scrolling_inside_a_dock_keeps_the_row_ids() {
     impl egui_dock::TabViewer for Viewer<'_> {
         type Tab = String;
 
+        fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
+            egui::Id::new(tab.as_str())
+        }
+
         fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
             tab.as_str().into()
         }
