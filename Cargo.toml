@@ -117,7 +117,9 @@ egui-snarl = { path = "crates/egui_snarl", features = ["serde"] }
 exmex = "0.21"
 # Serialization
 serde = { version = "1", features = ["derive"] }
-ron = "0.8"
+# 0.12.2 parses a 7.9 MB scene in 102 s, 0.11 in 0.74 s (#1621). Stay here until a
+# release fixes it; every RON file in both repos reads and writes the same as 0.8.
+ron = "0.11"
 # glTF mesh loading
 gltf = { version = "1.4", default-features = false, features = ["import", "utils", "names"] }
 # Base64 — RFC 4648 standard / URL-safe alphabet decoder. Used to
@@ -150,7 +152,7 @@ dirs = "7"
 uuid = { version = "1", features = ["v4", "serde"] }
 # Asset metadata sidecar format. Editable by humans (Unity ships YAML;
 # we ship TOML — same readable spirit, native Rust ecosystem).
-toml = "0.8"
+toml = "1"
 # Dynamic plugins
 libloading = "0.9"
 # System metrics (CPU%, RAM RSS) for the editor performance HUD.
