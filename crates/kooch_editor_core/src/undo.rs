@@ -85,11 +85,6 @@ impl UndoStack {
         }
     }
 
-    /// How many commands are held, undo and redo alike. For the leak census (#1592).
-    pub fn depth(&self) -> usize {
-        self.undo_stack.len() + self.redo_stack.len()
-    }
-
     pub fn can_undo(&self) -> bool {
         !self.undo_stack.is_empty()
     }
