@@ -85,7 +85,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Window handle
 raw-window-handle = "0.6"
 # Audio
-kira = "0.9"
+kira = "0.12"
 # Input
 gilrs = { version = "0.11", features = ["serde-serialize"] }
 # Scripting — `sync` feature makes Engine + AST + Dynamic Send + Sync,

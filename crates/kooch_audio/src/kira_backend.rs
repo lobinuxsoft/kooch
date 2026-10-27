@@ -1,9 +1,9 @@
-//! [`KiraBackend`] — production [`AudioBackend`] backed by Kira 0.9.
+//! [`KiraBackend`] — production [`AudioBackend`] backed by Kira 0.12.
 //!
-//! Wraps `kira::manager::AudioManager` and tracks sound + instance
+//! Wraps `kira::AudioManager` and tracks sound + instance
 //! handles via slotmap. Decode happens via Kira's bundled decoders
 //! (mp3 / ogg / flac / wav) inside `load_sound`. Production builds use
-//! `kira::manager::backend::DefaultBackend` (cpal); tests use
+//! `kira::DefaultBackend` (cpal); tests use
 //! [`KiraBackend::new_with_mock_backend`] to bypass cpal init failures
 //! on headless systems.
 
@@ -11,18 +11,17 @@ use glam::{Quat, Vec3};
 use slotmap::SlotMap;
 use std::io::Cursor;
 
-use kira::manager::backend::{Backend as KiraBackendTrait, DefaultBackend};
-use kira::manager::{AudioManager, AudioManagerSettings};
+use kira::backend::Backend as KiraBackendTrait;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
-use kira::tween::Tween;
+use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Tween};
 
 use crate::backend::{AudioBackend, AudioError, InstanceHandle, PlayParams, SoundHandle};
 
-/// Audio backend wrapping `kira::manager::AudioManager`.
+/// Audio backend wrapping `kira::AudioManager`.
 ///
 /// Generic over Kira's `Backend` trait so production code uses
 /// [`DefaultBackend`] (cpal-driven) and tests / headless tools use
-/// [`kira::manager::backend::mock::MockBackend`].
+/// [`kira::backend::mock::MockBackend`].
 pub struct KiraBackend<B: KiraBackendTrait = DefaultBackend> {
     manager: AudioManager<B>,
     sounds: SlotMap<SoundHandle, StaticSoundData>,
@@ -58,15 +57,14 @@ impl<B: KiraBackendTrait> KiraBackend<B> {
 }
 
 #[cfg(test)]
-impl KiraBackend<kira::manager::backend::mock::MockBackend> {
+impl KiraBackend<kira::backend::mock::MockBackend> {
     /// Test-only constructor wired to Kira's MockBackend so unit tests
     /// run without an audio device. Audio output is not produced — only
     /// the management API is exercised.
     pub fn new_with_mock_backend() -> Result<Self, AudioError> {
-        let manager = AudioManager::<kira::manager::backend::mock::MockBackend>::new(
-            AudioManagerSettings::default(),
-        )
-        .map_err(|e| AudioError::BackendInit(format!("{e:?}")))?;
+        let manager =
+            AudioManager::<kira::backend::mock::MockBackend>::new(AudioManagerSettings::default())
+                .map_err(|e| AudioError::BackendInit(format!("{e:?}")))?;
         Ok(Self::from_manager(manager))
     }
 }
@@ -108,7 +106,7 @@ where
             play_data = play_data.loop_region(..);
         }
         if (params.volume - 1.0).abs() > 1e-6 {
-            play_data = play_data.volume(params.volume as f64);
+            play_data = play_data.volume(decibels(params.volume));
         }
         if (params.pitch - 1.0).abs() > 1e-6 {
             play_data = play_data.playback_rate(params.pitch as f64);
@@ -136,7 +134,7 @@ where
 
     fn set_instance_volume(&mut self, instance: InstanceHandle, volume: f32) {
         if let Some(handle) = self.instances.get_mut(instance) {
-            handle.set_volume(volume as f64, Tween::default());
+            handle.set_volume(decibels(volume), Tween::default());
         }
     }
 
@@ -146,7 +144,7 @@ where
         // by adjusting the main track's volume directly.
         self.manager
             .main_track()
-            .set_volume(volume as f64, Tween::default());
+            .set_volume(decibels(volume), Tween::default());
     }
 
     fn set_listener(&mut self, position: Vec3, rotation: Quat) {
@@ -159,6 +157,14 @@ where
     fn listener(&self) -> (Vec3, Quat) {
         (self.listener_pos, self.listener_rot)
     }
+}
+
+/// Our volumes are linear amplitude (1.0 = as recorded); kira 0.10+ takes decibels.
+fn decibels(amplitude: f32) -> Decibels {
+    if !(amplitude > 0.0) {
+        return Decibels::SILENCE;
+    }
+    Decibels((20.0 * amplitude.log10()).max(Decibels::SILENCE.0))
 }
 
 #[cfg(test)]
