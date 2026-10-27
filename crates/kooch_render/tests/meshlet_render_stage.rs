@@ -83,7 +83,7 @@ fn read_rgba8_texture(
         timeout: Some(std::time::Duration::from_secs(30)),
     });
     rx.recv().unwrap().unwrap();
-    let padded = slice.get_mapped_range().to_vec();
+    let padded = slice.get_mapped_range().expect("mapped buffer").to_vec();
 
     let mut out = Vec::with_capacity((w * h * bpp) as usize);
     for row in 0..h {

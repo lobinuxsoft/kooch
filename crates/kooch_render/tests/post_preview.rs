@@ -81,7 +81,11 @@ fn preview(source: &str) -> Option<Vec<u8>> {
         submission_index: None,
         timeout: None,
     });
-    let pixels = readback.slice(..).get_mapped_range().to_vec();
+    let pixels = readback
+        .slice(..)
+        .get_mapped_range()
+        .expect("mapped buffer")
+        .to_vec();
     Some(pixels)
 }
 

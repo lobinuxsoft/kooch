@@ -24,6 +24,7 @@ pub(super) fn make_root_indices_buffer(device: &wgpu::Device, lod_idx: u32) -> w
         buffer
             .slice(..)
             .get_mapped_range_mut()
+            .expect("mapped buffer")
             .copy_from_slice(&init);
     }
     buffer.unmap();

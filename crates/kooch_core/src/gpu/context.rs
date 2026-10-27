@@ -109,6 +109,7 @@ impl GpuContext {
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: frame_latency(),
+            color_space: wgpu::SurfaceColorSpace::Auto,
         };
 
         surface.configure(&device, &surface_config);
@@ -324,6 +325,7 @@ fn pick_adapter(
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: Some(surface),
         force_fallback_adapter: false,
+        apply_limit_buckets: false,
     }))
     .map_err(GpuError::NoAdapter)?;
 

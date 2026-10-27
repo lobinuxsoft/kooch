@@ -87,7 +87,7 @@ impl Metrics {
             .expect("metrics readback channel")
             .expect("map_async ok");
 
-        let view = slice.get_mapped_range();
+        let view = slice.get_mapped_range().expect("mapped buffer");
         let raw: MetricsRaw = *bytemuck::from_bytes::<MetricsRaw>(&view);
         drop(view);
         staging.unmap();

@@ -103,7 +103,11 @@ fn read_mip(
         submission_index: None,
         timeout: Some(std::time::Duration::from_secs(30)),
     });
-    let raw = staging.slice(..).get_mapped_range().to_vec();
+    let raw = staging
+        .slice(..)
+        .get_mapped_range()
+        .expect("mapped buffer")
+        .to_vec();
     let mut out = Vec::with_capacity((side * side) as usize);
     for y in 0..side {
         let start = (y * row) as usize;
@@ -436,8 +440,10 @@ fn the_pyramid_never_misses_a_page() {
         submission_index: None,
         timeout: Some(std::time::Duration::from_secs(30)),
     });
-    let answers: Vec<u32> =
-        bytemuck::cast_slice::<u8, u32>(&staging.slice(..).get_mapped_range()).to_vec();
+    let answers: Vec<u32> = bytemuck::cast_slice::<u8, u32>(
+        &staging.slice(..).get_mapped_range().expect("mapped buffer"),
+    )
+    .to_vec();
 
     // The smallest mip at which both axes collapse to two texels — the
     // definition, spelled out here so the shader's bit trick is checked

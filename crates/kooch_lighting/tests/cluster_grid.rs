@@ -33,6 +33,7 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
         force_fallback_adapter: false,
+        apply_limit_buckets: false,
     }))
     .ok()?;
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -167,7 +168,7 @@ fn map(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Vec<u32> {
         .map_async(wgpu::MapMode::Read, move |r| tx.send(r).unwrap());
     wait(device);
     rx.recv().unwrap().unwrap();
-    let view = buffer.slice(..).get_mapped_range();
+    let view = buffer.slice(..).get_mapped_range().expect("mapped buffer");
     let words = bytemuck::cast_slice::<_, u32>(&view).to_vec();
     drop(view);
     buffer.unmap();

@@ -100,7 +100,7 @@ impl Readback {
                 capacity,
             } = self.labels[index];
             let counts = {
-                let mapped = buffer.slice(..).get_mapped_range();
+                let mapped = buffer.slice(..).get_mapped_range().expect("mapped buffer");
                 let words: &[u32] = bytemuck::cast_slice(&mapped);
                 MarkCounts {
                     resident: words[0],

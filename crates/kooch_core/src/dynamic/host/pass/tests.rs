@@ -18,6 +18,7 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
         force_fallback_adapter: false,
+        apply_limit_buckets: false,
     }))
     .ok()?;
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -144,7 +145,11 @@ fn a_plugin_pass_draws_into_the_pool() {
         submission_index: None,
         timeout: None,
     });
-    let pixels = readback.slice(..).get_mapped_range().to_vec();
+    let pixels = readback
+        .slice(..)
+        .get_mapped_range()
+        .expect("mapped buffer")
+        .to_vec();
 
     assert_eq!(
         &pixels[0..4],

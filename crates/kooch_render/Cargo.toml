@@ -9,7 +9,7 @@ authors.workspace = true
 
 [dependencies]
 # Validates a `.shader` before a pipeline is built from it (#1157). The same naga wgpu links.
-naga = { version = "29", features = ["wgsl-in"] }
+naga = { version = "30", features = ["wgsl-in"] }
 kooch_core.workspace = true
 kooch_ecs.workspace = true
 # Inti — the shading model and its GPU light records. A renderer

@@ -8,7 +8,7 @@
 //!
 //! - [`backend`] — trait + cross-backend types (SoundHandle,
 //!   InstanceHandle, PlayParams, AudioError)
-//! - [`kira_backend`] — concrete [`KiraBackend`] (Kira 0.9 with
+//! - [`kira_backend`] — concrete [`KiraBackend`] (Kira 0.12 with
 //!   default mp3/ogg/flac/wav decoders)
 //! - [`mock_backend`] — [`MockAudioBackend`] for tests + tooling
 //!

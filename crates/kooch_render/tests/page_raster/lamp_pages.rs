@@ -453,7 +453,10 @@ fn read_atlas_page(
         submission_index: None,
         timeout: Some(std::time::Duration::from_secs(30)),
     });
-    let whole = bytemuck::cast_slice::<u8, f32>(&staging.slice(..).get_mapped_range()).to_vec();
+    let whole = bytemuck::cast_slice::<u8, f32>(
+        &staging.slice(..).get_mapped_range().expect("mapped buffer"),
+    )
+    .to_vec();
     staging.unmap();
     let mut out = Vec::with_capacity((page * page) as usize);
     for row in 0..page {

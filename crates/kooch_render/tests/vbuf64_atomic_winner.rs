@@ -35,6 +35,7 @@ fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
         force_fallback_adapter: false,
+        apply_limit_buckets: false,
     }))
     .ok()?;
 
@@ -228,7 +229,7 @@ fn run_atomic_max_two(device: &wgpu::Device, queue: &wgpu::Queue, v1: u64, v2: u
     });
     rx.recv().expect("channel closed").expect("map failed");
 
-    let data = slice.get_mapped_range();
+    let data = slice.get_mapped_range().expect("mapped buffer");
     // The first 8 bytes are pixel (0,0). Following 31 pixels = 248 bytes
     // are the still-zero remainder of the row.
     let pixel: [u8; 8] = data[..8].try_into().unwrap();

@@ -17,7 +17,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 # The voxel storage tests validate their WGSL and run compute passes.
-naga = { version = "29", features = ["wgsl-in"] }
+naga = { version = "30", features = ["wgsl-in"] }
 pollster.workspace = true
 
 [features]

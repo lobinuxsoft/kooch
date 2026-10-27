@@ -235,6 +235,7 @@ fn adopt(
         height: size.height.max(1),
         present_mode: present_mode(&caps.present_modes),
         desired_maximum_frame_latency: 2,
+        color_space: wgpu::SurfaceColorSpace::Auto,
         alpha_mode: caps
             .alpha_modes
             .first()

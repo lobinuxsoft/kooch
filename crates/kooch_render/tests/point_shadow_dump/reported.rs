@@ -50,7 +50,7 @@ pub(super) fn read_face_depth(
         submission_index: None,
         timeout: None,
     });
-    let data = slice.get_mapped_range();
+    let data = slice.get_mapped_range().expect("mapped buffer");
     let mut out = Vec::with_capacity((size * size) as usize);
     for row in 0..size {
         let start = (row * padded) as usize;

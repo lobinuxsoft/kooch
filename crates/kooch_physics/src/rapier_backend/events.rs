@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use rapier3d::prelude::{
     ColliderHandle as RapierColliderHandle, ColliderSet, CollisionEvent as RapierCollisionEvent,
-    ContactPair, EventHandler, RigidBodyHandle, RigidBodySet,
+    ContactPair, EventHandler, RigidBodyHandle, RigidBodySet, SoftBodySet, SoftBodyTearEvent,
 };
 
 /// One step's reports in rapier handles, translated to [`BodyHandle`](crate::backend::BodyHandle)
@@ -91,11 +91,13 @@ impl EventHandler for EventCollector {
             });
         }
     }
+
+    fn handle_soft_body_tear_event(&self, _soft_bodies: &SoftBodySet, _event: &SoftBodyTearEvent) {}
 }
 
 /// The largest single contact impulse in a pair.
 fn peak_force(pair: &ContactPair) -> f32 {
-    pair.manifolds
+    pair.manifolds()
         .iter()
         .flat_map(|manifold| manifold.points.iter())
         .map(|point| point.data.impulse)

@@ -68,7 +68,8 @@ pub(crate) fn draw_asset_browser_content(
         i.raw
             .dropped_files
             .iter()
-            .filter_map(|f| f.path.clone())
+            .map(|f| f.path().to_path_buf())
+            .filter(|p| !p.as_os_str().is_empty())
             .collect()
     });
     if !dropped.is_empty() {

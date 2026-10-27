@@ -26,6 +26,7 @@ fn main() {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
         force_fallback_adapter: false,
+        apply_limit_buckets: false,
     }))
     .expect("no GPU adapter found");
 
@@ -92,7 +93,7 @@ fn main() {
         timeout: Some(std::time::Duration::from_secs(30)),
     });
 
-    let data = staging_slice.get_mapped_range();
+    let data = staging_slice.get_mapped_range().expect("mapped buffer");
     let result: &[f32] = bytemuck::cast_slice(&data);
 
     // -- Verify --

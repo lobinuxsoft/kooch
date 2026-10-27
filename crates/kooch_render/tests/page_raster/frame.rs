@@ -121,8 +121,10 @@ fn cs_snap(@builtin(global_invocation_id) id: vec3<u32>) {
         submission_index: None,
         timeout: Some(std::time::Duration::from_secs(30)),
     });
-    let read: Vec<[f32; 4]> =
-        bytemuck::cast_slice::<u8, [f32; 4]>(&staging.slice(..).get_mapped_range()).to_vec();
+    let read: Vec<[f32; 4]> = bytemuck::cast_slice::<u8, [f32; 4]>(
+        &staging.slice(..).get_mapped_range().expect("mapped buffer"),
+    )
+    .to_vec();
     staging.unmap();
 
     // 🔴 The property, now that a page is keyed by absolute world position: a fixed point's page

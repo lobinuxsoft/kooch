@@ -19,6 +19,7 @@ fn create_adapter_headless() {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
         force_fallback_adapter: false,
+        apply_limit_buckets: false,
     }));
 
     assert!(adapter.is_ok(), "expected a GPU adapter to be available");

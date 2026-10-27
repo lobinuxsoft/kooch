@@ -221,7 +221,11 @@ impl MeshletGpuTimers {
             let mut state_guard = slot.state.lock().unwrap();
             if *state_guard == SlotState::Ready {
                 {
-                    let view = slot.buffer.slice(..).get_mapped_range();
+                    let view = slot
+                        .buffer
+                        .slice(..)
+                        .get_mapped_range()
+                        .expect("mapped buffer");
                     let ticks: &[u64] = bytemuck::cast_slice(&view);
                     let mut timings = Vec::with_capacity(self.stage_count as usize);
                     for stage in 0..self.stage_count as usize {

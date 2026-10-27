@@ -55,7 +55,7 @@ fn read(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Ve
         submission_index: None,
         timeout: Some(std::time::Duration::from_secs(30)),
     });
-    bytemuck::cast_slice(&staging.slice(..).get_mapped_range()).to_vec()
+    bytemuck::cast_slice(&staging.slice(..).get_mapped_range().expect("mapped buffer")).to_vec()
 }
 
 /// Two tiles: the left all material 1, the right material 1 with a row of material 2.

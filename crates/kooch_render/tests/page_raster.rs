@@ -106,7 +106,10 @@ fn read_words(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer)
         submission_index: None,
         timeout: Some(std::time::Duration::from_secs(30)),
     });
-    let words = bytemuck::cast_slice::<u8, u32>(&staging.slice(..).get_mapped_range()).to_vec();
+    let words = bytemuck::cast_slice::<u8, u32>(
+        &staging.slice(..).get_mapped_range().expect("mapped buffer"),
+    )
+    .to_vec();
     staging.unmap();
     words
 }

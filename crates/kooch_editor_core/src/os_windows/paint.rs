@@ -17,7 +17,12 @@ pub(crate) fn apply_textures(
 ) {
     for open in live.lock().unwrap().iter() {
         if let Some(output) = &open.output {
-            for (id, delta) in &output.textures_delta.set {
+            for (id, delta) in output
+                .textures_delta
+                .set
+                .iter()
+                .flat_map(|(id, ds)| ds.iter().map(move |d| (id, d)))
+            {
                 renderer.update_texture(gpu.device(), gpu.queue(), *id, delta);
             }
         }
@@ -114,5 +119,5 @@ fn paint(
     }
     buffers.push(encoder.finish());
     gpu.queue().submit(buffers);
-    frame.present();
+    gpu.queue().present(frame);
 }

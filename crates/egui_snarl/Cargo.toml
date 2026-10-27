@@ -21,7 +21,7 @@ egui.workspace = true
 slab = { version = "0.4" }
 serde = { workspace = true, features = ["derive"], optional = true }
 smallvec = { version = "1.15", features = ["const_new"] }
-egui-scale = { version = "0.5.0" }
+egui-scale = { version = "0.6" }
 
 # Upstream's `egui-probe` derives stay in the source untouched; the feature is not carried here.
 [lints.rust]

@@ -43,7 +43,7 @@ impl StagingBuffer {
             timeout: Some(std::time::Duration::from_secs(30)),
         });
 
-        let data = slice.get_mapped_range();
+        let data = slice.get_mapped_range().expect("mapped buffer");
         let result = bytemuck::cast_slice(&data).to_vec();
 
         drop(data);

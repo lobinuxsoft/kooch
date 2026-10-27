@@ -34,6 +34,7 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
         force_fallback_adapter: false,
+        apply_limit_buckets: false,
     }))
     .ok()?;
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -265,7 +266,10 @@ fn read_words(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer)
     queue.submit([encoder.finish()]);
     staging.slice(..).map_async(wgpu::MapMode::Read, |_| {});
     wait(device);
-    let words = bytemuck::cast_slice::<u8, u32>(&staging.slice(..).get_mapped_range()).to_vec();
+    let words = bytemuck::cast_slice::<u8, u32>(
+        &staging.slice(..).get_mapped_range().expect("mapped buffer"),
+    )
+    .to_vec();
     staging.unmap();
     words
 }

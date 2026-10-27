@@ -33,9 +33,9 @@ impl Default for SysMetricsState {
     fn default() -> Self {
         // Build the System with the minimum refresh kinds we'll actually query. Skipping disks /
         // networks / components keeps each refresh under a millisecond on Linux.
-        let refresh_kind = RefreshKind::new()
-            .with_cpu(CpuRefreshKind::new().with_cpu_usage())
-            .with_processes(ProcessRefreshKind::new().with_cpu().with_memory());
+        let refresh_kind = RefreshKind::nothing()
+            .with_cpu(CpuRefreshKind::nothing().with_cpu_usage())
+            .with_processes(ProcessRefreshKind::nothing().with_cpu().with_memory());
         let system = System::new_with_specifics(refresh_kind);
         let pid = Pid::from_u32(std::process::id());
         Self {
@@ -88,11 +88,11 @@ pub(crate) fn sys_metrics_system(resources: &mut Resources) {
         // multiple refreshes — empirically observed on Linux during #463 manual validation.
         state
             .system
-            .refresh_cpu_specifics(CpuRefreshKind::new().with_cpu_usage());
+            .refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
         state.system.refresh_processes_specifics(
             ProcessesToUpdate::Some(&[state.pid]),
             true,
-            ProcessRefreshKind::new().with_cpu().with_memory(),
+            ProcessRefreshKind::nothing().with_cpu().with_memory(),
         );
         state.last_refresh = Some(Instant::now());
         state.samples_taken = state.samples_taken.saturating_add(1);

@@ -37,6 +37,7 @@ fn create_headless_device() -> wgpu::Device {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
         force_fallback_adapter: false,
+        apply_limit_buckets: false,
     }))
     .expect("no GPU adapter");
 
