@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-10-22 — 🎯 **Moving the mouse over the editor no longer eats memory, closing a scene gives it back, and the VRAM figure is finally true.** The HUD had shown 5 MB in every scene: it counted four render targets and never heard of the 128 MiB shadow page atlas or a single material texture. It now asks each owner what it holds instead of being told by nine call sites, and that honest number is what exposed everything after it. There was **no unload path at all** — `Assets::remove` was called only by its own tests — so every scene a session opened was held forever; meshes and textures are now released when nothing has asked to draw them for a second, and textures are uploaded on demand (5 for `character_test`, not the project's 78). RAM climbed ~1 MB/s under a moving mouse: the GPU profiler bridge fed puffin every frame while nobody was recording, and puffin only empties its frame when recording. Freed is not returned, either — glibc kept 53 MB inside the process until `malloc_trim` handed it back. The heavy scene now costs **569 MB on the first visit and 569 on the last**. 🔴 And the lesson is about method: **eight hypotheses fell by reading, and the culprit had been read twice and cleared.** A 40-line allocator hook that printed a backtrace when a buffer crossed 8 MiB named it on the first run.
+Last updated 2026-10-26 — 🎯 **Play feels like the game again, and the memory question has an answer.** A camera turn in Play stuttered because the editor presented an uneven number of host frames per frame; the editor's pull is now the host's clock (lockstep), and the jump lost the third of a second the ride-height spring added on every fall. The memory hunt ended with a measurement, not a guess: idle editor flat for minutes, Play/Stop adds ~20 MB that hits a ceiling after a few cycles and never moves RSS — a bounded driver cache, not a leak. Every dependency is current (wgpu 30, egui 0.36, rapier 0.36, kira 0.12), with every scene and asset in both repos verified to read and write identically; ron stays on 0.11 because 0.12.2 takes 102 s to parse a scene 0.11 parses in 0.74 s.
 
 
 ---
@@ -207,6 +207,49 @@ what the engine did before any of this existed, for the reason
 `settings.rs:510` argues at length: a serde default is not a
 recommendation, it is what an old file silently becomes. A project that
 wants these values sets them.
+
+---
+
+## 🎯 2026-10-26 — Play without stutter, a memory answer, and every dependency current
+
+**What the user gets:** a camera that turns smoothly in Play, a jump with the timing the design asked
+for, and a measured answer to "is the editor leaking?" — no.
+
+### Play is lockstep with the editor (#1427, #1613)
+
+The editor pulled snapshots as they arrived and the host woke on every input, so one presented frame
+showed one, two or three host frames, and a camera turn stuttered. The editor's pull is now the
+host's clock: one pull per presented frame, input rides the next pull, and a 100 ms ceiling covers a
+stalled editor. Interpolation for a host over the network waits for #1604.
+
+### Feel fixes found by playing
+
+- **#1064**: the ride-height spring pushed against a falling body and added ~0.3 s to every jump; a
+  descent guard lets the fall be a fall.
+- **#1616**: the camera composer's share jumped from the ramp to 1 the frame the target stopped — a
+  5° jolt. It is eased now.
+- **#673** double gravity in shipped games, **#766** one press becoming several jumps, **#1425** a
+  frame cap that never slept, **#647** a remote protocol with no authentication.
+
+### The memory question, closed with numbers (#1589)
+
+Measured with a `/proc` sampler, a census of every asset container and `dhat`:
+the idle editor does not grow (120 MB flat for 7 minutes); Play/Stop adds ~20 MB over the first
+cycles and then stops (<2 MB across 6 more) with RSS unchanged; the Rust heap is 72–80 MB and the
+rest is the driver's own `malloc`. A bounded cache. Startup now identifies assets instead of
+decoding all of them (#1618). Left: free heap kept after pipeline compilation (#1623) and the
+caches the sweep does not cover yet (#1624).
+
+### Every dependency current (#1621)
+
+wgpu 30, naga 30, egui 0.36, egui_dock 0.21, rapier 0.36, kira 0.12, toml 1, syn 3 and 229
+compatible updates. Held back with a reason each: egui 0.37 (egui_dock), glam 0.34 (rapier),
+**ron 0.12** (102 s vs 0.74 s on a 7.9 MB scene). Every RON and TOML file in both repos — 314 and
+209 — reads and re-writes identically under the old and the new versions.
+
+### Next
+
+**#1587** — the virtual shadow acceptance suite has not compiled since the page cell was split.
 
 ---
 
