@@ -208,18 +208,6 @@ pub(super) fn run_editor_ui(
                 },
             );
 
-            // Drawn on the context rather than inside a panel: a window is
-            // free-floating, and nesting it in the menu bar's `Ui` would
-            // clip it to that strip.
-            if let Some(report) = preflight {
-                crate::menu_bar::draw_preflight_window(
-                    ui.ctx(),
-                    report,
-                    toolbar.install_blocked.as_ref(),
-                    installing,
-                    &mut actions,
-                );
-            }
             crate::menu_bar::draw_settings_window(
                 ui.ctx(),
                 &mut actions,
@@ -386,6 +374,19 @@ pub(super) fn run_editor_ui(
         } else if let Some(ps) = project_state.as_mut() {
             let launch_actions = launch_screen::draw_launch_screen(ui, ps);
             forward_launch_actions(launch_actions, &mut actions);
+        }
+
+        // Outside both branches: the launcher is where a machine first opens the editor, and finding
+        // a missing package only once a project builds costs a reboot on an image-based system.
+        // Drawn on the context so it floats rather than clipping to a panel.
+        if let Some(report) = preflight {
+            crate::menu_bar::draw_preflight_window(
+                ui.ctx(),
+                report,
+                toolbar.install_blocked.as_ref(),
+                installing,
+                &mut actions,
+            );
         }
 
         if let Some(pending) = prefab_overwrite {

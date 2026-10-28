@@ -39,7 +39,7 @@ impl std::fmt::Display for Refusal {
 
 /// Whether an install may start right now.
 pub fn refusal(resources: &Resources, report: &Report) -> Option<Refusal> {
-    if report.packages().is_none() {
+    if report.packages().is_none() && report.user_steps().is_empty() {
         return Some(match report.installer {
             Installer::Unknown => Refusal::NoInstaller,
             _ => Refusal::Nothing,
@@ -63,6 +63,26 @@ pub fn privileged(installer: Installer, packages: &str) -> Option<Vec<String>> {
         Installer::Winget => owned(&["winget", "install", packages]),
         Installer::Unknown => None,
     }
+}
+
+/// Everything the button runs: the user-level steps first, as the user, then the privileged package
+/// step. One shell line so a failed step stops the rest.
+pub fn steps(report: &Report) -> Option<Vec<String>> {
+    let privileged = match report.packages() {
+        Some(packages) => Some(privileged(report.installer, &packages)?),
+        None => None,
+    };
+    // Without Rust there is no rustup or cargo to run them with.
+    let user = match report.needs_rust() {
+        true => Vec::new(),
+        false => report.user_steps(),
+    };
+    if user.is_empty() || cfg!(target_os = "windows") {
+        return privileged;
+    }
+    let mut line: Vec<String> = user.into_iter().map(str::to_owned).collect();
+    line.extend(privileged.map(|argv| argv.join(" ")));
+    Some(vec!["sh".into(), "-c".into(), line.join(" && ")])
 }
 
 /// The command that restarts this machine.
@@ -144,8 +164,7 @@ pub fn start(resources: &mut Resources, report: &Report) -> Result<(), Refusal> 
     if let Some(refusal) = refusal(resources, report) {
         return Err(refusal);
     }
-    let packages = report.packages().ok_or(Refusal::Nothing)?;
-    let argv = privileged(report.installer, &packages).ok_or(Refusal::NoInstaller)?;
+    let argv = steps(report).ok_or(Refusal::NoInstaller)?;
 
     tracing::info!(command = %argv.join(" "), "installing what this machine is missing");
     let output: Arc<Mutex<Vec<String>>> = Default::default();

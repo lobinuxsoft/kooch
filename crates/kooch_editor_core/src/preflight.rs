@@ -97,9 +97,18 @@ impl Installer {
             (Self::RpmOstree | Self::Dnf, "D-Bus development files") => Some("dbus-devel"),
             (Self::Apt, "D-Bus development files") => Some("libdbus-1-dev"),
             (Self::Pacman, "D-Bus development files") => Some("dbus"),
-            (Self::RpmOstree | Self::Dnf, "A C compiler") => Some("gcc"),
+            (Self::RpmOstree | Self::Dnf, "A C compiler") => Some("gcc gcc-c++"),
             (Self::Apt, "A C compiler") => Some("build-essential"),
             (Self::Pacman, "A C compiler") => Some("base-devel"),
+            (Self::RpmOstree | Self::Dnf, "pkg-config") => Some("pkgconf-pkg-config"),
+            (Self::Apt, "pkg-config") => Some("pkg-config"),
+            (Self::Pacman, "pkg-config") => Some("pkgconf"),
+            (Self::RpmOstree | Self::Dnf, "mingw-w64 toolchain") => {
+                Some("mingw64-gcc mingw64-gcc-c++")
+            }
+            (Self::Apt, "mingw-w64 toolchain") => Some("gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64"),
+            (Self::Pacman, "mingw-w64 toolchain") => Some("mingw-w64-gcc"),
+            (Self::RpmOstree | Self::Dnf | Self::Pacman, "zig") => Some("zig"),
             (Self::RpmOstree | Self::Dnf | Self::Pacman, "mold (faster linker)") => Some("mold"),
             (Self::Apt, "mold (faster linker)") => Some("mold"),
             _ => None,
@@ -165,12 +174,52 @@ pub const DBUS: Requirement = Requirement {
     hint: "",
 };
 
-/// A C compiler, for the crates that build C rather than bind to it.
+/// A C and C++ compiler, for the crates that build sources rather than bind to a library.
 pub const C_COMPILER: Requirement = Requirement {
     name: "A C compiler",
-    why: "some dependencies build C sources rather than link a library",
+    why: "some dependencies build C sources, and meshopt builds C++",
     hint: "",
 };
+
+/// pkg-config, which every library probe above goes through.
+pub const PKG_CONFIG: Requirement = Requirement {
+    name: "pkg-config",
+    why: "the build scripts find ALSA, udev and D-Bus through it",
+    hint: "",
+};
+
+/// The mingw-w64 cross toolchain. **Not required** — only a Windows export uses it.
+pub const MINGW: Requirement = Requirement {
+    name: "mingw-w64 toolchain",
+    why: "a Windows export is cross-compiled and linked with it",
+    hint: "",
+};
+
+/// Rust's Windows target. **Not required** — only a Windows export uses it.
+pub const WINDOWS_TARGET: Requirement = Requirement {
+    name: "Rust Windows target",
+    why: "a Windows export compiles for x86_64-pc-windows-gnu",
+    hint: "",
+};
+
+/// zig. **Not required** — only a Linux export with a glibc floor uses it.
+pub const ZIG: Requirement = Requirement {
+    name: "zig",
+    why: "an export with a glibc floor links through zig",
+    hint: "https://ziglang.org/download",
+};
+
+/// cargo-zigbuild. **Not required** — only a Linux export with a glibc floor uses it.
+pub const ZIGBUILD: Requirement = Requirement {
+    name: "cargo-zigbuild",
+    why: "the cargo subcommand an export with a glibc floor runs",
+    hint: "",
+};
+
+/// Installed as the user rather than by the package manager: rustup and cargo write into the
+/// user's home, and running them privileged would put them in root's.
+const WINDOWS_TARGET_STEP: &str = "rustup target add x86_64-pc-windows-gnu";
+const ZIGBUILD_STEP: &str = "cargo install cargo-zigbuild";
 
 /// A faster linker. **Not required** — the build works without it.
 pub const MOLD: Requirement = Requirement {
@@ -192,8 +241,14 @@ pub struct Probes {
     /// `true` off Linux, where the question does not apply and a wrong
     /// answer would refuse a build that works.
     pub c_compiler: bool,
+    pub pkg_config: bool,
     /// Not required. Absent means slower, never broken.
     pub mold: bool,
+    /// Not required, like everything below: an export needs them, opening a project does not.
+    pub mingw: bool,
+    pub windows_target: bool,
+    pub zig: bool,
+    pub zigbuild: bool,
 }
 
 impl Probes {
@@ -209,8 +264,18 @@ impl Probes {
             dbus: !cfg!(target_os = "linux") || ran("pkg-config", &["--exists", "dbus-1"]),
             // The same binary the `cc` crate runs. Not a guess about a
             // toolchain — the toolchain itself, answering.
-            c_compiler: !cfg!(target_os = "linux") || ran("cc", &["--version"]),
+            c_compiler: !cfg!(target_os = "linux")
+                || (ran("cc", &["--version"]) && ran("c++", &["--version"])),
+            pkg_config: !cfg!(target_os = "linux") || ran("pkg-config", &["--version"]),
             mold: ran("mold", &["--version"]),
+            // The same tools `build::compile` refuses an export without.
+            mingw: !cfg!(target_os = "linux")
+                || (ran("x86_64-w64-mingw32-gcc", &["--version"])
+                    && ran("x86_64-w64-mingw32-g++", &["--version"])),
+            windows_target: !cfg!(target_os = "linux") || windows_target_installed(),
+            // `zig version`: zig reads `--version` as an unknown command and exits 1.
+            zig: !cfg!(target_os = "linux") || ran("zig", &["version"]),
+            zigbuild: !cfg!(target_os = "linux") || ran("cargo-zigbuild", &["--version"]),
         }
     }
 }
@@ -229,6 +294,10 @@ pub fn missing_from(probes: Probes) -> Vec<Requirement> {
     let mut missing = Vec::new();
     if !probes.cargo {
         missing.push(RUST);
+    }
+    // Before the libraries: without it every one of them reads as missing.
+    if !probes.pkg_config {
+        missing.push(PKG_CONFIG);
     }
     if !probes.alsa {
         missing.push(ALSA);
@@ -257,6 +326,18 @@ pub fn wanted_from(probes: Probes) -> Vec<Requirement> {
     if !probes.mold && cfg!(target_os = "linux") {
         wanted.push(MOLD);
     }
+    let exports = [
+        (probes.mingw, MINGW),
+        (probes.windows_target, WINDOWS_TARGET),
+        (probes.zig, ZIG),
+        (probes.zigbuild, ZIGBUILD),
+    ];
+    wanted.extend(
+        exports
+            .into_iter()
+            .filter(|(found, _)| !found)
+            .map(|(_, req)| req),
+    );
     wanted
 }
 
@@ -304,7 +385,7 @@ impl Report {
 
     /// Whether this machine's package step ends in a restart.
     pub fn reboots(&self) -> bool {
-        self.installer == Installer::RpmOstree
+        self.installer == Installer::RpmOstree && self.packages().is_some()
     }
 
     /// One block that fixes everything missing, ready to paste.
@@ -316,10 +397,23 @@ impl Report {
                 _ => RUSTUP_UNIX.to_owned(),
             });
         }
+        steps.extend(self.user_steps().into_iter().map(str::to_owned));
         if let Some(packages) = self.installer.command(&self.all()) {
             steps.push(packages);
         }
         (!steps.is_empty()).then(|| steps.join("\n"))
+    }
+
+    /// What installs as the user rather than through the package manager.
+    pub fn user_steps(&self) -> Vec<&'static str> {
+        let mut steps = Vec::new();
+        if self.wanted.contains(&WINDOWS_TARGET) {
+            steps.push(WINDOWS_TARGET_STEP);
+        }
+        if self.wanted.contains(&ZIGBUILD) {
+            steps.push(ZIGBUILD_STEP);
+        }
+        steps
     }
 
     /// The package step alone, without the `rustup` line or the reboot.
@@ -338,6 +432,18 @@ impl Report {
     pub fn needs_rust(&self) -> bool {
         self.missing.contains(&RUST)
     }
+}
+
+/// Asked of rustup the way `build::compile` asks it before an export.
+fn windows_target_installed() -> bool {
+    Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+        .is_ok_and(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .any(|line| line.trim() == "x86_64-pc-windows-gnu")
+        })
 }
 
 fn ran(program: &str, args: &[&str]) -> bool {

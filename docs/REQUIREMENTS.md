@@ -5,7 +5,8 @@ native Rust and links it as an `rlib`. So the machine that opens a
 project needs a Rust toolchain and the system libraries the engine's
 `*-sys` crates link against.
 
-The editor checks this once at startup and, when something is missing,
+The editor checks this once at startup — on the launcher, before any
+project opens — and, when something is missing,
 shows the requirement, the reason, and the exact command for *this*
 machine — and can run it. See `crates/kooch_editor_core/src/preflight.rs`
 and `install.rs`.
@@ -30,10 +31,11 @@ that does.
 | Requirement | Who needs it | Probe | Fedora / Atomic | Debian | Arch | Windows |
 |---|---|---|---|---|---|---|
 | **Rust** | everything; a project compiles the engine | `cargo --version` | rustup | rustup | rustup | rustup |
+| **pkg-config** | every probe below and every `*-sys` build script that goes through it | `pkg-config --version` | `pkgconf-pkg-config` | `pkg-config` | `pkgconf` | — |
 | **ALSA headers** | `alsa-sys` ← `cpal` ← `kooch_audio` | `pkg-config --exists alsa` | `alsa-lib-devel` | `libasound2-dev` | `alsa-lib` | — |
 | **udev headers** | `libudev-sys` ← `gilrs-core` — how a gamepad is seen | `pkg-config --exists libudev` | `systemd-devel` | `libudev-dev` | `systemd-libs` | — |
 | **D-Bus headers** | `libdbus-sys` ← `audio_thread_priority` ← `cpal` ← `kira` — realtime audio thread via RealtimeKit | `pkg-config --exists dbus-1` | `dbus-devel` | `libdbus-1-dev` | `dbus` | — |
-| **A C compiler** | `metis-sys` and `zstd-sys` build C sources | `cc --version` | `gcc` | `build-essential` | `base-devel` | MSVC |
+| **A C/C++ compiler** | `metis-sys` and `zstd-sys` build C, `meshopt` builds C++ | `cc --version` and `c++ --version` | `gcc gcc-c++` | `build-essential` | `base-devel` | MSVC |
 | **Vulkan headers** | `dlss_wgpu`'s build script | the header file itself | `vulkan-headers` | `libvulkan-dev` | `vulkan-headers` | Vulkan SDK |
 
 **The Vulkan probe is a file test, not `pkg-config --exists vulkan`.**
@@ -56,6 +58,19 @@ cross-compiled build stops being possible.
 | | Why | All Linux |
 |---|---|---|
 | **mold** | halves the link, but only beside split debug info — see below | `mold` |
+
+Export toolchains, Linux only — opening a project never needs them, an
+export refuses to start without them (`build::compile`):
+
+| | Who needs it | Probe | Fedora / Atomic | Debian | Arch |
+|---|---|---|---|---|---|
+| **mingw-w64** | a Windows export, cross-linked | `x86_64-w64-mingw32-gcc` and `-g++ --version` | `mingw64-gcc mingw64-gcc-c++` | `gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64` | `mingw-w64-gcc` |
+| **Rust Windows target** | a Windows export | `rustup target list --installed` | `rustup target add x86_64-pc-windows-gnu` | same | same |
+| **zig** | a Linux export with a glibc floor | `zig version` | `zig` | [ziglang.org](https://ziglang.org/download) | `zig` |
+| **cargo-zigbuild** | a Linux export with a glibc floor | `cargo-zigbuild --version` | `cargo install cargo-zigbuild` | same | same |
+
+The rustup and cargo steps run as the user, before the privileged
+package step: they write into the user's home.
 
 ### Measured, because the guess was wrong
 

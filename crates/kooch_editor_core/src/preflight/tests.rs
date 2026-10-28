@@ -1,4 +1,6 @@
-use super::{ALSA, C_COMPILER, DBUS, Installer, Probes, RUST, UDEV, VULKAN_HEADERS, missing_from};
+use super::{
+    ALSA, C_COMPILER, DBUS, Installer, PKG_CONFIG, Probes, RUST, UDEV, VULKAN_HEADERS, missing_from,
+};
 
 /// 🔴 The case this project's own distribution hits: YaguareteOS reports
 /// `ID=yaguarete` and only names Fedora in `ID_LIKE`. An `ID`-only match
@@ -104,6 +106,11 @@ fn a_ready_machine_reports_nothing() {
             dbus: true,
             c_compiler: true,
             mold: true,
+            pkg_config: true,
+            mingw: true,
+            windows_target: true,
+            zig: true,
+            zigbuild: true,
         })
         .is_empty()
     );
@@ -122,10 +129,23 @@ fn rust_is_reported_first() {
         dbus: false,
         c_compiler: false,
         mold: false,
+        pkg_config: false,
+        mingw: false,
+        windows_target: false,
+        zig: false,
+        zigbuild: false,
     });
     assert_eq!(
         missing,
-        vec![RUST, ALSA, UDEV, DBUS, C_COMPILER, VULKAN_HEADERS]
+        vec![
+            RUST,
+            PKG_CONFIG,
+            ALSA,
+            UDEV,
+            DBUS,
+            C_COMPILER,
+            VULKAN_HEADERS
+        ]
     );
 }
 
