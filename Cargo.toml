@@ -29,7 +29,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.98.44"
+version = "0.98.45"
 edition = "2024"
 license = "LicenseRef-Proprietary"
 repository = "https://github.com/lobinuxsoft/kooch"
@@ -86,6 +86,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 raw-window-handle = "0.6"
 # Audio
 kira = "0.12"
+# A build's whole process tree, not just cargo: process group on unix, Job Object on Windows (#1358).
+process-wrap = { version = "10", default-features = false, features = ["std", "process-group", "job-object"] }
+nix = { version = "0.31", default-features = false, features = ["signal"] }
 # Input
 gilrs = { version = "0.11", features = ["serde-serialize"] }
 # Scripting — `sync` feature makes Engine + AST + Dynamic Send + Sync,
