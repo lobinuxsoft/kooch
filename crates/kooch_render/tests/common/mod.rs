@@ -36,20 +36,9 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
                 }))
                 .ok()?;
 
-            // Hi-Z SPD pyramid build (#486) needs 12 storage texture
-            // slots in one bind group; default wgpu limit is 4. Raise
-            // it here mirroring the production GpuContext setup.
-            let mut limits = wgpu::Limits::default();
-            limits.max_storage_textures_per_shader_stage =
-                16.min(adapter.limits().max_storage_textures_per_shader_stage);
-            // group_err, debug); the production GpuContext clamps to 6 (TARGET_MAX_BIND_GROUPS in
-            // kooch_core). Mirror it here so the cull shader compiles against the test device.
-            limits.max_bind_groups = 6.min(adapter.limits().max_bind_groups);
-            // (params + visible IDs + count + 2 pool descriptors + instances + group_max_err +
-            // reject_reasons + stage_counters). wgpu's default 8 fails shader-module creation.
-            // Mirror TARGET_MAX_STORAGE_BUFFERS_PER_STAGE.
-            limits.max_storage_buffers_per_shader_stage =
-                16.min(adapter.limits().max_storage_buffers_per_shader_stage);
+            // The engine's own limits, not a copy of them: a hand-kept copy fell behind when the
+            // page table split and the shadow suites stopped building their layouts (#1587).
+            let limits = kooch_core::gpu::elevated_compute_limits(&adapter);
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("kooch_render_test_device"),
                 required_features: wgpu::Features::empty(),

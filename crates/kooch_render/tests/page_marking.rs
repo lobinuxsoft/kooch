@@ -1,5 +1,7 @@
 //! The GPU marking pass, against a real device (#866).
 
+mod common;
+
 use glam::{Mat4, Vec3};
 
 use kooch_core::resource::Resources;
@@ -16,36 +18,16 @@ use kooch_lighting::{ClusterCamera, GpuLights};
 use kooch_render::meshlet::DEFERRED_COLOR_FORMAT;
 use kooch_render::projection::perspective_infinite_rh_reverse_z;
 use kooch_render::shadow::pages::mark::{MarkCounts, PAINT_FORMAT, PageMarker, Paint};
-use kooch_render::shadow::pages::pool::{DEFAULT_MAX_AGE, PAGE_CELL, PoolConfig};
+use kooch_render::shadow::pages::pool::{DEFAULT_MAX_AGE, PAGE_READ, PoolConfig};
 use kooch_render::shadow::{ClipmapConfig, PageConfig, SHADOW_DEPTH_FORMAT};
 
 const SIZE: u32 = 128;
 const VIEWPORT: glam::Vec2 = glam::Vec2::new(SIZE as f32, SIZE as f32);
 
+/// One device for the whole binary: tests creating instances at once crash the Vulkan loader when
+/// the NVIDIA ICD is installed on an AMD machine (#1587).
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-        flags: wgpu::InstanceFlags::default(),
-        backend_options: wgpu::BackendOptions::default(),
-        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-        display: None,
-    });
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-        apply_limit_buckets: false,
-    }))
-    .ok()?;
-    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("page_marking_test_device"),
-        required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::default(),
-        memory_hints: wgpu::MemoryHints::default(),
-        trace: wgpu::Trace::Off,
-        experimental_features: wgpu::ExperimentalFeatures::default(),
-    }))
-    .ok()
+    common::try_acquire_device()
 }
 
 fn world() -> Resources {

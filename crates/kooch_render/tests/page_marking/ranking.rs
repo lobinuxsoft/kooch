@@ -58,8 +58,8 @@ fn the_survivors_are_the_top_ranks() {
     let clip_levels = ClipmapConfig::default().levels;
     let cells = read_words(&device, &queue, marker.pool().slots());
     let mut residents = 0;
-    for entry in 0..cells.len() / PAGE_CELL as usize {
-        if cells[entry * PAGE_CELL as usize] == 0 {
+    for entry in 0..cells.len() / PAGE_READ as usize {
+        if cells[entry * PAGE_READ as usize] == 0 {
             continue;
         }
         residents += 1;
