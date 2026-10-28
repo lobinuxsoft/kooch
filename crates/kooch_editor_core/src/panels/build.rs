@@ -112,7 +112,7 @@ fn draw_presets(
     ui.add_space(4.0);
     let building = matches!(
         panel.status,
-        Some(BuildStatus::Compiling { .. } | BuildStatus::Packaging),
+        Some(BuildStatus::Compiling { .. } | BuildStatus::Packaging | BuildStatus::Stopping),
     );
     let button = ui.add_enabled(
         !building && selected.is_some(),
@@ -240,6 +240,14 @@ fn draw_status(ui: &mut egui::Ui, panel: &BuildPanel) {
         }
         // Not red: nothing went wrong, someone pressed a button, and an
         // error where a deliberate act happened reads as a bug.
+        // A spinner, because it is what keeps the panel repainting until the tree is gone.
+        Some(BuildStatus::Stopping) => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.weak("Stopping cargo, rustc and the linker…");
+            })
+            .response
+        }
         Some(BuildStatus::Cancelled) => ui.weak("Cancelled."),
         Some(BuildStatus::Failed(why)) => ui.colored_label(egui::Color32::LIGHT_RED, why),
     };

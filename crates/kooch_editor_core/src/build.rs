@@ -1,5 +1,6 @@
 //! Producing a game from a project (#758).
 
+mod cargo_run;
 pub mod compile;
 /// - [`dlss`] — the two obligations a build with NVIDIA's upscaler
 ///   carries: the SDK before cargo, the runtime and the notices after.
@@ -45,7 +46,7 @@ impl BuildState {
     pub fn busy(&self) -> bool {
         matches!(
             self.job.as_ref().map(BuildJob::status),
-            Some(BuildStatus::Compiling { .. } | BuildStatus::Packaging),
+            Some(BuildStatus::Compiling { .. } | BuildStatus::Packaging | BuildStatus::Stopping),
         )
     }
 }

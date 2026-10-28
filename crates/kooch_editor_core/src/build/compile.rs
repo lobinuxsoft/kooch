@@ -2,12 +2,13 @@
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
 use kooch_core::Guid;
 use kooch_pack::PackKey;
 
+use super::cargo_run::CargoRun;
 use super::platform::Platform;
 use super::{BuildPreset, Package, PackageError};
 
@@ -30,13 +31,15 @@ pub enum BuildStatus {
     /// they were built.
     Done(Vec<Package>),
     Failed(String),
-    /// Stopped on purpose.
+    /// A cancel was asked for and the process tree is still going down.
+    Stopping,
+    /// Stopped on purpose, and nothing of the build is left running.
     Cancelled,
 }
 
 /// A build in progress.
 pub struct BuildJob {
-    child: Option<Child>,
+    child: Option<CargoRun>,
     output: Arc<Mutex<Vec<String>>>,
     status: BuildStatus,
     preset: BuildPreset,
@@ -114,12 +117,11 @@ impl BuildJob {
         }
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        let mut child = command
-            .spawn()
-            .map_err(|e| format!("could not start cargo: {e}"))?;
+        let mut child =
+            CargoRun::spawn(command).map_err(|e| format!("could not start cargo: {e}"))?;
         let output = Arc::new(Mutex::new(Vec::new()));
-        capture(child.stdout.take(), &output);
-        capture(child.stderr.take(), &output);
+        capture(child.stdout(), &output);
+        capture(child.stderr(), &output);
 
         Ok(Self {
             child: Some(child),
@@ -156,15 +158,14 @@ impl BuildJob {
             );
         }
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
-        let mut child = command
-            .spawn()
+        let mut child = CargoRun::spawn(command)
             .map_err(|e| format!("could not start cargo for {}: {e}", next.label()))?;
         if let Ok(mut log) = self.output.lock() {
             log.push(String::new());
             log.push(format!("── {} ──", next.label()));
         }
-        capture(child.stdout.take(), &self.output);
-        capture(child.stderr.take(), &self.output);
+        capture(child.stdout(), &self.output);
+        capture(child.stderr(), &self.output);
         self.child = Some(child);
         let built = self.done.len();
         self.status = BuildStatus::Compiling {
@@ -195,6 +196,13 @@ impl BuildJob {
         let Some(child) = self.child.as_mut() else {
             return;
         };
+        if matches!(self.status, BuildStatus::Stopping) {
+            if child.gone() {
+                self.child = None;
+                self.status = BuildStatus::Cancelled;
+            }
+            return;
+        }
         match child.try_wait() {
             Ok(None) => {}
             Ok(Some(exit)) => {
@@ -272,14 +280,16 @@ impl BuildJob {
         self.status = BuildStatus::Done(std::mem::take(&mut self.done));
     }
 
-    /// Stops the build.
+    /// Stops the build. [`Cancelled`](BuildStatus::Cancelled) comes from [`poll`](Self::poll),
+    /// once the whole process tree is gone — not from here.
     pub fn cancel(&mut self) {
-        if let Some(child) = self.child.as_mut() {
-            let _ = child.kill();
-            let _ = child.wait();
+        match self.child.as_mut() {
+            Some(child) => {
+                child.stop();
+                self.status = BuildStatus::Stopping;
+            }
+            None => self.status = BuildStatus::Cancelled,
         }
-        self.child = None;
-        self.status = BuildStatus::Cancelled;
     }
 }
 
@@ -288,8 +298,7 @@ impl Drop for BuildJob {
     /// a `dist/` behind it.
     fn drop(&mut self) {
         if let Some(child) = self.child.as_mut() {
-            let _ = child.kill();
-            let _ = child.wait();
+            child.stop_blocking();
         }
     }
 }

@@ -58,6 +58,11 @@ serde_json.workspace = true
 egui-snarl.workspace = true
 ron.workspace = true
 sysinfo.workspace = true
+process-wrap.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# Asking whether anything of a stopped build's process group is still alive.
+nix.workspace = true
 
 [dev-dependencies]
 # The shared adapter its GPU tests ask their device from (#334).
