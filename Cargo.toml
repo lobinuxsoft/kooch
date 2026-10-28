@@ -85,18 +85,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Window handle
 raw-window-handle = "0.6"
 # Audio
-# Without the default `cpal-realtime-dbus`: it links libdbus, so building a project would need
-# dbus-devel (#1629).
-kira = { version = "0.12", default-features = false, features = [
-    "cpal",
-    "cpal-realtime",
-    "mp3",
-    "ogg",
-    "vorbis",
-    "flac",
-    "wav",
-    "pcm",
-] }
+kira = "0.12"
 # Input
 gilrs = { version = "0.11", features = ["serde-serialize"] }
 # Scripting — `sync` feature makes Engine + AST + Dynamic Send + Sync,
