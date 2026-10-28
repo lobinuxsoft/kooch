@@ -172,7 +172,7 @@ pub(crate) fn draw_preflight_window(
     }
 
     let title = match report.is_ready() {
-        true => "This machine could build faster",
+        true => "This machine can build — exports and speed need more",
         false => "This machine cannot build a project yet",
     };
     egui::Window::new(title)
