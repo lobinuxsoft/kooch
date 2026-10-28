@@ -2,28 +2,13 @@ use super::*;
 
 use std::sync::OnceLock;
 
-// Shared device per test binary — see issue #334. Mesa radv races
-// when many threads invoke `request_adapter` concurrently.
+// One device per test binary (#334).
 static SHARED_DEVICE: OnceLock<Option<(wgpu::Device, wgpu::Queue)>> = OnceLock::new();
 
 fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     SHARED_DEVICE
         .get_or_init(|| {
-            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-                flags: wgpu::InstanceFlags::default(),
-                backend_options: wgpu::BackendOptions::default(),
-                memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-                display: None,
-            });
-            let adapter =
-                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::HighPerformance,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                    apply_limit_buckets: false,
-                }))
-                .ok()?;
+            let adapter = kooch_core::gpu::test_adapter()?;
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("material_pipeline_test_device"),
                 required_features: wgpu::Features::empty(),

@@ -19,12 +19,7 @@ fn wire(graph: &mut Graph, from: NodeId, output: usize, to: NodeId, input: usize
 }
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::default();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }))
-    .ok()?;
+    let adapter = kooch_core::gpu::test_adapter()?;
     // The surface's own group 4 is the textures, and the default limit stops at four groups.
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("seamless_noise"),

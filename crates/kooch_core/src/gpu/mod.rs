@@ -22,6 +22,8 @@ pub mod limits;
 mod profiler;
 pub mod sizing;
 pub mod targets;
+#[cfg(any(test, feature = "test-adapter"))]
+mod test_adapter;
 
 #[cfg(test)]
 mod tests;
@@ -34,3 +36,5 @@ pub use limits::{MAX_WORKGROUPS_PER_DIM, elevated_compute_limits, tiled_workgrou
 pub use profiler::{GpuQuery, GpuScopes};
 pub use sizing::{buffer_bytes, grown, texture_bytes};
 pub use targets::{TargetDesc, TargetId, TargetPool};
+#[cfg(any(test, feature = "test-adapter"))]
+pub use test_adapter::test_adapter;

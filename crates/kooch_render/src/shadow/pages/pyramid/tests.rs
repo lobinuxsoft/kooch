@@ -2,10 +2,7 @@ use super::*;
 use crate::shadow::pages::pool::{PAGE_READ, PAGE_WORK};
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::default();
-    let adapter =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-            .ok()?;
+    let adapter = kooch_core::gpu::test_adapter()?;
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: None,
         required_features: wgpu::Features::empty(),

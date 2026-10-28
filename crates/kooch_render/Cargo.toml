@@ -69,6 +69,8 @@ dlss = ["dep:dlss_wgpu", "kooch_core/dlss"]
 dlss-debug-overlay = ["dlss", "dlss_wgpu/debug_overlay"]
 
 [dev-dependencies]
+# The shared adapter its GPU tests ask their device from (#334).
+kooch_core = { workspace = true, features = ["test-adapter"] }
 pollster.workspace = true
 # Reading back what the GPU scopes reported (#785). Only the test needs
 # to name puffin: the engine reaches it through `kooch_core`.

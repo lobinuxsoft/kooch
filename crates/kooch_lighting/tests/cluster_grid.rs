@@ -22,20 +22,7 @@ const VIEWPORT: glam::Vec2 = glam::Vec2::new(256.0, 256.0);
 const CELL_WORDS: usize = 8;
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-        flags: wgpu::InstanceFlags::default(),
-        backend_options: wgpu::BackendOptions::default(),
-        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-        display: None,
-    });
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-        apply_limit_buckets: false,
-    }))
-    .ok()?;
+    let adapter = kooch_core::gpu::test_adapter()?;
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("cluster_grid_test_device"),
         required_features: wgpu::Features::empty(),

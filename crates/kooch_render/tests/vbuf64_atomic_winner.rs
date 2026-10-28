@@ -24,20 +24,7 @@ fn cs_atomic_max_two() {
 /// adapter does not advertise the bundle, so the test skips cleanly on adapters / backends that
 /// lack it (Mac/MSL has no `atomic_uint64`, older drivers, etc.).
 fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-        flags: wgpu::InstanceFlags::default(),
-        backend_options: wgpu::BackendOptions::default(),
-        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-        display: None,
-    });
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-        apply_limit_buckets: false,
-    }))
-    .ok()?;
+    let adapter = kooch_core::gpu::test_adapter()?;
 
     // Atomic storage textures need TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES as the gating feature
     // on top of the int64-atomic bundle. The production GpuContext requests it as a hard-required

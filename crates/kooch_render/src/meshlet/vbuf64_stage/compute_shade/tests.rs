@@ -4,10 +4,7 @@ use super::*;
 /// with the default surface and a custom one, built on a real device.
 #[test]
 fn both_paths_build_a_custom_surface() {
-    let instance = wgpu::Instance::default();
-    let Ok(adapter) =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-    else {
+    let Some(adapter) = kooch_core::gpu::test_adapter() else {
         return;
     };
     let features = kooch_core::gpu::vbuf64_features();
