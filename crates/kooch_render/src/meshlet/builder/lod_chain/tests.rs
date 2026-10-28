@@ -475,3 +475,44 @@ fn nearest_weights(p: glam::Vec3, [a, b, c]: [glam::Vec3; 3]) -> [f32; 3] {
     let (v, w) = (vb * denom, vc * denom);
     [1.0 - v - w, v, w]
 }
+
+/// The same mesh builds the same chain, byte for byte: otherwise two machines ship different GPU
+/// data and every geometry A/B measures noise (#984). Two builds in one process differ as well as
+/// two runs would, since every `HashMap` here gets its own random seed.
+#[test]
+fn a_chain_builds_identically() {
+    let bytes = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/meshes/primitives/sphere.glb"
+    ))
+    .expect("the sphere ships with the engine");
+    let mesh = crate::mesh::parse_mesh_bytes(&bytes).expect("sphere parses");
+    let build = || {
+        build_meshlets_lod_chain(
+            &mesh,
+            DEFAULT_MAX_VERTICES,
+            DEFAULT_MAX_TRIANGLES,
+            0.5,
+            LodConfig::default(),
+        )
+        .expect("lod chain")
+    };
+    let first = build();
+    assert!(
+        first.meshlets.iter().any(|m| m.lod_level > 1),
+        "the sphere must have a chain to vary"
+    );
+    for _ in 0..4 {
+        let again = build();
+        let same = bytemuck::cast_slice::<_, u8>(&first.meshlets)
+            == bytemuck::cast_slice::<_, u8>(&again.meshlets)
+            && first.meshlet_vertices == again.meshlet_vertices
+            && first.meshlet_triangles == again.meshlet_triangles;
+        assert!(
+            same,
+            "rebuilt into {} meshlets, first build had {}",
+            again.meshlets.len(),
+            first.meshlets.len()
+        );
+    }
+}
