@@ -150,7 +150,9 @@ impl InputBackend for MockInputBackend {
     }
 
     fn gamepads(&self) -> Vec<GamepadId> {
-        self.gamepads.keys().copied().collect()
+        let mut ids: Vec<GamepadId> = self.gamepads.keys().copied().collect();
+        ids.sort_unstable();
+        ids
     }
 
     fn is_button_pressed(&self, gamepad: GamepadId, button: GamepadButton) -> bool {

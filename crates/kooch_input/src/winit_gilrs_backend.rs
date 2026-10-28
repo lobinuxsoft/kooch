@@ -34,11 +34,16 @@ pub struct WinitGilrsBackend {
     /// When the previous frame was polled: velocity is motion over the time it took.
     last_poll: Option<std::time::Instant>,
     gamepads: HashMap<GamepadId, GamepadState>,
+    /// The last pad touched, so a second connected pad cannot steal the actions (#1643).
+    active_pad: Option<GamepadId>,
     queued_events: Vec<InputEvent>,
 }
 
 /// Motion over the time it took, in pixels per second. A frame shorter than a tenth of a
 /// millisecond is a clock that did not move, not a mouse moving at a million pixels a second.
+/// How far a stick or trigger has to travel to make its pad the active one.
+const ACTIVE_TRAVEL: f32 = 0.5;
+
 pub(crate) fn velocity(motion: Vec2, seconds: f32) -> Vec2 {
     motion / seconds.max(1e-4)
 }
@@ -132,6 +137,7 @@ impl WinitGilrsBackend {
             mouse_velocity: Vec2::ZERO,
             last_poll: None,
             gamepads: HashMap::new(),
+            active_pad: None,
             queued_events: Vec::new(),
         }
     }
@@ -220,12 +226,16 @@ impl WinitGilrsBackend {
                 }
                 gilrs::EventType::Disconnected => {
                     self.gamepads.remove(&id);
+                    if self.active_pad == Some(id) {
+                        self.active_pad = None;
+                    }
                     self.queued_events.push(InputEvent::GamepadDisconnected(id));
                 }
                 gilrs::EventType::ButtonPressed(button, _) => {
                     let Some(button) = GamepadButton::from_upstream(button) else {
                         continue;
                     };
+                    self.active_pad = Some(id);
                     let entry = self.gamepads.entry(id).or_default();
                     if entry.pressed_buttons.insert(button) {
                         entry.just_pressed_buttons.insert(button);
@@ -252,6 +262,10 @@ impl WinitGilrsBackend {
                     let Some(axis) = GamepadAxis::from_upstream(axis) else {
                         continue;
                     };
+                    // Past half travel: resting drift must not hand the actions to an idle pad.
+                    if value.abs() > ACTIVE_TRAVEL {
+                        self.active_pad = Some(id);
+                    }
                     let entry = self.gamepads.entry(id).or_default();
                     entry.axes.insert(axis, value);
                     self.queued_events.push(InputEvent::GamepadAxisChanged {
@@ -331,7 +345,13 @@ impl InputBackend for WinitGilrsBackend {
     }
 
     fn gamepads(&self) -> Vec<GamepadId> {
-        self.gamepads.keys().copied().collect()
+        let mut ids: Vec<GamepadId> = self.gamepads.keys().copied().collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    fn active_gamepad(&self) -> Option<GamepadId> {
+        self.active_pad.or_else(|| self.gamepads().first().copied())
     }
 
     fn is_button_pressed(&self, gamepad: GamepadId, button: GamepadButton) -> bool {
