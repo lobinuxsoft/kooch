@@ -362,10 +362,10 @@ fn lod_chain_caps_at_max_levels() {
     );
 }
 
-/// 🔴 A coarse LOD must not stretch a triangle across a UV seam: on the shipped capsule, a triangle
-/// spanning half the texture is one whose corners sit on both sides of the wrap (#1149).
+/// 🔴 A coarse LOD must put the texture where LOD 0 has it: on the shipped capsule, a UV shifted
+/// by a fraction of a checker square reads as the pattern cut and slid at the LOD switch (#1149).
 #[test]
-fn coarse_lods_keep_uv_seams() {
+fn coarse_lods_keep_their_uvs() {
     let bytes = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../assets/meshes/primitives/capsule.glb"
@@ -380,24 +380,98 @@ fn coarse_lods_keep_uv_seams() {
         LodConfig::default(),
     )
     .expect("lod chain");
-    for meshlet in &chain.meshlets {
+    let corner = |vertex: &crate::mesh::MeshVertex| {
+        (
+            glam::Vec3::from(vertex.position),
+            glam::Vec2::from(vertex.uv),
+        )
+    };
+    let fine: Vec<[(glam::Vec3, glam::Vec2); 3]> = mesh
+        .indices
+        .chunks(3)
+        .map(|t| [0, 1, 2].map(|c| corner(&mesh.vertices[t[c] as usize])))
+        .collect();
+    for meshlet in chain
+        .meshlets
+        .iter()
+        .filter(|m| (1..=3).contains(&m.lod_level))
+    {
         for triangle in 0..meshlet.triangle_count as usize {
-            let uv = [0, 1, 2].map(|corner| {
-                let local = chain.meshlet_triangles
-                    [meshlet.triangle_offset as usize + triangle * 3 + corner];
+            let coarse = [0, 1, 2].map(|c| {
+                let local =
+                    chain.meshlet_triangles[meshlet.triangle_offset as usize + triangle * 3 + c];
                 let vertex =
                     chain.meshlet_vertices[meshlet.vertex_offset as usize + local as usize];
-                glam::Vec2::from(chain.vertices[vertex as usize].uv)
+                corner(&chain.vertices[vertex as usize])
             });
-            let span = uv[0]
-                .distance(uv[1])
-                .max(uv[1].distance(uv[2]))
-                .max(uv[2].distance(uv[0]));
+            let (point, uv) = blend(&coarse, [1.0 / 3.0; 3]);
+            let shift = uv_shift(&fine, point, uv);
+            // A fifth of a checker square at the capsule material's `uv_scale` (2, 1); 1.0 gave 0.34.
             assert!(
-                span < 0.5,
-                "LOD {} has a triangle spanning {span:.3} of the texture",
+                shift < 0.1,
+                "LOD {} shifts the texture by {shift:.3}",
                 meshlet.lod_level
             );
         }
     }
+}
+
+fn blend(t: &[(glam::Vec3, glam::Vec2); 3], w: [f32; 3]) -> (glam::Vec3, glam::Vec2) {
+    (
+        t[0].0 * w[0] + t[1].0 * w[1] + t[2].0 * w[2],
+        t[0].1 * w[0] + t[1].1 * w[1] + t[2].1 * w[2],
+    )
+}
+
+/// How far `uv` is from the UV LOD 0 has at the surface point nearest `point`. Among triangles
+/// equally near — the two sides of a seam — the closest UV wins.
+fn uv_shift(fine: &[[(glam::Vec3, glam::Vec2); 3]], point: glam::Vec3, uv: glam::Vec2) -> f32 {
+    let mut best = (f32::MAX, f32::MAX);
+    for triangle in fine {
+        let weights = nearest_weights(point, triangle.map(|c| c.0));
+        let (on, there) = blend(triangle, weights);
+        let distance = on.distance(point);
+        let shift = ((uv - there) * glam::Vec2::new(2.0, 1.0)).length();
+        if distance < best.0 - 1e-4 || (distance < best.0 + 1e-4 && shift < best.1) {
+            best = (distance.min(best.0), shift);
+        }
+    }
+    best.1
+}
+
+/// Barycentric weights of the point of triangle `t` nearest `p` (Ericson, RTCD 5.1.5).
+fn nearest_weights(p: glam::Vec3, [a, b, c]: [glam::Vec3; 3]) -> [f32; 3] {
+    let (ab, ac, ap) = (b - a, c - a, p - a);
+    let (d1, d2) = (ab.dot(ap), ac.dot(ap));
+    if d1 <= 0.0 && d2 <= 0.0 {
+        return [1.0, 0.0, 0.0];
+    }
+    let bp = p - b;
+    let (d3, d4) = (ab.dot(bp), ac.dot(bp));
+    if d3 >= 0.0 && d4 <= d3 {
+        return [0.0, 1.0, 0.0];
+    }
+    let vc = d1 * d4 - d3 * d2;
+    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+        let v = d1 / (d1 - d3);
+        return [1.0 - v, v, 0.0];
+    }
+    let cp = p - c;
+    let (d5, d6) = (ab.dot(cp), ac.dot(cp));
+    if d6 >= 0.0 && d5 <= d6 {
+        return [0.0, 0.0, 1.0];
+    }
+    let vb = d5 * d2 - d1 * d6;
+    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+        let w = d2 / (d2 - d6);
+        return [1.0 - w, 0.0, w];
+    }
+    let va = d3 * d6 - d5 * d4;
+    if va <= 0.0 && d4 - d3 >= 0.0 && d5 - d6 >= 0.0 {
+        let w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return [0.0, 1.0 - w, w];
+    }
+    let denom = 1.0 / (va + vb + vc);
+    let (v, w) = (vb * denom, vc * denom);
+    [1.0 - v - w, v, w]
 }

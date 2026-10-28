@@ -25,9 +25,10 @@ const PARENTS_PER_GROUP_CAP: usize = NANITE_GROUP_SIZE * 2;
 /// LOD level past which per-vertex cell-boundary locks are dropped (#535).
 const CELL_BOUNDARY_LOCK_MAX_LEVEL: u32 = 3;
 
-/// How much a collapse that moves a UV costs, against position error. Weld alone still let 1 in
-/// 62 capsule triangles span half the texture; at 1.0 none does, for 70 triangles instead (#1149).
-const UV_WEIGHT: f32 = 1.0;
+/// How much a collapse that moves a UV costs, against position error (#1149). On the capsule, 1.0
+/// still shifted the texture by two thirds of a checker square at LOD 3; 16 keeps it under an
+/// eighth, reaching the same coarsest mesh in smaller steps. 64 costs 2.5x LOD 0 in extra levels.
+const UV_WEIGHT: f32 = 16.0;
 
 /// Builds a multi-LOD [`MeshletMesh`] using the Nanite-grouped DAG algorithm. The resulting
 /// `MeshletMesh` concatenates every LOD's meshlets into one descriptor array, rebasing per-LOD
