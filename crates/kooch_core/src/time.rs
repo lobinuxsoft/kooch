@@ -196,11 +196,6 @@ impl Time {
         self.frame_start
     }
 
-    /// How long until the next fixed step comes due.
-    pub fn until_next_fixed_step(&self) -> Duration {
-        self.fixed_delta.saturating_sub(self.accumulator)
-    }
-
     /// Number of fixed timestep updates since startup.
     #[inline]
     pub fn fixed_count(&self) -> u64 {

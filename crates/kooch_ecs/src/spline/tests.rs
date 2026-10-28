@@ -83,7 +83,11 @@ fn the_up_stays_square() {
 #[test]
 fn the_nearest_point_is_found() {
     let points = straight();
-    let found = nearest::nearest_point(&points, false, Vec3::new(1.5, 5.0, 0.0));
+    let found = eval::at(
+        &points,
+        false,
+        nearest::nearest(&points, false, Vec3::new(1.5, 5.0, 0.0)),
+    );
     assert!(found.distance(Vec3::new(1.5, 0.0, 0.0)) < 1e-2, "{found}");
 }
 
@@ -97,7 +101,7 @@ fn a_spline_too_short_is_safe() {
         assert!(eval::up(&points, closed, 0.5).is_finite());
         assert_eq!(arc::length(&points, closed), 0.0);
         assert!(arc::at_distance(&points, closed, 1.0).is_finite());
-        assert!(nearest::nearest_point(&points, closed, Vec3::ONE).is_finite());
+        assert!(nearest::nearest(&points, closed, Vec3::ONE).is_finite());
     }
 }
 

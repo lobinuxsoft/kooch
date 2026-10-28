@@ -55,15 +55,3 @@ fn one_action_takes_bindings_from_several_devices() {
     assert_eq!(devices.len(), 2);
     assert_ne!(devices[0], devices[1], "both bindings are the same device");
 }
-
-/// Two actions with one name make `resolve` a coin toss, so it has to
-/// be answerable before a file is saved rather than after.
-#[test]
-fn duplicate_names_are_reported() {
-    let map = ActionMap::new("gameplay")
-        .add(Action::new("jump", ControlType::Button))
-        .add(Action::new("jump", ControlType::Button))
-        .add(Action::new("move", ControlType::Vector2));
-    assert_eq!(map.duplicate_names(), vec!["jump"]);
-    assert!(gameplay().duplicate_names().is_empty());
-}

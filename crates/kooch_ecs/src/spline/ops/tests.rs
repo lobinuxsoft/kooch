@@ -122,7 +122,11 @@ fn a_subdivide_counts_per_segment() {
 fn a_subdivide_stays_on_curve() {
     let points = bent();
     let cut = subdivide(&points, false, 1)[1];
-    let nearest = crate::spline::nearest::nearest_point(&points, false, cut.position);
+    let nearest = crate::spline::eval::at(
+        &points,
+        false,
+        crate::spline::nearest::nearest(&points, false, cut.position),
+    );
     assert!(cut.position.distance(nearest) < 1e-3);
 }
 

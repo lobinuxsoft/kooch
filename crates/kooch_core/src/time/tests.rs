@@ -1,30 +1,18 @@
-/// A loop with nothing to draw paces itself off this. Zero means a
-/// step is already owed, so the caller must not treat it as "sleep
-/// forever" (#656).
+/// Advancing one whole step runs one and keeps the *phase*: the accumulator carries the remainder
+/// rather than being drained, or interpolation would snap back every frame.
 #[test]
-fn the_wait_for_the_next_fixed_step_shrinks_as_time_accumulates() {
+fn a_step_keeps_the_remainder() {
     let mut time = Time::new();
     time.set_fixed_hz(60.0);
     let step = time.fixed_delta();
 
-    // Fresh: a whole step away.
-    assert_eq!(time.until_next_fixed_step(), step);
-
-    // Two thirds of a step in, so a third of a step to go.
     time.advance(step.mul_f32(2.0 / 3.0));
-    let remaining = time.until_next_fixed_step();
-    assert!(
-        remaining < step && remaining > Duration::ZERO,
-        "expected part of a step, got {remaining:?}",
-    );
+    let phase = time.render_alpha();
+    assert!((phase - 2.0 / 3.0).abs() < 1e-3, "{phase}");
 
-    // Advancing exactly one step runs one and leaves the *phase* intact — the accumulator keeps the
-    // remainder rather than being drained. A pacer that assumed a reset here would sleep a third of
-    // a step too long, every frame, and the sim would run slow.
     assert_eq!(time.advance(step), 1);
-    assert_eq!(
-        time.until_next_fixed_step(),
-        remaining,
+    assert!(
+        (time.render_alpha() - phase).abs() < 1e-3,
         "the remainder was dropped instead of carried",
     );
 }

@@ -38,11 +38,6 @@ pub fn nearest(points: &[Knot], closed: bool, point: Vec3) -> f32 {
     )
 }
 
-/// The closest point itself, for the common case that never needed the parameter.
-pub fn nearest_point(points: &[Knot], closed: bool, point: Vec3) -> Vec3 {
-    at(points, closed, nearest(points, closed, point))
-}
-
 /// The sampled `t` whose point sits closest.
 fn coarsest(points: &[Knot], closed: bool, point: Vec3, steps: usize) -> f32 {
     let mut best = (0.0_f32, f32::INFINITY);

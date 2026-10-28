@@ -371,10 +371,6 @@ impl Vbuf64Stage {
         self.near = near.max(1.0e-4);
     }
 
-    pub fn temporal_aa(&self) -> bool {
-        self.technique.is_temporal()
-    }
-
     /// Whether anything this frame will read the motion vectors.
     fn needs_motion(&self) -> bool {
         self.technique.is_temporal()

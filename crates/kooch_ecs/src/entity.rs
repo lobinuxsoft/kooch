@@ -41,12 +41,6 @@ impl Entity {
         self.generation
     }
 
-    /// Returns the index as a plain `u32` suitable for GPU storage buffers.
-    #[inline]
-    pub const fn to_gpu(&self) -> u32 {
-        self.index
-    }
-
     /// Returns `true` if this entity is not the [`INVALID`](Self::INVALID) sentinel.
     #[inline]
     pub const fn is_valid(&self) -> bool {

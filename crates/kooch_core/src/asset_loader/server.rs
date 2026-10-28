@@ -204,13 +204,6 @@ impl AssetServer {
             .map(|key| Handle::<T>::from_key(*key))
     }
 
-    /// Drops every cached path → handle association without touching the
-    /// `Assets<T>` storage. Use after a hot-reload pass that re-inserted
-    /// fresh assets.
-    pub fn clear_cache(&mut self) {
-        self.cache.clear();
-    }
-
     /// Forgets the cached handle for one path, so the next load re-reads it from disk.
     pub fn forget<T: Asset>(&mut self, path: impl AsRef<Path>) {
         let path = self.resolve_path(path.as_ref());

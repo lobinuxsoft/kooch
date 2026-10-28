@@ -31,12 +31,6 @@ fn equality() {
 }
 
 #[test]
-fn to_gpu() {
-    let e = Entity::new(42, 5);
-    assert_eq!(e.to_gpu(), 42);
-}
-
-#[test]
 fn hash_works_in_set() {
     let mut set = HashSet::new();
     set.insert(Entity::new(0, 0));

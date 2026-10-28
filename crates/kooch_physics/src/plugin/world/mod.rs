@@ -153,11 +153,6 @@ impl BodySpec {
             crate::components::KIND_KINEMATIC | crate::components::KIND_STATIC
         )
     }
-
-    /// `true` when the author drives the pose and the solver reacts.
-    pub fn is_kinematic(&self) -> bool {
-        matches!(self.kind, crate::components::KIND_KINEMATIC)
-    }
 }
 
 /// One slot's worth of state. `entity == Entity::INVALID` marks it free.

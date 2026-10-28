@@ -84,58 +84,6 @@ pub static UP_MODE_CHOICES: &[FieldChoice] = &[
     },
 ];
 
-/// Labels for the `follow` dropdown.
-pub static FOLLOW_MODE_CHOICES: &[FieldChoice] = &[
-    FieldChoice {
-        label: "None",
-        value: FOLLOW_NONE as i64,
-    },
-    FieldChoice {
-        label: "Hard Lock To Target",
-        value: FOLLOW_GLUED as i64,
-    },
-    FieldChoice {
-        label: "Follow",
-        value: FOLLOW_SIMPLE as i64,
-    },
-    FieldChoice {
-        label: "Orbital Follow",
-        value: FOLLOW_ORBITAL as i64,
-    },
-    FieldChoice {
-        label: "Position Composer",
-        value: FOLLOW_POSITION_COMPOSER as i64,
-    },
-    FieldChoice {
-        label: "Third Person Follow",
-        value: FOLLOW_SHOULDER as i64,
-    },
-];
-
-/// Labels for the `look_at` dropdown.
-pub static LOOK_AT_CHOICES: &[FieldChoice] = &[
-    FieldChoice {
-        label: "None",
-        value: LOOK_AT_NONE as i64,
-    },
-    FieldChoice {
-        label: "Rotate With Follow Target",
-        value: LOOK_AT_MIMIC as i64,
-    },
-    FieldChoice {
-        label: "Hard Look At",
-        value: LOOK_AT_SIMPLE as i64,
-    },
-    FieldChoice {
-        label: "Pan Tilt",
-        value: LOOK_AT_ARM as i64,
-    },
-    FieldChoice {
-        label: "Rotation Composer",
-        value: LOOK_AT_COMPOSED as i64,
-    },
-];
-
 /// Labels for the `inactive_update` dropdown.
 pub static INACTIVE_UPDATE_CHOICES: &[FieldChoice] = &[
     FieldChoice {
@@ -148,12 +96,6 @@ pub static INACTIVE_UPDATE_CHOICES: &[FieldChoice] = &[
     },
 ];
 
-/// `offset` only means something to the modes that add one.
-pub static OFFSET_WHEN: FieldCondition = FieldCondition {
-    field: "follow",
-    values: &[FOLLOW_SIMPLE as i64],
-};
-
 /// Both shoulders and everywhere between them.
 pub static SIDE_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::FieldRange {
     min: 0.0,
@@ -165,18 +107,6 @@ pub static SIDE_RANGE: kooch_ecs::reflect::FieldRange = kooch_ecs::reflect::Fiel
 pub static ARM_WHEN: FieldCondition = FieldCondition {
     field: "follow",
     values: &[FOLLOW_ORBITAL as i64, FOLLOW_SHOULDER as i64],
-};
-
-/// The shoulder's own, which only one body reads — so a field never shows where it does nothing.
-pub static SHOULDER_WHEN: FieldCondition = FieldCondition {
-    field: "follow",
-    values: &[FOLLOW_SHOULDER as i64],
-};
-
-/// Only the orbital body has a surface to choose.
-pub static ORBITAL_WHEN: FieldCondition = FieldCondition {
-    field: "follow",
-    values: &[FOLLOW_ORBITAL as i64],
 };
 
 /// How far a target must move, per axis in world units, before the camera writes a new pose. A

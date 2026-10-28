@@ -20,7 +20,7 @@ fn a_scene_writes_an_instance_as_a_reference_not_as_entities() {
         crate::scene::sync::instantiate_members(&prefab, &mut resources, scene).unwrap();
     crate::prefab_instance::attach(&mut resources, spawned, &members, source);
 
-    let document = SceneDocument::from_ecs_scene(&mut resources, scene);
+    let document = SceneDocument::from_ecs_instance(&mut resources, scene, scene);
 
     // Three entities were built; one description is written.
     assert_eq!(
@@ -67,7 +67,7 @@ fn loading_a_reference_rebuilds_the_instance() {
     let (spawned, members) =
         crate::scene::sync::instantiate_members(&prefab, &mut resources, scene).unwrap();
     crate::prefab_instance::attach(&mut resources, spawned, &members, Guid::new_v4());
-    let document = SceneDocument::from_ecs_scene(&mut resources, scene);
+    let document = SceneDocument::from_ecs_instance(&mut resources, scene, scene);
 
     // Without an asset server the prefab cannot be found, which is the
     // *other* case worth holding: the instance is not silently dropped.
