@@ -92,7 +92,12 @@ pub trait InputBackend: Send + Sync + 'static {
     }
 
     // ─── gamepad ─────────────────────────────────────────────────────
+    /// Connected pads, lowest id first.
     fn gamepads(&self) -> Vec<GamepadId>;
+    /// The pad actions read: the last one touched, or the lowest id before any is (#1643).
+    fn active_gamepad(&self) -> Option<GamepadId> {
+        self.gamepads().first().copied()
+    }
     fn is_button_pressed(&self, gamepad: GamepadId, button: GamepadButton) -> bool;
     /// `true` only on the frame the button went down — without it a pad jump fired every held frame
     /// (#57).

@@ -48,6 +48,9 @@ pub struct InputSnapshot {
     /// Connected gamepads and their state.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gamepads: Vec<GamepadSnapshot>,
+    /// The pad the sender's actions read, so the host follows the same one (#1643).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_pad: Option<u32>,
 }
 
 impl InputSnapshot {
@@ -129,6 +132,7 @@ impl InputSnapshot {
             mouse_delta: [delta.x, delta.y],
             mouse_velocity: [velocity.x, velocity.y],
             gamepads,
+            active_pad: backend.active_gamepad().map(GamepadId::index),
         }
     }
 
@@ -163,6 +167,7 @@ pub struct RemoteInputBackend {
     /// Held until the next snapshot, like an axis: the host ticks faster than the editor sends.
     mouse_velocity: Vec2,
     gamepads: HashMap<GamepadId, PadState>,
+    active_pad: Option<GamepadId>,
     /// Applied but not yet handed out by `poll`.
     queued_events: Vec<InputEvent>,
 }
@@ -186,6 +191,7 @@ impl RemoteInputBackend {
     /// Replaces the held state with `snapshot`. Its edges wait for the next `begin_frame`, which
     /// shows them for exactly one host frame however many frames the snapshot spans (#766).
     pub fn apply(&mut self, snapshot: &InputSnapshot) {
+        self.active_pad = snapshot.active_pad.map(GamepadId);
         let incoming: HashSet<KeyCode> = snapshot.keys.iter().copied().collect();
         for &key in incoming.difference(&self.pressed_keys) {
             self.pending_pressed.insert(key);
@@ -320,6 +326,12 @@ impl InputBackend for RemoteInputBackend {
         let mut ids: Vec<GamepadId> = self.gamepads.keys().copied().collect();
         ids.sort_unstable();
         ids
+    }
+
+    fn active_gamepad(&self) -> Option<GamepadId> {
+        self.active_pad
+            .filter(|pad| self.gamepads.contains_key(pad))
+            .or_else(|| self.gamepads().first().copied())
     }
 
     fn is_button_pressed(&self, gamepad: GamepadId, button: GamepadButton) -> bool {

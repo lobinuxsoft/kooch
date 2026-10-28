@@ -35,7 +35,7 @@ impl ActionValue {
 
 /// Reads one action against a backend, with no map involved — evaluation never needed one.
 pub fn evaluate(action: &Action, backend: &dyn InputBackend) -> ActionValue {
-    let pad = backend.gamepads().first().copied();
+    let pad = backend.active_gamepad();
     read_action(action, backend, pad)
 }
 
