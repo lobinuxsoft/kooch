@@ -17,21 +17,7 @@ fn byte_size_calculation() {
 // -- GPU tests (require hardware) --
 
 fn create_headless_device() -> (Device, Queue) {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-        flags: wgpu::InstanceFlags::default(),
-        backend_options: wgpu::BackendOptions::default(),
-        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-        display: None,
-    });
-
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-        apply_limit_buckets: false,
-    }))
-    .expect("no GPU adapter");
+    let adapter = crate::gpu::test_adapter().expect("no GPU adapter");
 
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("test_device"),

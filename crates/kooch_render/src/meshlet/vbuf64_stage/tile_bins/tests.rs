@@ -22,10 +22,7 @@ fn the_frame_reads_the_same_layout() {
 }
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::default();
-    let adapter =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-            .ok()?;
+    let adapter = kooch_core::gpu::test_adapter()?;
     let features = kooch_core::gpu::vbuf64_features();
     if !adapter.features().contains(features) {
         return None;

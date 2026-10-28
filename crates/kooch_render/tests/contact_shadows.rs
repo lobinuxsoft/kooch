@@ -55,20 +55,7 @@ const OPEN_FLOOR: Vec3 = Vec3::new(-5.0, 0.0, 2.0);
 /// A device carrying the int64-atomic bundle the R64 path needs, or `None` where the adapter has
 /// none.
 fn try_acquire_device_vbuf64() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-        flags: wgpu::InstanceFlags::default(),
-        backend_options: wgpu::BackendOptions::default(),
-        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-        display: None,
-    });
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-        apply_limit_buckets: false,
-    }))
-    .ok()?;
+    let adapter = kooch_core::gpu::test_adapter()?;
 
     let needed = kooch_core::gpu::all_required_features();
     if !adapter.features().contains(needed) {

@@ -37,20 +37,7 @@ fn build_unit_quad() -> Mesh {
 }
 
 fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-        flags: wgpu::InstanceFlags::default(),
-        backend_options: wgpu::BackendOptions::default(),
-        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-        display: None,
-    });
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-        apply_limit_buckets: false,
-    }))
-    .ok()?;
+    let adapter = kooch_core::gpu::test_adapter()?;
 
     // Reject overlay needs TEXTURE_ATOMIC for parity with the
     // density / overdraw heatmaps, plus the Rgba8Unorm storage

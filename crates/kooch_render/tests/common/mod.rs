@@ -19,22 +19,7 @@ static SHARED_DEVICE: OnceLock<Option<(wgpu::Device, wgpu::Queue)>> = OnceLock::
 pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     SHARED_DEVICE
         .get_or_init(|| {
-            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-                flags: wgpu::InstanceFlags::default(),
-                backend_options: wgpu::BackendOptions::default(),
-                memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-                display: None,
-            });
-
-            let adapter =
-                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::HighPerformance,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                    apply_limit_buckets: false,
-                }))
-                .ok()?;
+            let adapter = kooch_core::gpu::test_adapter()?;
 
             // The engine's own limits, not a copy of them: a hand-kept copy fell behind when the
             // page table split and the shadow suites stopped building their layouts (#1587).
@@ -57,20 +42,7 @@ pub fn try_acquire_device() -> Option<(wgpu::Device, wgpu::Queue)> {
 pub fn try_acquire_device_r64() -> Option<(wgpu::Device, wgpu::Queue)> {
     let required = kooch_core::gpu::all_required_features();
 
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-        flags: wgpu::InstanceFlags::default(),
-        backend_options: wgpu::BackendOptions::default(),
-        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-        display: None,
-    });
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-        apply_limit_buckets: false,
-    }))
-    .ok()?;
+    let adapter = kooch_core::gpu::test_adapter()?;
     if !adapter.features().contains(required) {
         return None;
     }
@@ -101,21 +73,7 @@ pub fn try_acquire_device_r64() -> Option<(wgpu::Device, wgpu::Queue)> {
 /// Acquires a wgpu device with `Features::TIMESTAMP_QUERY` + `TIMESTAMP_QUERY_INSIDE_ENCODERS` so
 /// the mesh-frame bench (#335) can drive `MeshletGpuTimers` for per-pass timing.
 pub fn try_acquire_device_with_timer() -> Option<(wgpu::Device, wgpu::Queue, wgpu::Adapter)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-        flags: wgpu::InstanceFlags::default(),
-        backend_options: wgpu::BackendOptions::default(),
-        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-        display: None,
-    });
-
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-        apply_limit_buckets: false,
-    }))
-    .ok()?;
+    let adapter = kooch_core::gpu::test_adapter()?;
 
     let features = adapter.features();
     let needed = wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;

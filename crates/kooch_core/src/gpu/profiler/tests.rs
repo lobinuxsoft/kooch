@@ -11,20 +11,7 @@ static PUFFIN: Mutex<()> = Mutex::new(());
 /// A device with the timestamp features, or `None` on an adapter that
 /// cannot measure — CI runners without a GPU included.
 fn timestamp_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL,
-        flags: wgpu::InstanceFlags::default(),
-        backend_options: wgpu::BackendOptions::default(),
-        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-        display: None,
-    });
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-        apply_limit_buckets: false,
-    }))
-    .ok()?;
+    let adapter = crate::gpu::test_adapter()?;
     // The encoder form of a scope needs INSIDE_ENCODERS specifically.
     // Asking for a feature the adapter lacks fails device creation, so
     // check before requesting rather than after.
