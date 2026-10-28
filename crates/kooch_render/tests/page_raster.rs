@@ -3,20 +3,14 @@
 mod common;
 
 use kooch_render::meshlet::GpuGlobalMeshPool;
-use kooch_render::shadow::pages::pool::{PAGE_CELL, PagePool, PoolConfig};
+use kooch_render::shadow::pages::pool::{PAGE_READ, PAGE_WORK, PagePool, PoolConfig};
 use kooch_render::shadow::pages::raster::{PAGE_DEPTH_FORMAT, PAGE_FRONT_FACE, PageRasterizer};
 use kooch_render::shadow::pages::{ClipmapConfig, PageConfig};
 
+/// One device for the whole binary: tests creating instances at once crash the Vulkan loader when
+/// the NVIDIA ICD is installed on an AMD machine (#1587).
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::default();
-    let adapter =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-            .ok()?;
-    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("page_raster_test"),
-        ..Default::default()
-    }))
-    .ok()
+    common::try_acquire_device()
 }
 
 /// A pool small enough that the atlas is megabytes rather than a quarter of a gigabyte: every test

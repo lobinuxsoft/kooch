@@ -38,7 +38,9 @@ pub fn tiled_workgroups(threads: u32, workgroup_size: u32) -> (u32, u32) {
 pub(super) const TARGET_MAX_BUFFER_SIZE: u64 = 256 << 20;
 pub(super) const TARGET_MAX_STORAGE_BUFFER_BINDING_SIZE: u64 = 128 << 20;
 
-pub(super) fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
+/// The limits the engine asks every device for. Public so a test device asks for the same and
+/// cannot drift from a hand-kept copy (#1587).
+pub fn elevated_compute_limits(adapter: &Adapter) -> wgpu::Limits {
     let adapter_limits = adapter.limits();
 
     let invocations = TARGET_MAX_COMPUTE_INVOCATIONS_PER_WORKGROUP

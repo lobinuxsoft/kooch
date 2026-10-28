@@ -30,7 +30,7 @@ pub use context::{GpuContext, vsync_override};
 pub use dlss::{DlssRuntime, DlssSdk, DlssSupport};
 pub use error::GpuError;
 pub use features::{all_required_features, engine_features, vbuf64_features};
-pub use limits::{MAX_WORKGROUPS_PER_DIM, tiled_workgroups};
+pub use limits::{MAX_WORKGROUPS_PER_DIM, elevated_compute_limits, tiled_workgroups};
 pub use profiler::{GpuQuery, GpuScopes};
 pub use sizing::{buffer_bytes, grown, texture_bytes};
 pub use targets::{TargetDesc, TargetId, TargetPool};

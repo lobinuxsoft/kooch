@@ -149,7 +149,7 @@ fn both_expansions_emit_the_same_pairs() {
         let mut page_pool = PagePool::new(&device, small());
         let entries = VIEWS * span(LIGHTS);
         page_pool.ensure_entries(&device, entries);
-        let cell = PAGE_CELL as usize;
+        let cell = PAGE_READ as usize;
         let mut slots = vec![0u32; entries as usize * cell];
         for (index, &(x, y)) in cells.iter().enumerate() {
             let page = sun_page(0, LEVEL, (x, y), LIGHTS);
@@ -266,7 +266,7 @@ fn an_empty_page_is_not_a_hit() {
 
     let dense: String = body.chars().filter(|c| !c.is_whitespace()).collect();
     assert!(
-        dense.contains("inti_page_slots[page*PAGE_CELL+3u]==0u"),
+        dense.contains("inti_page_slots[page*PAGE_READ+PAGE_STAMP]==0u"),
         "the lookup does not check the content stamp, so a resident page with no depth \
          reads as a hit and shades lit",
     );
@@ -369,7 +369,7 @@ fn the_reader_jumps_to_the_level_that_answers() {
         "nothing fills the jump table",
     );
     let stamp = compact
-        .find("PAGE_CELL + 3u] = select(gen")
+        .find("PAGE_READ + PAGE_STAMP] = select(gen")
         .expect("the compaction stamps content");
     let fill = compact
         .find("fn cs_lod_offsets(")

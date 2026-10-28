@@ -379,12 +379,14 @@ fn every_table_reader_agrees_on_the_layout() {
                 include_str!("../../shaders/page_mark_froxels.wgsl"),
             ),
         ),
+        (
+            "page_pyramid.wgsl",
+            include_str!("../../shaders/page_pyramid.wgsl"),
+        ),
     ];
     for (name, source) in readers {
-        assert!(
-            !source.contains("table_slots[entry]") && !source.contains("table_slots[page]"),
-            "{name} indexes the table's slots without PAGE_CELL"
-        );
+        unstrided(name, source, "table_read", "PAGE_READ");
+        unstrided(name, source, "table_work", "PAGE_WORK");
         assert!(
             !source.contains("PAGE_DEAD") && !source.contains("page_probe"),
             "{name} still speaks the hash's dialect — tombstones and probe             runs died with it"
@@ -396,13 +398,28 @@ fn every_table_reader_agrees_on_the_layout() {
     // flat table — so it must index by the page id, with the stride.
     let shading = kooch_lighting::inti_pbr_shader(1);
     assert!(
-        shading.contains("inti_page_slots[page * PAGE_CELL]"),
-        "the shading pass indexes the table's slots without PAGE_CELL"
+        shading.contains("inti_page_slots[page * PAGE_READ + PAGE_SLOT]"),
+        "the shading pass does not look the slot up by page id"
     );
+    unstrided("inti_pbr", &shading, "inti_page_slots", "PAGE_READ");
     assert!(
         !shading.contains("page_probe"),
         "the shading lookup grew a probe loop back; the flat table is one load"
     );
+}
+
+/// Every index into `buffer` multiplies by its own stride. Both are three words today, so a
+/// buffer indexed with the other's stride reads right until one of them grows (#1579).
+fn unstrided(name: &str, source: &str, buffer: &str, stride: &str) {
+    let open = format!("{buffer}[");
+    for (at, _) in source.match_indices(&open) {
+        let index = &source[at + open.len()..];
+        let index = &index[..index.find(']').expect("an index closes")];
+        assert!(
+            index.contains(&format!("* {stride}")) || index.contains(&format!("*{stride}")),
+            "{name} indexes {buffer} as [{index}], without {stride}"
+        );
+    }
 }
 
 /// The shading reads the slice this frame's raster wrote.

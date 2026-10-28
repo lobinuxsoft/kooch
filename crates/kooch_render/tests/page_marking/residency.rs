@@ -313,8 +313,8 @@ fn a_resident_page_keeps_its_slot() {
         queue.submit([encoder.finish()]);
         let cells = read_words(&device, &queue, marker.pool().slots());
         let mut placed = std::collections::HashMap::new();
-        for entry in 0..cells.len() / PAGE_CELL as usize {
-            let stored = cells[entry * PAGE_CELL as usize];
+        for entry in 0..cells.len() / PAGE_READ as usize {
+            let stored = cells[entry * PAGE_READ as usize];
             if stored == 0 {
                 continue;
             }

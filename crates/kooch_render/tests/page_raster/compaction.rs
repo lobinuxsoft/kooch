@@ -22,7 +22,7 @@ fn a_hundred_lamps_compact_without_drops() {
         })
         .collect();
     pool.ensure_entries(&device, span(LIGHTS));
-    let cell = PAGE_CELL as usize;
+    let cell = PAGE_READ as usize;
     let mut slots = vec![0u32; span(LIGHTS) as usize * cell];
     let config = PageConfig::default();
     let floor = config.local_floor();
@@ -79,7 +79,7 @@ fn a_still_suns_page_caches() {
     let lamps = [kooch_lighting::GpuLight::default()];
     let page = sun_page(0, 5, (7, 8), LIGHTS);
     pool.ensure_entries(&device, span(LIGHTS));
-    let cell = PAGE_CELL as usize;
+    let cell = PAGE_READ as usize;
     let mut slots = vec![0u32; span(LIGHTS) as usize * cell];
     slots[page as usize * cell] = 11;
     queue.write_buffer(pool.slots(), 0, bytemuck::cast_slice(&slots));
@@ -169,7 +169,7 @@ fn a_page_compacts_into_the_level_it_came_from() {
     let entries = ((VIEW + 1) * span(LIGHTS)) as usize;
     let mut pool = pool;
     pool.ensure_entries(&device, entries as u32);
-    let cell = PAGE_CELL as usize;
+    let cell = PAGE_READ as usize;
     let mut slots = vec![0u32; entries * cell];
     for (page, slot) in planted.iter() {
         slots[*page as usize * cell] = *slot + 1;
@@ -252,8 +252,9 @@ fn a_page_compacts_into_the_level_it_came_from() {
 
     // 🔴 And the way BACK. `page_list` is dense and per view, so a pass that computes a page KEY —
     // rather than reading one out of the list — has no route to the entry the draw indexes by.
-    let cells = read_words(&device, &queue, pool.slots());
-    let listing = |page: u32| cells[page as usize * cell + 2];
+    // The listing lives in the work table since #1579, word 1 of `PAGE_WORK`.
+    let work = read_words(&device, &queue, pool.work());
+    let listing = |page: u32| work[page as usize * PAGE_WORK as usize + 1];
     for (planted_page, slot) in planted.iter() {
         let at = listing(*planted_page) as usize;
         assert_ne!(

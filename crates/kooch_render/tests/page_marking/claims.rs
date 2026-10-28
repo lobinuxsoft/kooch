@@ -219,9 +219,9 @@ fn the_table_holds_every_claim() {
 
     let mut resident = 0u32;
     let mut seen_slots = std::collections::HashSet::new();
-    for entry in 0..slots.len() / PAGE_CELL as usize {
+    for entry in 0..slots.len() / PAGE_READ as usize {
         // The first word is `slot + 1`; `PAGE_ABSENT` (0) names nothing.
-        let stored = slots[entry * PAGE_CELL as usize];
+        let stored = slots[entry * PAGE_READ as usize];
         if stored == 0 {
             continue;
         }
@@ -307,8 +307,8 @@ fn a_view_clears_only_its_own_pages() {
 
     let slots = read_words(&device, &queue, marker.pool().slots());
     let mut per_view = [0u32; 2];
-    for entry in 0..slots.len() / PAGE_CELL as usize {
-        if slots[entry * PAGE_CELL as usize] == 0 {
+    for entry in 0..slots.len() / PAGE_READ as usize {
+        if slots[entry * PAGE_READ as usize] == 0 {
             continue;
         }
         let owner = (entry as u64 / span) as usize;

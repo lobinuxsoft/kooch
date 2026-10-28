@@ -155,7 +155,7 @@ fn lamp_page_holds_its_view(
     let mut page_pool = PagePool::new(&device, budget);
     let entries = VIEWS * span(LIGHTS);
     page_pool.ensure_entries(&device, entries);
-    let cell = PAGE_CELL as usize;
+    let cell = PAGE_READ as usize;
     let mut slots = vec![0u32; entries as usize * cell];
     // 🔴 FOUR, not three, and that is the whole of what makes the far-layer case detectable: with a
     // layer of sixteen pages, slot 4 and slot 20 are the SAME rect of different layers.
