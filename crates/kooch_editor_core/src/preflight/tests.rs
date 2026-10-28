@@ -1,4 +1,4 @@
-use super::{ALSA, C_COMPILER, Installer, Probes, RUST, UDEV, VULKAN_HEADERS, missing_from};
+use super::{ALSA, C_COMPILER, DBUS, Installer, Probes, RUST, UDEV, VULKAN_HEADERS, missing_from};
 
 /// 🔴 The case this project's own distribution hits: YaguareteOS reports
 /// `ID=yaguarete` and only names Fedora in `ID_LIKE`. An `ID`-only match
@@ -101,6 +101,7 @@ fn a_ready_machine_reports_nothing() {
             alsa: true,
             vulkan_headers: true,
             udev: true,
+            dbus: true,
             c_compiler: true,
             mold: true,
         })
@@ -118,10 +119,14 @@ fn rust_is_reported_first() {
         alsa: false,
         vulkan_headers: false,
         udev: false,
+        dbus: false,
         c_compiler: false,
         mold: false,
     });
-    assert_eq!(missing, vec![RUST, ALSA, UDEV, C_COMPILER, VULKAN_HEADERS]);
+    assert_eq!(
+        missing,
+        vec![RUST, ALSA, UDEV, DBUS, C_COMPILER, VULKAN_HEADERS]
+    );
 }
 
 /// 🔴 The header, not the loader. `pkg-config --exists vulkan` answers for a library every machine

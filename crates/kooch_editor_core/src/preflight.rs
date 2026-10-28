@@ -94,6 +94,9 @@ impl Installer {
             (Self::RpmOstree | Self::Dnf, "udev development files") => Some("systemd-devel"),
             (Self::Apt, "udev development files") => Some("libudev-dev"),
             (Self::Pacman, "udev development files") => Some("systemd-libs"),
+            (Self::RpmOstree | Self::Dnf, "D-Bus development files") => Some("dbus-devel"),
+            (Self::Apt, "D-Bus development files") => Some("libdbus-1-dev"),
+            (Self::Pacman, "D-Bus development files") => Some("dbus"),
             (Self::RpmOstree | Self::Dnf, "A C compiler") => Some("gcc"),
             (Self::Apt, "A C compiler") => Some("build-essential"),
             (Self::Pacman, "A C compiler") => Some("base-devel"),
@@ -155,6 +158,13 @@ pub const UDEV: Requirement = Requirement {
     hint: "",
 };
 
+/// D-Bus's development files, which `libdbus-sys` links.
+pub const DBUS: Requirement = Requirement {
+    name: "D-Bus development files",
+    why: "audio asks RealtimeKit over D-Bus for a realtime thread, through kira's default features",
+    hint: "",
+};
+
 /// A C compiler, for the crates that build C rather than bind to it.
 pub const C_COMPILER: Requirement = Requirement {
     name: "A C compiler",
@@ -177,6 +187,8 @@ pub struct Probes {
     pub alsa: bool,
     pub vulkan_headers: bool,
     pub udev: bool,
+    /// `true` off Linux, where kira does not link D-Bus.
+    pub dbus: bool,
     /// `true` off Linux, where the question does not apply and a wrong
     /// answer would refuse a build that works.
     pub c_compiler: bool,
@@ -193,6 +205,8 @@ impl Probes {
             vulkan_headers: vulkan_header().is_file(),
             // The same query `libudev-sys`'s build script makes.
             udev: !cfg!(target_os = "linux") || ran("pkg-config", &["--exists", "libudev"]),
+            // The same query `libdbus-sys`'s build script makes.
+            dbus: !cfg!(target_os = "linux") || ran("pkg-config", &["--exists", "dbus-1"]),
             // The same binary the `cc` crate runs. Not a guess about a
             // toolchain — the toolchain itself, answering.
             c_compiler: !cfg!(target_os = "linux") || ran("cc", &["--version"]),
@@ -224,6 +238,9 @@ pub fn missing_from(probes: Probes) -> Vec<Requirement> {
     // finding out about a package later costs another reboot.
     if !probes.udev {
         missing.push(UDEV);
+    }
+    if !probes.dbus {
+        missing.push(DBUS);
     }
     if !probes.c_compiler {
         missing.push(C_COMPILER);

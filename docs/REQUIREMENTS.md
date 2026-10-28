@@ -32,6 +32,7 @@ that does.
 | **Rust** | everything; a project compiles the engine | `cargo --version` | rustup | rustup | rustup | rustup |
 | **ALSA headers** | `alsa-sys` ← `cpal` ← `kooch_audio` | `pkg-config --exists alsa` | `alsa-lib-devel` | `libasound2-dev` | `alsa-lib` | — |
 | **udev headers** | `libudev-sys` ← `gilrs-core` — how a gamepad is seen | `pkg-config --exists libudev` | `systemd-devel` | `libudev-dev` | `systemd-libs` | — |
+| **D-Bus headers** | `libdbus-sys` ← `audio_thread_priority` ← `cpal` ← `kira` — realtime audio thread via RealtimeKit | `pkg-config --exists dbus-1` | `dbus-devel` | `libdbus-1-dev` | `dbus` | — |
 | **A C compiler** | `metis-sys` and `zstd-sys` build C sources | `cc --version` | `gcc` | `build-essential` | `base-devel` | MSVC |
 | **Vulkan headers** | `dlss_wgpu`'s build script | the header file itself | `vulkan-headers` | `libvulkan-dev` | `vulkan-headers` | Vulkan SDK |
 
