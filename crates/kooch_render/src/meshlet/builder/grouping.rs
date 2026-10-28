@@ -91,6 +91,11 @@ pub(super) fn group_meshlets_metis(
         adj[i].push((j as i32, w));
         adj[j].push((i as i32, w));
     }
+    // `pair_weight` iterates in a per-process random order, and METIS partitions by the order it is
+    // given: unsorted, the same mesh built a different chain every import (#984).
+    for neighbours in &mut adj {
+        neighbours.sort_unstable();
+    }
 
     let mut xadj: Vec<i32> = Vec::with_capacity(n + 1);
     let mut adjncy: Vec<i32> = Vec::new();
