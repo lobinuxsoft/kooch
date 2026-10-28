@@ -12,6 +12,7 @@ use super::common::{clusterize_lod, total_aabb};
 use super::error::MeshletBuildError;
 use super::grouping::{collect_group_boundary_vertices, group_meshlets_metis};
 use super::lod_config::LodConfig;
+use super::weld::weld_positions;
 
 /// Number of children grouped together when building each LOD level of the Nanite-style DAG. Karis
 /// SIGGRAPH 2021 used 4 — small enough that simplify reliably collapses the group to a parent
@@ -23,6 +24,10 @@ const PARENTS_PER_GROUP_CAP: usize = NANITE_GROUP_SIZE * 2;
 
 /// LOD level past which per-vertex cell-boundary locks are dropped (#535).
 const CELL_BOUNDARY_LOCK_MAX_LEVEL: u32 = 3;
+
+/// How much a collapse that moves a UV costs, against position error. Weld alone still let 1 in
+/// 62 capsule triangles span half the texture; at 1.0 none does, for 70 triangles instead (#1149).
+const UV_WEIGHT: f32 = 1.0;
 
 /// Builds a multi-LOD [`MeshletMesh`] using the Nanite-grouped DAG algorithm. The resulting
 /// `MeshletMesh` concatenates every LOD's meshlets into one descriptor array, rebasing per-LOD
@@ -37,6 +42,9 @@ pub fn build_meshlets_lod_chain(
     if mesh.indices.is_empty() {
         return Err(MeshletBuildError::EmptyMesh);
     }
+    let mut welded = mesh.clone();
+    weld_positions(&mut welded.vertices);
+    let mesh = &welded;
 
     let vertex_stride = std::mem::size_of::<MeshVertex>();
     let vertex_bytes: &[u8] = bytemuck::cast_slice(&mesh.vertices);
@@ -156,12 +164,16 @@ pub fn build_meshlets_lod_chain(
             }
 
             let mut actual_error = 0.0f32;
-            // simplify_with_locks: explicit per-vertex locks force
-            // cell-boundary vertices to survive collapse, complementing
-            // LockBorder which only handles topological mesh borders.
-            let simplified = meshopt::simplify_with_locks(
+            // Explicit per-vertex locks force cell-boundary vertices to survive collapse,
+            // complementing LockBorder which only handles topological mesh borders. The UVs ride
+            // along as attributes so a collapse cannot stretch a triangle across the texture.
+            let uvs: Vec<f32> = geo.vertices.iter().flat_map(|v| v.uv).collect();
+            let simplified = meshopt::simplify_with_attributes_and_locks(
                 &geo.indices,
                 &group_adapter,
+                &uvs,
+                &[UV_WEIGHT; 2],
+                std::mem::size_of::<[f32; 2]>(),
                 &vertex_lock,
                 target_count,
                 current_error,

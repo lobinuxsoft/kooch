@@ -6,6 +6,7 @@ mod grouping;
 mod lod_chain;
 mod lod_config;
 mod single_lod;
+mod weld;
 
 #[cfg(test)]
 mod test_support;

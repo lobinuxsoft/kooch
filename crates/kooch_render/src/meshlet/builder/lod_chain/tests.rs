@@ -361,3 +361,43 @@ fn lod_chain_caps_at_max_levels() {
         chain_high.meshlets.len(),
     );
 }
+
+/// 🔴 A coarse LOD must not stretch a triangle across a UV seam: on the shipped capsule, a triangle
+/// spanning half the texture is one whose corners sit on both sides of the wrap (#1149).
+#[test]
+fn coarse_lods_keep_uv_seams() {
+    let bytes = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/meshes/primitives/capsule.glb"
+    ))
+    .expect("the capsule ships with the engine");
+    let mesh = crate::mesh::parse_mesh_bytes(&bytes).expect("capsule parses");
+    let chain = build_meshlets_lod_chain(
+        &mesh,
+        DEFAULT_MAX_VERTICES,
+        DEFAULT_MAX_TRIANGLES,
+        0.5,
+        LodConfig::default(),
+    )
+    .expect("lod chain");
+    for meshlet in &chain.meshlets {
+        for triangle in 0..meshlet.triangle_count as usize {
+            let uv = [0, 1, 2].map(|corner| {
+                let local = chain.meshlet_triangles
+                    [meshlet.triangle_offset as usize + triangle * 3 + corner];
+                let vertex =
+                    chain.meshlet_vertices[meshlet.vertex_offset as usize + local as usize];
+                glam::Vec2::from(chain.vertices[vertex as usize].uv)
+            });
+            let span = uv[0]
+                .distance(uv[1])
+                .max(uv[1].distance(uv[2]))
+                .max(uv[2].distance(uv[0]));
+            assert!(
+                span < 0.5,
+                "LOD {} has a triangle spanning {span:.3} of the texture",
+                meshlet.lod_level
+            );
+        }
+    }
+}
