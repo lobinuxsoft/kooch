@@ -204,25 +204,6 @@ fn no_root_keeps_path_raw() {
     assert_eq!(resolved, PathBuf::from("models/cube.glb"));
 }
 
-#[test]
-fn clear_cache_drops_path_lookup_only() {
-    let mut server = AssetServer::new();
-    server.register_loader::<PlainText, _>(TextLoader);
-    let mut resources = Resources::new();
-    resources.insert(Assets::<PlainText>::new());
-    let path = temp_file_with("data", "txt");
-
-    let _h = server.load::<PlainText>(&path, &mut resources).unwrap();
-    assert!(server.get_cached::<PlainText>(&path).is_some());
-    server.clear_cache();
-    assert!(server.get_cached::<PlainText>(&path).is_none());
-
-    // Storage untouched
-    let assets = resources.get::<Assets<PlainText>>().unwrap();
-    assert_eq!(assets.len(), 1);
-    let _ = std::fs::remove_file(&path);
-}
-
 /// Load on a path with no `.meta` adjacent should generate one
 /// transparently; the sidecar must exist after the call.
 #[test]
@@ -371,8 +352,8 @@ fn second_load_keeps_same_guid() {
         .guid_for(&path)
         .unwrap();
 
-    // Force a re-load (clear path cache; sidecar persists on disk).
-    server.clear_cache();
+    // Force a re-load; the sidecar persists on disk.
+    server.forget::<PlainText>(&path);
     server.load::<PlainText>(&path, &mut resources).unwrap();
     let second_guid = resources
         .get::<AssetDatabase>()

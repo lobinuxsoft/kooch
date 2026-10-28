@@ -137,11 +137,6 @@ impl PersistentIdAllocator {
         Self { next: 1 }
     }
 
-    /// The value to persist so a later session does not reissue live ids.
-    pub const fn watermark(&self) -> u64 {
-        self.next
-    }
-
     /// Allocates the next id.
     pub fn allocate(&mut self) -> EntityGuid {
         // A u64 counter incremented once per referenced entity does not

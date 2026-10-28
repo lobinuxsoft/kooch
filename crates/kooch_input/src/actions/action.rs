@@ -165,24 +165,6 @@ impl ActionMap {
     pub fn action(&self, id: ActionId) -> Option<&Action> {
         self.actions.get(id.index())
     }
-
-    /// Names that appear more than once, which make [`resolve`](Self::resolve) a coin toss — for
-    /// the editor to refuse saving.
-    pub fn duplicate_names(&self) -> Vec<&str> {
-        let mut seen: Vec<&str> = Vec::new();
-        let mut duplicates: Vec<&str> = Vec::new();
-        for action in &self.actions {
-            let name = action.name.as_str();
-            if seen.contains(&name) {
-                if !duplicates.contains(&name) {
-                    duplicates.push(name);
-                }
-            } else {
-                seen.push(name);
-            }
-        }
-        duplicates
-    }
 }
 
 #[cfg(test)]

@@ -308,7 +308,6 @@ fn old_faces_keep_their_ids() {
         &before[..],
         "the old faces kept theirs"
     );
-    assert_eq!(mesh.face_of_id(before[0]), Some(0));
     assert!(after.len() > before.len(), "the walls got ids too");
 }
 

@@ -201,11 +201,6 @@ impl SceneDocument {
         Self::capture(resources, Capture::Everything, Guid::new_v4())
     }
 
-    /// Snapshots only the entities belonging to `scene`.
-    pub fn from_ecs_scene(resources: &mut Resources, scene: Guid) -> Self {
-        Self::capture(resources, Capture::Scene(scene), scene)
-    }
-
     /// Snapshots one open scene instance, writing `as_id` as the document's identity.
     pub fn from_ecs_instance(resources: &mut Resources, scene: Guid, as_id: Guid) -> Self {
         Self::capture(resources, Capture::Scene(scene), as_id)

@@ -123,11 +123,11 @@ fn a_new_action_does_not_collide() {
         edit_input_map(&mut resources, &Edit::AddAction);
     }
     let open = resources.get::<OpenInputMap>().unwrap();
-    assert!(
-        open.map.duplicate_names().is_empty(),
-        "adding actions produced duplicates: {:?}",
-        open.map.duplicate_names()
-    );
+    let mut names: Vec<&str> = open.map.actions.iter().map(|a| a.name.as_str()).collect();
+    let added = names.len();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), added, "adding actions produced duplicates");
 }
 
 /// An index out of range is a stale click — the panel drew a list one

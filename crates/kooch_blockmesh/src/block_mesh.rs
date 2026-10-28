@@ -169,12 +169,6 @@ impl BlockMesh {
         )
     }
 
-    /// Where the face carrying `id` is now, or `None` when it is gone — a rebuilt shape keeps no
-    /// face it was not given.
-    pub fn face_of_id(&self, id: u32) -> Option<usize> {
-        (0..self.face_count()).find(|index| self.face_id(*index) == Some(id))
-    }
-
     /// An id nothing has held, for a face about to be appended.
     pub(crate) fn take_face_id(&mut self) -> u32 {
         // `max` covers a mesh loaded without ids: its faces answer with their positions, so the
