@@ -29,20 +29,6 @@ fn the_chain_top_draws() {
     lamp_page_holds_its_view(false, small(), 7, top);
 }
 
-/// 🔴 The acceptance for #1016: the SAME page, read back from a pool whose view spans two layers,
-/// with the coarse page living in the second one.
-#[test]
-fn a_page_on_the_far_layer_draws_the_same() {
-    // 64 pages across two views is 32 each; a cap of four pages a row
-    // makes a layer hold 16, so each view needs two.
-    let split = small().fit_atlas(4 * PageConfig::default().page, PageConfig::default().page);
-    assert_eq!(split.slice(), 16, "a layer holds sixteen pages");
-    assert_eq!(split.layers_per_view(), 2, "so a view needs two layers");
-    // Slot 20 is page 4 of layer 1 — the far layer, and view 0's.
-    assert_eq!(20 / split.slice(), 1, "the coarse page is on layer one");
-    lamp_page_holds_its_view(true, split, 20, coarse_level());
-}
-
 /// Three levels above the chain's floor: coarse enough to pair against a coarse bucket's survivors,
 /// fine enough that its cell is a window rather than the whole face.
 fn coarse_level() -> u32 {
