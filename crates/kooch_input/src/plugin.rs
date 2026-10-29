@@ -86,6 +86,7 @@ impl RawEventHandler for WinitEventCollector {
             WindowEvent::KeyboardInput { .. }
                 | WindowEvent::MouseInput { .. }
                 | WindowEvent::CursorMoved { .. }
+                | WindowEvent::MouseWheel { .. }
         ) {
             self.pending.push(event.clone());
         }

@@ -23,6 +23,9 @@ pub enum ControlPath {
     /// a stick is: one action binds both and is read with one formula, and it survives the wire,
     /// where the editor and the project do not share a frame rate.
     MouseMotion(MouseAxis),
+    /// The wheel along one axis, in lines this frame (#56): `+Y` away from the user. Notches, not a
+    /// rate — a wheel has no speed between them.
+    MouseScroll(MouseAxis),
 }
 
 impl ControlPath {
@@ -40,7 +43,9 @@ impl ControlPath {
     pub fn device(self) -> DeviceClass {
         match self {
             ControlPath::Key(_) => DeviceClass::Keyboard,
-            ControlPath::Mouse(_) | ControlPath::MouseMotion(_) => DeviceClass::Mouse,
+            ControlPath::Mouse(_) | ControlPath::MouseMotion(_) | ControlPath::MouseScroll(_) => {
+                DeviceClass::Mouse
+            }
             ControlPath::Button(_) | ControlPath::Axis(_) => DeviceClass::Gamepad,
         }
     }

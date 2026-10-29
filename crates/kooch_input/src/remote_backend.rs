@@ -45,6 +45,10 @@ pub struct InputSnapshot {
     /// not at all, while a velocity is right whenever it is read.
     #[serde(default)]
     pub mouse_velocity: [f32; 2],
+    /// Scroll accumulated over the frame, in lines (#56). A delta like `mouse_delta`: each notch
+    /// happens once.
+    #[serde(default)]
+    pub mouse_scroll: [f32; 2],
     /// Connected gamepads and their state.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gamepads: Vec<GamepadSnapshot>,
@@ -125,12 +129,14 @@ impl InputSnapshot {
         let position = backend.mouse_position();
         let delta = backend.mouse_delta();
         let velocity = backend.mouse_velocity();
+        let scroll = backend.mouse_scroll();
         Self {
             keys,
             mouse_buttons,
             mouse_position: [position.x, position.y],
             mouse_delta: [delta.x, delta.y],
             mouse_velocity: [velocity.x, velocity.y],
+            mouse_scroll: [scroll.x, scroll.y],
             gamepads,
             active_pad: backend.active_gamepad().map(GamepadId::index),
         }
@@ -145,6 +151,7 @@ impl InputSnapshot {
             && self.mouse_delta == [0.0, 0.0]
             // A mouse that stopped has to say so once, or the host keeps turning at the last speed.
             && self.mouse_velocity == [0.0, 0.0]
+            && self.mouse_scroll == [0.0, 0.0]
             && self.gamepads.iter().all(|pad| {
                 pad.buttons.is_empty() && pad.axes.iter().all(|(_, value)| *value == 0.0)
             })
@@ -161,9 +168,11 @@ pub struct RemoteInputBackend {
     pending_pressed: HashSet<KeyCode>,
     pending_released: HashSet<KeyCode>,
     pending_delta: Vec2,
+    pending_scroll: Vec2,
     pressed_mouse: HashSet<MouseButton>,
     mouse_position: Vec2,
     mouse_delta: Vec2,
+    mouse_scroll: Vec2,
     /// Held until the next snapshot, like an axis: the host ticks faster than the editor sends.
     mouse_velocity: Vec2,
     gamepads: HashMap<GamepadId, PadState>,
@@ -220,6 +229,12 @@ impl RemoteInputBackend {
         if delta != Vec2::ZERO {
             self.queued_events
                 .push(InputEvent::MouseMoved { position, delta });
+        }
+        let scroll = Vec2::from(snapshot.mouse_scroll);
+        if scroll != Vec2::ZERO {
+            self.pending_scroll += scroll;
+            self.queued_events
+                .push(InputEvent::MouseScrolled { delta: scroll });
         }
 
         let mut seen = HashSet::new();
@@ -280,6 +295,7 @@ impl InputBackend for RemoteInputBackend {
         self.just_pressed_keys = std::mem::take(&mut self.pending_pressed);
         self.just_released_keys = std::mem::take(&mut self.pending_released);
         self.mouse_delta = std::mem::take(&mut self.pending_delta);
+        self.mouse_scroll = std::mem::take(&mut self.pending_scroll);
         for state in self.gamepads.values_mut() {
             state.just_pressed = std::mem::take(&mut state.pending_pressed);
             state.just_released = std::mem::take(&mut state.pending_released);
@@ -320,6 +336,10 @@ impl InputBackend for RemoteInputBackend {
 
     fn mouse_velocity(&self) -> Vec2 {
         self.mouse_velocity
+    }
+
+    fn mouse_scroll(&self) -> Vec2 {
+        self.mouse_scroll
     }
 
     fn gamepads(&self) -> Vec<GamepadId> {

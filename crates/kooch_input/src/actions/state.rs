@@ -185,6 +185,14 @@ fn read_control(path: ControlPath, backend: &dyn InputBackend, pad: Option<Gamep
                 MouseAxis::Y => -velocity.y,
             }
         }
+        // winit already counts away from the user as up, so no flip.
+        ControlPath::MouseScroll(axis) => {
+            let scroll = backend.mouse_scroll();
+            match axis {
+                MouseAxis::X => scroll.x,
+                MouseAxis::Y => scroll.y,
+            }
+        }
     }
 }
 

@@ -19,6 +19,10 @@ pub enum InputEvent {
         position: Vec2,
         delta: Vec2,
     },
+    /// The wheel or a trackpad scrolled, in lines: `+y` away from the user, `+x` right (#56).
+    MouseScrolled {
+        delta: Vec2,
+    },
     GamepadConnected(GamepadId),
     GamepadDisconnected(GamepadId),
     GamepadButtonPressed {
@@ -88,6 +92,11 @@ pub trait InputBackend: Send + Sync + 'static {
     /// The mouse's motion over the last frame as a velocity, in pixels per second. Zero where the
     /// backend has no raw motion: a rate made up from cursor positions would stop at the edge.
     fn mouse_velocity(&self) -> Vec2 {
+        Vec2::ZERO
+    }
+    /// Scroll since the previous frame, in lines: `+y` away from the user, `+x` right. A
+    /// trackpad's pixels are converted, so a wheel notch and a swipe read alike (#56).
+    fn mouse_scroll(&self) -> Vec2 {
         Vec2::ZERO
     }
 
