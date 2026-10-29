@@ -1,5 +1,5 @@
-//! [`WorldStreamingPlugin`]: registers [`ChunkManager`] and [`LodRingConfig`] and schedules
-//! activation. It attaches no [`StreamingFocus`]; the game or editor chooses which entities drive
+//! [`WorldStreamingPlugin`]: registers [`ChunkManager`] and [`LodRingConfig`]; activation is not
+//! scheduled until chunks carry content (#1648). It attaches no [`StreamingFocus`]; the game or editor chooses which entities drive
 //! streaming.
 
 use kooch_core::app::App;
@@ -37,9 +37,8 @@ impl Plugin for WorldStreamingPlugin {
             registry.register_cpu_reflected::<StreamingFocus>();
         }
 
-        // Cache-gated by `FocusCacheState`: with no boundary crossed the system returns without
-        // enumerating the grid — 41 M pending entries in 30 s before (#315).
-        app.add_system(kooch_core::stage::Stage::PreUpdate, world_streaming_system);
+        // `world_streaming_system` is not scheduled: no chunk carries content yet, so it would load
+        // and evict chunks of nothing every frame (#1648). Terrain streaming turns it on (#313).
     }
 
     fn name(&self) -> &str {
