@@ -5,6 +5,15 @@ pub(crate) fn drag<Num: egui::emath::Numeric>(value: &mut Num) -> egui::DragValu
     egui::DragValue::new(value).custom_parser(evaluate)
 }
 
+/// A [`Slider`](egui::Slider) whose typed value lands on Enter or focus loss. 🔴 Applied live, egui
+/// 0.36 rewrites the text mid-entry: typing `.25` gives `0.52` (#1665). Dragging is unaffected.
+pub(crate) fn slider<Num: egui::emath::Numeric>(
+    value: &mut Num,
+    range: std::ops::RangeInclusive<Num>,
+) -> egui::Slider<'_> {
+    egui::Slider::new(value, range).update_while_editing(false)
+}
+
 /// Evaluates what the author typed, or `None` if it is not a number.
 pub(crate) fn evaluate(text: &str) -> Option<f64> {
     let normalised = normalise(text);

@@ -67,7 +67,7 @@ pub(super) fn number_editor(
         Some([lo, hi]) => {
             ui.spacing_mut().slider_width = FIELD - 50.0;
             ui.add(
-                egui::Slider::new(default, lo..=hi)
+                crate::numeric::slider(default, lo..=hi)
                     .step_by(if whole { 1.0 } else { 0.0 })
                     .fixed_decimals(decimals),
             );

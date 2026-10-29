@@ -370,7 +370,7 @@ fn draw_ranged(
     match value {
         ReflectValue::F32(v) => {
             let mut val = *v as f64;
-            let mut slider = egui::Slider::new(&mut val, min..=max);
+            let mut slider = crate::numeric::slider(&mut val, min..=max);
             if range.step > 0.0 {
                 slider = slider.step_by(range.step);
             }
@@ -382,7 +382,7 @@ fn draw_ranged(
         }
         ReflectValue::U32(v) => {
             let mut val = *v as f64;
-            let mut slider = egui::Slider::new(&mut val, min..=max);
+            let mut slider = crate::numeric::slider(&mut val, min..=max);
             if range.step > 0.0 {
                 slider = slider.step_by(range.step);
             }
