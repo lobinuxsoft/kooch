@@ -13,18 +13,7 @@ pub(super) fn draw_material_editor(
     catalog: &[AssetCatalogEntry],
     actions: &mut Vec<EditorAction>,
 ) {
-    // 🔴 `mat` arrives a save-and-reload behind the keystroke, and a `DragValue` handed a value it
-    // did not write replaces its text, scrambling digits (#1665). Mid-edit, the last edit is the truth.
-    let pending_id = egui::Id::new(("material_pending", guid));
-    let editing = ui.memory(|memory| memory.focused().is_some())
-        || ui.input(|input| input.pointer.any_down());
-    let pending = ui
-        .data(|data| data.get_temp::<Material>(pending_id))
-        .filter(|pending| editing && pending != mat);
-    if pending.is_none() {
-        ui.data_mut(|data| data.remove_temp::<Material>(pending_id));
-    }
-    let mut edited = pending.unwrap_or_else(|| mat.clone());
+    let mut edited = mat.clone();
     let mut changed = false;
     // Set on the frame a drag ends. That frame usually reports no change
     // — the value stopped moving before the button came up — so it is a
@@ -79,7 +68,6 @@ pub(super) fn draw_material_editor(
     // picking a texture, clicking a swatch. Only a drag needs the wait,
     // and `released` is what ends it.
     let held = ui.input(|input| input.pointer.any_down());
-    ui.data_mut(|data| data.insert_temp(pending_id, edited.clone()));
     actions.push(EditorAction::EditMaterial {
         guid,
         material: edited,
@@ -107,13 +95,13 @@ pub(super) fn draw_pbr_fields(
             ui.end_row();
 
             ui.label("Metallic");
-            let response = ui.add(egui::Slider::new(&mut edited.metallic, 0.0..=1.0));
+            let response = ui.add(crate::numeric::slider(&mut edited.metallic, 0.0..=1.0));
             changed |= response.changed();
             released |= response.drag_stopped();
             ui.end_row();
 
             ui.label("Roughness");
-            let response = ui.add(egui::Slider::new(&mut edited.roughness, 0.0..=1.0));
+            let response = ui.add(crate::numeric::slider(&mut edited.roughness, 0.0..=1.0));
             changed |= response.changed();
             released |= response.drag_stopped();
             ui.end_row();
@@ -205,12 +193,12 @@ pub(super) fn draw_shader_params(
                 ui.label(&param.name);
                 match (param.kind, param.range) {
                     (ParamKind::Float, Some([lo, hi])) => {
-                        track(ui.add(egui::Slider::new(&mut value[0], lo..=hi)));
+                        track(ui.add(crate::numeric::slider(&mut value[0], lo..=hi)));
                     }
                     (ParamKind::Int, Some([lo, hi])) => {
                         track(
                             ui.add(
-                                egui::Slider::new(&mut value[0], lo..=hi)
+                                crate::numeric::slider(&mut value[0], lo..=hi)
                                     .step_by(1.0)
                                     .fixed_decimals(0),
                             ),

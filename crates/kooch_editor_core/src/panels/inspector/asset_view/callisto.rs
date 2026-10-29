@@ -125,7 +125,7 @@ fn intensity(
 
 fn unit(ui: &mut egui::Ui, label: &str, value: &mut f32, track: &mut impl FnMut(egui::Response)) {
     ui.label(label);
-    track(ui.add(egui::Slider::new(value, 0.0..=1.0)));
+    track(ui.add(crate::numeric::slider(value, 0.0..=1.0)));
     ui.end_row();
 }
 
