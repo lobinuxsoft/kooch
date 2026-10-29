@@ -11,18 +11,44 @@ pub struct LoadContext<'a> {
     pub path: &'a Path,
     /// The `[import]` table of the asset's `.meta`, when it has one.
     import: Option<&'a toml::Table>,
+    /// Reads a file beside the asset; without one, the disk. A packaged game has nothing on disk,
+    /// so a file the asset names by relative path (a `.gltf`'s `.bin`) must come through the pack.
+    reader: Option<&'a mut dyn FnMut(&Path) -> AssetResult<Vec<u8>>>,
 }
 
 impl<'a> LoadContext<'a> {
     /// A context with no import settings, which is what a test and a
     /// `.meta`-less file both get.
     pub fn new(path: &'a Path) -> Self {
-        Self { path, import: None }
+        Self {
+            path,
+            import: None,
+            reader: None,
+        }
     }
 
     /// The same, carrying the sidecar's `[import]` table.
     pub fn with_import(path: &'a Path, import: Option<&'a toml::Table>) -> Self {
-        Self { path, import }
+        Self {
+            path,
+            import,
+            reader: None,
+        }
+    }
+
+    /// The same, reading neighbours through `reader` instead of the disk.
+    pub fn with_reader(mut self, reader: &'a mut dyn FnMut(&Path) -> AssetResult<Vec<u8>>) -> Self {
+        self.reader = Some(reader);
+        self
+    }
+
+    /// The bytes of `relative`, resolved against the asset's own directory.
+    pub fn read_sibling(&mut self, relative: &str) -> AssetResult<Vec<u8>> {
+        let path = self.path.parent().unwrap_or(Path::new("")).join(relative);
+        match self.reader.as_mut() {
+            Some(read) => read(&path),
+            None => Ok(std::fs::read(&path)?),
+        }
     }
 
     /// The loader's own import settings, or their defaults.

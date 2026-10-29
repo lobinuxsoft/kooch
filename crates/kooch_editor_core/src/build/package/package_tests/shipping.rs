@@ -225,3 +225,38 @@ fn a_project_without_a_manifest_still_packages() {
             .exists(),
     );
 }
+
+/// A `.gltf` names its buffer by URI, and a pack without it loads nothing (#981).
+#[test]
+fn a_gltf_carries_its_buffer() {
+    let dir = tmp("gltfbuffer");
+    let key = PackKey::generate();
+    let (proj, eng) = (dir.join("proj"), dir.join("engine"));
+    project(&proj);
+    engine(&eng);
+    write(
+        &proj.join("assets/props/tree.gltf"),
+        br#"{"buffers": [{"uri": "tree.bin", "byteLength": 4}]}"#,
+    );
+    write(&proj.join("assets/props/tree.gltf.meta"), b"guid = \"t\"\n");
+    write(&proj.join("assets/props/tree.bin"), b"data");
+
+    let out = assemble(
+        &BuildPreset::default(),
+        Platform::Linux,
+        &known(),
+        &proj,
+        Some(&eng),
+        &binary(&dir),
+        "demo",
+        &key,
+    )
+    .unwrap();
+
+    let pack = Pack::open(&out.pack.unwrap(), &key).unwrap();
+    let shipped: Vec<&str> = pack.entries().iter().map(|e| e.name.as_str()).collect();
+    assert!(
+        shipped.contains(&"assets/props/tree.bin"),
+        "the .gltf shipped without its buffer: {shipped:?}",
+    );
+}

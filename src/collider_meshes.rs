@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use kooch_core::Guid;
 use kooch_core::app::App;
 use kooch_core::asset_database::AssetDatabase;
-use kooch_core::asset_loader::AssetServer;
+use kooch_core::asset_loader::{AssetServer, read_game_file};
 use kooch_core::asset_meta;
 use kooch_core::plugin::Plugin;
 use kooch_core::resource::Resources;
@@ -15,7 +15,7 @@ use kooch_core::stage::Stage;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_physics::components::{Collider, SHAPE_CONVEX_HULL, is_mesh_derived};
 use kooch_physics::{ColliderMesh, ColliderMeshCache, ConvexPart, hull_of};
-use kooch_render::mesh::{parse_mesh_bytes_full, parse_mesh_parts};
+use kooch_render::mesh::{SidecarReader, parse_mesh_read, parse_parts_read};
 
 /// The `[import]` key a baked collision asset carries; in the sidecar, since artist meshes have one
 /// primitive per material, not per convex piece.
@@ -137,13 +137,16 @@ fn unanswered(resources: &Resources) -> Vec<Wanted> {
 fn load_mesh(resources: &mut Resources, guid: Guid) -> Option<ColliderMesh> {
     let path = path_of(resources, guid)?;
     let bytes = read_bytes(resources, &path, guid)?;
-    let base = path.parent();
+    // A `.gltf`'s buffers come the way the file did: from the pack in a packaged game.
+    let base = path.parent().unwrap_or(Path::new("")).to_path_buf();
+    let mut sibling = |uri: &str| read_game_file(resources, &base.join(uri));
+    let base = Some(&mut sibling as SidecarReader);
 
     let mesh = match baked_kind(&path) {
         // Baked pieces: each primitive is one convex hull, and its
         // triangles are the engine's own claim that it is. Trusted, not
         // checked — see `ConvexPart`.
-        Some(COLLISION_PARTS) => parse_mesh_parts(&bytes, base)
+        Some(COLLISION_PARTS) => parse_parts_read(&bytes, base)
             .map(|parts| ColliderMesh {
                 parts: parts
                     .into_iter()
@@ -155,7 +158,7 @@ fn load_mesh(resources: &mut Resources, guid: Guid) -> Option<ColliderMesh> {
         // A baked hull is one convex piece, and the file is already it.
         // Hulling it again gave back the same 226 points at 162 µs a
         // build, which was the whole cost the bake existed to remove.
-        Some(COLLISION_HULL) => parse_mesh_parts(&bytes, base)
+        Some(COLLISION_HULL) => parse_parts_read(&bytes, base)
             .map(|parts| {
                 let (points, faces) = parts.into_iter().next().unwrap_or_default();
                 ColliderMesh {
@@ -165,7 +168,7 @@ fn load_mesh(resources: &mut Resources, guid: Guid) -> Option<ColliderMesh> {
                 }
             })
             .map_err(|error| error.to_string()),
-        _ => parse_mesh_bytes_full(&bytes, 1.0, base)
+        _ => parse_mesh_read(&bytes, 1.0, base)
             .map(|mesh| ColliderMesh {
                 vertices: mesh
                     .vertices
