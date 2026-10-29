@@ -118,6 +118,7 @@ fn a_snapshot_round_trips_through_json() {
             id: 1,
             buttons: vec![GamepadButton::South],
             axes: vec![(GamepadAxis::LeftStickY, -0.5)],
+            values: vec![(GamepadButton::RightTrigger2, 0.3)],
         }],
         ..Default::default()
     };

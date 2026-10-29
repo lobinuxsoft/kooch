@@ -125,7 +125,7 @@ pub mod prelude {
 
     #[cfg(feature = "input")]
     pub use kooch_input::{
-        CursorMode, InputBackend, InputPlugin, KeyCode, MouseButton,
+        CursorMode, InputBackend, InputPlugin, KeyCode, MouseButton, Rumble,
         backend::{GamepadAxis, GamepadButton, GamepadId},
         ids::MouseAxis,
     };
@@ -488,6 +488,8 @@ impl kooch_core::plugin::Plugin for InputRemotePlugin {
         // expired and the event queue grew for the whole Play session (#766).
         app.add_event::<kooch_input::InputEvent>();
         app.add_system(kooch_core::stage::Stage::Input, pump_remote_input);
+        // After gameplay, so a rumble asked this frame leaves with the next pull.
+        app.add_system(kooch_core::stage::Stage::PostUpdate, forward_rumble);
         app.add_system(
             kooch_core::stage::Stage::Startup,
             |resources: &mut kooch_core::resource::Resources| {
@@ -520,6 +522,29 @@ impl kooch_core::plugin::Plugin for InputRemotePlugin {
 
     fn name(&self) -> &str {
         "InputRemotePlugin"
+    }
+}
+
+/// Hands the editor the rumbles the game asked for: the editor's process holds the pads (#57).
+#[cfg(all(feature = "input", feature = "remote"))]
+fn forward_rumble(resources: &mut kooch_core::resource::Resources) {
+    let Some(backend) = resources.get_mut::<Box<dyn kooch_input::InputBackend>>() else {
+        return;
+    };
+    let rumbles = backend.take_rumbles();
+    if rumbles.is_empty() {
+        return;
+    }
+    let outbox = resources.get_or_default::<kooch_remote::HostOutbox>();
+    for (pad, rumble) in rumbles {
+        let signal = kooch_input::RumbleSignal {
+            pad: pad.index(),
+            rumble,
+        };
+        match kooch_remote::serde_json::to_value(signal) {
+            Ok(payload) => outbox.push(kooch_input::RUMBLE_SIGNAL, payload),
+            Err(error) => tracing::warn!(%error, "could not encode a rumble"),
+        }
     }
 }
 

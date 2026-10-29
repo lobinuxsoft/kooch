@@ -75,6 +75,8 @@ pub struct RemoteSession {
     /// shows its own frame; this is the process that is actually
     /// simulating (#699).
     host_metrics: Option<kooch_remote::protocol::HostMetrics>,
+    /// What the project sent back unasked, waiting for the system that acts on it (#57).
+    signals: Vec<kooch_remote::protocol::HostSignal>,
     /// The scenes the project has open, as it last reported them.
     scenes: Option<Vec<kooch_remote::protocol::SceneEntry>>,
     /// What the project schedules, and which of it is running.
@@ -158,6 +160,7 @@ impl RemoteSession {
             state: ConnectionState::Connecting,
             snapshot: Vec::new(),
             host_metrics: None,
+            signals: Vec::new(),
             scenes: None,
             systems: None,
             changed_last_refresh: true,
@@ -179,6 +182,7 @@ impl RemoteSession {
             state: ConnectionState::Connecting,
             snapshot: Vec::new(),
             host_metrics: None,
+            signals: Vec::new(),
             scenes: None,
             systems: None,
             changed_last_refresh: true,
@@ -253,6 +257,11 @@ impl RemoteSession {
         self.host_metrics
     }
 
+    /// The project's signals since the last call.
+    pub fn take_signals(&mut self) -> Vec<kooch_remote::protocol::HostSignal> {
+        std::mem::take(&mut self.signals)
+    }
+
     /// The scenes the project has open, or `None` if it has not said.
     pub fn open_scenes(&self) -> Option<&[kooch_remote::protocol::SceneEntry]> {
         self.scenes.as_deref()
@@ -315,7 +324,8 @@ impl RemoteSession {
         let mut structural = false;
         for reply in pulled {
             match reply {
-                crate::moved_pump::Pulled::Update(update) => {
+                crate::moved_pump::Pulled::Update(mut update) => {
+                    self.signals.append(&mut update.signals);
                     if update.host.is_some() {
                         self.host_metrics = update.host;
                     }

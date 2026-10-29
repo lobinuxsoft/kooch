@@ -116,4 +116,16 @@ pub trait InputBackend: Send + Sync + 'static {
     /// Returns the axis value in `[-1.0, 1.0]`, or `0.0` if the gamepad
     /// is disconnected / axis is unknown.
     fn axis_value(&self, gamepad: GamepadId, axis: GamepadAxis) -> f32;
+    /// How far a button is pulled, in `[0, 1]`: a trigger's travel, 0 or 1 for a digital button
+    /// (#57). Defaults to the held state for backends that only know held.
+    fn button_value(&self, gamepad: GamepadId, button: GamepadButton) -> f32 {
+        self.is_button_pressed(gamepad, button) as u8 as f32
+    }
+    /// Plays a rumble on a pad, replacing the one it was playing. A pad without force feedback, or a
+    /// backend without pads, ignores it.
+    fn rumble(&mut self, _gamepad: GamepadId, _rumble: crate::rumble::Rumble) {}
+    /// Rumbles this backend cannot play itself, for whoever holds the pad: the editor, in Play.
+    fn take_rumbles(&mut self) -> Vec<(GamepadId, crate::rumble::Rumble)> {
+        Vec::new()
+    }
 }

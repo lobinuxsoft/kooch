@@ -52,6 +52,26 @@ A trackpad reports pixels, which are converted at egui's 50 per line, so a notch
 the same length move the camera alike. Each notch counts once, including in the editor's Play,
 where the editor and the game do not share a frame rate.
 
+## Triggers: how far, not whether
+
+`Gamepad / LeftTrigger2` and `RightTrigger2` read their **travel**, `0` at rest to `1` fully pulled,
+so an `Axis` action bound to one regulates — throttle, brake, torque — instead of switching. A
+`Button` action on the same trigger still fires once it counts as pressed. Some pads report their
+triggers as `LeftZ`/`RightZ` axes instead; bind those the same way.
+
+## Rumble
+
+```rust
+if let Some(pad) = backend.active_gamepad() {
+    backend.rumble(pad, Rumble { strong: 0.8, weak: 0.3, duration_ms: 150 });
+}
+```
+
+`strong` is the heavy, low motor and `weak` the light, high one, both in `[0, 1]`. A new rumble
+replaces the one the pad was playing, and all zero stops it. A pad without force feedback ignores
+it. In the editor's Play the pad belongs to the editor's process, so the game's request travels back
+to it with the next world pull — a frame late, the same feel.
+
 ## Capturing the cursor
 
 Mouse look wants the cursor held in place and hidden. Ask for it; the window applies it:
