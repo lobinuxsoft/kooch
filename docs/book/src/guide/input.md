@@ -1,7 +1,7 @@
 # Input
 
 A game never names a key. It points a component at an `.inputaction` asset, and the action decides
-which controls feed it — keys, mouse buttons, gamepad buttons and axes, and **mouse motion**.
+which controls feed it — keys, mouse buttons, gamepad buttons and axes, **mouse motion** and the **mouse wheel**.
 Actions are authored in the Input Map panel.
 
 ## Looking around: the mouse and the stick in one action
@@ -36,6 +36,21 @@ reads the way pushing a stick up does.
 
 Mouse motion is the device's own report, not two cursor positions subtracted, so a turn **never
 stops at the edge of the window**.
+
+## Zooming: the mouse wheel
+
+`Mouse / Scroll Y` (and `Scroll X`, for a tilting wheel or a trackpad's sideways swipe) reads the
+wheel in **lines this frame**, with up as away from the player. An `Axis` action — say `zoom` —
+bound to it is consumed **without** `dt`, because a wheel has notches, not a speed:
+
+```rust
+let zoom = loaded.evaluate(input.zoom, backend).map(|v| v.axis()).unwrap_or_default();
+distance = (distance - zoom * metres_per_notch).clamp(min, max);
+```
+
+A trackpad reports pixels, which are converted at egui's 50 per line, so a notch and a swipe of
+the same length move the camera alike. Each notch counts once, including in the editor's Play,
+where the editor and the game do not share a frame rate.
 
 ## Capturing the cursor
 

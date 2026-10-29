@@ -27,6 +27,8 @@ pub struct WinitGilrsBackend {
     pressed_mouse: HashSet<MouseButton>,
     mouse_position: Vec2,
     mouse_delta: Vec2,
+    /// Wheel and trackpad scroll this frame, in lines (#56).
+    mouse_scroll: Vec2,
     /// Raw motion accumulated this frame, from the device rather than the cursor (#1266).
     mouse_motion: Vec2,
     /// Last frame's motion as pixels per second.
@@ -133,6 +135,7 @@ impl WinitGilrsBackend {
             pressed_mouse: HashSet::new(),
             mouse_position: Vec2::ZERO,
             mouse_delta: Vec2::ZERO,
+            mouse_scroll: Vec2::ZERO,
             mouse_motion: Vec2::ZERO,
             mouse_velocity: Vec2::ZERO,
             last_poll: None,
@@ -207,6 +210,11 @@ impl WinitGilrsBackend {
                     position: new_pos,
                     delta,
                 });
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let delta = scroll_lines(*delta);
+                self.mouse_scroll += delta;
+                self.queued_events.push(InputEvent::MouseScrolled { delta });
             }
             _ => {}
         }
@@ -289,6 +297,7 @@ impl InputBackend for WinitGilrsBackend {
         }
         self.just_released_keys.clear();
         self.mouse_delta = Vec2::ZERO;
+        self.mouse_scroll = Vec2::ZERO;
         self.mouse_motion = Vec2::ZERO;
     }
 
@@ -298,6 +307,10 @@ impl InputBackend for WinitGilrsBackend {
 
     fn feed_mouse_motion(&mut self, delta: Vec2) {
         self.mouse_motion += delta;
+    }
+
+    fn mouse_scroll(&self) -> Vec2 {
+        self.mouse_scroll
     }
 
     fn poll(&mut self) -> Vec<InputEvent> {
@@ -382,3 +395,17 @@ impl InputBackend for WinitGilrsBackend {
 
 #[cfg(test)]
 mod backend_tests;
+
+/// Pixels per line for a trackpad's `PixelDelta`: egui-winit's own factor, so the editor's panels and
+/// the game scroll alike.
+const PIXELS_PER_LINE: f32 = 50.0;
+
+/// A wheel's notches as they come; a trackpad's pixels as the lines they amount to.
+fn scroll_lines(delta: winit::event::MouseScrollDelta) -> Vec2 {
+    match delta {
+        winit::event::MouseScrollDelta::LineDelta(x, y) => Vec2::new(x, y),
+        winit::event::MouseScrollDelta::PixelDelta(pixels) => {
+            Vec2::new(pixels.x as f32, pixels.y as f32) / PIXELS_PER_LINE
+        }
+    }
+}
