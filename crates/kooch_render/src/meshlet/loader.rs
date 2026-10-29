@@ -2,7 +2,7 @@
 
 use kooch_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
 
-use crate::mesh::parse_mesh_bytes_full;
+use crate::mesh::{parse_mesh_read, siblings};
 
 use super::asset::{DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES, MeshletMesh};
 use super::builder::{LodConfig, MeshletBuildError, build_meshlets_lod_chain};
@@ -17,7 +17,7 @@ impl AssetLoader<MeshletMesh> for MeshletMeshLoader {
     }
 
     fn load(&self, bytes: &[u8], ctx: &mut LoadContext<'_>) -> AssetResult<MeshletMesh> {
-        let mesh = parse_mesh_bytes_full(bytes, 1.0, ctx.path.parent())
+        let mesh = parse_mesh_read(bytes, 1.0, Some(&mut siblings(ctx)))
             .map_err(|e| AssetError::Loader(Box::new(e)))?;
         build_meshlets_lod_chain(
             &mesh,

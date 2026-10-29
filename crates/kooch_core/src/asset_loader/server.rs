@@ -129,8 +129,11 @@ impl AssetServer {
         // with no `.meta` yet — one dropped into the folder a moment ago — still loads, on the
         // engine's defaults.
         let meta = asset_meta::read_meta(&path).ok();
+        let packs = &mut self.packs;
+        let mut read = |sibling: &Path| packs.read_or_disk(sibling);
         let mut ctx =
-            LoadContext::with_import(&path, meta.as_ref().and_then(|m| m.import.as_ref()));
+            LoadContext::with_import(&path, meta.as_ref().and_then(|m| m.import.as_ref()))
+                .with_reader(&mut read);
         let boxed = loader.load_boxed(&bytes, &mut ctx)?;
 
         // Downcast back to T. Safe by construction — registry is keyed by
@@ -244,8 +247,11 @@ impl AssetServer {
             // editing the `[import]` table and saving is a reload, and
             // the point of the table is to see the answer change.
             let meta = asset_meta::read_meta(&path).ok();
+            let packs = &mut self.packs;
+            let mut read = |sibling: &Path| packs.read_or_disk(sibling);
             let mut ctx =
-                LoadContext::with_import(&path, meta.as_ref().and_then(|m| m.import.as_ref()));
+                LoadContext::with_import(&path, meta.as_ref().and_then(|m| m.import.as_ref()))
+                    .with_reader(&mut read);
             match loader.reload_into(&bytes, &mut ctx, key, resources)? {
                 true => reloaded += 1,
                 false => stale.push(type_id),

@@ -1,14 +1,12 @@
 //! Buffer resolution for the glTF document.
 
-use std::path::Path;
-
-use super::GltfMeshError;
+use super::{GltfMeshError, SidecarReader};
 
 /// Resolves the document's buffer bytes. Three sources covered.
 pub(super) fn collect_buffers(
     document: &gltf::Document,
     glb_blob: Option<&[u8]>,
-    base_dir: Option<&Path>,
+    mut read: Option<SidecarReader<'_>>,
 ) -> Result<Vec<Vec<u8>>, GltfMeshError> {
     let mut out = Vec::with_capacity(document.buffers().len());
     for buffer in document.buffers() {
@@ -18,7 +16,7 @@ pub(super) fn collect_buffers(
                 out.push(blob.to_vec());
             }
             gltf::buffer::Source::Uri(uri) => {
-                out.push(resolve_uri(uri, base_dir)?);
+                out.push(resolve_uri(uri, read.as_deref_mut())?);
             }
         }
     }
@@ -27,29 +25,34 @@ pub(super) fn collect_buffers(
 
 /// Dispatches a `Uri` buffer source to the right resolver based on
 /// shape — `data:` URIs decode in-process, everything else is treated
-/// as a sidecar relative to `base_dir`.
-fn resolve_uri(uri: &str, base_dir: Option<&Path>) -> Result<Vec<u8>, GltfMeshError> {
+/// as a sidecar the reader resolves.
+fn resolve_uri<'r>(
+    uri: &str,
+    read: Option<&mut (dyn FnMut(&str) -> std::io::Result<Vec<u8>> + 'r)>,
+) -> Result<Vec<u8>, GltfMeshError> {
     if let Some(payload) = uri.strip_prefix("data:") {
         super::data_uri::decode(payload)
     } else {
-        resolve_sidecar(uri, base_dir)
+        resolve_sidecar(uri, read)
     }
 }
 
 /// Reads a sidecar buffer file. The URI must clear hygiene checks
-/// ([`reject_unsafe_uri`]) and `base_dir` must be supplied (memory
+/// ([`reject_unsafe_uri`]) and a reader must be supplied (memory
 /// loads have no anchor for relative resolution).
-fn resolve_sidecar(uri: &str, base_dir: Option<&Path>) -> Result<Vec<u8>, GltfMeshError> {
+fn resolve_sidecar<'r>(
+    uri: &str,
+    read: Option<&mut (dyn FnMut(&str) -> std::io::Result<Vec<u8>> + 'r)>,
+) -> Result<Vec<u8>, GltfMeshError> {
     if let Some(reason) = reject_unsafe_uri(uri) {
         return Err(GltfMeshError::BufferUriRejected {
             uri: uri.to_string(),
             reason,
         });
     }
-    let base = base_dir.ok_or(GltfMeshError::BufferUriUnresolvable)?;
-    let resolved = base.join(uri);
-    std::fs::read(&resolved).map_err(|source| GltfMeshError::BufferIo {
-        uri: resolved.display().to_string(),
+    let read = read.ok_or(GltfMeshError::BufferUriUnresolvable)?;
+    read(uri).map_err(|source| GltfMeshError::BufferIo {
+        uri: uri.to_string(),
         source,
     })
 }

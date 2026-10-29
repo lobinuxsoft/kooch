@@ -292,6 +292,7 @@ fn collect_assets(
         }
         files.push((name, path));
     }
+    gltf_files::carry_uris(&mut files);
 
     files.sort_by(|a, b| a.0.cmp(&b.0));
     (files, shadowed)
@@ -528,6 +529,8 @@ fn keep_executable(from: &Path, to: &Path) {
 
 #[cfg(not(unix))]
 fn keep_executable(_from: &Path, _to: &Path) {}
+
+mod gltf_files;
 
 #[cfg(test)]
 mod package_tests;

@@ -10,6 +10,7 @@ use kooch_pack::Pack;
 fn known() -> Vec<String> {
     [
         "glb",
+        "gltf",
         // The image loader claims it, and a texture is what a material reaches for — a fixture
         // without it cannot exercise the graph this file exists to walk.
         "png",

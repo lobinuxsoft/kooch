@@ -17,7 +17,8 @@ mod tests;
 
 /// Loader handling `*.glb` and `*.gltf`. GLB packages every buffer in the same file; `.gltf`
 /// documents may reference external buffers either as sidecar files (relative path) or inline
-/// `data:` URIs — both resolved through [`LoadContext::path`].
+/// `data:` URIs. Sidecars are read through [`LoadContext::read_sibling`], so a packaged game finds
+/// them in its pack.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GltfMeshLoader;
 
@@ -27,9 +28,29 @@ impl AssetLoader<Mesh> for GltfMeshLoader {
     }
 
     fn load(&self, bytes: &[u8], ctx: &mut LoadContext<'_>) -> AssetResult<Mesh> {
-        parse_mesh_bytes_full(bytes, 1.0, ctx.path.parent())
+        parse_mesh_read(bytes, 1.0, Some(&mut siblings(ctx)))
             .map_err(|e| AssetError::Loader(Box::new(e)))
     }
+}
+
+/// Reads a buffer a `.gltf` names by relative URI.
+pub type SidecarReader<'a> = &'a mut dyn FnMut(&str) -> std::io::Result<Vec<u8>>;
+
+/// A `.gltf`'s neighbours, read the way the asset itself was: from its pack or from disk.
+pub fn siblings<'c>(
+    ctx: &'c mut LoadContext<'_>,
+) -> impl FnMut(&str) -> std::io::Result<Vec<u8>> + 'c {
+    |uri| {
+        ctx.read_sibling(uri).map_err(|error| match error {
+            AssetError::Io(error) => error,
+            other => std::io::Error::other(other.to_string()),
+        })
+    }
+}
+
+/// Reads sidecars from `base_dir` on disk; `None` when there is no directory to anchor them.
+fn on_disk(base_dir: Option<&Path>) -> Option<impl FnMut(&str) -> std::io::Result<Vec<u8>>> {
+    base_dir.map(|base| move |uri: &str| std::fs::read(base.join(uri)))
 }
 
 /// Domain errors specific to mesh parsing. Wrapped into
@@ -115,10 +136,19 @@ pub fn parse_mesh_parts(
     bytes: &[u8],
     base_dir: Option<&Path>,
 ) -> Result<Vec<(Vec<Vec3>, Vec<[u32; 3]>)>, GltfMeshError> {
+    let mut disk = on_disk(base_dir);
+    parse_parts_read(bytes, disk.as_mut().map(|read| read as SidecarReader))
+}
+
+/// [`parse_mesh_parts`], reading sidecars through `read`.
+pub fn parse_parts_read(
+    bytes: &[u8],
+    read: Option<SidecarReader<'_>>,
+) -> Result<Vec<(Vec<Vec3>, Vec<[u32; 3]>)>, GltfMeshError> {
     let gltf = gltf::Gltf::from_slice(bytes)?;
     let blob = gltf.blob.as_deref();
     let document = gltf.document;
-    let buffers = buffers::collect_buffers(&document, blob, base_dir)?;
+    let buffers = buffers::collect_buffers(&document, blob, read)?;
 
     let mut parts = Vec::new();
     match document
@@ -151,10 +181,24 @@ pub fn parse_mesh_bytes_full(
     import_scale: f32,
     base_dir: Option<&Path>,
 ) -> Result<Mesh, GltfMeshError> {
+    let mut disk = on_disk(base_dir);
+    parse_mesh_read(
+        bytes,
+        import_scale,
+        disk.as_mut().map(|read| read as SidecarReader),
+    )
+}
+
+/// [`parse_mesh_bytes_full`], reading sidecars through `read`.
+pub fn parse_mesh_read(
+    bytes: &[u8],
+    import_scale: f32,
+    read: Option<SidecarReader<'_>>,
+) -> Result<Mesh, GltfMeshError> {
     let gltf = gltf::Gltf::from_slice(bytes)?;
     let blob = gltf.blob.as_deref();
     let document = gltf.document;
-    let buffers = buffers::collect_buffers(&document, blob, base_dir)?;
+    let buffers = buffers::collect_buffers(&document, blob, read)?;
 
     let mut out_vertices: Vec<MeshVertex> = Vec::new();
     let mut out_indices: Vec<u32> = Vec::new();
