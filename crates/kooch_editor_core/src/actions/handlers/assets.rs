@@ -17,7 +17,11 @@ pub(super) fn handle_import_assets(
         tracing::error!(dest = %dest.display(), error = %e, "import: cannot create destination");
         return;
     }
-    let copied = super::import_copy::copy_dropped(files, dest);
+    let mut copied = super::import_copy::copy_dropped(files, dest);
+    let meshes: Vec<_> = copied.iter().filter(|f| is_mesh(f)).cloned().collect();
+    for mesh in meshes {
+        copied.extend(super::import_materials::import(&mesh));
+    }
     if copied.is_empty() {
         return;
     }
@@ -350,4 +354,10 @@ pub(super) fn handle_rename_layer(
     // Published now rather than next frame, so the checklist under the cursor renames with it.
     resources.insert(names);
     super::asset_saved(resources, &path);
+}
+
+fn is_mesh(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("gltf") || ext.eq_ignore_ascii_case("glb"))
 }

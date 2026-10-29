@@ -3,6 +3,7 @@
 mod assets;
 mod collider;
 mod import_copy;
+pub(crate) mod import_materials;
 mod play;
 mod prefab;
 mod project;

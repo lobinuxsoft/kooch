@@ -51,6 +51,17 @@ pub(super) fn spawn_mesh(
         tracing::warn!(target: TARGET, error = %e, "could not write the mesh reference");
         return;
     }
+    if let Some(material) =
+        crate::actions::handlers::import_materials::imported_material(resources, guid)
+    {
+        let value = kooch_ecs::reflect::ReflectValue::AssetRef {
+            guid: Some(material),
+            asset_type: std::any::type_name::<kooch_render::material::Material>().to_owned(),
+        };
+        if let Err(e) = client.set_field(entity, renderer_ty, "material", value) {
+            tracing::warn!(target: TARGET, error = %e, "could not write the material reference");
+        }
+    }
     place(client, entity, transform_ty, at);
 
     tracing::info!(

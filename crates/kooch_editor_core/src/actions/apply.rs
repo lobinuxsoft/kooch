@@ -124,6 +124,17 @@ pub(crate) fn apply_actions(
     // Asked before the local/remote split so the prompt appears once
     // regardless of which path would have written the file.
     let mut actions = intercept_prefab_overwrites(resources, actions);
+    // The View and World panels have no database to tell a mesh from a prefab, so every dropped
+    // asset arrives as `InstantiatePrefab`; a mesh becomes the spawn it is (#1656).
+    let spawns: Vec<Option<EditorAction>> = actions
+        .iter()
+        .map(|action| as_mesh_spawn(resources, action))
+        .collect();
+    for (action, spawn) in actions.iter_mut().zip(&spawns) {
+        if let Some(spawn) = spawn {
+            *action = spawn;
+        }
+    }
     actions.extend(queued.iter());
     let actions = &actions;
 
@@ -253,4 +264,26 @@ pub(crate) fn apply_actions(
         apply_non_ecs_action(action, resources, undo_stack);
         i += 1;
     }
+}
+
+/// A prefab drop whose asset is a mesh, as the `SpawnMesh` it should have been.
+fn as_mesh_spawn(resources: &Resources, action: &EditorAction) -> Option<EditorAction> {
+    let EditorAction::InstantiatePrefab { prefab, at } = action else {
+        return None;
+    };
+    let path = resources
+        .get::<kooch_core::asset_database::AssetDatabase>()?
+        .entry(*prefab)?
+        .path
+        .clone();
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    if ext != "glb" && ext != "gltf" {
+        return None;
+    }
+    let name = path.file_stem()?.to_str()?.to_owned();
+    Some(EditorAction::SpawnMesh {
+        path,
+        name,
+        at: *at,
+    })
 }

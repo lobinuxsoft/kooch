@@ -175,10 +175,15 @@ impl SpawnMeshCommand {
         // because the field is `#[reflect(skip)]` (opaque GUID, not a
         // user-editable string).
         if let Some(guid) = guid {
+            let material =
+                crate::actions::handlers::import_materials::imported_material(resources, guid);
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                 if let Some(mut storage) = registry.get_cpu_mut::<MeshRenderer>() {
                     if let Some(renderer) = storage.get_mut(entity) {
                         renderer.mesh = Some(guid);
+                        if material.is_some() {
+                            renderer.material = material;
+                        }
                     }
                 }
             }

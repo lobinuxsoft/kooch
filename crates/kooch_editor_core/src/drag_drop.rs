@@ -16,3 +16,11 @@ pub(crate) struct DraggedAsset {
 
 /// The canonical type name a prefab asset is registered under.
 pub(crate) const PREFAB_TYPE_NAME: &str = "kooch_ecs::scene::document::SceneDocument";
+
+/// Whether dropping an asset of `type_name` onto the View or World spawns something: a prefab, or
+/// a mesh, which arrives as a prefab drop and is spawned as a mesh (#1656).
+pub(crate) fn spawns(type_name: &str) -> bool {
+    type_name == PREFAB_TYPE_NAME
+        || type_name == std::any::type_name::<kooch_render::meshlet::MeshletMesh>()
+        || type_name == std::any::type_name::<kooch_render::mesh::Mesh>()
+}

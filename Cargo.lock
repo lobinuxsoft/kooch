@@ -2297,6 +2297,7 @@ dependencies = [
  "egui_dock",
  "exmex",
  "glam 0.33.12",
+ "gltf",
  "kooch_blockmesh",
  "kooch_camera",
  "kooch_character",
