@@ -10,7 +10,7 @@ pub struct Callisto {
     /// Diffuse Fresnel, ρf: scales the diffuse where light grazes. [0, 256].
     pub fresnel: f32,
     pub fresnel_tint: [f32; 3],
-    /// nf, [0, 1]: higher peaks later and narrower.
+    /// nf, [0, 1]: higher spreads it wider — the exponent is `5·2(1 − nf)`, 0 at 1.
     pub fresnel_falloff: f32,
     /// mf, [0, 1].
     pub fresnel_tangent: f32,
