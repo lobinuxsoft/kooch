@@ -668,6 +668,7 @@ pub(super) fn draw_collision_matrix(
 /// their synthetic indices happen to collide.
 const ASSET_PSEUDO_GENERATION: u32 = u32::MAX - 1;
 
+mod callisto;
 mod material;
 
 use material::*;

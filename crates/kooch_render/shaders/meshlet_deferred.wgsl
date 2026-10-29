@@ -30,6 +30,8 @@ struct MaterialParams {
     // and in two other shaders, and a test reads all three because a field added to two of them
     // fails silently rather than at compile time.
     uv_scale_offset: vec4<f32>,
+    // `Callisto::pack` (#1657).
+    callisto: array<vec4<f32>, 5>,
 }
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
@@ -196,6 +198,7 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
                     vec2<f32>(pixel) + vec2<f32>(0.5),
                     surf.flags,
                     surf.layers,
+                    inti_callisto(m.callisto),
                 );
                 radiance += m.base_color.rgb * m.metallic_roughness_emissive_pad.z;
                 rgb = inti_tonemap(radiance);

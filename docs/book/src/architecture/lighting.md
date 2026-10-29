@@ -70,9 +70,24 @@ their fixes are baked in from the start rather than rediscovered later:
 |---|---|
 | **D** | GGX / Trowbridge-Reitz, in Filament's reassociated form. The naïve expression loses catastrophic f32 precision at low roughness and the highlight breaks into visible blocks |
 | **V** | Height-correlated Smith (Heitz 2014), returning `G / (4·NoV·NoL)` combined — so the specular term must not divide again |
-| **F** | Plain Schlick, with `f90` derived from `f0`. A near-black dielectric with `f90 = 1` grows a white rim at grazing angles that no real material has |
-| **Diffuse** | Burley / Disney. Lambert is flat; this brightens the grazing edge on rough surfaces the way cloth and unfinished wood do |
+| **F** | Schlick, with `f90` derived from `f0` (a near-black dielectric with `f90 = 1` grows a white rim no real material has), and Callisto's specular Fresnel falloff on top |
+| **Diffuse** | Proxima (Callisto Protocol, SIGGRAPH 2023): a fit to GGX-microfacet diffuse, so lighting holds as normal-map mips flatten. Lambert at zero roughness |
 | **Multiscatter** | Single-scattering GGX loses energy on rough metals — they go grey. Compensated by the split-sum integral's analytic fit |
+
+### The Callisto BRDF
+
+Every material carries the Callisto BRDF's controls (*Light model* in the material
+inspector): diffuse Fresnel, retroreflection, a smooth terminator, their tints and
+the specular Fresnel falloff. They follow the slides of "The Rendering of The
+Callisto Protocol" (SIGGRAPH 2023 Advances, slides 85, 90, 95):
+
+`Lo = (c1 · f_proxima + f_ggx) · c2 · Li · cos θi`
+
+`c1` scales the diffuse at grazing light (Fresnel) and from behind the viewer
+(retroreflection). `c2` softens the edge between light and shadow, outside those
+two areas. **The defaults are Lambert + GGX by design.** A material that moves no
+control skips `c1` and `c2` entirely, so the default costs Proxima alone. The
+talk's dual GGX lobe is not implemented: the slides list it but give no formula.
 
 Two decisions worth stating because they diverge from something:
 

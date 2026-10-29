@@ -1,11 +1,11 @@
 use super::*;
 
 #[test]
-fn material_params_layout_is_pod_64_bytes() {
+fn material_params_layout_is_pod_144_bytes() {
     // 16 B base_color + 16 B (metallic, rough, emissive, pad)
     // + 16 B (albedo, normal, metal_rough, pad)
-    // + 16 B (uv scale, uv offset) = 64 B.
-    assert_eq!(std::mem::size_of::<MaterialParams>(), 64);
+    // + 16 B (uv scale, uv offset) + 5 × 16 B Callisto = 144 B.
+    assert_eq!(std::mem::size_of::<MaterialParams>(), 144);
     assert_eq!(std::mem::align_of::<MaterialParams>(), 4);
 }
 
@@ -44,6 +44,7 @@ fn every_shader_agrees_on_the_material_layout() {
         "metallic_roughness_emissive_pad",
         "texture_indices",
         "uv_scale_offset",
+        "callisto",
     ];
 
     for (index, source) in SHADERS.iter().enumerate() {
@@ -72,10 +73,10 @@ fn every_shader_agrees_on_the_material_layout() {
         );
     }
 
-    // Four vec4s. The assertion is on the number rather than on the
+    // Nine vec4s. The assertion is on the number rather than on the
     // expression so a field added as a bare `f32` — which pads to 16
     // anyway and would keep the count right — still fails here.
-    assert_eq!(std::mem::size_of::<MaterialParams>(), 64);
+    assert_eq!(std::mem::size_of::<MaterialParams>(), 144);
 }
 
 /// The texture transform reaches the GPU struct in the order the shader

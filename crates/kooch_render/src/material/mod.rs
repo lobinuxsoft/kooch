@@ -1,6 +1,7 @@
 //! PBR material parameters + GPU pool + typed [`Material`] asset.
 
 mod asset;
+mod callisto;
 mod pipeline;
 pub mod shader;
 mod texture_pool;
@@ -9,6 +10,7 @@ mod values;
 /// The engine's surface, and what a new `.shader` starts as.
 pub use crate::meshlet::{DEFAULT_SURFACE_SHADER, NEW_SURFACE_SHADER};
 pub use asset::{MATERIAL_EXTENSION, Material, MaterialLoader, MaterialParseError};
+pub use callisto::Callisto;
 pub use pipeline::{
     DEFAULT_CAPACITY as MATERIAL_POOL_DEFAULT_CAPACITY, FALLBACK_MATERIAL_ID, MATERIAL_TYPE_NAME,
     MaterialPipeline, SurfaceSource, TextureReimports,
@@ -36,6 +38,8 @@ pub struct MaterialParams {
     pub metallic_roughness_emissive_pad: [f32; 4],
     pub texture_indices: [u32; 4],
     pub uv_scale_offset: [f32; 4],
+    /// [`Callisto::pack`]'s five rows, in the order `IntiCallisto` declares them.
+    pub callisto: [[f32; 4]; 5],
 }
 
 impl Default for MaterialParams {
@@ -51,7 +55,14 @@ impl MaterialParams {
             metallic_roughness_emissive_pad: [metallic, roughness, emissive, 0.0],
             texture_indices: [NO_TEXTURE; 4],
             uv_scale_offset: [1.0, 1.0, 0.0, 0.0],
+            callisto: Callisto::default().pack(),
         }
+    }
+
+    /// Sets the light model's controls.
+    pub fn with_callisto(mut self, callisto: &Callisto) -> Self {
+        self.callisto = callisto.pack();
+        self
     }
 
     /// Sets the texture transform: `scale` tiles, `offset` slides.

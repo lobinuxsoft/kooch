@@ -57,8 +57,10 @@ fn shade_from_tile(
     layers: u32,
     start: u32,
     len: u32,
+    callisto: IntiCallisto,
 ) -> vec3<f32> {
-    let surf = inti_surface(world_position, n, base_color, metallic, roughness, flags, layers);
+    let surf = inti_surface(
+        world_position, n, base_color, metallic, roughness, flags, layers, callisto);
 
     // One march per pixel rather than one per light (#845), exactly as
     // `inti_shade` does it — the two walks have to agree or the A/B
@@ -281,6 +283,7 @@ fn cs_shade_tile(
             rgb = inti_debug_view(screen.debug_mode, surf.world_position, shaded.normal, frag_coord);
         } else {
             var radiance = vec3<f32>(0.0);
+            let callisto = inti_callisto(materials[screen.material_id].callisto);
             // An unlit shader skips Inti, its shadows and the contact march (#1179).
             if (SURFACE_UNLIT) {
             } else if (tile_overflow == 0u && clustered) {
@@ -289,13 +292,13 @@ fn cs_shade_tile(
                 radiance = shade_from_tile(
                     surf.world_position, shaded.normal, shaded.base_color, shaded.metallic,
                     shaded.roughness, frag_coord, surf.flags, surf.layers,
-                    tile_cell_start[c], tile_cell_len[c]);
+                    tile_cell_start[c], tile_cell_len[c], callisto);
             } else {
                 // The fallback the caps promise: straight to the storage
                 // buffer, the same call the fragment path makes.
                 radiance = inti_shade(
                     surf.world_position, shaded.normal, shaded.base_color, shaded.metallic,
-                    shaded.roughness, frag_coord, surf.flags, surf.layers);
+                    shaded.roughness, frag_coord, surf.flags, surf.layers, callisto);
             }
             // Display units, as the fragment frame explains: 1.0 is full brightness at any exposure.
             radiance += shaded.emissive / max(inti.exposure, 1e-8);
