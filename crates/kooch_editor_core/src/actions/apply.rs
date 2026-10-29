@@ -124,6 +124,8 @@ pub(crate) fn apply_actions(
     // Asked before the local/remote split so the prompt appears once
     // regardless of which path would have written the file.
     let mut actions = intercept_prefab_overwrites(resources, actions);
+    // Here rather than in a handler so the follow-up edit takes the same local or remote path.
+    queued.extend(super::baked_shape::shape_edits(resources, &actions));
     // The View and World panels have no database to tell a mesh from a prefab, so every dropped
     // asset arrives as `InstantiatePrefab`; a mesh becomes the spawn it is (#1656).
     let spawns: Vec<Option<EditorAction>> = actions

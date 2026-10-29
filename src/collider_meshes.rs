@@ -161,8 +161,11 @@ fn load_mesh(resources: &mut Resources, guid: Guid) -> Option<ColliderMesh> {
         Some(COLLISION_HULL) => parse_parts_read(&bytes, base)
             .map(|parts| {
                 let (points, faces) = parts.into_iter().next().unwrap_or_default();
+                // Its faces are its triangles too: without them every shape but
+                // the hull refused it, and the body silently did not collide.
                 ColliderMesh {
                     vertices: points.clone(),
+                    indices: faces.clone(),
                     hull: ConvexPart { points, faces },
                     ..Default::default()
                 }

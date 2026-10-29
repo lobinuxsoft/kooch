@@ -478,6 +478,7 @@ pub(crate) enum SpawnTarget {
 
 /// Prefabs edited in the Inspector whose file is behind the cache.
 mod apply;
+mod baked_shape;
 mod describe;
 
 pub(crate) use apply::{DirtyPrefabs, PendingPrefabOverwrite, apply_actions};
