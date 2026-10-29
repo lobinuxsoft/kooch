@@ -62,7 +62,7 @@ pub(crate) fn draw_view_content(
     // not in anything this panel is handed. See `viewport_pick`.
     if response
         .dnd_hover_payload::<crate::drag_drop::DraggedAsset>()
-        .is_some_and(|a| a.type_name == crate::drag_drop::PREFAB_TYPE_NAME)
+        .is_some_and(|a| crate::drag_drop::spawns(&a.type_name))
     {
         ui.painter().rect_stroke(
             response.rect,

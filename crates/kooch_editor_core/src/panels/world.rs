@@ -188,7 +188,7 @@ pub(crate) fn draw_world_content(
     // move a prefab that was deliberately authored elsewhere.
     if background
         .dnd_hover_payload::<crate::drag_drop::DraggedAsset>()
-        .is_some_and(|a| a.type_name == crate::drag_drop::PREFAB_TYPE_NAME)
+        .is_some_and(|a| crate::drag_drop::spawns(&a.type_name))
     {
         ui.painter().rect_filled(
             background_rect,
