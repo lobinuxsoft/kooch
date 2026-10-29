@@ -8,6 +8,8 @@ struct MaterialParams {
     texture_indices: vec4<u32>,
     // xy tiling, zw offset. Also declared in `meshlet_deferred.wgsl`; a test reads both.
     uv_scale_offset: vec4<f32>,
+    // `Callisto::pack` (#1657), read through `inti_callisto`.
+    callisto: array<vec4<f32>, 5>,
 }
 
 @group(2) @binding(0) var<storage, read> materials: array<MaterialParams>;

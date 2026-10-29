@@ -23,6 +23,8 @@ struct IntiSurface {
     // #1220 — the instance's layers. A light whose own mask shares no bit with it is skipped before
     // anything is sampled.
     layers: u32,
+    // #1657 — the material's light-model controls.
+    callisto: IntiCallisto,
 }
 
 // `base_color` is linear albedo (sRGB textures are decoded by the sampler; `Material::base_color`
@@ -35,6 +37,7 @@ fn inti_surface(
     roughness: f32,
     flags: u32,
     layers: u32,
+    callisto: IntiCallisto,
 ) -> IntiSurface {
     let v = normalize(inti.camera_position - world_position);
     let n_dot_v = max(dot(n, v), 1e-4);
@@ -56,6 +59,7 @@ fn inti_surface(
     surf.view_depth = dot(world_position - inti.camera_position, inti.camera_forward);
     surf.flags = flags;
     surf.layers = layers;
+    surf.callisto = callisto;
     return surf;
 }
 
@@ -143,7 +147,15 @@ fn inti_light_lit(
     // The diffuse layer always answers to the light's centre.
     let h = normalize(s.to_light + surf.v);
     let l_dot_h = saturate(dot(s.to_light, h));
-    let diffuse_term = inti_fd_burley(surf.perceptual, surf.n_dot_v, n_dot_l, l_dot_h);
+    let diffuse_cos = inti_fd_proxima(surf.a, n_dot_l, dot(surf.v, s.to_light));
+    // Callisto's c1 and c2 (#1657); a default material skips both and is Lambert-based GGX.
+    var c1 = vec3<f32>(1.0);
+    var c2 = vec3<f32>(1.0);
+    if (surf.callisto.on > 0.5) {
+        let n_dot_h = saturate(dot(surf.n, h));
+        c1 = inti_callisto_c1(surf.callisto, l_dot_h, n_dot_h);
+        c2 = inti_callisto_c2(surf.callisto, l_dot_h, n_dot_h, n_dot_l);
+    }
 
     // The expensive half — GGX, Smith, Schlick, multiscatter, representative point — per light per
     // pixel with ~15 lights (#820). Under `specular_floor` (#821) a light pays diffuse only; 0.0
@@ -186,7 +198,7 @@ fn inti_light_lit(
         let n_dot_h = saturate(dot(surf.n, h_spec));
         let d = inti_d_ggx(a_spec, n_dot_h);
         let vis = inti_v_smith_correlated(a_spec, surf.n_dot_v, n_dot_l_spec);
-        f = inti_fresnel(surf.f0, l_dot_h_spec);
+        f = inti_fresnel_falloff(surf.f0, l_dot_h_spec, surf.callisto);
         specular = inti_specular_multiscatter(
             d * vis * f * spec_intensity, surf.f0, surf.f_ab);
         if (solid_angle > 0.0) {
@@ -196,7 +208,7 @@ fn inti_light_lit(
 
     // Diffuse gets what specular did not reflect; Bevy's forward path skips this, its path tracer
     // does not.
-    let diffuse = (vec3<f32>(1.0) - f) * surf.diffuse_color * diffuse_term;
+    let diffuse = (vec3<f32>(1.0) - f) * surf.diffuse_color * c1 * diffuse_cos;
 
     // Each light kind reads its own map: cascades (#476), spot layer (#777), point cube (#778). A
     // non-receiving surface fetches nothing (#804).
@@ -240,8 +252,8 @@ fn inti_light_lit(
     }
 
     // 🔴 Cosine per layer, as Bevy: specular has its own N·L, and factoring it out undoes half of
-    // #776 invisibly until a radius is authored.
-    let radiance = (diffuse * n_dot_l + specular * n_dot_l_spec) * s.irradiance * shadow;
+    // #776 invisibly until a radius is authored. Proxima already carries the diffuse one.
+    let radiance = (diffuse + specular * n_dot_l_spec) * c2 * s.irradiance * shadow;
     // Only a light whose own map does not block it may win the one march.
     let marchable = shadow > 0.0 && (light.flags & INTI_LIGHT_CONTACT_SHADOWS) != 0u;
     return IntiLit(radiance, select(0.0, reach, marchable), s.to_light);
@@ -414,8 +426,11 @@ fn inti_shade(
     flags: u32,
     // #1220 — and its layers, off the same instance.
     layers: u32,
+    // #1657 — the material's light-model controls.
+    callisto: IntiCallisto,
 ) -> vec3<f32> {
-    let surf = inti_surface(world_position, n, base_color, metallic, roughness, flags, layers);
+    let surf = inti_surface(
+        world_position, n, base_color, metallic, roughness, flags, layers, callisto);
 
     // 🔴 One march per pixel, not per light (#845): 1.7 ms per step on the OneXFly × ~14 lights was
     // the whole frame. The loop remembers the brightest light and marches for it alone.

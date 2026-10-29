@@ -228,17 +228,6 @@ fn inti_v_smith_correlated(a: f32, n_dot_v: f32, n_dot_l: f32) -> f32 {
     return 0.5 / max(lambda_v + lambda_l, 1e-4);
 }
 
-fn inti_f_schlick_scalar(f0: f32, f90: f32, v_dot_h: f32) -> f32 {
-    return f0 + (f90 - f0) * pow(saturate(1.0 - v_dot_h), 5.0);
-}
-
-// f90 derived from f0 rather than assumed to be 1.0. A near-black dielectric with f90 = 1 grows a
-// white rim at grazing angles that no real material has; the 50·0.33 scale is Filament's fit.
-fn inti_fresnel(f0: vec3<f32>, v_dot_h: f32) -> vec3<f32> {
-    let f90 = saturate(dot(f0, vec3<f32>(50.0 * 0.33)));
-    return f0 + (vec3<f32>(f90) - f0) * pow(saturate(1.0 - v_dot_h), 5.0);
-}
-
 // Analytic fit to the split-sum DFG integral (Karis / Lazarov), the same polynomial Bevy falls back
 // to without a DFG LUT. Feeds the multiscatter compensation below. Takes PERCEPTUAL roughness.
 fn inti_f_ab(perceptual_roughness: f32, n_dot_v: f32) -> vec2<f32> {
@@ -259,18 +248,67 @@ fn inti_specular_multiscatter(
     return single_scatter * (1.0 + f0 * (1.0 / (f_ab.x + f_ab.y) - 1.0));
 }
 
-// Burley / Disney diffuse. Lambert is flat; this one brightens the grazing edge on rough surfaces
-// the way cloth and unfinished wood actually do. `a` unused — Burley takes perceptual roughness.
-fn inti_fd_burley(
-    perceptual_roughness: f32,
-    n_dot_v: f32,
-    n_dot_l: f32,
-    l_dot_h: f32,
-) -> f32 {
-    let f90 = 0.5 + 2.0 * perceptual_roughness * l_dot_h * l_dot_h;
-    let light_scatter = inti_f_schlick_scalar(1.0, f90, n_dot_l);
-    let view_scatter = inti_f_schlick_scalar(1.0, f90, n_dot_v);
-    return light_scatter * view_scatter * (1.0 / INTI_PI);
+// Proxima (#1657; SIGGRAPH 2023 Advances, Callisto Protocol, slide 128): a fit to GGX-microfacet
+// diffuse, so lighting holds as normal-map mips flatten. Pre-multiplied by N·L, as the slide
+// recommends, so it returns `f·N·L`. Lambert at `a = 0`.
+fn inti_fd_proxima(a: f32, n_dot_l: f32, v_dot_l: f32) -> f32 {
+    let toward = 1.0 - sqrt(max(-v_dot_l, 0.0));
+    return max(a * (0.19 - 0.55 * n_dot_l) * toward + n_dot_l, 0.0) * (1.0 / INTI_PI);
+}
+
+// The Callisto BRDF's controls (#1657), packed by `Callisto::pack`. Defaults are Lambert + GGX.
+struct IntiCallisto {
+    // rgb ρf (intensity × tint), w 5·r(nf).
+    fresnel: vec4<f32>,
+    // rgb ρr, w 5·r(nr).
+    retro: vec4<f32>,
+    // rgb o, w p.
+    terminator: vec4<f32>,
+    // x 5·r(mf), y 5·r(mr), z specular Fresnel weight t(2 − r(ns)), w its exponent 5·r(ns).
+    tangent: vec4<f32>,
+    // 1 when any control departs from its default; 0 skips c1 and c2.
+    on: f32,
+}
+
+fn inti_callisto(rows: array<vec4<f32>, 5>) -> IntiCallisto {
+    return IntiCallisto(rows[0], rows[1], rows[2], rows[3], rows[4].x);
+}
+
+fn inti_callisto_default() -> IntiCallisto {
+    return IntiCallisto(
+        vec4<f32>(1.0, 1.0, 1.0, 2.5), vec4<f32>(1.0, 1.0, 1.0, 2.5),
+        vec4<f32>(0.0, 0.0, 0.0, 0.5), vec4<f32>(2.5, 2.5, 1.0, 5.0), 0.0);
+}
+
+// Slide 85's `h`, exponents pre-remapped. 🔴 The floor keeps `pow(0, 0)` from being NaN.
+fn inti_callisto_h(cos_a: f32, n: f32, cos_b: f32, m: f32) -> f32 {
+    return pow(max(1.0 - cos_a, 1e-6), n) * pow(max(cos_b, 1e-6), m);
+}
+
+// Slide 85's c1: diffuse Fresnel × retroreflection. θd is L to H, θh is N to H.
+fn inti_callisto_c1(c: IntiCallisto, l_dot_h: f32, n_dot_h: f32) -> vec3<f32> {
+    let alpha_f = inti_callisto_h(l_dot_h, c.fresnel.w, n_dot_h, c.tangent.x);
+    let alpha_r = inti_callisto_h(n_dot_h, c.retro.w, l_dot_h, c.tangent.y);
+    return mix(vec3<f32>(1.0), c.fresnel.rgb, alpha_f) * mix(vec3<f32>(1.0), c.retro.rgb, alpha_r);
+}
+
+// Slide 90's c2: the smooth terminator, masked off the Fresnel and retroreflection areas. The
+// slide writes `1 − θ`; read as cosines, the only reading that stays in [0, 1].
+fn inti_callisto_c2(c: IntiCallisto, l_dot_h: f32, n_dot_h: f32, n_dot_l: f32) -> vec3<f32> {
+    let d = 1.0 - l_dot_h;
+    let h = 1.0 - n_dot_h;
+    let mask = (1.0 - d * d * d) * (1.0 - h * h * h);
+    let soft = smoothstep(0.0, max(mask * c.terminator.w, 1e-4), n_dot_l);
+    return mix(vec3<f32>(1.0), vec3<f32>(soft), mask * c.terminator.rgb);
+}
+
+// Schlick with slide 95's falloff; weight 1 and exponent 5 are plain Schlick. f90 derived from f0
+// rather than 1.0: a near-black dielectric with f90 = 1 grows a white rim no real material has; the
+// 50·0.33 scale is Filament's fit.
+fn inti_fresnel_falloff(f0: vec3<f32>, v_dot_h: f32, c: IntiCallisto) -> vec3<f32> {
+    let f90 = saturate(dot(f0, vec3<f32>(50.0 * 0.33)));
+    let edge = pow(max(1.0 - v_dot_h, 1e-6), c.tangent.w);
+    return f0 + c.tangent.z * (vec3<f32>(f90) - f0) * edge;
 }
 
 // Inverse-square with a smooth window reaching exactly zero at `range`, so the gizmo's wire sphere

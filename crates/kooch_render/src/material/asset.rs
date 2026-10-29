@@ -6,8 +6,8 @@ use kooch_core::Guid;
 use kooch_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
 use serde::{Deserialize, Serialize};
 
-use super::MaterialParams;
 use super::values::ParamValues;
+use super::{Callisto, MaterialParams};
 
 /// What a material file is called.
 pub const MATERIAL_EXTENSION: &str = "material";
@@ -48,6 +48,9 @@ pub struct Material {
     /// Values for `shader`'s declared parameters, by name (#1158). Absent ones use the default.
     #[serde(default, skip_serializing_if = "ParamValues::is_empty")]
     pub values: ParamValues,
+    /// The light model's controls (#1657). Absent → Lambert + GGX, which every older file meant.
+    #[serde(default, skip_serializing_if = "Callisto::is_default")]
+    pub callisto: Callisto,
 }
 
 impl Material {
@@ -66,6 +69,7 @@ impl Material {
             uv_offset: [0.0, 0.0],
             shader: None,
             values: ParamValues::new(),
+            callisto: Callisto::default(),
         }
     }
 
@@ -105,6 +109,7 @@ impl Material {
             self.emissive,
         )
         .with_uv(self.uv_scale, self.uv_offset)
+        .with_callisto(&self.callisto)
     }
 }
 
@@ -122,6 +127,7 @@ impl Default for Material {
             uv_offset: [0.0, 0.0],
             shader: None,
             values: ParamValues::new(),
+            callisto: Callisto::default(),
         }
     }
 }

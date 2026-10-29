@@ -52,6 +52,14 @@ pub(super) fn draw_material_editor(
             ui.weak("The shader is missing or does not parse — the Console says why.");
         }
     }
+    // Any lit shader: the controls act in the light loop, not in the surface (#1657).
+    if !matches!(shader, MaterialShader::Unavailable) {
+        ui.separator();
+        let (light_changed, light_released) =
+            super::callisto::draw_callisto(ui, guid, &mut edited.callisto);
+        changed |= light_changed;
+        released |= light_released;
+    }
 
     if !changed && !released {
         return;
