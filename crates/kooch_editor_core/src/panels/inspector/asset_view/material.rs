@@ -13,7 +13,18 @@ pub(super) fn draw_material_editor(
     catalog: &[AssetCatalogEntry],
     actions: &mut Vec<EditorAction>,
 ) {
-    let mut edited = mat.clone();
+    // 🔴 `mat` arrives a save-and-reload behind the keystroke, and a `DragValue` handed a value it
+    // did not write replaces its text, scrambling digits (#1665). Mid-edit, the last edit is the truth.
+    let pending_id = egui::Id::new(("material_pending", guid));
+    let editing = ui.memory(|memory| memory.focused().is_some())
+        || ui.input(|input| input.pointer.any_down());
+    let pending = ui
+        .data(|data| data.get_temp::<Material>(pending_id))
+        .filter(|pending| editing && pending != mat);
+    if pending.is_none() {
+        ui.data_mut(|data| data.remove_temp::<Material>(pending_id));
+    }
+    let mut edited = pending.unwrap_or_else(|| mat.clone());
     let mut changed = false;
     // Set on the frame a drag ends. That frame usually reports no change
     // — the value stopped moving before the button came up — so it is a
@@ -68,6 +79,7 @@ pub(super) fn draw_material_editor(
     // picking a texture, clicking a swatch. Only a drag needs the wait,
     // and `released` is what ends it.
     let held = ui.input(|input| input.pointer.any_down());
+    ui.data_mut(|data| data.insert_temp(pending_id, edited.clone()));
     actions.push(EditorAction::EditMaterial {
         guid,
         material: edited,
