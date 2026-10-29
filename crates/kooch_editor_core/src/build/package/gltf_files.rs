@@ -37,7 +37,7 @@ pub(super) fn carry_uris(files: &mut Vec<(String, PathBuf)>) {
 
 /// The relative file URIs in a `.gltf`'s `buffers` and `images`. Inline `data:` URIs and anything
 /// the loader's hygiene gate would refuse are left out.
-fn uris_of(path: &std::path::Path) -> Vec<String> {
+pub(crate) fn uris_of(path: &std::path::Path) -> Vec<String> {
     let Ok(text) = std::fs::read(path) else {
         return Vec::new();
     };

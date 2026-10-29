@@ -17,22 +17,7 @@ pub(super) fn handle_import_assets(
         tracing::error!(dest = %dest.display(), error = %e, "import: cannot create destination");
         return;
     }
-    let mut copied = Vec::new();
-    for src in files {
-        let Some(name) = src.file_name() else {
-            continue;
-        };
-        let target = crate::actions::asset_ops::unique_target(dest, name);
-        match std::fs::copy(src, &target) {
-            Ok(_) => {
-                tracing::info!(from = %src.display(), to = %target.display(), "asset imported");
-                copied.push(target);
-            }
-            Err(e) => {
-                tracing::error!(from = %src.display(), error = %e, "asset import failed");
-            }
-        }
-    }
+    let copied = super::import_copy::copy_dropped(files, dest);
     if copied.is_empty() {
         return;
     }

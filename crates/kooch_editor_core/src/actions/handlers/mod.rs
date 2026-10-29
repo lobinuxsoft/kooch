@@ -2,6 +2,7 @@
 
 mod assets;
 mod collider;
+mod import_copy;
 mod play;
 mod prefab;
 mod project;
