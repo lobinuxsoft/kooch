@@ -292,7 +292,10 @@ impl RawEventHandler for EguiEventHandler {
             return open.state.on_window_event(window, event).consumed;
         }
         let mut state = self.winit_state.lock().unwrap();
-        state.on_window_event(window, event).consumed
+        let consumed = state.on_window_event(window, event).consumed;
+        // egui claims the wheel whenever the pointer is over a panel — the viewport is one — so a
+        // consumed wheel never reached the game's input; `InputFocus` already decides who gets it.
+        consumed && !matches!(event, WindowEvent::MouseWheel { .. })
     }
 }
 
