@@ -142,6 +142,9 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
     // full world as in an empty one — and it is the half of "Play shows the game" that declaring
     // component types cannot reach without reading the world every frame.
     session.set_watching(watched_ids(resources, mirror));
+    if let Some(size) = resources.get::<kooch_ecs::ViewSize>() {
+        session.send_view_size((size.0.x, size.0.y));
+    }
 
     // A gizmo drag is an edit the project has not been told about yet — it only goes over the wire
     // when the user lets go.
@@ -187,6 +190,12 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
                 sync.last_pull = Some(Instant::now());
                 profiling::scope!("remote: apply moved");
                 mirror.apply_moved(&moved.moved, &moved.components, resources);
+                let pending = resources
+                    .get::<kooch_ecs::UiDrawList>()
+                    .and_then(|list| list.atlas_upload.as_ref().map(|upload| upload.rect));
+                if let Some(ui) = session.take_ui(pending) {
+                    resources.insert(ui);
+                }
                 record_stats(resources, session, refresh, Duration::ZERO);
                 return;
             }

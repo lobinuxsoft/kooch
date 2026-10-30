@@ -18,6 +18,7 @@ pub mod protocol;
 pub mod scene_root;
 pub mod server;
 pub mod snapshot_cache;
+pub mod ui_frame;
 
 pub use client::{CallStats, ClientError, MovedUpdate, RemoteClient};
 pub use outbox::HostOutbox;
