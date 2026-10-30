@@ -1,9 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <!-- The pause menu: the syntax sample frozen by #1693, parsed by #280 phases 2-3. -->
-<ui style="menu.kooch_style">
+<ui style="menu.kcss" xmlns:on="urn:kooch:on" xmlns:bind="urn:kooch:bind">
   <panel name="menu" class="card">
     <label class="title">Pausa</label>
 
-    <use src="menu_button.kooch_ui" name="resume" on:click="game.resume">
+    <use src="menu_button.kxml" name="resume" on:click="game.resume">
       <set node="label" text="Continuar"/>
     </use>
 
@@ -17,7 +18,7 @@
       <toggle name="rumble" bind:value="InputSettings.rumble"/>
     </panel>
 
-    <use src="menu_button.kooch_ui" name="quit" class="danger" on:click="game.quit">
+    <use src="menu_button.kxml" name="quit" class="danger" on:click="game.quit">
       <set node="label" text="Salir"/>
     </use>
   </panel>

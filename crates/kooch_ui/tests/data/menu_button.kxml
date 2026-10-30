@@ -1,5 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <!-- A button reused by the menu: the label's text is overridden per instance. -->
-<ui style="menu.kooch_style">
+<ui style="menu.kcss" xmlns:on="urn:kooch:on" xmlns:bind="urn:kooch:bind">
   <button name="root" class="menu-button">
     <label name="label">Button</label>
   </button>

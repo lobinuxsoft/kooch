@@ -1,15 +1,15 @@
-//! `.kooch_ui` (#280, syntax in #1693): a document's structure, read with `roxmltree`.
+//! `.kxml` (#280, syntax in #1693): a document's structure, read with `roxmltree`.
 
 use kooch_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
 
 /// Extension the asset database routes to [`UiSourceLoader`].
-pub const UI_EXTENSION: &str = "kooch_ui";
+pub const UI_EXTENSION: &str = "kxml";
 
 /// The root's parent.
 pub const NO_PARENT: u32 = u32::MAX;
 
-/// `on:` and `bind:` are XML namespace prefixes, so they are declared around the file: an author
-/// writes `on:click` without an `xmlns` line. On line 1, so every row an error names is the file's.
+/// `on:` and `bind:` are XML namespace prefixes, declared around the file so the `xmlns` line on
+/// `<ui>` is optional; a linter still wants it. On line 1, so every row an error names is the file's.
 const PREFIXES: [(&str, &str); 2] = [("on", "urn:kooch:on"), ("bind", "urn:kooch:bind")];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,7 +82,7 @@ impl UiSource {
             .children()
             .filter(|n| n.is_element());
         let (Some(root), None) = (roots.next(), roots.next()) else {
-            return Err("a .kooch_ui holds one `<ui>`".to_owned());
+            return Err("a .kxml holds one `<ui>`".to_owned());
         };
         if root.tag_name().name() != "ui" {
             return Err(format!(
@@ -182,7 +182,7 @@ fn push(
     Ok(())
 }
 
-/// Reads a `.kooch_ui` file into a [`UiSource`].
+/// Reads a `.kxml` file into a [`UiSource`].
 #[derive(Debug, Default, Clone, Copy)]
 pub struct UiSourceLoader;
 

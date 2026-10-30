@@ -46,5 +46,5 @@
 
 slider {
   width: 320px;
-  material: "shaders/ui_slider.shader";
+  -kooch-material: "shaders/ui_slider.shader";
 }

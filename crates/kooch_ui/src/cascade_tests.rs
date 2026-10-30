@@ -2,13 +2,13 @@ use crate::build_tree;
 use crate::source::UiSource;
 use crate::style::UiStyleSheet;
 
-const MENU_UI: &str = include_str!("../tests/data/menu.kooch_ui");
-const MENU_STYLE: &str = include_str!("../tests/data/menu.kooch_style");
+const MENU_UI: &str = include_str!("../tests/data/menu.kxml");
+const MENU_STYLE: &str = include_str!("../tests/data/menu.kcss");
 
 #[test]
 fn the_menu_sample_builds() {
     let source = UiSource::parse(MENU_UI).expect("the sample parses");
-    assert_eq!(source.style.as_deref(), Some("menu.kooch_style"));
+    assert_eq!(source.style.as_deref(), Some("menu.kcss"));
     let sheet = UiStyleSheet::parse(MENU_STYLE);
     let tree = build_tree(&source, Some(&sheet));
     let menu = tree.query("menu").expect("the menu panel");

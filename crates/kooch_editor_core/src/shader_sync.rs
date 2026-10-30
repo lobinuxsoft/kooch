@@ -73,7 +73,11 @@ const ANALYZER_SETTINGS: [&str; 3] = [
     "wgsl-analyzer.inlayHints.typeHints",
 ];
 
-/// Adds what `.shader` files need to the project's `.vscode/settings.json`, creating it if absent.
+/// Kóoch's own extensions, read by VS Code as the language they are written in (#1158, #1697).
+const ASSOCIATIONS: [(&str, &str); 3] =
+    [("*.shader", "wgsl"), ("*.kxml", "xml"), ("*.kcss", "css")];
+
+/// Adds what Kóoch's files need to the project's `.vscode/settings.json`, creating it if absent.
 /// Keys the author already set keep their values, and the rest of the file keeps its formatting.
 pub(crate) fn write_vscode_settings(root: &Path) {
     let settings = root.join(".vscode").join("settings.json");
@@ -90,7 +94,7 @@ pub(crate) fn write_vscode_settings(root: &Path) {
         .and_then(|()| std::fs::write(&settings, merged));
     match written {
         Ok(()) => {
-            tracing::info!(path = %settings.display(), "VS Code settings updated for .shader files")
+            tracing::info!(path = %settings.display(), "VS Code settings updated for Kóoch files")
         }
         Err(error) => {
             tracing::warn!(path = %settings.display(), %error, "could not write VS Code settings")
@@ -98,7 +102,7 @@ pub(crate) fn write_vscode_settings(root: &Path) {
     }
 }
 
-/// `text` with whatever `.shader` needs added, or `None` when nothing is missing.
+/// `text` with whatever Kóoch's files need added, or `None` when nothing is missing.
 ///
 /// 🔴 Spliced into the text rather than re-serialised: serde_json would sort the author's keys. A file
 /// with comments or trailing commas is not plain JSON and is refused rather than guessed at.
@@ -110,22 +114,32 @@ fn merged_settings(text: &str) -> Result<Option<String>, String> {
     let mut merged = text.trim_end().to_owned();
     let mut additions: Vec<String> = Vec::new();
 
+    let entry = |(glob, language): &(&str, &str)| format!("\"{glob}\": \"{language}\"");
     match object.get("files.associations") {
-        None => additions.push(r#""files.associations": { "*.shader": "wgsl" }"#.to_owned()),
-        Some(serde_json::Value::Object(map)) if map.contains_key("*.shader") => {}
+        None => {
+            let entries: Vec<String> = ASSOCIATIONS.iter().map(entry).collect();
+            additions.push(format!(
+                "\"files.associations\": {{ {} }}",
+                entries.join(", ")
+            ));
+        }
         Some(serde_json::Value::Object(map)) => {
-            let key = merged
-                .find("\"files.associations\"")
-                .ok_or("files.associations is not where it parsed")?;
-            let brace = key
-                + merged[key..]
-                    .find('{')
-                    .ok_or("files.associations has no body")?;
-            let entry = match map.is_empty() {
-                true => r#" "*.shader": "wgsl" "#,
-                false => r#" "*.shader": "wgsl","#,
-            };
-            merged.insert_str(brace + 1, entry);
+            let missing: Vec<String> = ASSOCIATIONS
+                .iter()
+                .filter(|(glob, _)| !map.contains_key(*glob))
+                .map(entry)
+                .collect();
+            if !missing.is_empty() {
+                let key = merged
+                    .find("\"files.associations\"")
+                    .ok_or("files.associations is not where it parsed")?;
+                let brace = key
+                    + merged[key..]
+                        .find('{')
+                        .ok_or("files.associations has no body")?;
+                let separator = if map.is_empty() { " " } else { "," };
+                merged.insert_str(brace + 1, &format!(" {}{separator}", missing.join(", ")));
+            }
         }
         Some(_) => return Err("files.associations is not an object".to_owned()),
     }

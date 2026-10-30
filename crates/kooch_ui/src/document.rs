@@ -28,10 +28,10 @@ pub static MODE_CHOICES: &[FieldChoice] = &[
 #[derive(Debug, Clone, Default, PartialEq, Reflect)]
 #[reflect(category = "UI")]
 pub struct UiDocument {
-    /// The `.kooch_ui` structure (#280).
+    /// The `.kxml` structure (#280).
     #[reflect(asset = "kooch_ui::source::UiSource")]
     pub source: Option<Guid>,
-    /// The `.kooch_style` sheet (#280).
+    /// The `.kcss` sheet (#280).
     #[reflect(asset = "kooch_ui::style::sheet::UiStyleSheet")]
     pub style: Option<Guid>,
     /// Over the screen, or in the world at this entity.

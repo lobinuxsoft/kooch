@@ -60,6 +60,7 @@ fn existing_settings_are_extended() {
     assert_eq!(settings["editor.fontSize"], 14);
     assert_eq!(settings["files.associations"]["*.foo"], "toml");
     assert_eq!(settings["files.associations"]["*.shader"], "wgsl");
+    assert_eq!(settings["files.associations"]["*.kxml"], "xml");
     assert_eq!(settings["wgsl-analyzer.inlayHints.typeHints"], false);
 }
 

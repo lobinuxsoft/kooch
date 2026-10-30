@@ -69,7 +69,7 @@ fn open_project(resources: &mut Resources, path: &std::path::Path, scene: SceneS
                 crate::actions::split_authoring(&root, &crate_name);
                 // And give the game build the engine crates its scenes use (#1187).
                 crate::build::scene_features::ensure(&root, &[]);
-                // So `.shader` files open as WGSL in VS Code (#1158).
+                // So `.shader`, `.kxml` and `.kcss` open as WGSL, XML and CSS in VS Code (#1158, #1697).
                 crate::shader_sync::write_vscode_settings(&root);
 
                 // Then load it, if it has been built. Writing lib.rs does not produce a .so — that

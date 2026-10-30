@@ -1,4 +1,4 @@
-//! A [`UiTree`] from a parsed `.kooch_ui` and its sheet.
+//! A [`UiTree`] from a parsed `.kxml` and its sheet.
 
 use crate::cascade::resolve;
 use crate::source::{ElementKind, NO_PARENT, UiSource};
