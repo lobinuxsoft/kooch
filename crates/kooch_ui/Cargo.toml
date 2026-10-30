@@ -1,0 +1,13 @@
+[package]
+name = "kooch_ui"
+description = "In-game UI: one entity per document, its node tree as SoA over taffy."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kooch_core.workspace = true
+kooch_ecs.workspace = true
+taffy.workspace = true

@@ -51,6 +51,8 @@ pub use kooch_physics;
 pub use kooch_remote;
 #[cfg(feature = "render")]
 pub use kooch_render;
+#[cfg(feature = "ui")]
+pub use kooch_ui;
 #[cfg(feature = "window")]
 pub use kooch_window;
 #[cfg(feature = "world")]
@@ -151,6 +153,10 @@ pub mod prelude {
     // changed.
     #[cfg(feature = "blockmesh")]
     pub use kooch_blockmesh::{Block, BlockMesh, BlockPlugin, BuiltBlocks, SplineSweep};
+
+    // A UI is one entity; the game reaches its nodes through `UiTrees` (#96).
+    #[cfg(feature = "ui")]
+    pub use kooch_ui::{UiDocument, UiNode, UiPlugin, UiTree, UiTrees};
 
     // 🔴 Goals, checkpoints and death planes are sensors, and the event type could not be named
     // here. Read with `Events<CollisionStarted>`; ⚠️ one frame late by design, since `Events` is
@@ -321,6 +327,10 @@ impl kooch_core::plugin::PluginGroup for RemoteHostPlugins {
         #[cfg(feature = "blockmesh")]
         let builder = builder.add(kooch_blockmesh::BlockPlugin);
 
+        // Beside blocks and for the same reason: a scene's `UiDocument` has to resolve on the host.
+        #[cfg(feature = "ui")]
+        let builder = builder.add(kooch_ui::UiPlugin);
+
         // Gravity that points somewhere other than down. Inert until a
         // scene holds a source, so adding it changes nothing on its own.
         #[cfg(all(feature = "physics", feature = "gravity"))]
@@ -392,6 +402,10 @@ impl kooch_core::plugin::PluginGroup for DefaultPlugins {
         // forgotten line reads only "add_component failed".
         #[cfg(feature = "blockmesh")]
         let builder = builder.add(kooch_blockmesh::BlockPlugin);
+
+        // Beside blocks and for the same reason: a scene's `UiDocument` has to resolve on the host.
+        #[cfg(feature = "ui")]
+        let builder = builder.add(kooch_ui::UiPlugin);
 
         // Gravity that points somewhere other than down. Inert until a
         // scene holds a source, so adding it changes nothing on its own.
