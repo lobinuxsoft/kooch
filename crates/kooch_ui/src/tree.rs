@@ -1,8 +1,13 @@
 //! A document's nodes: taffy owns structure and layout, the parallel arrays own the rest. A
 //! [`UiNode`] indexes all of them, so nothing outside needs taffy's slotmap keys.
 
+use std::hash::{Hash, Hasher};
+
 use glam::Vec2;
 use taffy::{AvailableSpace, NodeId, Size, Style, TaffyTree};
+
+use crate::atlas::{GlyphAtlas, GlyphKey, subpixel};
+use crate::text::{Text, UiFonts, measure};
 
 /// A node of one [`UiTree`]: dense from the root, which is `0`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -15,11 +20,23 @@ pub struct UiRect {
     pub size: Vec2,
 }
 
+/// One glyph to draw, in physical pixels, and where its bitmap is in the atlas.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GlyphQuad {
+    pub min: [f32; 2],
+    pub size: [f32; 2],
+    pub uv_min: [u16; 2],
+    pub uv_size: [u16; 2],
+    pub node: u32,
+}
+
 /// One document's node tree. Grows only: a document that changes shape is rebuilt whole, and
 /// hiding a node is `Display::None`, not removal.
 #[derive(Debug)]
 pub struct UiTree {
-    layout: TaffyTree<()>,
+    /// The node context is the node's own index: the measure reads its text by it.
+    layout: TaffyTree<u32>,
     taffy: Vec<NodeId>,
     /// `u32::MAX` for the root. Always a lower index than the child, which is what lets one forward
     /// pass turn taffy's parent-relative positions into absolute ones.
@@ -27,6 +44,10 @@ pub struct UiTree {
     name: Vec<Option<Box<str>>>,
     material: Vec<u32>,
     rect: Vec<UiRect>,
+    text: Vec<Option<Text>>,
+    glyphs: Vec<GlyphQuad>,
+    /// Physical pixels per canvas unit and atlas generation the glyphs were built for.
+    rastered: Option<(f32, u32)>,
     /// Size the rects were computed for; `None` once anything changed.
     laid_out: Option<Vec2>,
 }
@@ -49,6 +70,9 @@ impl UiTree {
             name: Vec::new(),
             material: Vec::new(),
             rect: Vec::new(),
+            text: Vec::new(),
+            glyphs: Vec::new(),
+            rastered: None,
             laid_out: None,
         };
         // Logical units: rounding here would snap to a pixel the screen does not have. The draw
@@ -78,18 +102,66 @@ impl UiTree {
         }
     }
 
+    /// Gives a node text, shaped with the engine font at `size` canvas units. Its content box is
+    /// measured from it.
+    pub fn set_text(&mut self, node: UiNode, content: &str, size: f32) {
+        let Some(&id) = self.taffy.get(node.0 as usize) else {
+            return;
+        };
+        let slot = &mut self.text[node.0 as usize];
+        if slot
+            .as_ref()
+            .is_some_and(|text| text.content == content && text.size == size)
+        {
+            return;
+        }
+        *slot = Some(Text {
+            content: content.to_owned(),
+            size,
+            layout: None,
+            origin: Vec2::ZERO,
+        });
+        let _ = self.layout.set_node_context(id, Some(node.0));
+        let _ = self.layout.mark_dirty(id);
+        self.laid_out = None;
+    }
+
     /// Lays the tree out in `available` logical units, unless it already is for that size and
     /// nothing changed since. Returns whether it ran.
-    pub fn layout(&mut self, available: Size<AvailableSpace>) -> bool {
+    pub fn layout(&mut self, available: Size<AvailableSpace>, fonts: &mut UiFonts) -> bool {
         let key = Vec2::new(space_key(available.width), space_key(available.height));
         if self.laid_out == Some(key) || self.taffy.is_empty() {
             return false;
         }
-        if self
-            .layout
-            .compute_layout(self.taffy[0], available)
-            .is_err()
-        {
+        let text = &mut self.text;
+        let measured = self.layout.compute_layout_with_measure(
+            self.taffy[0],
+            available,
+            |inputs, _, context, style| {
+                taffy::compute_leaf_layout(
+                    inputs,
+                    style,
+                    |_, _| 0.0,
+                    |known, available| {
+                        let Some(text) = context.and_then(|index| text[*index as usize].as_mut())
+                        else {
+                            return Size::ZERO;
+                        };
+                        let width = known.width.or(match available.width {
+                            AvailableSpace::Definite(width) => Some(width),
+                            AvailableSpace::MinContent => Some(0.0),
+                            AvailableSpace::MaxContent => None,
+                        });
+                        let size = measure(text.shaped(fonts), width);
+                        Size {
+                            width: known.width.unwrap_or(size.x),
+                            height: known.height.unwrap_or(size.y),
+                        }
+                    },
+                )
+            },
+        );
+        if measured.is_err() {
             return false;
         }
         for index in 0..self.taffy.len() {
@@ -100,13 +172,64 @@ impl UiTree {
                 u32::MAX => Vec2::ZERO,
                 parent => self.rect[parent as usize].min,
             };
+            let min = origin + Vec2::new(own.location.x, own.location.y);
+            let inset = Vec2::new(
+                own.padding.left + own.border.left,
+                own.padding.top + own.border.top,
+            );
+            let content = own.content_box_width();
             self.rect[index] = UiRect {
-                min: origin + Vec2::new(own.location.x, own.location.y),
+                min,
                 size: Vec2::new(own.size.width, own.size.height),
             };
+            // The last measure may have broken lines at a trial width; the box is final now.
+            if let Some(text) = self.text[index].as_mut() {
+                text.origin = min + inset;
+                measure(text.shaped(fonts), Some(content));
+            }
         }
         self.laid_out = Some(key);
+        self.rastered = None;
         true
+    }
+
+    /// Rebuilds the glyph quads when the layout, the scale or the atlas changed. `scale` is
+    /// physical pixels per canvas unit. Returns whether it ran.
+    pub fn rasterize(&mut self, scale: f32, fonts: &mut UiFonts, atlas: &mut GlyphAtlas) -> bool {
+        if self.rastered == Some((scale, atlas.generation())) {
+            return false;
+        }
+        // Twice at most: a full atlas clears itself mid-pass, and what was built before points at
+        // space it gave away.
+        for _ in 0..2 {
+            let generation = atlas.generation();
+            self.glyphs.clear();
+            for (index, text) in self.text.iter_mut().enumerate() {
+                let Some(text) = text.as_mut() else {
+                    continue;
+                };
+                let origin = text.origin;
+                let layout = text.shaped(fonts);
+                push_glyphs(
+                    layout,
+                    origin,
+                    scale,
+                    index as u32,
+                    &mut fonts.scale,
+                    atlas,
+                    &mut self.glyphs,
+                );
+            }
+            if atlas.generation() == generation {
+                self.rastered = Some((scale, generation));
+                return true;
+            }
+        }
+        true
+    }
+
+    pub fn glyphs(&self) -> &[GlyphQuad] {
+        &self.glyphs
     }
 
     pub fn rect(&self, node: UiNode) -> Option<UiRect> {
@@ -153,7 +276,64 @@ impl UiTree {
         self.name.push(None);
         self.material.push(Self::NO_MATERIAL);
         self.rect.push(UiRect::default());
+        self.text.push(None);
         index
+    }
+}
+
+fn push_glyphs(
+    layout: &parley::Layout<()>,
+    origin: Vec2,
+    scale: f32,
+    node: u32,
+    context: &mut swash::scale::ScaleContext,
+    atlas: &mut GlyphAtlas,
+    out: &mut Vec<GlyphQuad>,
+) {
+    for line in layout.lines() {
+        for item in line.items() {
+            let parley::PositionedLayoutItem::GlyphRun(run) = item else {
+                continue;
+            };
+            let shaped = run.run();
+            let font = shaped.font();
+            let Some(font_ref) = swash::FontRef::from_index(font.data.data(), font.index as usize)
+            else {
+                continue;
+            };
+            let coords: Vec<i16> = shaped
+                .normalized_coords()
+                .iter()
+                .map(|coord| coord.to_bits())
+                .collect();
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            coords.hash(&mut hasher);
+            let coords_hash = hasher.finish();
+            let size = (shaped.font_size() * scale * 64.0).round() as u32;
+            for glyph in run.positioned_glyphs() {
+                let x = (origin.x + glyph.x) * scale;
+                let y = ((origin.y + glyph.y) * scale).round();
+                let (pixel, bin) = subpixel(x);
+                let key = GlyphKey {
+                    font: font.data.id(),
+                    index: font.index,
+                    glyph: glyph.id as u16,
+                    size,
+                    subpixel: bin,
+                    coords: coords_hash,
+                };
+                let Some(slot) = atlas.glyph(context, font_ref, &coords, key) else {
+                    continue;
+                };
+                out.push(GlyphQuad {
+                    min: [pixel + slot.left as f32, y - slot.top as f32],
+                    size: [slot.size[0] as f32, slot.size[1] as f32],
+                    uv_min: slot.min,
+                    uv_size: slot.size,
+                    node,
+                });
+            }
+        }
     }
 }
 
