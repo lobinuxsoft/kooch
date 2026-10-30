@@ -10,6 +10,7 @@ authors.workspace = true
 [dependencies]
 kooch_core.workspace = true
 kooch_ecs.workspace = true
+kooch_input.workspace = true
 taffy.workspace = true
 glam.workspace = true
 parley.workspace = true

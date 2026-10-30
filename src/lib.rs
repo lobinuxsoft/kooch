@@ -156,7 +156,9 @@ pub mod prelude {
 
     // A UI is one entity; the game reaches its nodes through `UiTrees` (#96).
     #[cfg(feature = "ui")]
-    pub use kooch_ui::{UiDocument, UiNode, UiPlugin, UiTree, UiTrees};
+    pub use kooch_ui::{
+        UiActions, UiDocument, UiEvent, UiEventKind, UiNode, UiPlugin, UiPointer, UiTree, UiTrees,
+    };
 
     // 🔴 Goals, checkpoints and death planes are sensors, and the event type could not be named
     // here. Read with `Events<CollisionStarted>`; ⚠️ one frame late by design, since `Events` is

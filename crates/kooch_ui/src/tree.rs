@@ -64,6 +64,8 @@ pub struct UiTree {
     /// pass turn taffy's parent-relative positions into absolute ones.
     parent: Vec<u32>,
     name: Vec<Option<Box<str>>>,
+    /// The action `on:click` names (#1693).
+    click: Vec<Option<Box<str>>>,
     material: Vec<u32>,
     rect: Vec<UiRect>,
     /// Border width from the layout, uniform: the left edge's.
@@ -95,6 +97,7 @@ impl UiTree {
             taffy: Vec::new(),
             parent: Vec::new(),
             name: Vec::new(),
+            click: Vec::new(),
             material: Vec::new(),
             rect: Vec::new(),
             border: Vec::new(),
@@ -333,6 +336,35 @@ impl UiTree {
         }
     }
 
+    pub fn set_click(&mut self, node: UiNode, action: &str) {
+        if let Some(own) = self.click.get_mut(node.0 as usize) {
+            *own = Some(action.into());
+        }
+    }
+
+    pub fn click(&self, node: UiNode) -> Option<&str> {
+        self.click.get(node.0 as usize)?.as_deref()
+    }
+
+    pub fn parent(&self, node: UiNode) -> Option<UiNode> {
+        let parent = *self.parent.get(node.0 as usize)?;
+        (parent != u32::MAX).then_some(UiNode(parent))
+    }
+
+    /// The topmost node under `point` that stops the pointer: one with an action or a visible
+    /// background. A transparent layout panel lets it through to the game.
+    pub fn pick(&self, point: Vec2) -> Option<UiNode> {
+        (0..self.rect.len())
+            .rev()
+            .map(|i| UiNode(i as u32))
+            .find(|&node| {
+                let i = node.0 as usize;
+                let rect = self.rect[i];
+                let inside = point.cmpge(rect.min).all() && point.cmplt(rect.min + rect.size).all();
+                inside && (self.click[i].is_some() || self.paint[i].background[3] > 0.0)
+            })
+    }
+
     pub fn set_material(&mut self, node: UiNode, material: u32) {
         if let Some(own) = self.material.get_mut(node.0 as usize) {
             *own = material;
@@ -356,6 +388,7 @@ impl UiTree {
         self.taffy.push(node);
         self.parent.push(parent);
         self.name.push(None);
+        self.click.push(None);
         self.material.push(Self::NO_MATERIAL);
         self.rect.push(UiRect::default());
         self.border.push(0.0);

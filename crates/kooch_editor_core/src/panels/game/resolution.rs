@@ -10,6 +10,25 @@ pub(crate) struct GameResolution {
     pub choice: Option<[u32; 2]>,
     /// The display's sizes, one per size, largest first.
     pub sizes: Vec<[u32; 2]>,
+    /// Where last frame's image was drawn, so the cursor can be sent in the game's pixels (#96).
+    pub image: Option<GameImage>,
+}
+
+/// The game image on the editor's window, in physical pixels, and the target it shows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct GameImage {
+    pub min: glam::Vec2,
+    pub size: glam::Vec2,
+    pub target: glam::Vec2,
+}
+
+impl GameImage {
+    /// A window position in the target's pixels; `None` off the image.
+    pub fn map(&self, window: glam::Vec2) -> Option<glam::Vec2> {
+        let local = (window - self.min) / self.size;
+        let inside = local.cmpge(glam::Vec2::ZERO).all() && local.cmplt(glam::Vec2::ONE).all();
+        inside.then_some(local * self.target)
+    }
 }
 
 /// One entry per size: a monitor reports each size once per refresh rate.

@@ -172,7 +172,9 @@ fn gated(open: bool, value: f32) -> Vec3 {
 fn read_control(path: ControlPath, backend: &dyn InputBackend, pad: Option<GamepadId>) -> f32 {
     match path {
         ControlPath::Key(key) => backend.is_pressed(key) as u8 as f32,
-        ControlPath::Mouse(button) => backend.is_mouse_pressed(button) as u8 as f32,
+        ControlPath::Mouse(button) => {
+            (!backend.pointer_claimed() && backend.is_mouse_pressed(button)) as u8 as f32
+        }
         ControlPath::Button(button) => pad
             .map(|pad| backend.button_value(pad, button))
             .unwrap_or(0.0),
@@ -186,6 +188,7 @@ fn read_control(path: ControlPath, backend: &dyn InputBackend, pad: Option<Gamep
             }
         }
         // winit already counts away from the user as up, so no flip.
+        ControlPath::MouseScroll(_) if backend.pointer_claimed() => 0.0,
         ControlPath::MouseScroll(axis) => {
             let scroll = backend.mouse_scroll();
             match axis {

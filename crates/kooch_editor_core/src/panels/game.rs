@@ -3,7 +3,7 @@
 mod resolution;
 pub(crate) mod rig_overlay;
 
-pub(crate) use resolution::{GameResolution, sizes as display_sizes};
+pub(crate) use resolution::{GameImage, GameResolution, sizes as display_sizes};
 
 /// Draws the game image with the perf sidebar over it, or says why
 /// there is nothing to draw. Answers whether the image itself was clicked — the gesture that hands
@@ -67,6 +67,11 @@ pub(crate) fn draw_game_content(
     } else {
         image_rect = Some(ui.add(egui::Image::new((texture_id, available))).rect);
     }
+    resolution.image = image_rect.map(|rect| GameImage {
+        min: glam::Vec2::new(rect.min.x, rect.min.y) * pixels_per_point,
+        size: glam::Vec2::new(rect.width(), rect.height()) * pixels_per_point,
+        target: glam::Vec2::new(requested.0 as f32, requested.1 as f32),
+    });
     if let (Some(rig), Some(rect)) = (&rig, image_rect)
         && hud_visibility.rig_overlay
     {

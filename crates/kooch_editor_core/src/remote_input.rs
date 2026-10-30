@@ -15,7 +15,15 @@ pub(crate) fn send_input_to_host(resources: &mut Resources) {
     let Some(backend) = resources.get::<Box<dyn InputBackend>>() else {
         return;
     };
-    let snapshot = InputSnapshot::from_backend(backend.as_ref());
+    let mut snapshot = InputSnapshot::from_backend(backend.as_ref());
+    let image = resources
+        .get::<crate::state::EditorOverlay>()
+        .and_then(|overlay| overlay.game_resolution.image);
+    snapshot.pointer = snapshot
+        .pointer
+        .zip(image)
+        .and_then(|(pointer, image)| image.map(pointer.into()))
+        .map(Into::into);
 
     let Some(state) = resources.get_mut::<RemoteState>() else {
         return;
