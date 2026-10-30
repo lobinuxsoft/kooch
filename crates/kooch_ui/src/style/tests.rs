@@ -2,7 +2,7 @@ use taffy::{FlexDirection, LengthPercentage};
 
 use super::*;
 
-const MENU: &str = include_str!("../../tests/data/menu.kooch_style");
+const MENU: &str = include_str!("../../tests/data/menu.kcss");
 
 fn resolve(rule: &StyleRule) -> ResolvedStyle {
     let mut style = ResolvedStyle::default();

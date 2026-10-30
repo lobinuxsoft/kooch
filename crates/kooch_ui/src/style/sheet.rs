@@ -58,7 +58,7 @@ pub struct StyleWarning {
     pub message: String,
 }
 
-/// A parsed `.kooch_style`, rules in source order.
+/// A parsed `.kcss`, rules in source order.
 #[derive(Debug, Clone, Default)]
 pub struct UiStyleSheet {
     pub rules: Vec<StyleRule>,

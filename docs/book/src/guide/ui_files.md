@@ -7,21 +7,28 @@ A `UiDocument` points at two files, split like Unity's UXML and USS:
 
 | File | Says | Format |
 |---|---|---|
-| `.kooch_ui` | which nodes, nested how, what they do | XML |
-| `.kooch_style` | how they look | a subset of CSS |
+| `.kxml` | which nodes, nested how, what they do | XML |
+| `.kcss` | how they look | a subset of CSS |
 
 The document is built from them in whichever process shows it: the editor's own with Play stopped,
 so you design without running the game, and the game's in Play.
 
-Create the two files under `assets/` and pick the `.kooch_ui` as the document's **Source**. The
+Create the two files under `assets/` and pick the `.kxml` as the document's **Source**. The
 sheet is the one `<ui style="…">` names; the document's **Style** field, when set, overrides it.
 Save either file and the Game View rebuilds the document — no Play needed. A document with no
 Source is left to code, as in [UI](./ui.md).
 
+Both are plain XML and CSS, so any editor reads them as such once it knows the extension. Opening
+the project in the Kóoch editor adds `"*.kxml": "xml"` and `"*.kcss": "css"` to
+`.vscode/settings.json`. The `xmlns` line on `<ui>` is what keeps an XML linter quiet about `on:`
+and `bind:`; the engine declares them itself when it is missing. A property that is Kóoch's own
+carries the `-kooch-` prefix, which CSS linters skip as vendor-specific.
+
 ## Markup
 
 ```xml
-<ui style="menu.kooch_style">
+<?xml version="1.0" encoding="UTF-8"?>
+<ui style="menu.kcss" xmlns:on="urn:kooch:on" xmlns:bind="urn:kooch:bind">
   <panel name="menu" class="card">
     <label class="title">Pausa</label>
     <button name="resume" on:click="game.resume"><label>Continuar</label></button>
@@ -38,7 +45,7 @@ Source is left to code, as in [UI](./ui.md).
 | `button` | A panel that can be clicked and focused. |
 | `toggle` | A checkbox; its value is a `bool`. |
 | `slider` | A track with a thumb; its value is an `f32` between `min` and `max`. |
-| `use` | Another `.kooch_ui`, instanced here. |
+| `use` | Another `.kxml`, instanced here. |
 
 Every element takes `name` (what `tree.query` finds, unique in the document) and `class` (any
 number, space separated).
@@ -50,7 +57,7 @@ node of the instance — the same button file used twice with two texts. Attribu
 (`name`, `class`, `on:*`) apply to the instance's root.
 
 ```xml
-<use src="menu_button.kooch_ui" name="quit" class="danger" on:click="game.quit">
+<use src="menu_button.kxml" name="quit" class="danger" on:click="game.quit">
   <set node="label" text="Salir"/>
 </use>
 ```
@@ -141,7 +148,7 @@ precedence are CSS's: name over class over element, and the later rule wins a ti
 | `border-radius` | length |
 | `font-family` | `"Inter"`, `"Fira Code"`, or a font the project registers |
 | `font-size` | length |
-| `material` | a path to a `.shader` with `kind: ui` (#1690) |
+| `-kooch-material` | a path to a `.shader` with `kind: ui` (#1690) |
 
 A bare `0` is a length. Colours are sRGB: `hsl()`, `lab()` and the rest are a warning.
 

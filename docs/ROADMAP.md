@@ -224,7 +224,7 @@ to its dark side.
   physics interpolation and propagation, so compensating from the game would wobble.
 - **#1657** — Proxima's premultiplied fit is `0.19·α` at N·L = 0, where the light loop cuts: a 19 %
   step at roughness 1. The rough term now fades over the last ~9°. The slides validate to 89.5° only.
-- **UI decided (#96, #280 rewritten):** one entity holds a `UiDocument` (`.kooch_ui` + `.kooch_style`,
+- **UI decided (#96, #280 rewritten):** one entity holds a `UiDocument` (`.kxml` + `.kcss`,
   `Overlay | World`); nodes are SoA inside the document on `TaffyTree`, not entities; a material per
   element; game code asks `doc.query`. Authoring, templates with overrides and the UI Builder are #280.
   The first HUD — the ball's speed and torque — is #96's smoke.

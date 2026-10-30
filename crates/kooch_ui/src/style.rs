@@ -1,4 +1,4 @@
-//! `.kooch_style` (#280, syntax in #1693): a CSS subset parsed on Servo's `cssparser`. Layout values
+//! `.kcss` (#280, syntax in #1693): a CSS subset parsed on Servo's `cssparser`. Layout values
 //! go through taffy's own CSS parser; this module owns the rule grammar and the mapping.
 
 mod declaration;
@@ -17,9 +17,9 @@ pub use sheet::{
 mod tests;
 
 /// Extension the asset database routes to [`UiStyleLoader`].
-pub const STYLE_EXTENSION: &str = "kooch_style";
+pub const STYLE_EXTENSION: &str = "kcss";
 
-/// Reads a `.kooch_style` file into a [`UiStyleSheet`], logging what it skipped.
+/// Reads a `.kcss` file into a [`UiStyleSheet`], logging what it skipped.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct UiStyleLoader;
 

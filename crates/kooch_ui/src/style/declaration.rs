@@ -115,8 +115,8 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Vec<Declaration>, String> 
         "border-radius" => one(D::BorderRadius(px(text)?)),
         "font-family" => one(D::FontFamily(family(text)?)),
         "font-size" => one(D::FontSize(px(text)?)),
-        "material" => one(D::Material(quoted(text)?)),
-        _ => return Err(format!("`{name}` is not a .kooch_style property")),
+        "-kooch-material" => one(D::Material(quoted(text)?)),
+        _ => return Err(format!("`{name}` is not a .kcss property")),
     };
     parsed.map_err(|message| format!("{name}: {message}"))
 }

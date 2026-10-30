@@ -9,8 +9,8 @@ row in the scene.
 
 | Field | What it is |
 |---|---|
-| `source` | The `.kooch_ui` file with the structure (#280) |
-| `style` | The `.kooch_style` sheet with the look (#280) |
+| `source` | The `.kxml` file with the structure (#280) |
+| `style` | The `.kcss` sheet with the look (#280) |
 | `mode` | **Overlay** draws over the screen; **World** places it in the scene at the entity |
 
 Enable it with the engine's `ui` feature.
