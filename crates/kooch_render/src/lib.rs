@@ -15,6 +15,7 @@ pub mod settings;
 pub mod shadow;
 pub mod sky;
 pub mod texture;
+pub mod ui;
 pub mod vbuf64;
 pub mod view_camera;
 

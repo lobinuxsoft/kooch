@@ -117,3 +117,33 @@ fn text_is_measured_and_rasterized() {
     assert!(tree.rasterize(2.0, &mut fonts, &mut atlas));
     assert!(tree.glyphs()[0].size[1] > small[1] * 1.8);
 }
+
+/// Fira Code's `=>` is a ligature: the shaper swaps in glyphs a lone `=` and `>` never use.
+#[test]
+fn fira_code_shapes_ligatures() {
+    let mut fonts = UiFonts::default();
+    let ids = |content: &str, fonts: &mut UiFonts| {
+        let mut text = crate::text::Text {
+            content: content.into(),
+            size: 32.0,
+            family: Some("Fira Code".into()),
+            layout: None,
+            origin: Vec2::ZERO,
+        };
+        let layout = text.shaped(fonts);
+        crate::text::measure(layout, None);
+        let mut ids = Vec::new();
+        for line in layout.lines() {
+            for item in line.items() {
+                if let parley::PositionedLayoutItem::GlyphRun(run) = item {
+                    ids.extend(run.glyphs().map(|glyph| glyph.id));
+                }
+            }
+        }
+        ids
+    };
+    let joined = ids("=>", &mut fonts);
+    let apart = ids("= >", &mut fonts);
+    assert_eq!(joined.len(), 2);
+    assert_ne!(joined[1], apart[2]);
+}
