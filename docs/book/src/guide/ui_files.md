@@ -1,7 +1,8 @@
 # UI files
 
-> 🚧 The syntax is frozen (#1693); the parsers arrive with #280. Until then a document is built from
-> code, as in [UI](./ui.md).
+> 🚧 The style sheet parses (`UiStyleSheet::parse`, #1695); loading the markup and matching the
+> selectors arrive with the rest of #280. Until then a document is built from code, as in
+> [UI](./ui.md).
 
 A `UiDocument` points at two files, split like Unity's UXML and USS:
 
@@ -137,5 +138,7 @@ precedence are CSS's: name over class over element, and the later rule wins a ti
 | `font-family` | `"Inter"`, `"Fira Code"`, or a font the project registers |
 | `font-size` | length |
 | `material` | a path to a `.shader` with `kind: ui` (#1690) |
+
+A bare `0` is a length. Colours are sRGB: `hsl()`, `lab()` and the rest are a warning.
 
 Anything else is a warning naming the file and line, and the rule's other properties still apply.

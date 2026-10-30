@@ -6,6 +6,7 @@ mod document;
 mod draw;
 mod layout;
 mod plugin;
+pub mod style;
 mod text;
 mod tree;
 mod trees;
