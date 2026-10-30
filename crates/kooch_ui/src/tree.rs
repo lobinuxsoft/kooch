@@ -75,6 +75,8 @@ pub struct UiTree {
     rastered: Option<(f32, u32)>,
     /// Size the rects were computed for; `None` once anything changed.
     laid_out: Option<Vec2>,
+    /// The files this tree was built from; `None` for one built in code.
+    pub(crate) origin: Option<crate::documents::Origin>,
 }
 
 // SAFETY: taffy's lengths are `!Send` only for the pointer a `calc()` length carries, and taffy is
@@ -101,6 +103,7 @@ impl UiTree {
             glyphs: Vec::new(),
             rastered: None,
             laid_out: None,
+            origin: None,
         };
         // Logical units: rounding here would snap to a pixel the screen does not have. The draw
         // rounds, in physical pixels.

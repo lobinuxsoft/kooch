@@ -191,10 +191,12 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
                 profiling::scope!("remote: apply moved");
                 mirror.apply_moved(&moved.moved, &moved.components, resources);
                 let pending = resources
-                    .get::<kooch_ecs::UiDrawList>()
-                    .and_then(|list| list.atlas_upload.as_ref().map(|upload| upload.rect));
-                if let Some(ui) = session.take_ui(pending) {
-                    resources.insert(ui);
+                    .get::<crate::ui_preview::RemoteUi>()
+                    .and_then(|ui| ui.list.atlas_upload.as_ref().map(|upload| upload.rect));
+                if let Some(list) = session.take_ui(pending) {
+                    resources
+                        .get_or_default::<crate::ui_preview::RemoteUi>()
+                        .list = list;
                 }
                 record_stats(resources, session, refresh, Duration::ZERO);
                 return;

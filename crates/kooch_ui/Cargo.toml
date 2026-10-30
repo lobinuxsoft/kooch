@@ -18,3 +18,5 @@ swash.workspace = true
 etagere.workspace = true
 cssparser.workspace = true
 cssparser-color.workspace = true
+roxmltree.workspace = true
+tracing.workspace = true

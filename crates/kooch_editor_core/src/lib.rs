@@ -78,6 +78,7 @@ pub(crate) mod state;
 pub(crate) mod style;
 pub(crate) mod surface_snap;
 pub(crate) mod systems;
+mod ui_preview;
 pub(crate) mod undo;
 pub(crate) mod viewport;
 pub(crate) mod viewport_pick;
@@ -125,6 +126,9 @@ impl Plugin for EditorPlugin {
         // And UI: the Inspector reads dropdowns and tooltips from this process's registry, so a
         // `UiDocument` known only to the host showed `mode` as a bare number.
         app.add_plugin(kooch_ui::UiComponentsPlugin);
+        app.add_system(Stage::Startup, ui_preview::start_preview_system);
+        // Before the render, which draws what it leaves.
+        app.add_system(Stage::PreRender, ui_preview::preview_ui_system);
 
         // earn the next one. The baseline is what the accumulator falls back to after the runner
         // reads it, so a frame that asks for nothing is a frame that stops the loop.

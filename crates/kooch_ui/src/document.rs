@@ -32,7 +32,7 @@ pub struct UiDocument {
     #[reflect(asset = "kooch_ui::source::UiSource")]
     pub source: Option<Guid>,
     /// The `.kooch_style` sheet (#280).
-    #[reflect(asset = "kooch_ui::style::UiStyleSheet")]
+    #[reflect(asset = "kooch_ui::style::sheet::UiStyleSheet")]
     pub style: Option<Guid>,
     /// Over the screen, or in the world at this entity.
     #[reflect(choices = MODE_CHOICES)]

@@ -161,20 +161,13 @@ pub(crate) fn render_game_view(
     // The same post-process the View panel runs: a game view without it would be the wrong preview
     // of the game (#1201).
     super::post::apply(gpu, &mut encoder, &game.target, resources);
-    // The project's UI, over the post-process as in the game. Only in Play: it is what the game
-    // drew last, and an edit-mode frame would show it stale.
-    if resources
-        .get::<crate::remote_session::RemoteState>()
-        .is_some_and(|state| state.playing)
-    {
-        kooch_render::ui::draw_frame(
-            gpu,
-            &mut encoder,
-            resources,
-            game.target.view(),
-            game.target.size(),
-        );
-    }
+    crate::ui_preview::draw(
+        gpu,
+        &mut encoder,
+        resources,
+        game.target.view(),
+        game.target.size(),
+    );
 
     gpu.queue().submit(Some(encoder.finish()));
     true
