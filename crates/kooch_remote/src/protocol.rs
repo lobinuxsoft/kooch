@@ -320,6 +320,9 @@ pub enum ResponseData {
         full: bool,
         #[serde(default)]
         host: Option<HostMetrics>,
+        /// What the host queued for the editor since the last pull — rumble, today (#57).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        signals: Vec<HostSignal>,
     },
     /// Reply to [`Method::ListEntities`]: the whole world when `full`, otherwise only changes;
     /// `removed` lists what went away since the caller's revision.
@@ -361,6 +364,13 @@ pub enum ResponseData {
         name: String,
         result: serde_json::Value,
     },
+}
+
+/// A message from the host to the editor, named `subsystem.what` like an extension.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HostSignal {
+    pub name: String,
+    pub payload: serde_json::Value,
 }
 
 /// What the project's process costs per frame, riding the snapshot already pulled. Simulation

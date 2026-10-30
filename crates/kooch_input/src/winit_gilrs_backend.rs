@@ -38,6 +38,8 @@ pub struct WinitGilrsBackend {
     gamepads: HashMap<GamepadId, GamepadState>,
     /// The last pad touched, so a second connected pad cannot steal the actions (#1643).
     active_pad: Option<GamepadId>,
+    /// The rumble each pad is playing; dropping an effect stops it, so it lives here.
+    rumbles: HashMap<GamepadId, gilrs::ff::Effect>,
     queued_events: Vec<InputEvent>,
 }
 
@@ -121,6 +123,8 @@ struct GamepadState {
     just_pressed_buttons: HashSet<GamepadButton>,
     just_released_buttons: HashSet<GamepadButton>,
     axes: HashMap<GamepadAxis, f32>,
+    /// Analog travel from `ButtonChanged`: a trigger pulled halfway is not pressed yet (#57).
+    button_values: HashMap<GamepadButton, f32>,
 }
 
 impl WinitGilrsBackend {
@@ -141,6 +145,7 @@ impl WinitGilrsBackend {
             last_poll: None,
             gamepads: HashMap::new(),
             active_pad: None,
+            rumbles: HashMap::new(),
             queued_events: Vec::new(),
         }
     }
@@ -234,6 +239,7 @@ impl WinitGilrsBackend {
                 }
                 gilrs::EventType::Disconnected => {
                     self.gamepads.remove(&id);
+                    self.rumbles.remove(&id);
                     if self.active_pad == Some(id) {
                         self.active_pad = None;
                     }
@@ -258,6 +264,7 @@ impl WinitGilrsBackend {
                         continue;
                     };
                     let entry = self.gamepads.entry(id).or_default();
+                    entry.button_values.remove(&button);
                     if entry.pressed_buttons.remove(&button) {
                         entry.just_released_buttons.insert(button);
                         self.queued_events.push(InputEvent::GamepadButtonReleased {
@@ -282,7 +289,17 @@ impl WinitGilrsBackend {
                         value,
                     });
                 }
-                _ => {} // ignore button-changed analog events for PR-1
+                gilrs::EventType::ButtonChanged(button, value, _) => {
+                    let Some(button) = GamepadButton::from_upstream(button) else {
+                        continue;
+                    };
+                    if value > ACTIVE_TRAVEL {
+                        self.active_pad = Some(id);
+                    }
+                    let entry = self.gamepads.entry(id).or_default();
+                    entry.button_values.insert(button, value);
+                }
+                _ => {}
             }
         }
     }
@@ -390,6 +407,43 @@ impl InputBackend for WinitGilrsBackend {
             .get(&gamepad)
             .and_then(|state| state.axes.get(&axis).copied())
             .unwrap_or(0.0)
+    }
+
+    fn button_value(&self, gamepad: GamepadId, button: GamepadButton) -> f32 {
+        let Some(state) = self.gamepads.get(&gamepad) else {
+            return 0.0;
+        };
+        match state.button_values.get(&button) {
+            Some(value) => *value,
+            None => state.pressed_buttons.contains(&button) as u8 as f32,
+        }
+    }
+
+    fn rumble(&mut self, gamepad: GamepadId, rumble: crate::rumble::Rumble) {
+        // Dropped first: a new request replaces the old, and a stop is just the drop.
+        self.rumbles.remove(&gamepad);
+        if rumble.is_stop() {
+            return;
+        }
+        let Some(gilrs) = &self.gilrs else {
+            return;
+        };
+        let mut gilrs = gilrs.lock().expect("gilrs mutex poisoned");
+        let Some((pad, _)) = gilrs
+            .gamepads()
+            .find(|(pad, found)| GamepadId::from(*pad) == gamepad && found.is_ff_supported())
+        else {
+            return;
+        };
+        match crate::rumble::effect(&mut gilrs, pad, rumble).and_then(|effect| {
+            effect.play()?;
+            Ok(effect)
+        }) {
+            Ok(effect) => {
+                self.rumbles.insert(gamepad, effect);
+            }
+            Err(error) => tracing::warn!(%gamepad, %error, "the pad would not rumble"),
+        }
     }
 }
 

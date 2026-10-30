@@ -363,6 +363,7 @@ fn list_moved(
             revision: delta.revision,
             full: delta.full,
             host: host_metrics(resources),
+            signals: crate::outbox::drain(resources),
         },
     )
 }

@@ -167,14 +167,14 @@ fn gated(open: bool, value: f32) -> Vec3 {
     }
 }
 
-/// One control's value as a number: a button reads 0 or 1, so a d-pad and a stick are
-/// interchangeable in a binding.
+/// One control's value as a number: a button reads 0 or 1 — a trigger its travel — so a d-pad and a
+/// stick are interchangeable in a binding.
 fn read_control(path: ControlPath, backend: &dyn InputBackend, pad: Option<GamepadId>) -> f32 {
     match path {
         ControlPath::Key(key) => backend.is_pressed(key) as u8 as f32,
         ControlPath::Mouse(button) => backend.is_mouse_pressed(button) as u8 as f32,
         ControlPath::Button(button) => pad
-            .map(|pad| backend.is_button_pressed(pad, button) as u8 as f32)
+            .map(|pad| backend.button_value(pad, button))
             .unwrap_or(0.0),
         ControlPath::Axis(axis) => pad.map(|pad| backend.axis_value(pad, axis)).unwrap_or(0.0),
         ControlPath::MouseMotion(axis) => {

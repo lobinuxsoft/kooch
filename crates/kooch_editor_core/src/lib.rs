@@ -211,6 +211,8 @@ impl Plugin for EditorPlugin {
         // After the pull, so a snapshot describes the frame the editor is
         // about to draw rather than the one it just finished.
         app.add_system(Stage::PreUpdate, remote_input::send_input_to_host);
+        // After the pull too: the rumble rides the reply it brought.
+        app.add_system(Stage::PreUpdate, remote_input::play_host_rumble);
         // Register the EditorOnly marker as ephemeral *before* the camera
         // is spawned, so the entity is filtered from any save that races
         // the spawn (e.g. play-mode snapshot triggered immediately).

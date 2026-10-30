@@ -21,6 +21,9 @@ pub struct GamepadSnapshot {
     /// Axes and their values. Absent axes read as `0.0`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub axes: Vec<(GamepadAxis, f32)>,
+    /// Buttons partway pulled, in `(0, 1)` — a trigger's travel (#57). The rest read from `buttons`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<(GamepadButton, f32)>,
 }
 
 /// Everything an input backend holds at one instant, sorted so equal states serialise equally and
@@ -122,6 +125,11 @@ impl InputSnapshot {
                     .map(|axis| (axis, backend.axis_value(pad, axis)))
                     .filter(|(_, value)| *value != 0.0)
                     .collect(),
+                values: BUTTONS
+                    .into_iter()
+                    .map(|button| (button, backend.button_value(pad, button)))
+                    .filter(|(_, value)| *value > 0.0 && *value < 1.0)
+                    .collect(),
             })
             .collect();
         gamepads.sort_unstable_by_key(|pad| pad.id);
@@ -153,7 +161,9 @@ impl InputSnapshot {
             && self.mouse_velocity == [0.0, 0.0]
             && self.mouse_scroll == [0.0, 0.0]
             && self.gamepads.iter().all(|pad| {
-                pad.buttons.is_empty() && pad.axes.iter().all(|(_, value)| *value == 0.0)
+                pad.buttons.is_empty()
+                    && pad.values.is_empty()
+                    && pad.axes.iter().all(|(_, value)| *value == 0.0)
             })
     }
 }
@@ -179,6 +189,8 @@ pub struct RemoteInputBackend {
     active_pad: Option<GamepadId>,
     /// Applied but not yet handed out by `poll`.
     queued_events: Vec<InputEvent>,
+    /// Asked of a pad this process does not hold; the host hands them to the editor.
+    rumbles: Vec<(GamepadId, crate::rumble::Rumble)>,
 }
 
 #[derive(Default)]
@@ -189,6 +201,7 @@ struct PadState {
     pending_released: HashSet<GamepadButton>,
     buttons: HashSet<GamepadButton>,
     axes: HashMap<GamepadAxis, f32>,
+    values: HashMap<GamepadButton, f32>,
 }
 
 impl RemoteInputBackend {
@@ -265,6 +278,7 @@ impl RemoteInputBackend {
             // and merging would leave a stick pushed forever after the
             // sender stopped mentioning it.
             state.axes = pad.axes.iter().copied().collect();
+            state.values = pad.values.iter().copied().collect();
             for &(axis, value) in &pad.axes {
                 self.queued_events.push(InputEvent::GamepadAxisChanged {
                     gamepad: id,
@@ -377,6 +391,24 @@ impl InputBackend for RemoteInputBackend {
             .get(&gamepad)
             .and_then(|state| state.axes.get(&axis).copied())
             .unwrap_or(0.0)
+    }
+
+    fn button_value(&self, gamepad: GamepadId, button: GamepadButton) -> f32 {
+        let Some(state) = self.gamepads.get(&gamepad) else {
+            return 0.0;
+        };
+        match state.values.get(&button) {
+            Some(value) => *value,
+            None => state.buttons.contains(&button) as u8 as f32,
+        }
+    }
+
+    fn rumble(&mut self, gamepad: GamepadId, rumble: crate::rumble::Rumble) {
+        self.rumbles.push((gamepad, rumble));
+    }
+
+    fn take_rumbles(&mut self) -> Vec<(GamepadId, crate::rumble::Rumble)> {
+        std::mem::take(&mut self.rumbles)
     }
 }
 
