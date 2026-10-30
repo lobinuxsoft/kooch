@@ -1,0 +1,24 @@
+<!-- The pause menu: the syntax sample frozen by #1693, parsed by #280 phases 2-3. -->
+<ui style="menu.kooch_style">
+  <panel name="menu" class="card">
+    <label class="title">Pausa</label>
+
+    <use src="menu_button.kooch_ui" name="resume" on:click="game.resume">
+      <set node="label" text="Continuar"/>
+    </use>
+
+    <panel class="row">
+      <label>Volumen</label>
+      <slider name="volume" min="0" max="1" bind:value="AudioSettings.volume"/>
+    </panel>
+
+    <panel class="row">
+      <label>Vibración</label>
+      <toggle name="rumble" bind:value="InputSettings.rumble"/>
+    </panel>
+
+    <use src="menu_button.kooch_ui" name="quit" class="danger" on:click="game.quit">
+      <set node="label" text="Salir"/>
+    </use>
+  </panel>
+</ui>

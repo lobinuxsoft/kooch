@@ -1,0 +1,6 @@
+<!-- A button reused by the menu: the label's text is overridden per instance. -->
+<ui style="menu.kooch_style">
+  <button name="root" class="menu-button">
+    <label name="label">Button</label>
+  </button>
+</ui>
