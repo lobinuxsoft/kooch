@@ -12,6 +12,7 @@
 - [Gravity](./guide/gravity.md)
 - [Input](./guide/input.md)
 - [UI](./guide/ui.md)
+  - [UI files](./guide/ui_files.md)
 - [Shipping a Game](./guide/shipping.md)
 
 # Scripting

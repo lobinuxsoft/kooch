@@ -1,0 +1,50 @@
+/* Theme values, read with var(). */
+:root {
+  --accent: #ff8a1f;
+  --surface: rgba(16, 16, 20, 0.85);
+}
+
+.card {
+  align-self: center;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  background-color: var(--surface);
+  border: 3px var(--accent);
+  border-radius: 18px;
+}
+
+.title {
+  font-size: 48px;
+  color: var(--accent);
+}
+
+.row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.menu-button {
+  padding: 8px 24px;
+  background-color: #2a2a33;
+  border-radius: 8px;
+}
+
+.menu-button:hover {
+  background-color: #3a3a46;
+}
+
+.menu-button:focus {
+  border: 2px var(--accent);
+}
+
+.menu-button.danger #label {
+  color: #ff5a5a;
+}
+
+slider {
+  width: 320px;
+  material: "shaders/ui_slider.shader";
+}
