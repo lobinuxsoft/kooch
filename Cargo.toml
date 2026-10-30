@@ -30,7 +30,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.98.71"
+version = "0.98.72"
 edition = "2024"
 license = "LicenseRef-Proprietary"
 repository = "https://github.com/lobinuxsoft/kooch"
@@ -90,8 +90,12 @@ swash = "0.2"
 # Loads fontconfig at runtime for the system fallback, so building needs no fontconfig-devel.
 fontique = { version = "0.12", features = ["fontconfig-dlopen"] }
 etagere = "0.3"
+# `.kooch_style` (#280): Servo's CSS tokenizer and colour parser, MPL-2.0 like `symphonia`. 0.37 is
+# the one taffy's `parse` feature links, so the tree carries a single cssparser.
+cssparser = "0.37"
+cssparser-color = "0.5"
 # Without `calc`: a calc length is a raw pointer, the one thing keeping the tree off `Send`.
-taffy = { version = "0.15", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "block_layout", "content_size"] }
+taffy = { version = "0.15", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "block_layout", "content_size", "parse"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Window handle
 raw-window-handle = "0.6"
