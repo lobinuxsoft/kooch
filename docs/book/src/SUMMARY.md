@@ -11,6 +11,7 @@
 - [Colliders](./guide/colliders.md)
 - [Gravity](./guide/gravity.md)
 - [Input](./guide/input.md)
+- [UI](./guide/ui.md)
 - [Shipping a Game](./guide/shipping.md)
 
 # Scripting

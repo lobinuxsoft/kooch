@@ -11,6 +11,7 @@ members = [
     "crates/kooch_lighting",
     "crates/kooch_render",
     "crates/kooch_blockmesh",
+    "crates/kooch_ui",
     "crates/kooch_gizmos",
     "crates/kooch_gizmos_handles",
     "crates/kooch_physics",
@@ -81,6 +82,9 @@ encase = "0.13"
 pollster = "1"
 # Logging
 tracing = "0.1"
+# UI layout: flexbox and CSS Grid over a retained tree (#96).
+# Without `calc`: a calc length is a raw pointer, the one thing keeping the tree off `Send`.
+taffy = { version = "0.15", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "block_layout", "content_size"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Window handle
 raw-window-handle = "0.6"
@@ -182,6 +186,7 @@ kooch_input = { path = "crates/kooch_input" }
 kooch_lighting = { path = "crates/kooch_lighting" }
 kooch_render = { path = "crates/kooch_render" }
 kooch_blockmesh = { path = "crates/kooch_blockmesh" }
+kooch_ui = { path = "crates/kooch_ui" }
 kooch_gizmos = { path = "crates/kooch_gizmos" }
 kooch_gizmos_handles = { path = "crates/kooch_gizmos_handles" }
 kooch_physics = { path = "crates/kooch_physics" }
@@ -221,6 +226,7 @@ kooch_character = { workspace = true, optional = true }
 kooch_world = { workspace = true, optional = true }
 kooch_remote = { workspace = true, optional = true }
 kooch_blockmesh = { workspace = true, optional = true }
+kooch_ui = { workspace = true, optional = true }
 kooch_editor_core = { workspace = true, optional = true }
 kooch_plugin_api = { workspace = true, optional = true }
 
@@ -270,6 +276,8 @@ remote = ["dep:kooch_remote"]
 # The in-editor block tool's authoring mesh (#946). Pulls physics
 # because a block nothing collides with is scenery, not a level.
 blockmesh = ["dep:kooch_blockmesh", "render", "physics"]
+# In-game UI documents (#96).
+ui = ["dep:kooch_ui"]
 editor = ["dep:kooch_editor_core"]
 # NVIDIA DLSS (#536). A GAME turns this on; the engine never defaults to
 # it. Requires `DLSS_SDK` and `VULKAN_SDK` at build time and moves the
