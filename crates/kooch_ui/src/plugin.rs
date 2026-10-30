@@ -8,14 +8,29 @@ use kooch_ecs::component::ComponentRegistry;
 
 use crate::{UiDocument, UiTrees, prune_trees};
 
-pub struct UiPlugin;
+/// Only the components: what the editor needs to offer and inspect them, without running any UI.
+pub struct UiComponentsPlugin;
 
-impl Plugin for UiPlugin {
+impl Plugin for UiComponentsPlugin {
     fn build(&self, app: &mut App) {
         app.add_system(Stage::Startup, |resources: &mut Resources| {
             if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
                 registry.register_cpu_reflected::<UiDocument>();
             }
+        });
+    }
+
+    fn name(&self) -> &str {
+        "UiComponentsPlugin"
+    }
+}
+
+pub struct UiPlugin;
+
+impl Plugin for UiPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugin(UiComponentsPlugin);
+        app.add_system(Stage::Startup, |resources: &mut Resources| {
             resources.insert(UiTrees::default());
         });
         // Ungated: a document removed while stopped frees its tree too.

@@ -41,6 +41,7 @@ kooch_remote.workspace = true
 # Writing and verifying a shipped game's asset packs (#758).
 kooch_pack.workspace = true
 kooch_input.workspace = true
+kooch_ui.workspace = true
 egui.workspace = true
 egui-winit.workspace = true
 egui-wgpu.workspace = true

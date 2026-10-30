@@ -122,6 +122,9 @@ impl Plugin for EditorPlugin {
         // process reads it. Without this the menu offers `InputMapSource` — the name reaches it by
         // another route — and adding it fails with "no default value".
         app.add_plugin(kooch_input::actions::InputComponentsPlugin);
+        // And UI: the Inspector reads dropdowns and tooltips from this process's registry, so a
+        // `UiDocument` known only to the host showed `mode` as a bare number.
+        app.add_plugin(kooch_ui::UiComponentsPlugin);
 
         // earn the next one. The baseline is what the accumulator falls back to after the runner
         // reads it, so a frame that asks for nothing is a frame that stops the loop.
