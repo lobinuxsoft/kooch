@@ -84,6 +84,19 @@ pub trait InputBackend: Send + Sync + 'static {
     // ─── mouse ───────────────────────────────────────────────────────
     fn is_mouse_pressed(&self, button: MouseButton) -> bool;
     fn mouse_position(&self) -> Vec2;
+    /// The cursor as a pointer, in view pixels: `None` while it is captured for mouse look or out
+    /// of the view. What UI picking reads (#96).
+    fn pointer(&self) -> Option<Vec2> {
+        Some(self.mouse_position())
+    }
+    /// Whether the cursor is held for mouse look. Told by whoever applies the capture.
+    fn capture_pointer(&mut self, _captured: bool) {}
+    /// Hands this frame's mouse buttons and scroll to the UI: actions then read them as idle, so a
+    /// click on a button does not also fire the game's (#96). Raw reads are unaffected.
+    fn claim_pointer(&mut self, _claimed: bool) {}
+    fn pointer_claimed(&self) -> bool {
+        false
+    }
     /// Cumulative delta since the previous `poll` call.
     fn mouse_delta(&self) -> Vec2;
     /// Pushes relative mouse motion — the device's own report, which does not stop at the edge of

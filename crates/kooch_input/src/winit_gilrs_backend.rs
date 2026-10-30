@@ -41,6 +41,10 @@ pub struct WinitGilrsBackend {
     /// The rumble each pad is playing; dropping an effect stops it, so it lives here.
     rumbles: HashMap<GamepadId, gilrs::ff::Effect>,
     queued_events: Vec<InputEvent>,
+    captured: bool,
+    /// Whether the cursor is over the window.
+    inside: bool,
+    claimed: bool,
 }
 
 /// Motion over the time it took, in pixels per second. A frame shorter than a tenth of a
@@ -147,6 +151,9 @@ impl WinitGilrsBackend {
             active_pad: None,
             rumbles: HashMap::new(),
             queued_events: Vec::new(),
+            captured: false,
+            inside: false,
+            claimed: false,
         }
     }
 
@@ -210,12 +217,16 @@ impl WinitGilrsBackend {
                 let new_pos = Vec2::new(position.x as f32, position.y as f32);
                 let delta = new_pos - self.mouse_position;
                 self.mouse_position = new_pos;
+                // A window opened under the cursor gets no `CursorEntered`.
+                self.inside = true;
                 self.mouse_delta += delta;
                 self.queued_events.push(InputEvent::MouseMoved {
                     position: new_pos,
                     delta,
                 });
             }
+            WindowEvent::CursorEntered { .. } => self.inside = true,
+            WindowEvent::CursorLeft { .. } => self.inside = false,
             WindowEvent::MouseWheel { delta, .. } => {
                 let delta = scroll_lines(*delta);
                 self.mouse_scroll += delta;
@@ -364,6 +375,22 @@ impl InputBackend for WinitGilrsBackend {
 
     fn mouse_position(&self) -> Vec2 {
         self.mouse_position
+    }
+
+    fn pointer(&self) -> Option<Vec2> {
+        (self.inside && !self.captured).then_some(self.mouse_position)
+    }
+
+    fn capture_pointer(&mut self, captured: bool) {
+        self.captured = captured;
+    }
+
+    fn claim_pointer(&mut self, claimed: bool) {
+        self.claimed = claimed;
+    }
+
+    fn pointer_claimed(&self) -> bool {
+        self.claimed
     }
 
     fn mouse_delta(&self) -> Vec2 {

@@ -39,6 +39,10 @@ pub struct InputSnapshot {
     /// Cursor position, in the coordinate space of whatever captured it.
     #[serde(default)]
     pub mouse_position: [f32; 2],
+    /// The cursor as a pointer in the host's view pixels; `None` while captured or off the view.
+    /// The sender maps it, since only it knows where the view is drawn (#96).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pointer: Option<[f32; 2]>,
     /// Cursor movement accumulated over the frame, as a delta — two positions cannot tell a still
     /// cursor from a round trip.
     #[serde(default)]
@@ -142,6 +146,7 @@ impl InputSnapshot {
             keys,
             mouse_buttons,
             mouse_position: [position.x, position.y],
+            pointer: backend.pointer().map(|pointer| [pointer.x, pointer.y]),
             mouse_delta: [delta.x, delta.y],
             mouse_velocity: [velocity.x, velocity.y],
             mouse_scroll: [scroll.x, scroll.y],
@@ -191,6 +196,8 @@ pub struct RemoteInputBackend {
     queued_events: Vec<InputEvent>,
     /// Asked of a pad this process does not hold; the host hands them to the editor.
     rumbles: Vec<(GamepadId, crate::rumble::Rumble)>,
+    pointer: Option<Vec2>,
+    claimed: bool,
 }
 
 #[derive(Default)]
@@ -237,6 +244,7 @@ impl RemoteInputBackend {
         let position = Vec2::from(snapshot.mouse_position);
         let delta = Vec2::from(snapshot.mouse_delta);
         self.mouse_position = position;
+        self.pointer = snapshot.pointer.map(Vec2::from);
         self.pending_delta += delta;
         self.mouse_velocity = Vec2::from(snapshot.mouse_velocity);
         if delta != Vec2::ZERO {
@@ -342,6 +350,18 @@ impl InputBackend for RemoteInputBackend {
 
     fn mouse_position(&self) -> Vec2 {
         self.mouse_position
+    }
+
+    fn pointer(&self) -> Option<Vec2> {
+        self.pointer
+    }
+
+    fn claim_pointer(&mut self, claimed: bool) {
+        self.claimed = claimed;
+    }
+
+    fn pointer_claimed(&self) -> bool {
+        self.claimed
     }
 
     fn mouse_delta(&self) -> Vec2 {

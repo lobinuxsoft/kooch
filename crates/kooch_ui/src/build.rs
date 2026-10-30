@@ -35,6 +35,13 @@ pub fn build_tree(source: &UiSource, sheet: Option<&UiStyleSheet>) -> UiTree {
         if let Some(name) = &element.name {
             tree.set_name(node, name);
         }
+        if let Some((_, action)) = element
+            .attributes
+            .iter()
+            .find(|(key, _)| &**key == "on:click")
+        {
+            tree.set_click(node, action);
+        }
         tree.set_background(node, style.paint.background);
         tree.set_border_color(node, style.paint.border);
         tree.set_radius(node, style.paint.radius);

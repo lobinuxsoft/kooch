@@ -46,6 +46,9 @@ pub(crate) fn apply_cursor_system(resources: &mut Resources) {
     if applied.mode == Some(wanted) && applied.focused == focused {
         return;
     }
+    if let Some(backend) = resources.get_mut::<Box<dyn crate::InputBackend>>() {
+        backend.capture_pointer(wanted == CursorMode::Captured);
+    }
     match wanted {
         CursorMode::Captured => {
             // Locked where it is; confined to the window where the platform has no lock (X11).

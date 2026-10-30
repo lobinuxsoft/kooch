@@ -9,8 +9,8 @@ use kooch_ecs::component::ComponentRegistry;
 use kooch_core::schedule::Order;
 
 use crate::{
-    GlyphAtlas, UiDocument, UiFonts, UiTrees, build_documents, draw_documents, layout_documents,
-    prune_trees,
+    GlyphAtlas, UiActions, UiDocument, UiEvent, UiFonts, UiPointer, UiTrees, build_documents,
+    draw_documents, layout_documents, pick_pointer, prune_trees,
 };
 
 /// Only the components: what the editor needs to offer and inspect them, without running any UI.
@@ -40,6 +40,13 @@ impl Plugin for UiPlugin {
             resources.insert(UiFonts::default());
             resources.insert(GlyphAtlas::default());
         });
+        // At build, not Startup: a project's Startup system registering actions may run first.
+        app.insert_resource(UiActions::default())
+            .insert_resource(UiPointer::default())
+            .add_event::<UiEvent>();
+        // Before anything reads actions: a click the UI takes must read as idle to the game. On
+        // last frame's rects, which is what was on screen when the click was made.
+        app.add_system(Stage::PreUpdate, pick_pointer);
         // Ungated: a document removed while stopped frees its tree too.
         app.add_system(Stage::PostUpdate, prune_trees);
         app.add_system(Stage::PostUpdate, build_documents);

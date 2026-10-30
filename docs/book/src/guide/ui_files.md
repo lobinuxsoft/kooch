@@ -1,7 +1,7 @@
 # UI files
 
-> 🚧 Templates (`use`), states (`:hover`…), events and bindings are parsed but not live yet: they
-> arrive with the rest of #280 and #96's input phase.
+> 🚧 Templates (`use`), states (`:hover`…) and bindings are parsed but not live yet: they arrive
+> with the rest of #280 and #96's input phase. Of the events, `on:click` is live.
 
 A `UiDocument` points at two files, split like Unity's UXML and USS:
 
@@ -77,11 +77,13 @@ editor can list the actions on offer, and it works the same when the game runs i
 component on the document's entity, both ways: moving the slider writes the field, and changing the
 field moves the slider.
 
-A system hears the UI the way it hears input, by reading events:
+A system hears the UI the way it hears input, by reading events. They are read the frame after the
+click:
 
 ```rust
 fn pause_menu(resources: &mut Resources) {
-    for event in resources.events::<UiEvent>() {
+    let Some(events) = resources.get::<Events<UiEvent>>() else { return };
+    for event in events.read() {
         if event.action == "game.quit" {
             // ...
         }
@@ -89,13 +91,29 @@ fn pause_menu(resources: &mut Resources) {
 }
 ```
 
-Or the project registers the action once, and the UI runs it:
+Or the project registers the action once, from a `Startup` system, and the UI runs it the frame the
+click lands:
 
 ```rust
-app.add_ui_action("game.quit", |resources: &mut Resources, _event: &UiEvent| { /* ... */ });
+fn quit(resources: &mut Resources, _event: &UiEvent) { /* ... */ }
+
+fn register_actions(resources: &mut Resources) {
+    if let Some(actions) = resources.get_mut::<UiActions>() {
+        actions.add("game.quit", quit);
+    }
+}
 ```
 
-> The API names above are the design; they land with #96's input phase and #280's bindings phase.
+A click over the UI does not reach the game: while the pointer is over a node with an action or a
+visible background, input actions read mouse buttons and scroll as idle. A transparent layout panel
+lets the click through. Raw reads (`is_mouse_pressed`) still see everything, so a system that reads
+them asks `UiPointer::over` first. A press that started over the game stays the game's until it is
+released, so dragging the camera across a panel does not drop it.
+
+With the cursor captured for mouse look there is no pointer, and nothing is picked.
+
+> Live today: `on:click` on Overlay documents. `on:change`, `on:focus`/`on:blur`, `bind:value` and
+> gamepad navigation arrive with the rest of #96's input phase and #280's bindings phase.
 
 ## Style
 
