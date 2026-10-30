@@ -42,11 +42,13 @@ pub(super) fn action_to_command(
     match action {
         EditorAction::Spawn {
             extra,
+            fields,
             name,
             into,
             at,
         } => Some(Box::new(SpawnCommand::new(
             extra.clone(),
+            fields.clone(),
             name.clone(),
             *into,
             *at,

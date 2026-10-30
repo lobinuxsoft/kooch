@@ -64,11 +64,22 @@ impl BakeKind {
     }
 }
 
+/// A field a spawn writes over its component's default: what makes a preset more than a list of
+/// types (#1678).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SpawnField {
+    pub component: TypeId,
+    pub field: &'static str,
+    pub value: kooch_ecs::reflect::ReflectValue,
+}
+
 pub(crate) enum EditorAction {
     /// Spawn an entity with Name + Transform + optional extra components.
     /// The optional String sets the Name component value.
     Spawn {
         extra: Vec<TypeId>,
+        /// Written after the components are added, over their defaults.
+        fields: Vec<SpawnField>,
         name: Option<String>,
         /// Which scene the new entity is authored into, and what it hangs off.
         into: SpawnTarget,
