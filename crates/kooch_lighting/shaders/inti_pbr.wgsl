@@ -251,9 +251,15 @@ fn inti_specular_multiscatter(
 // Proxima (#1657; SIGGRAPH 2023 Advances, Callisto Protocol, slide 128): a fit to GGX-microfacet
 // diffuse, so lighting holds as normal-map mips flatten. Pre-multiplied by N·L, as the slide
 // recommends, so it returns `f·N·L`. Lambert at `a = 0`.
+// 🔴 The fit is `0.19·a`, not 0, at N·L = 0, where the loop drops the light: a 19 % step at
+// roughness 1, drawn as a hard line on every rough curve. The slides only validate to 89.5°, so the
+// rough term fades out over the last ~9° and only the shadow maps draw hard edges.
+const INTI_PROXIMA_FADE: f32 = 0.15;
+
 fn inti_fd_proxima(a: f32, n_dot_l: f32, v_dot_l: f32) -> f32 {
     let toward = 1.0 - sqrt(max(-v_dot_l, 0.0));
-    return max(a * (0.19 - 0.55 * n_dot_l) * toward + n_dot_l, 0.0) * (1.0 / INTI_PI);
+    let fade = smoothstep(0.0, INTI_PROXIMA_FADE, n_dot_l);
+    return max(a * (0.19 - 0.55 * n_dot_l) * toward * fade + n_dot_l, 0.0) * (1.0 / INTI_PI);
 }
 
 // The Callisto BRDF's controls (#1657), packed by `Callisto::pack`. Defaults are Lambert + GGX.
