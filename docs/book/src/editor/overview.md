@@ -508,6 +508,14 @@ its Project window out of the undo stack for the same reason.
 > resurrection. Loading a scene or closing the project clears the history, because the world
 > it describes is gone.
 
+### A child that keeps its own rotation
+
+A child follows its parent's whole transform, so an arrow parented to a rolling ball rolls with it.
+Add **Position Only** to the child and it takes just the parent's position: its own rotation, scale
+and offset are read in world axes, and a system can point it anywhere — a heading arrow, a shadow
+blob, an upright label. Its own children compose under it as usual, so ball → arrow → cone works as
+built. The gizmo and the Inspector's Local/World rotation respect it.
+
 ## Play
 
 Play does **not** rebuild anything and does **not** open a second window.

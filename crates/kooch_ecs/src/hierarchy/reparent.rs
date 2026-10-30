@@ -4,7 +4,7 @@ use std::any::TypeId;
 
 use crate::component::ComponentRegistry;
 use crate::entity::Entity;
-use crate::hierarchy::Parent;
+use crate::hierarchy::{Parent, PositionOnly};
 use crate::transform::Transform;
 use glam::{Quat, Vec3};
 use kooch_core::resource::Resources;
@@ -27,6 +27,12 @@ pub(super) fn rewrite_local_transform_for_reparent(
         None => (Vec3::ZERO, Quat::IDENTITY, Vec3::ONE),
     };
 
+    // A `PositionOnly` child is in world axes: only the parent's position comes off.
+    if rides(resources, entity) {
+        write_local(resources, entity, child_wp - parent_wp, child_wr, child_ws);
+        return;
+    }
+
     // Inverse of `world = T + R · (S ⊙ local)`: subtract T, apply R⁻¹, then divide by S
     // component-wise.
     let parent_rot_inv = parent_wr.inverse();
@@ -39,14 +45,37 @@ pub(super) fn rewrite_local_transform_for_reparent(
     let new_local_rot = parent_rot_inv * child_wr;
     let new_local_scale = child_ws * inv_parent_scale;
 
+    write_local(
+        resources,
+        entity,
+        new_local_pos,
+        new_local_rot,
+        new_local_scale,
+    );
+}
+
+fn write_local(
+    resources: &mut Resources,
+    entity: Entity,
+    position: Vec3,
+    rotation: Quat,
+    scale: Vec3,
+) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
         && let Some(mut transform_storage) = registry.get_cpu_mut::<Transform>()
         && let Some(transform) = transform_storage.get_mut(entity)
     {
-        transform.position = new_local_pos;
-        transform.rotation = new_local_rot;
-        transform.scale = new_local_scale;
+        transform.position = position;
+        transform.rotation = rotation;
+        transform.scale = scale;
     }
+}
+
+fn rides(resources: &Resources, entity: Entity) -> bool {
+    resources
+        .get::<ComponentRegistry>()
+        .and_then(|registry| registry.get_cpu::<PositionOnly>())
+        .is_some_and(|storage| storage.get(entity).is_some())
 }
 
 /// Walks up the parent chain from `entity` to a root, composing TRS per component. Returns the
@@ -71,8 +100,13 @@ fn compute_world_trs(resources: &Resources, entity: Entity) -> Option<(Vec3, Qua
     let mut world_pos = Vec3::ZERO;
     let mut world_rot = Quat::IDENTITY;
     let mut world_scale = Vec3::ONE;
-    for &e in &chain {
+    let position_only = registry.get_cpu::<PositionOnly>();
+    for (depth, &e) in chain.iter().enumerate() {
         let t = transform_storage.get(e)?;
+        if depth > 0 && position_only.as_ref().is_some_and(|s| s.get(e).is_some()) {
+            world_rot = Quat::IDENTITY;
+            world_scale = Vec3::ONE;
+        }
         let new_pos = world_pos + world_rot * (world_scale * t.position);
         let new_rot = world_rot * t.rotation;
         let new_scale = world_scale * t.scale;

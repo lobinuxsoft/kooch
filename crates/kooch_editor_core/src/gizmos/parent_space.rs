@@ -5,7 +5,7 @@ use glam::{Mat4, Quat, Vec3};
 use kooch_core::resource::Resources;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
-use kooch_ecs::hierarchy::{GlobalTransform, Parent};
+use kooch_ecs::hierarchy::{GlobalTransform, Parent, PositionOnly, parent_frame};
 
 /// The world→local transform of `entity`'s parent, or `None` when it has no parent — in which case
 /// world space *is* its local space and no conversion is wanted.
@@ -13,7 +13,10 @@ pub(super) fn parent_world_to_local(resources: &Resources, entity: Entity) -> Op
     let registry = resources.get::<ComponentRegistry>()?;
     let parent = registry.get_cpu::<Parent>()?.get(entity)?.entity;
     let parent_world = registry.get_cpu::<GlobalTransform>()?.get(parent)?.matrix;
-    Some(parent_world.inverse())
+    let rides = registry
+        .get_cpu::<PositionOnly>()
+        .is_some_and(|storage| storage.get(entity).is_some());
+    Some(parent_frame(parent_world, rides).inverse())
 }
 
 /// Converts a world-space translation delta into the parent's space.

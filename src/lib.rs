@@ -106,6 +106,7 @@ pub mod prelude {
     // the per-type map is the inbox behind it — crate-private, because a third door into it would
     // give one component two values (#891).
     pub use kooch_ecs::component::{ComponentView, ComponentViewMut};
+    pub use kooch_ecs::hierarchy::PositionOnly;
     pub use kooch_ecs::{
         Children, Commands, Component, ComponentId, ComponentRegistry, EcsPlugin, Entity,
         EntityAllocator, GlobalTransform, MeshRenderer, Name, OrthographicCamera, Parent,
