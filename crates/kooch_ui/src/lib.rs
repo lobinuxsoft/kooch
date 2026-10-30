@@ -3,6 +3,7 @@
 
 mod atlas;
 mod document;
+mod draw;
 mod layout;
 mod plugin;
 mod text;
@@ -11,10 +12,11 @@ mod trees;
 
 pub use atlas::{AtlasGlyph, GlyphAtlas, GlyphKey};
 pub use document::{MODE_CHOICES, MODE_OVERLAY, MODE_WORLD, UiDocument};
+pub use draw::draw_documents;
 pub use layout::{CANVAS_HEIGHT, canvas, layout_documents};
 pub use plugin::{UiComponentsPlugin, UiPlugin};
 pub use text::UiFonts;
-pub use tree::{GlyphQuad, UiNode, UiRect, UiTree};
+pub use tree::{GlyphQuad, Paint, UiNode, UiRect, UiTree};
 pub use trees::{UiTrees, prune_trees};
 
 /// Node styles are taffy's own: flexbox and CSS Grid as the web defines them.

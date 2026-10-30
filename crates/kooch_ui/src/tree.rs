@@ -31,6 +31,28 @@ pub struct GlyphQuad {
     pub node: u32,
 }
 
+/// How a node is painted. Colours are sRGB, as a colour picker gives them: the frame they are
+/// blended over is already display-encoded. Transparent draws nothing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Paint {
+    pub background: [f32; 4],
+    pub border: [f32; 4],
+    /// Corner radius, canvas units.
+    pub radius: f32,
+    pub text: [f32; 4],
+}
+
+impl Default for Paint {
+    fn default() -> Self {
+        Self {
+            background: [0.0; 4],
+            border: [0.0; 4],
+            radius: 0.0,
+            text: [1.0; 4],
+        }
+    }
+}
+
 /// One document's node tree. Grows only: a document that changes shape is rebuilt whole, and
 /// hiding a node is `Display::None`, not removal.
 #[derive(Debug)]
@@ -44,6 +66,9 @@ pub struct UiTree {
     name: Vec<Option<Box<str>>>,
     material: Vec<u32>,
     rect: Vec<UiRect>,
+    /// Border width from the layout, uniform: the left edge's.
+    border: Vec<f32>,
+    paint: Vec<Paint>,
     text: Vec<Option<Text>>,
     glyphs: Vec<GlyphQuad>,
     /// Physical pixels per canvas unit and atlas generation the glyphs were built for.
@@ -70,6 +95,8 @@ impl UiTree {
             name: Vec::new(),
             material: Vec::new(),
             rect: Vec::new(),
+            border: Vec::new(),
+            paint: Vec::new(),
             text: Vec::new(),
             glyphs: Vec::new(),
             rastered: None,
@@ -118,11 +145,28 @@ impl UiTree {
         *slot = Some(Text {
             content: content.to_owned(),
             size,
+            family: slot.as_ref().and_then(|text| text.family.clone()),
             layout: None,
             origin: Vec2::ZERO,
         });
         let _ = self.layout.set_node_context(id, Some(node.0));
         let _ = self.layout.mark_dirty(id);
+        self.laid_out = None;
+    }
+
+    /// Shapes a node's text with `family` first (`"Fira Code"`), then Inter. Set after `set_text`.
+    pub fn set_font(&mut self, node: UiNode, family: &str) {
+        let Some(text) = self.text.get_mut(node.0 as usize).and_then(Option::as_mut) else {
+            return;
+        };
+        if text.family.as_deref() == Some(family) {
+            return;
+        }
+        text.family = Some(family.into());
+        text.layout = None;
+        if let Some(&id) = self.taffy.get(node.0 as usize) {
+            let _ = self.layout.mark_dirty(id);
+        }
         self.laid_out = None;
     }
 
@@ -182,6 +226,7 @@ impl UiTree {
                 min,
                 size: Vec2::new(own.size.width, own.size.height),
             };
+            self.border[index] = own.border.left;
             // The last measure may have broken lines at a trial width; the box is final now.
             if let Some(text) = self.text[index].as_mut() {
                 text.origin = min + inset;
@@ -226,6 +271,40 @@ impl UiTree {
             }
         }
         true
+    }
+
+    /// Fill colour, sRGB. The border's width is the layout's (`Style::border`).
+    pub fn set_background(&mut self, node: UiNode, rgba: [f32; 4]) {
+        if let Some(paint) = self.paint.get_mut(node.0 as usize) {
+            paint.background = rgba;
+        }
+    }
+
+    pub fn set_border_color(&mut self, node: UiNode, rgba: [f32; 4]) {
+        if let Some(paint) = self.paint.get_mut(node.0 as usize) {
+            paint.border = rgba;
+        }
+    }
+
+    pub fn set_radius(&mut self, node: UiNode, radius: f32) {
+        if let Some(paint) = self.paint.get_mut(node.0 as usize) {
+            paint.radius = radius;
+        }
+    }
+
+    /// Text colour, sRGB. White until set.
+    pub fn set_text_color(&mut self, node: UiNode, rgba: [f32; 4]) {
+        if let Some(paint) = self.paint.get_mut(node.0 as usize) {
+            paint.text = rgba;
+        }
+    }
+
+    pub fn paint(&self, node: UiNode) -> Option<Paint> {
+        self.paint.get(node.0 as usize).copied()
+    }
+
+    pub fn border(&self, node: UiNode) -> Option<f32> {
+        self.border.get(node.0 as usize).copied()
     }
 
     pub fn glyphs(&self) -> &[GlyphQuad] {
@@ -276,6 +355,8 @@ impl UiTree {
         self.name.push(None);
         self.material.push(Self::NO_MATERIAL);
         self.rect.push(UiRect::default());
+        self.border.push(0.0);
+        self.paint.push(Paint::default());
         self.text.push(None);
         index
     }

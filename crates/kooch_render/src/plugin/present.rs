@@ -246,6 +246,9 @@ fn render_passes(
         );
     }
 
+    // Over the finished, post-processed image: the UI is not part of the scene a post-process reads.
+    draw_ui(gpu, &mut encoder, resources, &surface_view, size);
+
     // The frame's last encoder, so this is where the timestamps are copied out — including the
     // meshlet stage's, which were written into an encoder submitted before this one and are
     // therefore already resolved on the queue by the time this copy runs.
@@ -377,4 +380,23 @@ fn clear_with_gradient(
         occlusion_query_set: None,
         multiview_mask: None,
     });
+}
+
+/// Draws the frame's [`UiDrawList`](kooch_ecs::UiDrawList), building the pass on first use.
+fn draw_ui(
+    gpu: &GpuContext,
+    encoder: &mut wgpu::CommandEncoder,
+    resources: &mut Resources,
+    target: &wgpu::TextureView,
+    size: (u32, u32),
+) {
+    let Some(mut list) = resources.remove::<kooch_ecs::UiDrawList>() else {
+        return;
+    };
+    let mut pass = resources
+        .remove::<crate::ui::UiPass>()
+        .unwrap_or_else(|| crate::ui::UiPass::new(gpu.device(), gpu.format()));
+    pass.draw(gpu.device(), gpu.queue(), encoder, target, size, &mut list);
+    resources.insert(pass);
+    resources.insert(list);
 }

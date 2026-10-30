@@ -52,8 +52,26 @@ Text is shaped with **Inter**, which the engine ships (SIL Open Font License, in
 node is measured from its text, so a label pushes its siblings in a row. Ligatures and accents come
 from the shaper on their own.
 
+**Fira Code** ships too, with its programming ligatures (`=>`, `!=`): `tree.set_font(node, "Fira
+Code")` after `set_text`.
+
 Sizes are in canvas units, and glyphs are rasterized at the screen's **physical** size: text stays
 sharp at 720p and at 1440p.
+
+## Painting
+
+```rust
+tree.set_background(panel, [0.08, 0.09, 0.12, 0.85]);
+tree.set_border_color(panel, [1.0, 0.55, 0.1, 1.0]); // width is the layout's `Style::border`
+tree.set_radius(panel, 18.0);
+tree.set_text_color(label, [0.55, 0.85, 1.0, 1.0]);
+```
+
+Colours are sRGB, as a colour picker gives them. An Overlay draws over the finished frame, after
+the post-process.
+
+> ⚠️ For now it shows in the game run on its own, not in the editor's Play: there the game runs in
+> another process, and sending what it draws to the editor is the next step of #96.
 
 Ask for a node by name once and keep the handle: `tree.query("speed")`. Removing the `UiDocument`,
 or despawning its entity, frees the tree.

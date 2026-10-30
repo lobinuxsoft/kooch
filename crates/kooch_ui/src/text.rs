@@ -13,6 +13,9 @@ use parley::{
 /// The engine's UI font, Inter (SIL OFL 1.1, `assets/fonts/Inter-OFL.txt`): variable, every weight
 /// in one file.
 static INTER: &[u8] = include_bytes!("../assets/fonts/Inter.ttf");
+/// Fira Code (SIL OFL 1.1, `assets/fonts/FiraCode-OFL.txt`): monospace with programming ligatures,
+/// asked for by family.
+static FIRA_CODE: &[u8] = include_bytes!("../assets/fonts/FiraCode-Regular.ttf");
 
 /// Inter first; the system's sans-serif for any glyph it lacks.
 const FAMILY: &[FontFamilyName<'static>] = &[
@@ -30,8 +33,10 @@ pub struct UiFonts {
 impl Default for UiFonts {
     fn default() -> Self {
         let mut font = FontContext::new();
-        let inter: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(INTER);
-        font.collection.register_fonts(Blob::new(inter), None);
+        for bytes in [INTER, FIRA_CODE] {
+            let data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(bytes);
+            font.collection.register_fonts(Blob::new(data), None);
+        }
         Self {
             font,
             layout: LayoutContext::new(),
@@ -44,6 +49,8 @@ impl Default for UiFonts {
 pub(crate) struct Text {
     pub content: String,
     pub size: f32,
+    /// A family tried before Inter, `"Fira Code"`; `None` is Inter.
+    pub family: Option<Box<str>>,
     /// `None` until shaped, and again whenever the content or size changes.
     pub layout: Option<Layout<()>>,
     /// Top-left of the content box, in the canvas: where the first line starts.
@@ -66,9 +73,15 @@ impl Text {
                 fonts
                     .layout
                     .ranged_builder(&mut fonts.font, &self.content, 1.0, true);
-            builder.push_default(StyleProperty::FontFamily(FontFamily::List(Cow::Borrowed(
-                FAMILY,
-            ))));
+            let family = match &self.family {
+                Some(first) => {
+                    let mut list = vec![FontFamilyName::Named(Cow::Borrowed(first))];
+                    list.extend_from_slice(FAMILY);
+                    FontFamily::List(Cow::Owned(list))
+                }
+                None => FontFamily::List(Cow::Borrowed(FAMILY)),
+            };
+            builder.push_default(StyleProperty::FontFamily(family));
             builder.push_default(StyleProperty::FontSize(self.size));
             builder.build(&self.content)
         })

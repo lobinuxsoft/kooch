@@ -6,7 +6,11 @@ use kooch_core::resource::Resources;
 use kooch_core::stage::Stage;
 use kooch_ecs::component::ComponentRegistry;
 
-use crate::{GlyphAtlas, UiDocument, UiFonts, UiTrees, layout_documents, prune_trees};
+use kooch_core::schedule::Order;
+
+use crate::{
+    GlyphAtlas, UiDocument, UiFonts, UiTrees, draw_documents, layout_documents, prune_trees,
+};
 
 /// Only the components: what the editor needs to offer and inspect them, without running any UI.
 pub struct UiComponentsPlugin;
@@ -39,6 +43,11 @@ impl Plugin for UiPlugin {
         app.add_system(Stage::PostUpdate, prune_trees);
         // After gameplay's `Update`, which is where a game edits its trees.
         app.add_system(Stage::PostUpdate, layout_documents);
+        app.add_ordered(
+            Stage::PostUpdate,
+            Order::after("layout_documents"),
+            draw_documents,
+        );
     }
 
     fn name(&self) -> &str {
