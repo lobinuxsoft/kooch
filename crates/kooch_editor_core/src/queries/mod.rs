@@ -315,11 +315,18 @@ pub(crate) fn gather_entity_data(
     if let Some(registry) = components.as_ref()
         && let Some(parent_storage) = registry.get_cpu::<Parent>()
     {
+        let position_only = registry.get_cpu::<kooch_ecs::hierarchy::PositionOnly>();
         for (child_entity, parent_comp) in parent_storage.iter() {
             if let Some(&child_idx) = entity_idx_map.get(child_entity) {
                 flat[child_idx].parent = Some(parent_comp.entity);
-                flat[child_idx].parent_global_rotation =
-                    global_rotations.get(&parent_comp.entity).copied();
+                // A `PositionOnly` child's rotation is already in world axes.
+                let rides = position_only
+                    .as_ref()
+                    .is_some_and(|storage| storage.get(*child_entity).is_some());
+                flat[child_idx].parent_global_rotation = match rides {
+                    true => Some(glam::Quat::IDENTITY),
+                    false => global_rotations.get(&parent_comp.entity).copied(),
+                };
             }
             // 🔴 The CHILD has to be listed too (#1475). The pass above already left the
             // ephemeral archetypes out; pushing one here anyway gave a spline placement's entity

@@ -44,13 +44,23 @@ pub(crate) fn refresh_detail(
             .and_then(|storage| storage.get(entity))
             .map(|transform| transform.rotation())
     };
+    // A `PositionOnly` child's rotation is already in world axes.
+    let rides = |entity: kooch_ecs::Entity| {
+        components
+            .as_ref()
+            .and_then(|registry| registry.get_cpu::<kooch_ecs::hierarchy::PositionOnly>())
+            .is_some_and(|storage| storage.get(entity).is_some())
+    };
 
     for row in rows.iter_mut() {
         if !detail_for.contains(&row.entity) {
             continue;
         }
         row.global_rotation = rotation(row.entity);
-        row.parent_global_rotation = row.parent.and_then(rotation);
+        row.parent_global_rotation = match rides(row.entity) {
+            true => row.parent.map(|_| glam::Quat::IDENTITY),
+            false => row.parent.and_then(rotation),
+        };
 
         let Some(archetype) = archetypes
             .entity_archetype(row.entity)

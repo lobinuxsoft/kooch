@@ -9,6 +9,7 @@ use crate::entity::Entity;
 use super::children::Children;
 use super::global_transform::GlobalTransform;
 use super::parent::Parent;
+use super::position_only::{PositionOnly, parent_frame};
 
 /// Propagates transforms top-down through the hierarchy.
 pub fn transform_propagation_system(resources: &mut kooch_core::resource::Resources) {
@@ -74,6 +75,7 @@ pub fn transform_propagation_system(resources: &mut kooch_core::resource::Resour
         .unwrap_or_default();
 
     let mut global_transforms: Vec<(Entity, GlobalTransform)> = Vec::new();
+    let position_only = registry.get_cpu::<PositionOnly>();
 
     while let Some((entity, parent_global)) = queue.pop_front() {
         global_transforms.push((
@@ -86,7 +88,13 @@ pub fn transform_propagation_system(resources: &mut kooch_core::resource::Resour
         if let Some(children) = children_map.get(&entity) {
             for &child in children {
                 if let Some(child_transform) = transform_map.get(&child) {
-                    let child_global = parent_global * child_transform.to_matrix();
+                    let frame = parent_frame(
+                        parent_global,
+                        position_only
+                            .as_ref()
+                            .is_some_and(|s| s.get(child).is_some()),
+                    );
+                    let child_global = frame * child_transform.to_matrix();
                     queue.push_back((child, child_global));
                 }
             }
@@ -148,6 +156,12 @@ pub fn propagate_subtrees(resources: &mut kooch_core::resource::Resources, roots
         };
         let parents = registry.get_cpu::<Parent>();
         let children = registry.get_cpu::<Children>();
+        let position_only = registry.get_cpu::<PositionOnly>();
+        let rides = |entity: Entity| {
+            position_only
+                .as_ref()
+                .is_some_and(|storage| storage.get(entity).is_some())
+        };
 
         let mut out = Vec::new();
         let mut queue: std::collections::VecDeque<(Entity, Mat4)> =
@@ -164,7 +178,7 @@ pub fn propagate_subtrees(resources: &mut kooch_core::resource::Resources, roots
                 .map(|parent| parent.entity)
                 .filter(|parent| parent.is_valid() && *parent != root)
                 .and_then(|parent| globals.get(parent))
-                .map(|global| global.matrix)
+                .map(|global| parent_frame(global.matrix, rides(root)))
                 .unwrap_or(Mat4::IDENTITY);
             queue.push_back((root, above * local.to_matrix()));
         }
@@ -182,7 +196,10 @@ pub fn propagate_subtrees(resources: &mut kooch_core::resource::Resources, roots
             };
             for &child in &below.entities {
                 if let Some(local) = transforms.get(child) {
-                    queue.push_back((child, matrix * local.to_matrix()));
+                    queue.push_back((
+                        child,
+                        parent_frame(matrix, rides(child)) * local.to_matrix(),
+                    ));
                 }
             }
         }
