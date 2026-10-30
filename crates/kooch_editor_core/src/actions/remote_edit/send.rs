@@ -116,6 +116,7 @@ pub(super) fn send(
         Edit::Spawn {
             name: entity_name,
             extra,
+            fields,
             into,
             at,
         } => {
@@ -166,6 +167,17 @@ pub(super) fn send(
                 }
                 client
                     .add_component(entity, component_name)
+                    .map_err(map_err)?;
+            }
+            for set in fields {
+                let Some(component_name) = registry
+                    .as_ref()
+                    .and_then(|r| r.component_name(&set.component))
+                else {
+                    continue;
+                };
+                client
+                    .set_field(entity, component_name, set.field, set.value)
                     .map_err(map_err)?;
             }
 

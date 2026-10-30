@@ -365,6 +365,8 @@ enum Edit<'a> {
         name: Option<String>,
         /// Component types the action asked for beyond the base ones.
         extra: Vec<std::any::TypeId>,
+        /// Written over the defaults once the components are in.
+        fields: Vec<crate::actions::SpawnField>,
         /// Where it goes — the scene, and what it hangs off.
         into: crate::actions::SpawnTarget,
         /// Resolved HERE, not sent as a drop point: unprojecting a cursor needs the editor's
@@ -512,12 +514,14 @@ fn classify<'a>(action: &'a EditorAction, resources: &mut Resources) -> Option<E
         EditorAction::Spawn {
             name,
             extra,
+            fields,
             into,
             at,
         } => Some(Edit::Spawn {
             into: *into,
             name: name.clone(),
             extra: extra.clone(),
+            fields: fields.clone(),
             at: crate::viewport_pick::resolve(resources, *at),
         }),
         // SpawnMesh is reduced in `dispatch`, not here: resolving its

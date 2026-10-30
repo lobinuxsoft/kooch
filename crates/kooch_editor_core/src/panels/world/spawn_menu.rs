@@ -13,8 +13,19 @@ use kooch_ecs::point_light::PointLight;
 use kooch_ecs::sky_renderer::SkyRenderer;
 use kooch_ecs::spot_light::SpotLight;
 
-use crate::actions::EditorAction;
+use crate::actions::{EditorAction, SpawnField};
 use crate::icons;
+
+/// A UI document in `mode`: Overlay over the screen, World at the entity (#1678).
+fn ui_document(mode: u32) -> (Vec<TypeId>, Vec<SpawnField>) {
+    let document = TypeId::of::<kooch_ui::UiDocument>();
+    let fields = vec![SpawnField {
+        component: document,
+        field: "mode",
+        value: kooch_ecs::reflect::ReflectValue::U32(mode),
+    }];
+    (vec![document], fields)
+}
 
 /// Title-cases a primitive's asset stem for display: `cube` → `Cube`.
 fn display_name(stem: &str) -> String {
@@ -62,6 +73,7 @@ pub(crate) fn spawn_entries(
                 into,
                 at,
                 extra: vec![],
+                fields: vec![],
                 name: None,
             });
             ui.close();
@@ -73,6 +85,7 @@ pub(crate) fn spawn_entries(
                     into,
                     at,
                     extra: vec![TypeId::of::<PerspectiveCamera>()],
+                    fields: vec![],
                     name: Some("Perspective Camera".to_owned()),
                 });
                 ui.close();
@@ -82,6 +95,7 @@ pub(crate) fn spawn_entries(
                     into,
                     at,
                     extra: vec![TypeId::of::<OrthographicCamera>()],
+                    fields: vec![],
                     name: Some("Orthographic Camera".to_owned()),
                 });
                 ui.close();
@@ -98,6 +112,7 @@ pub(crate) fn spawn_entries(
                     into,
                     at,
                     extra: orbital_rig(),
+                    fields: vec![],
                     name: Some("Orbital Follow Camera".to_owned()),
                 });
                 ui.close();
@@ -109,6 +124,7 @@ pub(crate) fn spawn_entries(
                     into,
                     at,
                     extra: shoulder_rig(),
+                    fields: vec![],
                     name: Some("Third Person Follow Camera".to_owned()),
                 });
                 ui.close();
@@ -120,6 +136,7 @@ pub(crate) fn spawn_entries(
                     into,
                     at,
                     extra: vec![TypeId::of::<VirtualCamera>()],
+                    fields: vec![],
                     name: Some("Virtual Camera".to_owned()),
                 });
                 ui.close();
@@ -130,6 +147,7 @@ pub(crate) fn spawn_entries(
                 into,
                 at,
                 extra: vec![TypeId::of::<MeshRenderer>()],
+                fields: vec![],
                 name: Some("Mesh".to_owned()),
             });
             ui.close();
@@ -166,16 +184,36 @@ pub(crate) fn spawn_entries(
                 into,
                 at,
                 extra: vec![TypeId::of::<SkyRenderer>()],
+                fields: vec![],
                 name: Some("Sky".to_owned()),
             });
             ui.close();
         }
+        ui.menu_button("UI", |ui| {
+            for (label, mode) in [
+                ("UI Overlay", kooch_ui::MODE_OVERLAY),
+                ("UI World", kooch_ui::MODE_WORLD),
+            ] {
+                if ui.button(label).clicked() {
+                    let (extra, fields) = ui_document(mode);
+                    actions.push(EditorAction::Spawn {
+                        into,
+                        at,
+                        extra,
+                        fields,
+                        name: Some(label.to_owned()),
+                    });
+                    ui.close();
+                }
+            }
+        });
         ui.menu_button("Lights", |ui| {
             if ui.button("Directional Light").clicked() {
                 actions.push(EditorAction::Spawn {
                     into,
                     at,
                     extra: vec![TypeId::of::<DirectionalLight>()],
+                    fields: vec![],
                     name: Some("Directional Light".to_owned()),
                 });
                 ui.close();
@@ -185,6 +223,7 @@ pub(crate) fn spawn_entries(
                     into,
                     at,
                     extra: vec![TypeId::of::<PointLight>()],
+                    fields: vec![],
                     name: Some("Point Light".to_owned()),
                 });
                 ui.close();
@@ -194,6 +233,7 @@ pub(crate) fn spawn_entries(
                     into,
                     at,
                     extra: vec![TypeId::of::<SpotLight>()],
+                    fields: vec![],
                     name: Some("Spot Light".to_owned()),
                 });
                 ui.close();

@@ -153,6 +153,7 @@ fn spawn_carries_its_extra_components_over_the_wire() {
     let action = EditorAction::Spawn {
         at: crate::viewport_pick::DropPoint::Authored,
         extra: vec![std::any::TypeId::of::<DirectionalLight>()],
+        fields: vec![],
         name: Some("Directional Light".to_owned()),
         into: crate::actions::SpawnTarget::Active,
     };

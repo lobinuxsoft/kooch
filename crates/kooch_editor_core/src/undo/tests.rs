@@ -336,6 +336,7 @@ fn spawn_undo_redo_cycle() {
     // Spawn via command.
     let cmd = SpawnCommand::new(
         vec![],
+        vec![],
         None,
         crate::actions::SpawnTarget::Active,
         crate::viewport_pick::DropPoint::Authored,

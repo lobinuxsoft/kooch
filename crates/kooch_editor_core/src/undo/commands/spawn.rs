@@ -17,6 +17,8 @@ pub(crate) struct SpawnCommand {
     entity: Option<Entity>,
     /// Extra component TypeIds to add beyond Name + Transform.
     extra_component_types: Vec<TypeId>,
+    /// Written over the defaults once the components are in.
+    fields: Vec<crate::actions::SpawnField>,
     /// Optional name to set on the Name component.
     name: Option<String>,
     /// All component TypeIds added during spawn (base + extra).
@@ -32,6 +34,7 @@ pub(crate) struct SpawnCommand {
 impl SpawnCommand {
     pub fn new(
         extra_component_types: Vec<TypeId>,
+        fields: Vec<crate::actions::SpawnField>,
         name: Option<String>,
         into: crate::actions::SpawnTarget,
         at: crate::viewport_pick::DropPoint,
@@ -39,6 +42,7 @@ impl SpawnCommand {
         Self {
             entity: None,
             extra_component_types,
+            fields,
             name,
             spawned_component_types: Vec::new(),
             into,
@@ -112,6 +116,17 @@ impl SpawnCommand {
             }
         }
         self.spawned_component_types = all_types;
+
+        if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+            for set in &self.fields {
+                let _ = registry.reflect_set_field(
+                    &set.component,
+                    entity,
+                    set.field,
+                    set.value.clone(),
+                );
+            }
+        }
 
         // Set the Name component value if provided.
         if let Some(ref name) = self.name {
