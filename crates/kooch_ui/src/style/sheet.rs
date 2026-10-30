@@ -65,6 +65,11 @@ pub struct UiStyleSheet {
     pub warnings: Vec<StyleWarning>,
 }
 
+// SAFETY: as for `UiTree`: taffy's lengths are `!Send` only for a `calc()` pointer, and taffy is
+// built without `calc`, so no declaration holds one.
+unsafe impl Send for UiStyleSheet {}
+unsafe impl Sync for UiStyleSheet {}
+
 impl UiStyleSheet {
     pub fn parse(source: &str) -> Self {
         // Two passes: a `var()` may come before the `:root` that sets it.

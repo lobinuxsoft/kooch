@@ -1,8 +1,7 @@
 # UI files
 
-> 🚧 The style sheet parses (`UiStyleSheet::parse`, #1695); loading the markup and matching the
-> selectors arrive with the rest of #280. Until then a document is built from code, as in
-> [UI](./ui.md).
+> 🚧 Templates (`use`), states (`:hover`…), events and bindings are parsed but not live yet: they
+> arrive with the rest of #280 and #96's input phase.
 
 A `UiDocument` points at two files, split like Unity's UXML and USS:
 
@@ -13,6 +12,11 @@ A `UiDocument` points at two files, split like Unity's UXML and USS:
 
 The document is built from them in whichever process shows it: the editor's own with Play stopped,
 so you design without running the game, and the game's in Play.
+
+Create the two files under `assets/` and pick the `.kooch_ui` as the document's **Source**. The
+sheet is the one `<ui style="…">` names; the document's **Style** field, when set, overrides it.
+Save either file and the Game View rebuilds the document — no Play needed. A document with no
+Source is left to code, as in [UI](./ui.md).
 
 ## Markup
 
@@ -113,7 +117,7 @@ precedence are CSS's: name over class over element, and the later rule wins a ti
 
 **Variables.** `--name: value` in `:root`, read with `var(--name)`.
 
-**Inherited.** `color`, `font-family` and `font-size` pass to children unless set there.
+**Inherited.** `color`, `font-family` and `font-size` pass to children unless set there. A label with no `font-size` anywhere up its chain is 24.
 
 ### Properties
 

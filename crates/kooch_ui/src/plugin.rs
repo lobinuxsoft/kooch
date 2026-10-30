@@ -9,7 +9,8 @@ use kooch_ecs::component::ComponentRegistry;
 use kooch_core::schedule::Order;
 
 use crate::{
-    GlyphAtlas, UiDocument, UiFonts, UiTrees, draw_documents, layout_documents, prune_trees,
+    GlyphAtlas, UiDocument, UiFonts, UiTrees, build_documents, draw_documents, layout_documents,
+    prune_trees,
 };
 
 /// Only the components: what the editor needs to offer and inspect them, without running any UI.
@@ -41,8 +42,13 @@ impl Plugin for UiPlugin {
         });
         // Ungated: a document removed while stopped frees its tree too.
         app.add_system(Stage::PostUpdate, prune_trees);
+        app.add_system(Stage::PostUpdate, build_documents);
         // After gameplay's `Update`, which is where a game edits its trees.
-        app.add_system(Stage::PostUpdate, layout_documents);
+        app.add_ordered(
+            Stage::PostUpdate,
+            Order::after("build_documents"),
+            layout_documents,
+        );
         app.add_ordered(
             Stage::PostUpdate,
             Order::after("layout_documents"),

@@ -2622,8 +2622,10 @@ dependencies = [
  "kooch_core",
  "kooch_ecs",
  "parley",
+ "roxmltree",
  "swash",
  "taffy",
+ "tracing",
 ]
 
 [[package]]
