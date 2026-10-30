@@ -2482,6 +2482,7 @@ dependencies = [
 name = "kooch_ui"
 version = "0.98.66"
 dependencies = [
+ "glam 0.33.12",
  "kooch_core",
  "kooch_ecs",
  "taffy",

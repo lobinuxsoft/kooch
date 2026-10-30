@@ -45,6 +45,7 @@ pub(super) fn prepare_frame_system(resources: &mut Resources) {
 
     let aspect = w as f32 / h.max(1) as f32;
     resources.insert(kooch_ecs::ViewAspect(aspect));
+    resources.insert(kooch_ecs::ViewSize(glam::UVec2::new(w, h)));
     resources.insert(FrameSetup {
         aspect,
         // Nothing excluded: a game's cameras are all the game's. The editor keeps its own out

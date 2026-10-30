@@ -11,3 +11,4 @@ authors.workspace = true
 kooch_core.workspace = true
 kooch_ecs.workspace = true
 taffy.workspace = true
+glam.workspace = true

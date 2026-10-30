@@ -61,5 +61,15 @@ impl Default for ViewAspect {
     }
 }
 
+/// The same image's size in physical pixels, for what lays itself out in it: the UI (#96).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ViewSize(pub glam::UVec2);
+
+impl Default for ViewSize {
+    fn default() -> Self {
+        Self(glam::UVec2::new(1920, 1080))
+    }
+}
+
 #[cfg(test)]
 mod tests;
