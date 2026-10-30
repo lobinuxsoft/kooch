@@ -67,7 +67,7 @@ pub use name::Name;
 pub use order::Order;
 pub use orthographic_camera::OrthographicCamera;
 pub use persistent_id::{EntityGuid, PersistentId, PersistentIdAllocator};
-pub use perspective_camera::{PerspectiveCamera, ViewAspect};
+pub use perspective_camera::{PerspectiveCamera, ViewAspect, ViewSize};
 pub use plugin::EcsPlugin;
 pub use point_light::PointLight;
 pub use post_process::{PostEffect, PostProcess};

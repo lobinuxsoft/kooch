@@ -15,6 +15,18 @@ row in the scene.
 
 Enable it with the engine's `ui` feature.
 
+## Units
+
+An Overlay is laid out in a **logical canvas 1080 units tall**, as wide as the screen's aspect
+makes it: 1920×1080 on a 16:9 screen, 1728×1080 on a 16:10 handheld. The same UI takes the same
+share of any screen, whatever its resolution or the OS scale factor — Unity's *Scale With Screen
+Size*, matching height.
+
+A World document is sized by its content for now.
+
+Layout runs in `PostUpdate`, after gameplay, and only when the tree or the screen changed. Read a
+node's place with `tree.rect(node)`: top-left origin, y down, in canvas units.
+
 ## Building a tree from code
 
 Until the file formats arrive, a game builds the tree itself and hands it to `UiTrees`:
