@@ -7,7 +7,7 @@ mod tree;
 mod trees;
 
 pub use document::{MODE_CHOICES, MODE_OVERLAY, MODE_WORLD, UiDocument};
-pub use plugin::UiPlugin;
+pub use plugin::{UiComponentsPlugin, UiPlugin};
 pub use tree::{UiNode, UiTree};
 pub use trees::{UiTrees, prune_trees};
 

@@ -2313,6 +2313,7 @@ dependencies = [
  "kooch_physics",
  "kooch_remote",
  "kooch_render",
+ "kooch_ui",
  "kooch_window",
  "kooch_world",
  "log",
