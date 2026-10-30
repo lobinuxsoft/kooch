@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-10-26 — 🎯 **Play feels like the game again, and the memory question has an answer.** A camera turn in Play stuttered because the editor presented an uneven number of host frames per frame; the editor's pull is now the host's clock (lockstep), and the jump lost the third of a second the ride-height spring added on every fall. The memory hunt ended with a measurement, not a guess: idle editor flat for minutes, Play/Stop adds ~20 MB that hits a ceiling after a few cycles and never moves RSS — a bounded driver cache, not a leak. Every dependency is current (wgpu 30, egui 0.36, rapier 0.36, kira 0.12), with every scene and asset in both repos verified to read and write identically; ron stays on 0.11 because 0.12.2 takes 102 s to parse a scene 0.11 parses in 0.74 s.
+Last updated 2026-10-30 — 🎯 **The pad drives the ball, and the UI has its model.** Triggers report how far they are pulled and pads rumble — from the game, through the editor's Play — so roll-a-ball drives by torque, regulated by trigger travel. A child can now follow only its parent's position (`PositionOnly`), which is what a heading arrow on a rolling ball needs. Proxima's fit no longer draws a hard line at the terminator: only the shadow maps draw hard edges. And the runtime UI is decided as a document per entity, UI Toolkit style, overlay or world, with a material per element (#96, #280).
 
 
 ---
@@ -207,6 +207,27 @@ what the engine did before any of this existed, for the reason
 `settings.rs:510` argues at length: a serde default is not a
 recommendation, it is what an old file silently becomes. A project that
 wants these values sets them.
+
+---
+
+## 🎯 2026-10-30 — the pad drives the ball, and the UI has its model
+
+**What the user gets:** a ball driven like a car — stick steers, triggers are the throttle — that
+rumbles when it lands, with an arrow showing where it will roll, and a planet that shades smoothly
+to its dark side.
+
+- **#56** — the mouse wheel reaches the game in Play; egui no longer swallows it over the viewport.
+- **#57** — `button_value` gives triggers their travel; `Rumble` plays on the pad, and a project
+  running under the editor sends it host → editor through `HostOutbox` on the `ListMoved` reply.
+- **#1672** — `PositionOnly`: a child that rides its parent's position and keeps its own rotation.
+  Propagation, reparent, gizmo and Inspector respect it. A project system cannot be ordered between
+  physics interpolation and propagation, so compensating from the game would wobble.
+- **#1657** — Proxima's premultiplied fit is `0.19·α` at N·L = 0, where the light loop cuts: a 19 %
+  step at roughness 1. The rough term now fades over the last ~9°. The slides validate to 89.5° only.
+- **UI decided (#96, #280 rewritten):** one entity holds a `UiDocument` (`.kooch_ui` + `.kooch_style`,
+  `Overlay | World`); nodes are SoA inside the document on `TaffyTree`, not entities; a material per
+  element; game code asks `doc.query`. Authoring, templates with overrides and the UI Builder are #280.
+  The first HUD — the ball's speed and torque — is #96's smoke.
 
 ---
 
