@@ -41,5 +41,19 @@ tree.set_name(speed, "speed");
 resources.get_mut::<UiTrees>().unwrap().insert(document_entity, tree);
 ```
 
+## Text
+
+```rust
+tree.set_text(speed, "Velocidad: 12,5 m/s", 32.0);
+```
+
+Text is shaped with **Inter**, which the engine ships (SIL Open Font License, in
+`crates/kooch_ui/assets/fonts/`); a glyph Inter lacks falls back to the system's sans-serif. The
+node is measured from its text, so a label pushes its siblings in a row. Ligatures and accents come
+from the shaper on their own.
+
+Sizes are in canvas units, and glyphs are rasterized at the screen's **physical** size: text stays
+sharp at 720p and at 1440p.
+
 Ask for a node by name once and keep the handle: `tree.query("speed")`. Removing the `UiDocument`,
 or despawning its entity, frees the tree.

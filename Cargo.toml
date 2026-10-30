@@ -83,6 +83,13 @@ pollster = "1"
 # Logging
 tracing = "0.1"
 # UI layout: flexbox and CSS Grid over a retained tree (#96).
+# UI text (#1686): the same stack as bevy_text 0.19. parley shapes and lays out, swash
+# rasterizes, etagere packs the atlas.
+parley = "0.12"
+swash = "0.2"
+# Loads fontconfig at runtime for the system fallback, so building needs no fontconfig-devel.
+fontique = { version = "0.12", features = ["fontconfig-dlopen"] }
+etagere = "0.3"
 # Without `calc`: a calc length is a raw pointer, the one thing keeping the tree off `Send`.
 taffy = { version = "0.15", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "block_layout", "content_size"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

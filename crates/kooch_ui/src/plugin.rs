@@ -6,7 +6,7 @@ use kooch_core::resource::Resources;
 use kooch_core::stage::Stage;
 use kooch_ecs::component::ComponentRegistry;
 
-use crate::{UiDocument, UiTrees, layout_documents, prune_trees};
+use crate::{GlyphAtlas, UiDocument, UiFonts, UiTrees, layout_documents, prune_trees};
 
 /// Only the components: what the editor needs to offer and inspect them, without running any UI.
 pub struct UiComponentsPlugin;
@@ -32,6 +32,8 @@ impl Plugin for UiPlugin {
         app.add_plugin(UiComponentsPlugin);
         app.add_system(Stage::Startup, |resources: &mut Resources| {
             resources.insert(UiTrees::default());
+            resources.insert(UiFonts::default());
+            resources.insert(GlyphAtlas::default());
         });
         // Ungated: a document removed while stopped frees its tree too.
         app.add_system(Stage::PostUpdate, prune_trees);
