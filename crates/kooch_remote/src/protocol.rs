@@ -165,6 +165,8 @@ pub enum Method {
         #[serde(default)]
         watching: Vec<EntityId>,
     },
+    /// The editor's Game View, in physical pixels: the host has no window to measure (#1691).
+    SetViewSize { width: u32, height: u32 },
     /// Every registered component type with its field schema.
     GetSchema,
     /// Overwrite one field of one component on one entity.
@@ -323,6 +325,10 @@ pub enum ResponseData {
         /// What the host queued for the editor since the last pull — rumble, today (#57).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         signals: Vec<HostSignal>,
+        /// The host's UI when it changed since the last pull: in remote Play only the editor
+        /// renders (#1691).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ui: Option<crate::ui_frame::UiFrame>,
     },
     /// Reply to [`Method::ListEntities`]: the whole world when `full`, otherwise only changes;
     /// `removed` lists what went away since the caller's revision.

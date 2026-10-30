@@ -187,6 +187,25 @@ impl UiPass {
     }
 }
 
+/// Draws the frame's [`UiDrawList`](kooch_ecs::UiDrawList), building the pass on first use.
+pub fn draw_frame(
+    gpu: &kooch_core::gpu::GpuContext,
+    encoder: &mut wgpu::CommandEncoder,
+    resources: &mut kooch_core::resource::Resources,
+    target: &wgpu::TextureView,
+    size: (u32, u32),
+) {
+    let Some(mut list) = resources.remove::<kooch_ecs::UiDrawList>() else {
+        return;
+    };
+    let mut pass = resources
+        .remove::<UiPass>()
+        .unwrap_or_else(|| UiPass::new(gpu.device(), gpu.format()));
+    pass.draw(gpu.device(), gpu.queue(), encoder, target, size, &mut list);
+    resources.insert(pass);
+    resources.insert(list);
+}
+
 fn instance_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("ui_instances"),

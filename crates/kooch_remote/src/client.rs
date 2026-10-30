@@ -161,6 +161,7 @@ impl RemoteClient {
                 full,
                 host,
                 signals,
+                ui,
             } => Ok(MovedUpdate {
                 moved,
                 components,
@@ -169,6 +170,7 @@ impl RemoteClient {
                 full,
                 host,
                 signals,
+                ui,
             }),
             other => Err(ClientError::Unexpected(other)),
         }
@@ -528,4 +530,6 @@ pub struct MovedUpdate {
     pub host: Option<crate::protocol::HostMetrics>,
     /// Delivered whatever `full` says: a declined pull still drained the host's outbox.
     pub signals: Vec<crate::protocol::HostSignal>,
+    /// The host's UI, when it changed (#1691).
+    pub ui: Option<crate::ui_frame::UiFrame>,
 }

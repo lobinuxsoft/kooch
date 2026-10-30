@@ -48,6 +48,12 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
         Method::ListEntities { since } => list_entities(id, resources, *since),
         Method::ListMoved { since, watching } => list_moved(id, resources, *since, watching),
         Method::GetSchema => get_schema(id, resources),
+        Method::SetViewSize { width, height } => {
+            let size = glam::UVec2::new(*width, *height).max(glam::UVec2::ONE);
+            resources.insert(kooch_ecs::ViewAspect(size.x as f32 / size.y as f32));
+            resources.insert(kooch_ecs::ViewSize(size));
+            Response::ok(id, ResponseData::Ok)
+        }
         Method::SetField {
             entity,
             component,
@@ -364,6 +370,7 @@ fn list_moved(
             full: delta.full,
             host: host_metrics(resources),
             signals: crate::outbox::drain(resources),
+            ui: crate::ui_frame::take(resources),
         },
     )
 }

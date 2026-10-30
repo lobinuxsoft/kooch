@@ -70,8 +70,9 @@ tree.set_text_color(label, [0.55, 0.85, 1.0, 1.0]);
 Colours are sRGB, as a colour picker gives them. An Overlay draws over the finished frame, after
 the post-process.
 
-> ⚠️ For now it shows in the game run on its own, not in the editor's Play: there the game runs in
-> another process, and sending what it draws to the editor is the next step of #96.
+In the editor's Play the game runs in another process with no window: it lays the UI out at the
+Game View's size, which the editor sends it, and the Game View draws what it built. Resize the panel
+and the layout follows. Only Overlay documents draw for now, here and in the game.
 
 Ask for a node by name once and keep the handle: `tree.query("speed")`. Removing the `UiDocument`,
 or despawning its entity, frees the tree.

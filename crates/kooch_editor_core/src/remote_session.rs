@@ -92,6 +92,10 @@ pub struct RemoteSession {
     schema: Vec<ComponentSchema>,
     /// Why the snapshot stopped tracking the project, or `None` while it tracks.
     stale: Option<String>,
+    /// The project's UI, for the Game View to draw in Play (#1691).
+    ui: kooch_remote::ui_frame::UiReceiver,
+    /// The Game View size the project was last told.
+    view_sent: Option<(u32, u32)>,
 }
 
 impl RemoteSession {
@@ -168,6 +172,8 @@ impl RemoteSession {
             pump: None,
             schema: Vec::new(),
             stale: None,
+            ui: Default::default(),
+            view_sent: None,
         })
     }
 
@@ -190,6 +196,8 @@ impl RemoteSession {
             pump: None,
             schema: Vec::new(),
             stale: None,
+            ui: Default::default(),
+            view_sent: None,
         }
     }
 
@@ -255,6 +263,28 @@ impl RemoteSession {
     /// What the project's process last reported its own frame cost to be.
     pub fn host_metrics(&self) -> Option<kooch_remote::protocol::HostMetrics> {
         self.host_metrics
+    }
+
+    /// The project's UI when it changed since the last call. `pending` is the rect of an atlas
+    /// upload the renderer never took, carried into the new list.
+    pub fn take_ui(&mut self, pending: Option<[u32; 4]>) -> Option<kooch_ecs::UiDrawList> {
+        self.ui.take(pending)
+    }
+
+    /// Tells the project the Game View's size when it changed: its layout and camera aspect read it.
+    pub fn send_view_size(&mut self, size: (u32, u32)) {
+        if self.view_sent == Some(size) || self.state != ConnectionState::Connected {
+            return;
+        }
+        let (width, height) = size;
+        // Kept unsent on failure, so the next frame tries again.
+        if self
+            .client
+            .notify(kooch_remote::protocol::Method::SetViewSize { width, height })
+            .is_ok()
+        {
+            self.view_sent = Some(size);
+        }
     }
 
     /// The project's signals since the last call.
@@ -326,6 +356,9 @@ impl RemoteSession {
             match reply {
                 crate::moved_pump::Pulled::Update(mut update) => {
                     self.signals.append(&mut update.signals);
+                    if let Some(ui) = update.ui.take() {
+                        self.ui.receive(ui);
+                    }
                     if update.host.is_some() {
                         self.host_metrics = update.host;
                     }
