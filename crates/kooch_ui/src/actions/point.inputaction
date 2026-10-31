@@ -1,0 +1,11 @@
+(
+    id: "6b1d0c52-4e2f-4a51-9c0e-0a7f3d1e2b01",
+    name: "ui_point",
+    control_type: Vector2,
+    bindings: [
+        (role: CompositeHead(Vector2(mode: Analog)), processors: []),
+        (role: Part(name: Right, path: Pointer(X)), processors: []),
+        (role: Part(name: Up, path: Pointer(Y)), processors: []),
+    ],
+    processors: [],
+)

@@ -5,7 +5,7 @@ use crate::images::UiImage;
 use crate::restyle::Styled;
 use crate::source::{ElementKind, NO_PARENT, UiSource};
 use crate::style::{ResolvedStyle, UiStyleSheet};
-use crate::{UiNode, UiTree};
+use crate::{UiEventKind, UiNode, UiTree};
 
 /// A label's size when nothing up its chain sets `font-size`, in canvas units.
 pub const DEFAULT_FONT_SIZE: f32 = 24.0;
@@ -38,12 +38,20 @@ pub fn build_tree(source: &UiSource, sheet: Option<&UiStyleSheet>) -> UiTree {
         if let Some(name) = &element.name {
             tree.set_name(node, name);
         }
-        if let Some((_, action)) = element
-            .attributes
-            .iter()
-            .find(|(key, _)| &**key == "on:click")
-        {
-            tree.set_click(node, action);
+        for (key, value) in &element.attributes {
+            match &**key {
+                "on:click" => tree.set_click(node, value),
+                "on:focus" => tree
+                    .handlers
+                    .push((node, UiEventKind::Focus, value.clone())),
+                "on:blur" => tree.handlers.push((node, UiEventKind::Blur, value.clone())),
+                "on:cancel" => tree
+                    .handlers
+                    .push((node, UiEventKind::Cancel, value.clone())),
+                "tabindex" if &**value == "-1" => tree.unfocusable.push(node),
+                "autofocus" => tree.autofocus = Some(node),
+                _ => {}
+            }
         }
         if let Some(text) = &element.text {
             tree.set_text(node, text, style.font_size.unwrap_or(DEFAULT_FONT_SIZE));

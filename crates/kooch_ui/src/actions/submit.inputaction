@@ -1,0 +1,11 @@
+(
+    id: "6b1d0c52-4e2f-4a51-9c0e-0a7f3d1e2b04",
+    name: "ui_submit",
+    control_type: Button,
+    bindings: [
+        (role: Whole(Key(Enter)), processors: []),
+        (role: Whole(Key(Space)), processors: []),
+        (role: Whole(Button(South)), processors: []),
+    ],
+    processors: [],
+)

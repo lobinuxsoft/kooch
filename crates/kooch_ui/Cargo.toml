@@ -18,6 +18,7 @@ fontique.workspace = true
 swash.workspace = true
 etagere.workspace = true
 image.workspace = true
+ron.workspace = true
 cssparser.workspace = true
 cssparser-color.workspace = true
 roxmltree.workspace = true

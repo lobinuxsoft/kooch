@@ -26,6 +26,9 @@ pub enum ControlPath {
     /// The wheel along one axis, in lines this frame (#56): `+Y` away from the user. Notches, not a
     /// rate — a wheel has no speed between them.
     MouseScroll(MouseAxis),
+    /// Where the pointer is, in physical pixels of the view, `+Y` up as every control counts: what a
+    /// UI points with (#96). 0 when there is none — captured for mouse look, or outside the view.
+    Pointer(MouseAxis),
 }
 
 impl ControlPath {
@@ -43,9 +46,10 @@ impl ControlPath {
     pub fn device(self) -> DeviceClass {
         match self {
             ControlPath::Key(_) => DeviceClass::Keyboard,
-            ControlPath::Mouse(_) | ControlPath::MouseMotion(_) | ControlPath::MouseScroll(_) => {
-                DeviceClass::Mouse
-            }
+            ControlPath::Mouse(_)
+            | ControlPath::MouseMotion(_)
+            | ControlPath::MouseScroll(_)
+            | ControlPath::Pointer(_) => DeviceClass::Mouse,
             ControlPath::Button(_) | ControlPath::Axis(_) => DeviceClass::Gamepad,
         }
     }

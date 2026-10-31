@@ -39,6 +39,15 @@ impl UiTree {
         }
     }
 
+    /// The node and its ancestors, as `:hover` and `:active` hold in CSS.
+    pub fn set_state_up(&mut self, node: UiNode, bits: u8, on: bool) {
+        let mut current = Some(node);
+        while let Some(node) = current {
+            self.set_state(node, bits, on);
+            current = self.parent(node);
+        }
+    }
+
     fn restyle(&mut self) {
         let Some(styled) = self.styled.take() else {
             return;

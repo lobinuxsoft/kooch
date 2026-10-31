@@ -408,6 +408,11 @@ pub(super) fn controls_of(device: DeviceClass) -> Vec<ControlPath> {
                     .iter()
                     .map(|a| ControlPath::MouseScroll(*a)),
             )
+            .chain(
+                kooch_input::ids::MouseAxis::ALL
+                    .iter()
+                    .map(|a| ControlPath::Pointer(*a)),
+            )
             .collect(),
         // Buttons and axes both, since a binding on a pad can be either
         // and forcing that choice into a third dropdown would be a
@@ -437,5 +442,6 @@ pub(super) fn control_label(path: ControlPath) -> String {
         ControlPath::Axis(axis) => format!("{axis:?} (axis)"),
         ControlPath::MouseMotion(axis) => format!("Motion {axis:?} (axis)"),
         ControlPath::MouseScroll(axis) => format!("Scroll {axis:?} (axis)"),
+        ControlPath::Pointer(axis) => format!("Pointer {axis:?} (axis)"),
     }
 }
