@@ -85,8 +85,7 @@ pub fn step_camera_whens(resources: &mut kooch_core::resource::Resources) {
 /// What `entity`'s condition adds to its priority, or nothing when it carries none.
 pub(crate) fn boost_of(registry: &ComponentRegistry, entity: Entity) -> i32 {
     registry
-        .get_cpu::<CameraWhen>()
-        .and_then(|whens| whens.get(entity))
+        .component::<CameraWhen>(entity)
         .map_or(0, CameraWhen::boost)
 }
 

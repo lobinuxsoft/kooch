@@ -52,19 +52,14 @@ impl Visualizer<PostProcessVolume> for PostVolumeVisualizer {
         // see all of them (#1222).
         let mut stack = vec![entity];
         while let Some(part) = stack.pop() {
-            if let Some(children) = registry
-                .get_cpu::<kooch_ecs::hierarchy::Children>()
-                .and_then(|storage| storage.get(part))
-            {
+            if let Some(children) = registry.component::<kooch_ecs::hierarchy::Children>(part) {
                 stack.extend(children.entities.iter().copied());
             }
             let (Some(collider), Some(at)) = (
-                registry.get_cpu::<Collider>().and_then(|s| s.get(part)),
+                registry.component::<Collider>(part),
                 match part == entity {
                     true => Some(transform),
-                    false => registry
-                        .get_cpu::<GlobalTransform>()
-                        .and_then(|s| s.get(part)),
+                    false => registry.component::<GlobalTransform>(part),
                 },
             ) else {
                 continue;

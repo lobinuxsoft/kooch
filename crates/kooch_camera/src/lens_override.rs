@@ -113,8 +113,7 @@ impl Component for LensOverride {}
 /// The lens `vcam` ends up with: what it asks for, or the camera's own when it asks for nothing.
 pub fn lens_of(registry: &ComponentRegistry, vcam: Entity, camera: LensOverride) -> LensOverride {
     registry
-        .get_cpu::<LensOverride>()
-        .and_then(|storage| storage.get(vcam))
+        .component::<LensOverride>(vcam)
         .copied()
         .unwrap_or(camera)
 }

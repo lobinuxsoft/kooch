@@ -124,10 +124,7 @@ fn planned(resources: &Resources) -> Vec<Impulse> {
     // in a build (#1312).
     for contact in events.read_fixed() {
         for entity in [contact.a, contact.b] {
-            let Some(collision) = registry
-                .get_cpu::<CollisionImpulse>()
-                .and_then(|storage| storage.get(entity))
-            else {
+            let Some(collision) = registry.component::<CollisionImpulse>(entity) else {
                 continue;
             };
             if contact.max_force_magnitude < collision.min_force {

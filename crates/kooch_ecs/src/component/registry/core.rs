@@ -362,6 +362,11 @@ impl ComponentRegistry {
     /// 🔴 Not `&ComponentStorage<T>` any more (#891). A value lives in exactly one place and most
     /// of them have moved into a table column, so a map reference would read `None` for an entity
     /// that plainly has the component — silently, at six hundred call sites.
+    /// One entity's `T`: `get_cpu::<T>()` and `get(entity)` in one call.
+    pub fn component<T: Component>(&self, entity: Entity) -> Option<&T> {
+        self.get_cpu::<T>()?.get(entity)
+    }
+
     pub fn get_cpu<T: Component>(&self) -> Option<ComponentView<'_, T>> {
         let id = self.ids.get(&TypeId::of::<T>()).copied()?;
         let slot = self.slots.get(id.index())?;
