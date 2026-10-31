@@ -13,13 +13,16 @@ use kooch_ecs::query::Query;
 use crate::build::build_tree;
 use crate::source::UiSource;
 use crate::style::{UiStyleSheet, warn_skipped};
+use crate::templates::expand;
 use crate::{UiDocument, UiTree, UiTrees};
 
 /// What a tree was built from, so an unchanged document is not read again.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Origin {
     source: Guid,
     style: Option<Guid>,
+    /// The `<use>` files it read, so editing a template rebuilds what uses it.
+    templates: Vec<PathBuf>,
     modified: SystemTime,
 }
 
@@ -41,10 +44,12 @@ pub fn build_documents(resources: &mut Resources) {
         for (entity, source, style) in documents {
             let previous = trees
                 .and_then(|trees| trees.get(entity))
-                .and_then(|tree| tree.origin)
+                .and_then(|tree| tree.origin.as_ref())
                 .filter(|origin| origin.source == source && origin.style == style);
-            // Stat, not read: two files a frame per document while stopped.
-            if previous.is_some_and(|origin| origin.modified == stamp(database, source, style)) {
+            // Stat, not read: its files' dates, once a frame per document.
+            if previous.is_some_and(|origin| {
+                origin.modified == stamp(database, source, style, &origin.templates)
+            }) {
                 continue;
             }
             built.push((entity, build(database, server.as_mut(), source, style)));
@@ -68,7 +73,8 @@ fn build(
     source: Guid,
     style: Option<Guid>,
 ) -> UiTree {
-    let mut tree = match read_tree(database, server, source, style) {
+    let mut templates = Vec::new();
+    let mut tree = match read_tree(database, server, source, style, &mut templates) {
         Ok(tree) => tree,
         Err(error) => {
             tracing::warn!("UI document not built: {error}");
@@ -78,7 +84,8 @@ fn build(
     tree.origin = Some(Origin {
         source,
         style,
-        modified: stamp(database, source, style),
+        modified: stamp(database, source, style, &templates),
+        templates,
     });
     tree
 }
@@ -89,10 +96,18 @@ fn read_tree(
     mut server: Option<&mut AssetServer>,
     source: Guid,
     style: Option<Guid>,
+    templates: &mut Vec<PathBuf>,
 ) -> Result<UiTree, String> {
     let source_path = path_of(database, source)?;
     let markup = UiSource::parse(&read(server.as_deref_mut(), &source_path)?)
         .map_err(|e| format!("{}: {e}", source_path.display()))?;
+    let markup = expand(
+        markup,
+        &source_path,
+        &mut |path| read(server.as_deref_mut(), path),
+        templates,
+        0,
+    )?;
     let sheet = match style {
         Some(guid) => {
             let path = path_of(database, guid)?;
@@ -116,7 +131,7 @@ fn read_tree(
 const DEFAULT_SHEET: &str = include_str!("default.kcss");
 
 /// `a/b/../c` → `a/c`: the database keys paths as scanned, and those have no `..`.
-fn normalise(path: &Path) -> PathBuf {
+pub(crate) fn normalise(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for component in path.components() {
         match component {
@@ -151,12 +166,19 @@ fn read(server: Option<&mut AssetServer>, path: &Path) -> Result<String, String>
 }
 
 /// The newest of the files' mtimes.
-pub(crate) fn stamp(database: &AssetDatabase, source: Guid, sheet: Option<Guid>) -> SystemTime {
+pub(crate) fn stamp(
+    database: &AssetDatabase,
+    source: Guid,
+    sheet: Option<Guid>,
+    templates: &[PathBuf],
+) -> SystemTime {
     [Some(source), sheet]
         .into_iter()
         .flatten()
         .filter_map(|guid| database.entry(guid))
-        .filter_map(|entry| entry.path.metadata().and_then(|m| m.modified()).ok())
+        .map(|entry| entry.path.as_path())
+        .chain(templates.iter().map(PathBuf::as_path))
+        .filter_map(|path| path.metadata().and_then(|m| m.modified()).ok())
         .max()
         .unwrap_or(SystemTime::UNIX_EPOCH)
 }

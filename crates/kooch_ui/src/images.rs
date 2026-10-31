@@ -52,7 +52,7 @@ pub fn load_images(resources: &mut Resources) {
         resources.get::<GlyphAtlas>(),
     ) {
         for guid in wanted {
-            let modified = stamp(database, guid, None);
+            let modified = stamp(database, guid, None, &[]);
             if atlas
                 .image(guid)
                 .is_some_and(|image| image.modified == modified)

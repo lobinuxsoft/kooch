@@ -59,6 +59,8 @@ pub struct Element {
     pub text: Option<Box<str>>,
     /// The rest as written (`on:click`, `bind:value`, `min`, `src`…), for the phases that read them.
     pub attributes: Vec<(Box<str>, Box<str>)>,
+    /// A `<use>`'s `<set node attribute=value>` children: node name, attribute, value.
+    pub overrides: Vec<(Box<str>, Box<str>, Box<str>)>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -138,6 +140,7 @@ fn push(
         classes: Vec::new(),
         text: None,
         attributes: Vec::new(),
+        overrides: Vec::new(),
     };
     for attribute in node.attributes() {
         let local = attribute.name();
@@ -170,12 +173,33 @@ fn push(
             .collect::<String>();
         element.text = Some(text.trim().into());
     }
-    let index = out.len() as u32;
-    out.push(element);
-    // A template's `<set>` children are overrides, read with templates (#280 phase 5).
+    // A `<use>`'s children are overrides of the instance, not elements.
     if kind == ElementKind::Use {
+        for set in node.children().filter(|n| n.is_element()) {
+            let target = set
+                .attribute("node")
+                .filter(|_| set.tag_name().name() == "set")
+                .ok_or_else(|| {
+                    format!("{}: `<use>` holds only `<set node=…>`", at(document, set))
+                })?;
+            for attribute in set.attributes().filter(|a| a.name() != "node") {
+                let key = match PREFIXES
+                    .iter()
+                    .find(|(_, uri)| attribute.namespace() == Some(uri))
+                {
+                    Some((prefix, _)) => format!("{prefix}:{}", attribute.name()),
+                    None => attribute.name().to_owned(),
+                };
+                element
+                    .overrides
+                    .push((target.into(), key.into(), attribute.value().into()));
+            }
+        }
+        out.push(element);
         return Ok(());
     }
+    let index = out.len() as u32;
+    out.push(element);
     for child in node.children().filter(|n| n.is_element()) {
         push(document, child, index, out)?;
     }
