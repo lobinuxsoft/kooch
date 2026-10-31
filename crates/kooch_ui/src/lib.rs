@@ -32,7 +32,7 @@ pub use focus::{UiFocus, navigate_focus};
 pub use images::{UiImage, load_images};
 pub use layout::{CANVAS_HEIGHT, canvas, layout_documents};
 pub use plugin::{UiComponentsPlugin, UiPlugin};
-pub use pointer::{UiAction, UiActions, UiEvent, UiEventKind, UiPointer, pick_pointer};
+pub use pointer::{UiAction, UiActions, UiEvent, UiEventKind, UiPointer, pick_pointer, ui_actions};
 pub use restyle::restyle_documents;
 pub use text::UiFonts;
 pub use tree::{GlyphQuad, Paint, UiNode, UiRect, UiTree};

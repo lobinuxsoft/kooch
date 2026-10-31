@@ -52,6 +52,13 @@ Text is shaped with **Inter**, which the engine ships (SIL Open Font License, in
 node is measured from its text, so a label pushes its siblings in a row. Ligatures and accents come
 from the shaper on their own.
 
+A game writing into a document built from files names the node and keeps the size the `.kcss`
+gave it:
+
+```rust
+resources.get_mut::<UiTrees>().unwrap().write_text(document, "clicks", "Clicks: 3");
+```
+
 **Fira Code** ships too, with its programming ligatures (`=>`, `!=`): `tree.set_font(node, "Fira
 Code")` after `set_text`.
 

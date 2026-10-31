@@ -4,6 +4,21 @@ A game never names a key. It points a component at an `.inputaction` asset, and 
 which controls feed it — keys, mouse buttons, gamepad buttons and axes, **mouse motion** and the **mouse wheel**.
 Actions are authored in the Input Map panel.
 
+## Reading an action
+
+`LoadedActions` reads every action once a frame, in `Stage::Input`, so `Update` asks it by the guid
+a component holds — no backend, and an unset or missing action reads at rest:
+
+```rust,ignore
+let loaded = resources.get::<LoadedActions>()?;
+let stick = loaded.vector2(input.movement);
+let jump = loaded.just_pressed(input.jump); // down this frame, not the last: a held button fires once
+let gas = loaded.axis(drive.forward);
+```
+
+`evaluate(guid, backend)` still reads the device right now, for code that runs before
+`Stage::Input`.
+
 ## Action maps: switching a group off
 
 An action's **Map** field, in the Input Map panel, names the group it belongs to — `Player`, `UI`,
@@ -33,7 +48,7 @@ Whichever is moving answers. Both read as the **same kind of number**, so a syst
 action with one formula whatever device the player holds:
 
 ```rust
-let look = loaded.evaluate(input.look, backend).map(|v| v.vector2()).unwrap_or_default();
+let look = loaded.vector2(input.look);
 yaw   += look.x * turn_speed_degrees_per_second * dt;
 pitch += look.y * turn_speed_degrees_per_second * dt;
 ```
@@ -60,7 +75,7 @@ wheel in **lines this frame**, with up as away from the player. An `Axis` action
 bound to it is consumed **without** `dt`, because a wheel has notches, not a speed:
 
 ```rust
-let zoom = loaded.evaluate(input.zoom, backend).map(|v| v.axis()).unwrap_or_default();
+let zoom = loaded.axis(input.zoom);
 distance = (distance - zoom * metres_per_notch).clamp(min, max);
 ```
 

@@ -171,6 +171,9 @@ Only the document holding focus reads Navigate, Submit and Cancel, so a HUD nobo
 takes the stick; the game still reads them too, so a button that keeps focus answers the jump key.
 `tabindex="-1"` is for that.
 
+A system answers an action by name: `ui_actions(resources, "hud.count")` is every document that sent
+it this frame, once per send.
+
 > Live today: `on:click`, `on:focus`/`on:blur`, `on:cancel` and pad navigation on Overlay
 > documents. `on:change` and `bind:value` arrive with #280's bindings phase.
 

@@ -26,6 +26,15 @@ impl UiTrees {
         self.0.get_mut(&document)
     }
 
+    /// Writes `content` into the node called `name` of `document`, at the size its style gave it.
+    pub fn write_text(&mut self, document: Entity, name: &str, content: &str) {
+        if let Some(tree) = self.get_mut(document)
+            && let Some(node) = tree.query(name)
+        {
+            tree.write_text(node, content);
+        }
+    }
+
     pub(crate) fn for_each(&self, each: impl FnMut(&UiTree)) {
         self.0.values().for_each(each);
     }

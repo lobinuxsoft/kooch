@@ -207,3 +207,17 @@ pub fn init_tracing() {
         .with(filter)
         .init();
 }
+
+#[doc(hidden)]
+pub use tracing as __tracing;
+
+/// `tracing::warn!`, once per call site: for what runs every frame and would otherwise flood.
+#[macro_export]
+macro_rules! warn_once {
+    ($($arg:tt)*) => {{
+        static WARNED: ::std::sync::atomic::AtomicBool = ::std::sync::atomic::AtomicBool::new(false);
+        if !WARNED.swap(true, ::std::sync::atomic::Ordering::Relaxed) {
+            $crate::__tracing::warn!($($arg)*);
+        }
+    }};
+}

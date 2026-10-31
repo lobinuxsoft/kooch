@@ -137,6 +137,12 @@ pub trait InputBackend: Send + Sync + 'static {
     /// Plays a rumble on a pad, replacing the one it was playing. A pad without force feedback, or a
     /// backend without pads, ignores it.
     fn rumble(&mut self, _gamepad: GamepadId, _rumble: crate::rumble::Rumble) {}
+    /// Rumbles the pad last used, if any.
+    fn rumble_active(&mut self, rumble: crate::rumble::Rumble) {
+        if let Some(pad) = self.active_gamepad() {
+            self.rumble(pad, rumble);
+        }
+    }
     /// Rumbles this backend cannot play itself, for whoever holds the pad: the editor, in Play.
     fn take_rumbles(&mut self) -> Vec<(GamepadId, crate::rumble::Rumble)> {
         Vec::new()
