@@ -1,0 +1,22 @@
+/* What a UiDocument without a Style looks like: readable on any scene. */
+
+ui {
+  padding: 24px;
+  color: #e8eaf0;
+  font-size: 24px;
+}
+
+panel {
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  background-color: rgba(20, 23, 31, 0.85);
+  border-radius: 12px;
+}
+
+button {
+  align-self: flex-start;
+  padding: 8px 16px;
+  background-color: #2a2f3d;
+  border-radius: 8px;
+}

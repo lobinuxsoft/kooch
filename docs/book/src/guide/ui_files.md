@@ -13,8 +13,9 @@ A `UiDocument` points at two files, split like Unity's UXML and USS:
 The document is built from them in whichever process shows it: the editor's own with Play stopped,
 so you design without running the game, and the game's in Play.
 
-Create the two files under `assets/` and pick the `.kxml` as the document's **Source**. The
-sheet is the one `<ui style="…">` names; the document's **Style** field, when set, overrides it.
+Create the two files under `assets/`, pick the `.kxml` as the document's **Source** and the `.kcss`
+as its **Style**. The markup never names a sheet: the same `.kxml` can wear another `.kcss` on
+another document. A document with no Style uses the engine's default sheet.
 Save either file and the Game View rebuilds the document — no Play needed. A document with no
 Source is left to code, as in [UI](./ui.md).
 
@@ -28,7 +29,7 @@ carries the `-kooch-` prefix, which CSS linters skip as vendor-specific.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<ui style="menu.kcss" xmlns:on="urn:kooch:on" xmlns:bind="urn:kooch:bind">
+<ui xmlns:on="urn:kooch:on" xmlns:bind="urn:kooch:bind">
   <panel name="menu" class="card">
     <label class="title">Pausa</label>
     <button name="resume" on:click="game.resume"><label>Continuar</label></button>

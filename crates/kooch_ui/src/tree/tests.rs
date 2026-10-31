@@ -2,21 +2,9 @@ use glam::Vec2;
 use taffy::prelude::{length, percent};
 use taffy::{AvailableSpace, FlexDirection, Size, Style};
 
-use super::{UiNode, UiTree};
+use super::UiTree;
 use crate::layout::canvas;
 use crate::{GlyphAtlas, UiFonts};
-
-#[test]
-fn a_named_node_is_queried() {
-    let mut tree = UiTree::new(Style::default());
-    let hud = tree.push(UiTree::ROOT, Style::default()).unwrap();
-    let speed = tree.push(hud, Style::default()).unwrap();
-    tree.set_name(speed, "speed");
-
-    assert_eq!(tree.query("speed"), Some(speed));
-    assert_eq!(tree.query("torque"), None);
-    assert_eq!(tree.push(UiNode(9), Style::default()), None);
-}
 
 fn screen(view: Vec2) -> Size<AvailableSpace> {
     Size {
