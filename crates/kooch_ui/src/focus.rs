@@ -36,9 +36,9 @@ impl UiFocus {
     }
 }
 
-/// A node focus can land on: one with an action, unless `tabindex="-1"`.
+/// A node focus can land on: one with an action, unless `tabindex="-1"` or disabled.
 pub(crate) fn focusable(tree: &UiTree, node: UiNode) -> bool {
-    tree.click(node).is_some() && !tree.unfocusable.contains(&node)
+    tree.click(node).is_some() && !tree.unfocusable.contains(&node) && !tree.disabled(node)
 }
 
 impl UiTree {

@@ -70,6 +70,8 @@ pub struct UiTree {
     pub(crate) handlers: Vec<(UiNode, crate::UiEventKind, Box<str>)>,
     /// Nodes with an action that `tabindex="-1"` keeps out of focus.
     pub(crate) unfocusable: Vec<UiNode>,
+    /// Nodes that neither click nor take focus, sparse.
+    disabled: Vec<UiNode>,
     /// The node `autofocus` names: it takes focus each time the document appears.
     pub(crate) autofocus: Option<UiNode>,
     /// Drawn last frame: what tells a document that just appeared from one already up.
@@ -111,6 +113,7 @@ impl UiTree {
             click: Vec::new(),
             handlers: Vec::new(),
             unfocusable: Vec::new(),
+            disabled: Vec::new(),
             autofocus: None,
             shown: false,
             material: Vec::new(),
@@ -373,6 +376,20 @@ impl UiTree {
 
     pub fn click(&self, node: UiNode) -> Option<&str> {
         self.click.get(node.0 as usize)?.as_deref()
+    }
+
+    /// A disabled node keeps stopping the pointer, so the click does not fall through to the game,
+    /// but sends nothing and takes no focus. Selects `:disabled`.
+    pub fn set_disabled(&mut self, node: UiNode, on: bool) {
+        self.disabled.retain(|&own| own != node);
+        if on {
+            self.disabled.push(node);
+        }
+        self.set_state(node, crate::style::STATE_DISABLED, on);
+    }
+
+    pub fn disabled(&self, node: UiNode) -> bool {
+        self.disabled.contains(&node)
     }
 
     pub fn parent(&self, node: UiNode) -> Option<UiNode> {

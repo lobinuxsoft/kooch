@@ -4,14 +4,24 @@ use crate::cascade::resolve;
 use crate::images::UiImage;
 use crate::restyle::Styled;
 use crate::source::{ElementKind, NO_PARENT, UiSource};
-use crate::style::{ResolvedStyle, UiStyleSheet};
+use crate::style::{ResolvedStyle, STATE_DISABLED, UiStyleSheet};
 use crate::{UiEventKind, UiNode, UiTree};
 
 /// A label's size when nothing up its chain sets `font-size`, in canvas units.
 pub const DEFAULT_FONT_SIZE: f32 = 24.0;
 
 pub fn build_tree(source: &UiSource, sheet: Option<&UiStyleSheet>) -> UiTree {
-    let states = vec![0; source.elements.len()];
+    let states: Vec<u8> = source
+        .elements
+        .iter()
+        .map(|element| {
+            let disabled = element
+                .attributes
+                .iter()
+                .any(|(key, value)| &**key == "disabled" && &**value != "false");
+            if disabled { STATE_DISABLED } else { 0 }
+        })
+        .collect();
     let styles = resolve(source, sheet, &states);
     let mut tree: Option<UiTree> = None;
     let mut nodes: Vec<Option<UiNode>> = Vec::with_capacity(source.elements.len());
@@ -50,6 +60,7 @@ pub fn build_tree(source: &UiSource, sheet: Option<&UiStyleSheet>) -> UiTree {
                     .push((node, UiEventKind::Cancel, value.clone())),
                 "tabindex" if &**value == "-1" => tree.unfocusable.push(node),
                 "autofocus" => tree.autofocus = Some(node),
+                "disabled" if &**value != "false" => tree.set_disabled(node, true),
                 _ => {}
             }
         }
