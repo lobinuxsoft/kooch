@@ -151,6 +151,7 @@ pub(super) fn undoable_step(
         }
         // Discrete: one click, one step.
         Edit::SetControlType { .. } => Some(("Set Control Type", None)),
+        Edit::SetMap { .. } => Some(("Set Action Map", None)),
         Edit::Rebind { .. } => Some(("Rebind", None)),
         Edit::RemoveBinding(_) => Some(("Remove Binding", None)),
         Edit::AddBinding { .. } => Some(("Add Binding", None)),
@@ -199,6 +200,13 @@ pub(super) fn edit_input_map(
         Edit::RenameAction { action, name } => match map.actions.get_mut(*action) {
             Some(target) if target.name != *name => {
                 target.name = name.clone();
+                true
+            }
+            _ => false,
+        },
+        Edit::SetMap { action, map: name } => match map.actions.get_mut(*action) {
+            Some(target) if target.map != *name => {
+                target.map = name.clone();
                 true
             }
             _ => false,

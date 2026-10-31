@@ -1,6 +1,6 @@
 //! Wiring actions into a frame: loaded in `Stage::PreUpdate`, read in `Stage::Input` after the
 //! backend is pumped, so `Update` sees this frame.
-//! No global map: actions are assets referenced by guid.
+//! Actions are assets referenced by guid; an action map is a name they share, switched as a group.
 
 use kooch_core::app::App;
 use kooch_core::plugin::Plugin;
@@ -40,6 +40,7 @@ impl Plugin for ActionsPlugin {
         // Loaded before they are read, and reloaded when a file changes:
         // editing a binding in the panel takes effect without a restart.
         app.add_system(Stage::PreUpdate, super::single::load_input_actions);
+        app.add_system(Stage::PreUpdate, super::single::reset_maps_on_stop);
         app.add_system(Stage::Input, super::single::read_input_actions);
     }
 

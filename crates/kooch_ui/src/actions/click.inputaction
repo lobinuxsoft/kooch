@@ -6,4 +6,5 @@
         (role: Whole(Mouse(Left)), processors: []),
     ],
     processors: [],
+    map: "UI",
 )

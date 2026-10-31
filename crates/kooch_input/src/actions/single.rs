@@ -146,6 +146,8 @@ pub struct LoadedActions {
     /// When each was last read off disk, so an edit to a `.inputaction` is picked up without
     /// restarting.
     read_at: Vec<(kooch_core::Guid, std::time::SystemTime)>,
+    /// Action maps switched off: their actions read as released.
+    off: Vec<String>,
 }
 
 impl LoadedActions {
@@ -164,8 +166,27 @@ impl LoadedActions {
         reference: Option<kooch_core::Guid>,
         backend: &dyn crate::backend::InputBackend,
     ) -> Option<ActionValue> {
-        let action = self.get(reference?)?;
-        Some(super::state::evaluate(action, backend))
+        Some(self.read(self.get(reference?)?, backend))
+    }
+
+    /// Reads `action` as its map allows: released, at rest, while the map is off.
+    pub fn read(&self, action: &Action, backend: &dyn crate::backend::InputBackend) -> ActionValue {
+        if self.off.contains(&action.map) {
+            return ActionValue::default();
+        }
+        super::state::evaluate(action, backend)
+    }
+
+    /// Switches an action map on or off — the gameplay map while a pause menu is open.
+    pub fn set_map(&mut self, map: &str, on: bool) {
+        self.off.retain(|own| own != map);
+        if !on && !map.is_empty() {
+            self.off.push(map.to_owned());
+        }
+    }
+
+    pub fn map_on(&self, map: &str) -> bool {
+        !self.off.iter().any(|own| own == map)
     }
 
     /// Puts an action in the cache under `guid`, as the loader does. For anything that produces an
@@ -297,6 +318,20 @@ pub fn load_input_actions(resources: &mut kooch_core::resource::Resources) {
     );
     resources.insert(cache);
 }
+
+/// Every map back on when Play stops: `LoadedActions` outlives Play, and a game stopped while
+/// paused would start the next one deaf.
+pub fn reset_maps_on_stop(resources: &mut kooch_core::resource::Resources) {
+    let playing = kooch_core::run_state::Playing::is_playing(resources);
+    let stopped = resources
+        .insert(WasPlaying(playing))
+        .is_some_and(|was| was.0 && !playing);
+    if stopped && let Some(loaded) = resources.get_mut::<LoadedActions>() {
+        loaded.off.clear();
+    }
+}
+
+struct WasPlaying(bool);
 
 /// Reads every enabled [`InputAction`] in `Stage::Input`, so gameplay sees this frame. A disabled
 /// action keeps its last value rather than faking a release.

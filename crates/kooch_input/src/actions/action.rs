@@ -84,6 +84,10 @@ pub struct Action {
     /// Defaults for older files.
     #[serde(default)]
     pub processors: Vec<Processor>,
+    /// The action map it belongs to (`Player`, `UI`), switched off as a group with
+    /// [`LoadedActions::set_map`](super::LoadedActions::set_map). Empty is always on.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub map: String,
 }
 
 impl Action {
@@ -96,6 +100,7 @@ impl Action {
             control_type,
             bindings: Vec::new(),
             processors: Vec::new(),
+            map: String::new(),
         }
     }
 
