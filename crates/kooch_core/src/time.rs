@@ -79,6 +79,18 @@ impl Time {
         self.fixed_delta = Duration::from_secs_f64(1.0 / hz);
     }
 
+    /// The app's clock, or a stand-in at its start with a 60 Hz frame when there is none (a bare
+    /// test): one answer for every system, where each used to invent its own fallback.
+    pub fn of(resources: &crate::resource::Resources) -> &Time {
+        static STAND_IN: std::sync::LazyLock<Time> = std::sync::LazyLock::new(|| {
+            let mut time = Time::new();
+            time.delta = time.fixed_delta;
+            time.unscaled_delta = time.fixed_delta;
+            time
+        });
+        resources.get::<Time>().unwrap_or(&STAND_IN)
+    }
+
     /// Sets how fast game time runs: 0 pauses gameplay, 0.5 is slow motion. Negative or NaN reads
     /// as 0.
     pub fn set_scale(&mut self, scale: f32) {

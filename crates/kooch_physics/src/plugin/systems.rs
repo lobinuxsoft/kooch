@@ -34,9 +34,6 @@ use crate::components::{Collider, PhysicsBody};
 
 use super::world::{BodySpec, PhysicsWorld, SolverBody};
 
-/// Fallback step when the app has no [`Time`] — 60 Hz.
-const FALLBACK_DT: f32 = 1.0 / 60.0;
-
 /// How far a pose may drift before the authored transform is pushed into
 /// the solver. Below this, pushing would only wake sleeping bodies.
 const POSE_EPSILON: f32 = 1e-5;
@@ -438,10 +435,7 @@ fn sync_archetypes(resources: &mut Resources, gained: &[Entity], orphans: &[Enti
 /// One fixed step, run by [`Stage::Physics`](kooch_core::stage::Stage::Physics) per whole step
 /// accumulated in [`Time`], independent of frame rate.
 pub fn physics_step_system(resources: &mut Resources) {
-    let dt = resources
-        .get::<Time>()
-        .map(|time| time.fixed_delta_secs())
-        .unwrap_or(FALLBACK_DT);
+    let dt = Time::of(resources).fixed_delta_secs();
     if let Some(world) = resources.get_mut::<PhysicsWorld>() {
         world.backend_mut().step(dt);
         // Immediately after the step that produced them, so a joint that

@@ -75,10 +75,7 @@ pub(crate) fn render_viewport(
         if let (Some(active_sky), Some(camera)) =
             (SkyRenderPass::active_sky(resources), view_camera(resources))
         {
-            let time_secs = resources
-                .get::<Time>()
-                .map(|t| t.elapsed_secs())
-                .unwrap_or(0.0);
+            let time_secs = Time::of(resources).elapsed_secs();
             sky_pass.render(
                 gpu.queue(),
                 &mut encoder,

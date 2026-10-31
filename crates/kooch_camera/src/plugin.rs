@@ -412,10 +412,8 @@ pub(crate) fn drive_virtual_cameras(resources: &mut Resources) {
 /// simulation answers the same twice, and with no multiplayer or replay nothing collects on it —
 /// while the cost is a visible step at any frame rate that is not the step rate (#1413).
 pub(crate) fn frame_dt(resources: &Resources) -> f32 {
-    resources
-        .get::<Time>()
-        .map(|time| time.delta_secs())
-        .unwrap_or(1.0 / 60.0)
+    Time::of(resources)
+        .delta_secs()
         // A stalled frame must not teleport the rig through its easing.
         .min(0.25)
 }

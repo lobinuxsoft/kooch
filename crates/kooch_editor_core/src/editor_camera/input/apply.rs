@@ -30,10 +30,7 @@ pub fn apply_viewport_input(
         return;
     };
 
-    let dt = resources
-        .get::<Time>()
-        .map(|t| t.unscaled_delta_secs())
-        .unwrap_or(1.0 / 60.0);
+    let dt = Time::of(resources).unscaled_delta_secs();
 
     // --- Snapshot controller and current transform ------------------------
     let mut controller = match resources.get::<EditorCameraController>() {

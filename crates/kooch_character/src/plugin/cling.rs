@@ -49,10 +49,7 @@ pub fn cling_and_leap(resources: &mut Resources) {
     if asked.is_empty() {
         return;
     }
-    let dt = resources
-        .get::<Time>()
-        .map(|time| time.fixed_delta_secs())
-        .unwrap_or(1.0 / 60.0);
+    let dt = Time::of(resources).fixed_delta_secs();
 
     let Some(mut world) = resources.remove::<PhysicsWorld>() else {
         return;

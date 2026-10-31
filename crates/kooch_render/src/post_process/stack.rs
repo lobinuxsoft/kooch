@@ -73,10 +73,7 @@ pub fn run_stack(
     let mut pool = resources
         .remove::<TargetPool>()
         .unwrap_or_else(|| TargetPool::new(device));
-    let time = resources
-        .get::<kooch_core::time::Time>()
-        .map(|time| time.elapsed_secs())
-        .unwrap_or(0.0);
+    let time = kooch_core::time::Time::of(resources).elapsed_secs();
 
     if let Some(materials) = resources.get::<MaterialPipeline>() {
         for &(material, weight) in stack {

@@ -91,10 +91,7 @@ pub fn hold_characters(resources: &mut Resources) {
     if planned.is_empty() {
         return;
     }
-    let dt = resources
-        .get::<Time>()
-        .map(|time| time.fixed_delta_secs())
-        .unwrap_or(1.0 / 60.0);
+    let dt = Time::of(resources).fixed_delta_secs();
 
     // Taken out rather than borrowed: writing `Grounded` afterwards needs
     // the registry mutably, and the sweep needs the world.
