@@ -210,7 +210,7 @@ const LOG_EVERY: Duration = Duration::from_secs(1);
 pub fn frame_metrics_system(resources: &mut Resources) {
     let Some((wall, work)) = resources
         .get::<Time>()
-        .map(|time| (time.delta(), time.frame_start().elapsed()))
+        .map(|time| (time.unscaled_delta(), time.frame_start().elapsed()))
     else {
         return;
     };

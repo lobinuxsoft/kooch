@@ -127,6 +127,23 @@ Physics runs on a **fixed** timestep, so a system in `Physics` or `PostPhysics` 
 shows up when the frame rate changes. It may also run **several times in one frame, or none at
 all**, so nothing that must happen once per frame belongs there.
 
+### Time scale
+
+`Time::set_scale` sets how fast game time runs: `0.0` pauses gameplay, `0.5` is slow motion.
+It scales `delta` and how many fixed steps run, never their size, so physics answers the same at
+any scale and runs no step at all while paused. What must keep moving during a pause — a menu, a
+tween on it — reads `unscaled_delta_secs()` instead; the engine's UI already does. Stop puts the
+scale back to `1.0`, so a game stopped while paused starts the next Play running.
+
+```rust,ignore
+fn toggle_pause(resources: &mut Resources) {
+    if let Some(time) = resources.get_mut::<Time>() {
+        let paused = time.scale() == 0.0;
+        time.set_scale(if paused { 1.0 } else { 0.0 });
+    }
+}
+```
+
 ### Events across the two cadences
 
 Reading events in a fixed stage takes a different call. `Events::read()` is the frame list, swapped

@@ -87,3 +87,13 @@ fn elapsed_accumulates() {
     assert_eq!(time.elapsed(), Duration::from_millis(48));
     assert_eq!(time.frame_count(), 3);
 }
+
+/// Paused gameplay runs no fixed step, while the UI's real clock still moves.
+#[test]
+fn a_zero_scale_pauses() {
+    let mut time = Time::new();
+    time.set_scale(0.0);
+    assert_eq!(time.advance(Duration::from_millis(100)), 0);
+    assert_eq!(time.delta(), Duration::ZERO);
+    assert_eq!(time.unscaled_delta(), Duration::from_millis(100));
+}
