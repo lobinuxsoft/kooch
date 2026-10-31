@@ -73,6 +73,10 @@ editor can list the actions on offer, and it works the same when the game runs i
 | `on:click` | `button` | — |
 | `on:change` | `toggle`, `slider` | the new value |
 | `on:focus` / `on:blur` | anything focusable | — |
+| `on:cancel` | the focused node or any ancestor; `<ui on:cancel>` answers for the document | — |
+
+`autofocus="true"` gives a node focus when the document is built — a menu's first button.
+`tabindex="-1"` keeps a node with an action out of focus — a HUD button the pad should not reach.
 
 `bind:value="Type.field"` keeps a `toggle` or `slider` in step with a field of a resource or of a
 component on the document's entity, both ways: moving the slider writes the field, and changing the
@@ -113,8 +117,28 @@ released, so dragging the camera across a panel does not drop it.
 
 With the cursor captured for mouse look there is no pointer, and nothing is picked.
 
-> Live today: `on:click` on Overlay documents. `on:change`, `on:focus`/`on:blur`, `bind:value` and
-> gamepad navigation arrive with the rest of #96's input phase and #280's bindings phase.
+### Input
+
+The UI reads **Input Actions**, the same `.inputaction` assets the game reads — there is no second
+input system. A `UiDocument` has five action fields; an empty one reads the engine's default:
+
+| Field | Type | Default |
+|---|---|---|
+| **Point** | Vector2 | the mouse (`Pointer X`/`Pointer Y`) |
+| **Click** | Button | left mouse button |
+| **Navigate** | Vector2 | arrows, d-pad, left stick |
+| **Submit** | Button | Enter, Space, South |
+| **Cancel** | Button | Escape, East |
+
+A press focuses the node with an action it lands on, and a press on the game drops focus. With
+focus, **Navigate** moves it to the nearest focusable node that way — once when pushed, then
+repeating after half a second — **Submit** clicks it, and **Cancel** sends the nearest `on:cancel`.
+Only the document holding focus reads Navigate, Submit and Cancel, so a HUD nobody focused never
+takes the stick; the game still reads them too, so a button that keeps focus answers the jump key.
+`tabindex="-1"` is for that.
+
+> Live today: `on:click`, `on:focus`/`on:blur`, `on:cancel` and pad navigation on Overlay
+> documents. `on:change` and `bind:value` arrive with #280's bindings phase.
 
 ## Style
 

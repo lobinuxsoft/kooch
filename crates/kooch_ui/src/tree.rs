@@ -66,6 +66,12 @@ pub struct UiTree {
     name: Vec<Option<Box<str>>>,
     /// The action `on:click` names (#1693).
     click: Vec<Option<Box<str>>>,
+    /// Every other `on:` the file gave, sparse: few nodes have one.
+    pub(crate) handlers: Vec<(UiNode, crate::UiEventKind, Box<str>)>,
+    /// Nodes with an action that `tabindex="-1"` keeps out of focus.
+    pub(crate) unfocusable: Vec<UiNode>,
+    /// The node `autofocus` names, until focus takes it.
+    pub(crate) autofocus: Option<UiNode>,
     material: Vec<u32>,
     rect: Vec<UiRect>,
     /// Border width from the layout, uniform: the left edge's.
@@ -101,6 +107,9 @@ impl UiTree {
             parent: Vec::new(),
             name: Vec::new(),
             click: Vec::new(),
+            handlers: Vec::new(),
+            unfocusable: Vec::new(),
+            autofocus: None,
             material: Vec::new(),
             rect: Vec::new(),
             border: Vec::new(),

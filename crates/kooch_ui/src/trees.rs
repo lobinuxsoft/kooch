@@ -7,7 +7,7 @@ use kooch_core::run_state::Playing;
 use kooch_ecs::Entity;
 use kooch_ecs::query::Query;
 
-use crate::{UiDocument, UiPointer, UiTree};
+use crate::{UiDocument, UiFocus, UiPointer, UiTree};
 
 /// The node tree of each entity with a [`UiDocument`].
 #[derive(Debug, Default)]
@@ -28,6 +28,12 @@ impl UiTrees {
 
     pub(crate) fn for_each(&self, each: impl FnMut(&UiTree)) {
         self.0.values().for_each(each);
+    }
+
+    pub(crate) fn for_each_entity_mut(&mut self, mut each: impl FnMut(Entity, &mut UiTree)) {
+        self.0
+            .iter_mut()
+            .for_each(|(entity, tree)| each(*entity, tree));
     }
 
     pub(crate) fn for_each_mut(&mut self, mut each: impl FnMut(&mut UiTree)) {
@@ -51,6 +57,7 @@ pub fn prune_trees(resources: &mut Resources) {
     }
     if stopped {
         resources.insert(UiPointer::default());
+        resources.insert(UiFocus::default());
     }
 }
 

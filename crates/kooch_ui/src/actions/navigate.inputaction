@@ -1,0 +1,21 @@
+(
+    id: "6b1d0c52-4e2f-4a51-9c0e-0a7f3d1e2b03",
+    name: "ui_navigate",
+    control_type: Vector2,
+    bindings: [
+        (role: CompositeHead(Vector2(mode: DigitalNormalized)), processors: []),
+        (role: Part(name: Up, path: Key(ArrowUp)), processors: []),
+        (role: Part(name: Down, path: Key(ArrowDown)), processors: []),
+        (role: Part(name: Left, path: Key(ArrowLeft)), processors: []),
+        (role: Part(name: Right, path: Key(ArrowRight)), processors: []),
+        (role: CompositeHead(Vector2(mode: DigitalNormalized)), processors: []),
+        (role: Part(name: Up, path: Button(DPadUp)), processors: []),
+        (role: Part(name: Down, path: Button(DPadDown)), processors: []),
+        (role: Part(name: Left, path: Button(DPadLeft)), processors: []),
+        (role: Part(name: Right, path: Button(DPadRight)), processors: []),
+        (role: CompositeHead(Vector2(mode: Analog)), processors: [StickDeadzone(min: 0.125, max: 0.925)]),
+        (role: Part(name: Up, path: Axis(LeftStickY)), processors: []),
+        (role: Part(name: Right, path: Axis(LeftStickX)), processors: []),
+    ],
+    processors: [],
+)
