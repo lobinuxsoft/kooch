@@ -74,6 +74,12 @@ pub fn navigate_focus(resources: &mut Resources) {
         document_of(resources, document).map(|d| (document, read(resources, &d)))
     }) {
         Some((document, input)) => {
+            // A press already down when focus arrives is not this document's: the `Esc` that
+            // opened a menu would otherwise cancel it on the next frame.
+            if was.focused.map(|(own, _)| own) != Some(document) {
+                focus.submit_was = input.submit;
+                focus.cancel_was = input.cancel;
+            }
             steer(resources, &mut focus, document, input.navigate, dt);
             if input.submit && !focus.submit_was {
                 focus.submitting = focus.focused;
