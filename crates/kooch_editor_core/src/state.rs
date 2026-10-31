@@ -293,9 +293,14 @@ impl RawEventHandler for EguiEventHandler {
         }
         let mut state = self.winit_state.lock().unwrap();
         let consumed = state.on_window_event(window, event).consumed;
-        // egui claims the wheel whenever the pointer is over a panel — the viewport is one — so a
-        // consumed wheel never reached the game's input; `InputFocus` already decides who gets it.
-        consumed && !matches!(event, WindowEvent::MouseWheel { .. })
+        // egui claims the wheel and the buttons whenever the pointer is over a panel — the viewport
+        // is one — so they never reached the game's input; `InputFocus` already decides who gets
+        // them. A swallowed release would also leave a button held.
+        consumed
+            && !matches!(
+                event,
+                WindowEvent::MouseWheel { .. } | WindowEvent::MouseInput { .. }
+            )
     }
 }
 
