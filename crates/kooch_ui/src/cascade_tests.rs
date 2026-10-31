@@ -2,23 +2,6 @@ use crate::build_tree;
 use crate::source::UiSource;
 use crate::style::UiStyleSheet;
 
-const MENU_UI: &str = include_str!("../tests/data/menu.kxml");
-const MENU_STYLE: &str = include_str!("../tests/data/menu.kcss");
-
-#[test]
-fn the_menu_sample_builds() {
-    let source = UiSource::parse(MENU_UI).expect("the sample parses");
-    assert_eq!(source.style.as_deref(), Some("menu.kcss"));
-    let sheet = UiStyleSheet::parse(MENU_STYLE);
-    let tree = build_tree(&source, Some(&sheet));
-    let menu = tree.query("menu").expect("the menu panel");
-    let surface = [16.0 / 255.0, 16.0 / 255.0, 20.0 / 255.0, 0.85];
-    assert_eq!(tree.paint(menu).map(|p| p.background), Some(surface));
-    assert!(tree.query("volume").is_some());
-    // A template, until phase 5.
-    assert!(tree.query("resume").is_none());
-}
-
 #[test]
 fn specificity_and_inheritance_resolve() {
     let source = UiSource::parse(

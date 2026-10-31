@@ -64,8 +64,6 @@ pub struct Element {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct UiSource {
     pub elements: Vec<Element>,
-    /// The root's `style`, relative to this file.
-    pub style: Option<Box<str>>,
 }
 
 impl UiSource {
@@ -91,8 +89,10 @@ impl UiSource {
                 root.tag_name().name()
             ));
         }
+        if root.attribute("style").is_some() {
+            tracing::warn!("`<ui style>` is ignored: the sheet is the UiDocument's Style");
+        }
         let mut source = Self {
-            style: root.attribute("style").map(Into::into),
             elements: Vec::new(),
         };
         push(&document, root, NO_PARENT, &mut source.elements)?;

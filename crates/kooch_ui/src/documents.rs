@@ -1,6 +1,6 @@
 //! Each document's tree from its files (#280), built again when they change on disk.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use kooch_core::Guid;
@@ -19,10 +19,7 @@ use crate::{UiDocument, UiTree, UiTrees};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Origin {
     source: Guid,
-    /// The document's own `style`, which overrides the markup's.
     style: Option<Guid>,
-    /// The sheet actually read.
-    sheet: Option<Guid>,
     modified: SystemTime,
 }
 
@@ -47,8 +44,7 @@ pub fn build_documents(resources: &mut Resources) {
                 .and_then(|tree| tree.origin)
                 .filter(|origin| origin.source == source && origin.style == style);
             // Stat, not read: two files a frame per document while stopped.
-            let sheet = style.or(previous.and_then(|origin| origin.sheet));
-            if previous.is_some_and(|origin| origin.modified == stamp(database, source, sheet)) {
+            if previous.is_some_and(|origin| origin.modified == stamp(database, source, style)) {
                 continue;
             }
             built.push((entity, build(database, server.as_mut(), source, style)));
@@ -72,8 +68,7 @@ fn build(
     source: Guid,
     style: Option<Guid>,
 ) -> UiTree {
-    let mut sheet_guid = style;
-    let mut tree = match read_tree(database, server, source, &mut sheet_guid) {
+    let mut tree = match read_tree(database, server, source, style) {
         Ok(tree) => tree,
         Err(error) => {
             tracing::warn!("UI document not built: {error}");
@@ -83,44 +78,34 @@ fn build(
     tree.origin = Some(Origin {
         source,
         style,
-        sheet: sheet_guid,
-        modified: stamp(database, source, sheet_guid),
+        modified: stamp(database, source, style),
     });
     tree
 }
 
+/// The document's `style`, or the engine's default sheet when it has none.
 fn read_tree(
     database: &AssetDatabase,
     mut server: Option<&mut AssetServer>,
     source: Guid,
-    sheet_guid: &mut Option<Guid>,
+    style: Option<Guid>,
 ) -> Result<UiTree, String> {
     let source_path = path_of(database, source)?;
     let markup = UiSource::parse(&read(server.as_deref_mut(), &source_path)?)
         .map_err(|e| format!("{}: {e}", source_path.display()))?;
-    if sheet_guid.is_none()
-        && let Some(relative) = markup.style.as_deref()
-    {
-        let path = normalise(&source_path.parent().unwrap_or(Path::new("")).join(relative));
-        *sheet_guid = database.guid_for(&path);
-        if sheet_guid.is_none() {
-            tracing::warn!(
-                "{}: style `{relative}` is not a known asset",
-                source_path.display()
-            );
-        }
-    }
-    let sheet = match *sheet_guid {
+    let sheet = match style {
         Some(guid) => {
             let path = path_of(database, guid)?;
             let sheet = UiStyleSheet::parse(&read(server, &path)?);
             warn_skipped(&path, &sheet);
-            Some(sheet)
+            sheet
         }
-        None => None,
+        None => UiStyleSheet::parse(DEFAULT_SHEET),
     };
-    Ok(build_tree(&markup, sheet.as_ref()))
+    Ok(build_tree(&markup, Some(&sheet)))
 }
+
+const DEFAULT_SHEET: &str = include_str!("default.kcss");
 
 fn path_of(database: &AssetDatabase, guid: Guid) -> Result<PathBuf, String> {
     database
@@ -148,19 +133,4 @@ fn stamp(database: &AssetDatabase, source: Guid, sheet: Option<Guid>) -> SystemT
         .filter_map(|entry| entry.path.metadata().and_then(|m| m.modified()).ok())
         .max()
         .unwrap_or(SystemTime::UNIX_EPOCH)
-}
-
-/// `a/b/../c` → `a/c`: the database keys paths as scanned, and those have no `..`.
-fn normalise(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::CurDir => {}
-            other => out.push(other),
-        }
-    }
-    out
 }
