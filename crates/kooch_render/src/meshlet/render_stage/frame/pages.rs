@@ -79,7 +79,7 @@ fn page_frame(resources: &Resources) -> u32 {
 fn page_age_frames(resources: &Resources) -> u32 {
     let Some(delta) = resources
         .get::<kooch_core::time::Time>()
-        .map(|t| t.delta_secs())
+        .map(|t| t.unscaled_delta_secs())
         .filter(|d| *d > 0.0)
     else {
         // No clock: keep the documented default rather than invent one.

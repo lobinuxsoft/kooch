@@ -99,7 +99,7 @@ fn render_preview(
     }
     let dt = resources
         .get::<kooch_core::time::Time>()
-        .map(|time| time.delta_secs())
+        .map(|time| time.unscaled_delta_secs())
         .unwrap_or(0.016);
     // Regenerated each frame: a few dozen nodes; the pipeline rebuilds only when the WGSL changes.
     // 🔴 A failure is shown, not dropped: a frozen preview makes every later edit look ignored.

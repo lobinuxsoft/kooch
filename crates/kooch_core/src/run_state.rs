@@ -26,13 +26,17 @@ impl Playing {
         resources.get::<Playing>().is_some_and(|p| p.0)
     }
 
-    /// Writes the flag, inserting the resource if it is missing.
+    /// Writes the flag, inserting the resource if it is missing. Stopping puts the time scale back
+    /// to 1: `Time` outlives Play, and a game paused when stopped would start the next one frozen.
     pub fn set(resources: &mut Resources, playing: bool) {
         match resources.get_mut::<Playing>() {
             Some(state) => state.0 = playing,
             None => {
                 resources.insert(Playing(playing));
             }
+        }
+        if !playing && let Some(time) = resources.get_mut::<crate::time::Time>() {
+            time.set_scale(1.0);
         }
     }
 }

@@ -32,7 +32,7 @@ pub fn apply_viewport_input(
 
     let dt = resources
         .get::<Time>()
-        .map(|t| t.delta_secs())
+        .map(|t| t.unscaled_delta_secs())
         .unwrap_or(1.0 / 60.0);
 
     // --- Snapshot controller and current transform ------------------------

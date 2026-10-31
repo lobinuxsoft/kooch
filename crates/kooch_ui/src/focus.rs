@@ -54,7 +54,7 @@ impl UiTree {
 pub fn navigate_focus(resources: &mut Resources) {
     let dt = resources
         .get::<Time>()
-        .map_or(0.0, |time| time.delta().as_secs_f32());
+        .map_or(0.0, |time| time.unscaled_delta_secs());
     let mut focus = resources.get::<UiFocus>().copied().unwrap_or_default();
     let was = focus;
     let appeared = reveal(resources);

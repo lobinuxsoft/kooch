@@ -5,17 +5,21 @@ use std::time::{Duration, Instant};
 /// Time resource containing frame timing information.
 #[derive(Debug, Clone)]
 pub struct Time {
-    /// When the application started.
-    startup: Instant,
     /// When the current frame started.
     frame_start: Instant,
     /// When the previous frame started.
     last_frame_start: Instant,
 
-    /// Time elapsed since the previous frame (variable).
+    /// Game time since the previous frame: real time times `scale`.
     delta: Duration,
-    /// Total time elapsed since startup.
+    /// Game time since startup: the sum of every scaled delta.
     elapsed: Duration,
+    /// Real time since the previous frame, for what a pause must not stop (UI, editor).
+    unscaled_delta: Duration,
+    /// Real time since startup.
+    unscaled_elapsed: Duration,
+    /// How fast game time runs: 0 pauses, 1 is real time.
+    scale: f32,
 
     /// Fixed timestep for physics (default: 1/60 second).
     fixed_delta: Duration,
@@ -46,11 +50,13 @@ impl Time {
     pub fn new() -> Self {
         let now = Instant::now();
         Self {
-            startup: now,
             frame_start: now,
             last_frame_start: now,
             delta: Duration::ZERO,
             elapsed: Duration::ZERO,
+            unscaled_delta: Duration::ZERO,
+            unscaled_elapsed: Duration::ZERO,
+            scale: 1.0,
             fixed_delta: Duration::from_secs_f64(1.0 / 60.0),
             accumulator: Duration::ZERO,
             max_accumulator: Duration::from_secs_f64(0.25), // Max 250ms accumulator
@@ -73,6 +79,18 @@ impl Time {
         self.fixed_delta = Duration::from_secs_f64(1.0 / hz);
     }
 
+    /// Sets how fast game time runs: 0 pauses gameplay, 0.5 is slow motion. Negative or NaN reads
+    /// as 0.
+    pub fn set_scale(&mut self, scale: f32) {
+        self.scale = if scale > 0.0 { scale } else { 0.0 };
+    }
+
+    /// How fast game time runs; 1 is real time.
+    #[inline]
+    pub fn scale(&self) -> f32 {
+        self.scale
+    }
+
     /// Updates timing for a new frame.
     ///
     /// Returns the number of fixed timestep updates that should run this frame.
@@ -80,31 +98,7 @@ impl Time {
         let now = Instant::now();
         self.last_frame_start = self.frame_start;
         self.frame_start = now;
-
-        self.delta = self.frame_start.duration_since(self.last_frame_start);
-        self.elapsed = self.frame_start.duration_since(self.startup);
-        self.frame_count += 1;
-
-        // Accumulate time for fixed updates
-        self.accumulator += self.delta;
-
-        // Clamp to prevent spiral of death
-        if self.accumulator > self.max_accumulator {
-            self.accumulator = self.max_accumulator;
-        }
-
-        // Calculate how many fixed steps to run
-        let mut fixed_updates = 0u32;
-        while self.accumulator >= self.fixed_delta {
-            self.accumulator -= self.fixed_delta;
-            self.fixed_count += 1;
-            fixed_updates += 1;
-        }
-
-        // Calculate render interpolation alpha
-        self.render_alpha = self.accumulator.as_secs_f32() / self.fixed_delta.as_secs_f32();
-
-        fixed_updates
+        self.tick(self.frame_start.duration_since(self.last_frame_start))
     }
 
     /// Advances time for testing without using real time.
@@ -120,12 +114,20 @@ impl Time {
     /// assert!(updates >= 5 && updates <= 6);
     /// ```
     pub fn advance(&mut self, duration: Duration) -> u32 {
-        self.delta = duration;
-        self.elapsed += duration;
+        self.tick(duration)
+    }
+
+    /// The scale feeds the accumulator, not the step: slow motion runs fewer steps of the same
+    /// size, so the simulation answers the same at any scale.
+    fn tick(&mut self, real: Duration) -> u32 {
+        self.unscaled_delta = real;
+        self.unscaled_elapsed += real;
+        self.delta = real.mul_f32(self.scale);
+        self.elapsed += self.delta;
         self.frame_count += 1;
 
         self.accumulator += self.delta;
-
+        // Clamp to prevent spiral of death
         if self.accumulator > self.max_accumulator {
             self.accumulator = self.max_accumulator;
         }
@@ -142,7 +144,7 @@ impl Time {
         fixed_updates
     }
 
-    /// Time elapsed since the previous frame.
+    /// Game time since the previous frame: real time times [`scale`](Self::scale).
     #[inline]
     pub fn delta(&self) -> Duration {
         self.delta
@@ -154,7 +156,25 @@ impl Time {
         self.delta.as_secs_f32()
     }
 
-    /// Total time elapsed since application startup.
+    /// Real time since the previous frame: what keeps running while gameplay is paused.
+    #[inline]
+    pub fn unscaled_delta(&self) -> Duration {
+        self.unscaled_delta
+    }
+
+    /// Real time since the previous frame in seconds.
+    #[inline]
+    pub fn unscaled_delta_secs(&self) -> f32 {
+        self.unscaled_delta.as_secs_f32()
+    }
+
+    /// Real time since startup.
+    #[inline]
+    pub fn unscaled_elapsed(&self) -> Duration {
+        self.unscaled_elapsed
+    }
+
+    /// Game time since startup: it stands still while paused.
     #[inline]
     pub fn elapsed(&self) -> Duration {
         self.elapsed
