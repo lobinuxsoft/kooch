@@ -1,7 +1,8 @@
 # UI files
 
 > 🚧 Templates (`use`) and bindings are parsed but not live yet: they arrive with the rest of #280.
-> Of the events, `on:click` is live; of the states, `:hover`, `:active` and `:focus`.
+> Of the states, `:hover`, `:active`, `:focus` and `:disabled` are live; `:checked` arrives with the
+> toggles of #280's bindings phase.
 
 A `UiDocument` points at two files, split like Unity's UXML and USS:
 
@@ -93,6 +94,9 @@ editor can list the actions on offer, and it works the same when the game runs i
 
 `autofocus="true"` gives a node focus when the document is built — a menu's first button.
 `tabindex="-1"` keeps a node with an action out of focus — a HUD button the pad should not reach.
+`disabled="true"` keeps a node from clicking and from taking focus, and selects `:disabled`; it still
+stops the pointer, so the click does not reach the game. Code turns it on and off with
+`UiTree::set_disabled(node, on)`.
 
 `bind:value="Type.field"` keeps a `toggle` or `slider` in step with a field of a resource or of a
 component on the document's entity, both ways: moving the slider writes the field, and changing the

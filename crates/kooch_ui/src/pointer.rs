@@ -179,6 +179,7 @@ pub(crate) fn event(
 ) -> Option<UiEvent> {
     let tree = resources.get::<UiTrees>()?.get(document)?;
     let action = match kind {
+        UiEventKind::Click if tree.disabled(node) => return None,
         UiEventKind::Click => tree.click(node)?,
         _ => tree.handler(node, kind)?,
     };
