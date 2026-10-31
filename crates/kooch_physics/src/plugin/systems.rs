@@ -192,8 +192,7 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
 /// which measures without a solver, showed it working (#1298).
 fn as_region(registry: &ComponentRegistry, entity: Entity, collider: Collider) -> Collider {
     let volume = registry
-        .get_cpu::<kooch_ecs::post_process_volume::PostProcessVolume>()
-        .and_then(|volumes| volumes.get(entity))
+        .component::<kooch_ecs::post_process_volume::PostProcessVolume>(entity)
         .filter(|volume| volume.enabled && !volume.global);
     match volume {
         Some(_) => Collider {

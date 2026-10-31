@@ -523,8 +523,7 @@ fn bodied(step: &crate::rig::RigStep) -> Option<Vec3> {
 fn pitched(step: &crate::rig::RigStep) -> f32 {
     let (low, high) = step
         .registry
-        .get_cpu::<crate::orbit::CameraOrbit>()
-        .and_then(|orbits| orbits.get(step.entity))
+        .component::<crate::orbit::CameraOrbit>(step.entity)
         .map_or((-89.0, 89.0), |orbit| (orbit.pitch_min, orbit.pitch_max));
     (step.vcam.pitch - low) / (high - low).max(1e-3)
 }

@@ -60,8 +60,7 @@ pub(super) fn sensor_occupancy_system(resources: &mut Resources) {
             return false;
         };
         registry
-            .get_cpu::<SolverBody>()
-            .and_then(|slots| slots.get(entity))
+            .component::<SolverBody>(entity)
             .and_then(|body| world.spec(body.slot()))
             .is_some_and(|spec| spec.is_sensor())
     };
@@ -189,16 +188,11 @@ fn depth_of(
     let mut deepest = f32::NEG_INFINITY;
     let mut stack = vec![sensor];
     while let Some(entity) = stack.pop() {
-        if let Some(children) = registry
-            .get_cpu::<kooch_ecs::hierarchy::Children>()
-            .and_then(|storage| storage.get(entity))
-        {
+        if let Some(children) = registry.component::<kooch_ecs::hierarchy::Children>(entity) {
             stack.extend(children.entities.iter().copied());
         }
         let (Some(collider), Some(region)) = (
-            registry
-                .get_cpu::<Collider>()
-                .and_then(|colliders| colliders.get(entity)),
+            registry.component::<Collider>(entity),
             transforms.and_then(|transforms| transforms.get(entity)),
         ) else {
             continue;

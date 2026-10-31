@@ -137,8 +137,7 @@ impl Leads {
 pub fn lead_stage(step: &mut crate::rig::RigStep) {
     let Some(lookahead) = step
         .registry
-        .get_cpu::<CameraLookahead>()
-        .and_then(|storage| storage.get(step.entity))
+        .component::<CameraLookahead>(step.entity)
         .filter(|lookahead| lookahead.enabled)
     else {
         return;

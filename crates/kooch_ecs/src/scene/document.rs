@@ -281,8 +281,7 @@ impl SceneDocument {
                     // changed — not as the entities it built. Those come back from the prefab on
                     // load.
                     let membership = components
-                        .get_cpu::<crate::prefab_instance::PrefabMember>()
-                        .and_then(|storage| storage.get(entity))
+                        .component::<crate::prefab_instance::PrefabMember>(entity)
                         .map(|member| member.root);
                     // Capturing a *prefab* takes the entities as they stand: a blueprint describes
                     // things, and an instance of something else is still a thing. Only a scene
@@ -299,8 +298,7 @@ impl SceneDocument {
                     let belongs = match what {
                         Capture::Everything => true,
                         Capture::Scene(only) => components
-                            .get_cpu::<crate::scene_member::SceneMember>()
-                            .and_then(|storage| storage.get(entity))
+                            .component::<crate::scene_member::SceneMember>(entity)
                             .is_some_and(|member| member.scene == only),
                         Capture::Subtree(_) => subtree.contains(&entity),
                     };

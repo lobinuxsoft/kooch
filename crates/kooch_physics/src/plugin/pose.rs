@@ -17,18 +17,14 @@ const MAX_DEPTH: u32 = 64;
 
 /// `entity`'s local-to-world matrix, as the last propagation published it.
 fn world_of(registry: &ComponentRegistry, entity: Entity) -> Mat4 {
-    if let Some(global) = registry
-        .get_cpu::<GlobalTransform>()
-        .and_then(|storage| storage.get(entity))
-    {
+    if let Some(global) = registry.component::<GlobalTransform>(entity) {
         return global.matrix;
     }
     // No published global: the entity was spawned after the last propagation. Its own transform is
     // its world one only while it has no parent — and if it has one, that is worth hearing about,
     // since authoring at a local offset is the exact bug this stage was added to end.
     let parented = registry
-        .get_cpu::<Parent>()
-        .and_then(|storage| storage.get(entity))
+        .component::<Parent>(entity)
         .is_some_and(|parent| parent.entity.is_valid() && parent.entity != entity);
     if parented {
         tracing::warn!(
@@ -38,8 +34,7 @@ fn world_of(registry: &ComponentRegistry, entity: Entity) -> Mat4 {
         );
     }
     registry
-        .get_cpu::<Transform>()
-        .and_then(|storage| storage.get(entity))
+        .component::<Transform>(entity)
         .map(Transform::to_matrix)
         .unwrap_or(Mat4::IDENTITY)
 }
@@ -89,8 +84,7 @@ pub(super) fn under_parent(
     rotation: Quat,
 ) -> (Vec3, Quat) {
     let parent = registry
-        .get_cpu::<Parent>()
-        .and_then(|storage| storage.get(entity))
+        .component::<Parent>(entity)
         .map(|parent| parent.entity)
         .filter(|parent| parent.is_valid() && *parent != entity);
     let Some(parent) = parent else {

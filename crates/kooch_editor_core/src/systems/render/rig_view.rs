@@ -99,10 +99,7 @@ pub(super) fn selected_rig(
             continue;
         };
         // 🔴 Named, because with a pin there are several and an unlabelled line belongs to nobody.
-        if let Some(name) = registry
-            .get_cpu::<kooch_ecs::Name>()
-            .and_then(|names| names.get(entity))
-        {
+        if let Some(name) = registry.component::<kooch_ecs::Name>(entity) {
             for note in &mut one.notes {
                 *note = format!("{}: {note}", name.value);
             }
@@ -212,8 +209,7 @@ fn composers(
     let led = |point: Vec2| point - on_axes(screen, target, lead).unwrap_or(Vec2::ZERO);
 
     if let Some(framing) = registry
-        .get_cpu::<kooch_camera::RotationComposer>()
-        .and_then(|storage| storage.get(entity))
+        .component::<kooch_camera::RotationComposer>(entity)
         .filter(|framing| framing.enabled)
     {
         let held = led(framing.screen);
@@ -232,10 +228,7 @@ fn composers(
         }
     }
 
-    if let Some(composer) = registry
-        .get_cpu::<kooch_camera::PositionComposer>()
-        .and_then(|storage| storage.get(entity))
-    {
+    if let Some(composer) = registry.component::<kooch_camera::PositionComposer>(entity) {
         view.zones.push(Zones {
             centre: composer.screen_position,
             dead: composer.dead_zone,
@@ -249,8 +242,7 @@ fn composers(
     }
 
     if let Some(look) = registry
-        .get_cpu::<kooch_camera::CameraLookahead>()
-        .and_then(|storage| storage.get(entity))
+        .component::<kooch_camera::CameraLookahead>(entity)
         .filter(|look| look.enabled)
     {
         // The cap as a ring on the target, drawn whether or not the lead has reached it: a ceiling
@@ -300,9 +292,7 @@ fn bodies(
 
     // 🔴 An offset body follows a point BESIDE the target, and that gap is a screen-space fact: it
     // is why the character is not where the zones say it should be.
-    if let Some(body) = registry
-        .get_cpu::<kooch_camera::Follow>()
-        .and_then(|s| s.get(entity))
+    if let Some(body) = registry.component::<kooch_camera::Follow>(entity)
         && body.offset.length_squared() > 1e-9
         && let (Some(on), Some(centre)) = (screen.of(target + body.offset), centre)
     {
@@ -321,8 +311,7 @@ fn bodies(
     }
 
     if let Some(body) = registry
-        .get_cpu::<kooch_camera::ThirdPersonFollow>()
-        .and_then(|s| s.get(entity))
+        .component::<kooch_camera::ThirdPersonFollow>(entity)
         .copied()
     {
         // The rig's own answer where it has run, and its own first-step answer where it has not —
@@ -339,8 +328,7 @@ fn bodies(
         // Handed the seed, the shoulder sat in one place while the camera swung around it, which is
         // the opposite of what a shoulder is. `gizmos/virtual_camera.rs` works it out the same way.
         let eye = registry
-            .get_cpu::<GlobalTransform>()
-            .and_then(|globals| globals.get(entity))
+            .component::<GlobalTransform>(entity)
             .map(|global| global.matrix.to_scale_rotation_translation().2);
         let back = eye
             .and_then(|eye| (eye - target).try_normalize())
