@@ -52,8 +52,8 @@ pub trait WorldQuery {
         tracker: &'w AccessTracker,
     ) -> Self::Fetch<'w>;
 
-    /// Releases borrows registered during `init_fetch`.
-    fn release_fetch(tracker: &AccessTracker);
+    /// Releases borrows registered during `init_fetch`; `fetch` says which were taken.
+    fn release_fetch(fetch: &Self::Fetch<'_>, tracker: &AccessTracker);
 
     /// Fetches the item for a single entity.
     unsafe fn fetch<'w>(
@@ -85,7 +85,7 @@ impl WorldQuery for Entity {
     ) -> Self::Fetch<'w> {
     }
 
-    fn release_fetch(_tracker: &AccessTracker) {}
+    fn release_fetch(_fetch: &Self::Fetch<'_>, _tracker: &AccessTracker) {}
 
     unsafe fn fetch<'w>(
         _fetch: &Self::Fetch<'w>,
@@ -138,7 +138,7 @@ impl<T: Send + Sync + 'static> WorldQuery for &T {
         }
     }
 
-    fn release_fetch(tracker: &AccessTracker) {
+    fn release_fetch(_fetch: &Self::Fetch<'_>, tracker: &AccessTracker) {
         // Only release if we actually acquired the borrow.
         // If the type wasn't registered, borrow_read was never called.
         tracker.release_read(TypeId::of::<T>());
@@ -216,7 +216,7 @@ impl<T: Send + Sync + 'static> WorldQuery for &mut T {
         }
     }
 
-    fn release_fetch(tracker: &AccessTracker) {
+    fn release_fetch(_fetch: &Self::Fetch<'_>, tracker: &AccessTracker) {
         tracker.release_write(TypeId::of::<T>());
     }
 
@@ -277,10 +277,11 @@ impl<Q: WorldQuery> WorldQuery for Option<Q> {
         }
     }
 
-    fn release_fetch(_tracker: &AccessTracker) {
-        // Release for Option is handled by the Query drop implementation, which checks whether the
-        // inner fetch was actually initialised. Calling Q::release_fetch here would be incorrect
-        // because we don't know if init_fetch returned Some or None.
+    /// Only what `init_fetch` took: an unregistered component was never borrowed (#1722).
+    fn release_fetch(fetch: &Self::Fetch<'_>, tracker: &AccessTracker) {
+        if let Some(inner) = fetch {
+            Q::release_fetch(inner, tracker);
+        }
     }
 
     unsafe fn fetch<'w>(
@@ -325,8 +326,10 @@ macro_rules! impl_world_query_tuple {
                 ($(unsafe { $name::init_fetch(registry, tracker) },)+)
             }
 
-            fn release_fetch(tracker: &AccessTracker) {
-                $($name::release_fetch(tracker);)+
+            #[allow(non_snake_case)]
+            fn release_fetch(fetch: &Self::Fetch<'_>, tracker: &AccessTracker) {
+                let ($($name,)+) = fetch;
+                $($name::release_fetch($name, tracker);)+
             }
 
             #[allow(non_snake_case)]
