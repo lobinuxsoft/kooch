@@ -3,7 +3,7 @@
 use crate::cascade::resolve;
 use crate::images::UiImage;
 use crate::restyle::Styled;
-use crate::source::{ElementKind, NO_PARENT, UiSource};
+use crate::source::{NO_PARENT, UiSource};
 use crate::style::{ResolvedStyle, STATE_DISABLED, UiStyleSheet};
 use crate::{UiEventKind, UiNode, UiTree};
 
@@ -30,11 +30,6 @@ pub fn build_tree(source: &UiSource, sheet: Option<&UiStyleSheet>) -> UiTree {
             (NO_PARENT, _) => {
                 tree = Some(UiTree::new(style.layout.clone()));
                 Some(UiTree::ROOT)
-            }
-            // Its subtree goes with it: templates are phase 5.
-            (_, _) if element.kind == ElementKind::Use => {
-                tracing::warn!("`<use>` is skipped until templates arrive (#280 phase 5)");
-                None
             }
             (parent, Some(tree)) => {
                 nodes[parent as usize].and_then(|parent| tree.push(parent, style.layout.clone()))

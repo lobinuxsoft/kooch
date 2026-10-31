@@ -14,7 +14,7 @@ use crate::{UiNode, UiTree, UiTrees};
 pub(crate) struct Styled {
     pub source: UiSource,
     pub sheet: Option<UiStyleSheet>,
-    /// The node each element became; `None` for one skipped (`<use>`).
+    /// The node each element became; `None` for one under a parent that failed.
     pub nodes: Vec<Option<UiNode>>,
     /// `STATE_*` bits, per element.
     pub states: Vec<u8>,

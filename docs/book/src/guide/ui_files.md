@@ -1,6 +1,6 @@
 # UI files
 
-> 🚧 Templates (`use`) and bindings are parsed but not live yet: they arrive with the rest of #280.
+> 🚧 Bindings are parsed but not live yet: they arrive with the rest of #280.
 > Of the states, `:hover`, `:active`, `:focus` and `:disabled` are live; `:checked` arrives with the
 > toggles of #280's bindings phase.
 
@@ -79,6 +79,20 @@ node of the instance — the same button file used twice with two texts. Attribu
   <set node="label" text="Salir"/>
 </use>
 ```
+
+A template is a `.kxml` like any other, whose `<ui>` holds exactly one element — the instance:
+
+```xml
+<ui>
+  <button class="menu-button"><label name="label">Botón</label></button>
+</ui>
+```
+
+`src` is relative to the file that uses it, and a template may use another. `<set>` takes any
+attribute: `text`, `class` (replaces the node's classes), `on:click`, `disabled`… The instance is
+styled by the document's sheet, not by one of its own, and saving the template rebuilds every
+document that uses it. Names inside an instance stay as written, so two instances both have a
+`label`; reach one through the instance's own name.
 
 ### Events and bindings
 

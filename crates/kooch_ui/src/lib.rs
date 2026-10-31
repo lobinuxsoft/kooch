@@ -17,6 +17,7 @@ mod pointer;
 mod restyle;
 pub mod source;
 pub mod style;
+mod templates;
 mod text;
 mod tree;
 mod trees;
