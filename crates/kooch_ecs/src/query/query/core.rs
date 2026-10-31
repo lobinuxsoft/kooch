@@ -166,7 +166,7 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Query<'w, Q, F> {
 impl<Q: WorldQuery, F: QueryFilter> Drop for Query<'_, Q, F> {
     fn drop(&mut self) {
         if !self._released {
-            Q::release_fetch(self.tracker);
+            Q::release_fetch(&self.fetch, self.tracker);
             self._released = true;
         }
     }

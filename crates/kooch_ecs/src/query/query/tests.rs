@@ -541,3 +541,16 @@ mod columns {
         assert_eq!(seen, vec![10, 20]);
     }
 }
+
+/// An optional component's borrow ends with its query, or the next frame's query panics (#1722).
+#[test]
+fn an_optional_borrow_is_released() {
+    let mut resources = setup();
+    let entity = spawn_entity(&mut resources, 0);
+    add_cpu_component(&mut resources, entity, Name("n".into()));
+    add_cpu_component(&mut resources, entity, Health(1));
+    for _ in 0..2 {
+        Query::<(&Name, Option<&mut Health>)>::new(&resources).for_each(|_| {});
+    }
+    Query::<&mut Health>::new(&resources).for_each(|health| health.0 += 1);
+}
