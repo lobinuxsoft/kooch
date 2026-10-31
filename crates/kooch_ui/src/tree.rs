@@ -180,6 +180,16 @@ impl UiTree {
         self.laid_out = None;
     }
 
+    /// Replaces a node's text, keeping the size its style gave it.
+    pub fn write_text(&mut self, node: UiNode, content: &str) {
+        let size = self
+            .text
+            .get(node.0 as usize)
+            .and_then(Option::as_ref)
+            .map_or(crate::build::DEFAULT_FONT_SIZE, |text| text.size);
+        self.set_text(node, content, size);
+    }
+
     /// Resizes a node's text, keeping its content. Nothing for a node without text.
     pub fn set_text_size(&mut self, node: UiNode, size: f32) {
         let Some(content) = self.text[node.0 as usize]

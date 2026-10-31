@@ -19,6 +19,7 @@ pub use crate::schedule::{Schedule, SystemFn, SystemInfo, SystemKey, SystemSourc
 pub use crate::stage::Stage;
 pub use crate::system::{FunctionSystem, GpuSystem, System};
 pub use crate::time::Time;
+pub use crate::warn_once;
 
 #[cfg(feature = "dynamic")]
 pub use crate::dynamic::{

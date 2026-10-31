@@ -127,6 +127,11 @@ Physics runs on a **fixed** timestep, so a system in `Physics` or `PostPhysics` 
 shows up when the frame rate changes. It may also run **several times in one frame, or none at
 all**, so nothing that must happen once per frame belongs there.
 
+### Saying it once
+
+`warn_once!` is `warn!` that fires once per call site, for a system that finds something missing
+every frame: `warn_once!("no PlayerInput on any entity")`.
+
 ### Time scale
 
 `Time::set_scale` sets how fast game time runs: `0.0` pauses gameplay, `0.5` is slow motion.

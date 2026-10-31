@@ -148,6 +148,9 @@ pub struct LoadedActions {
     read_at: Vec<(kooch_core::Guid, std::time::SystemTime)>,
     /// Action maps switched off: their actions read as released.
     off: Vec<String>,
+    /// This frame's and last frame's value, parallel to `by_guid`: read in `Stage::Input`.
+    now: Vec<ActionValue>,
+    was: Vec<ActionValue>,
 }
 
 impl LoadedActions {
@@ -189,6 +192,52 @@ impl LoadedActions {
         !self.off.iter().any(|own| own == map)
     }
 
+    /// This frame's value, read once in `Stage::Input`; at rest for an unknown or unset action.
+    pub fn value(&self, reference: Option<kooch_core::Guid>) -> ActionValue {
+        self.slot(reference)
+            .map(|index| self.now[index])
+            .unwrap_or_default()
+    }
+
+    pub fn pressed(&self, reference: Option<kooch_core::Guid>) -> bool {
+        self.value(reference).pressed
+    }
+
+    /// Down this frame and not the last: a held button fires once.
+    pub fn just_pressed(&self, reference: Option<kooch_core::Guid>) -> bool {
+        self.slot(reference)
+            .is_some_and(|index| self.now[index].pressed && !self.was[index].pressed)
+    }
+
+    pub fn just_released(&self, reference: Option<kooch_core::Guid>) -> bool {
+        self.slot(reference)
+            .is_some_and(|index| !self.now[index].pressed && self.was[index].pressed)
+    }
+
+    pub fn axis(&self, reference: Option<kooch_core::Guid>) -> f32 {
+        self.value(reference).axis()
+    }
+
+    pub fn vector2(&self, reference: Option<kooch_core::Guid>) -> glam::Vec2 {
+        self.value(reference).vector2()
+    }
+
+    fn slot(&self, reference: Option<kooch_core::Guid>) -> Option<usize> {
+        let guid = reference?;
+        self.by_guid.iter().position(|(own, _)| *own == guid)
+    }
+
+    /// Reads every action once, keeping last frame's beside it for the edges.
+    fn sample(&mut self, backend: &dyn crate::backend::InputBackend) {
+        let now: Vec<ActionValue> = self
+            .by_guid
+            .iter()
+            .map(|(_, action)| self.read(action, backend))
+            .collect();
+        self.was = std::mem::replace(&mut self.now, now);
+        self.was.resize(self.now.len(), ActionValue::default());
+    }
+
     /// Puts an action in the cache under `guid`, as the loader does. For anything that produces an
     /// action without the asset server: a plugin, a binding built at runtime, a test in another
     /// crate. Read now, so only a file saved later is stale.
@@ -199,7 +248,11 @@ impl LoadedActions {
     fn set(&mut self, guid: kooch_core::Guid, action: Action, modified: std::time::SystemTime) {
         match self.by_guid.iter_mut().find(|(g, _)| *g == guid) {
             Some(slot) => slot.1 = action,
-            None => self.by_guid.push((guid, action)),
+            None => {
+                self.by_guid.push((guid, action));
+                self.now.push(ActionValue::default());
+                self.was.push(ActionValue::default());
+            }
         }
         match self.read_at.iter_mut().find(|(g, _)| *g == guid) {
             Some(slot) => slot.1 = modified,
@@ -333,7 +386,8 @@ pub fn reset_maps_on_stop(resources: &mut kooch_core::resource::Resources) {
 
 struct WasPlaying(bool);
 
-/// Reads every enabled [`InputAction`] in `Stage::Input`, so gameplay sees this frame. A disabled
+/// Samples every loaded action, then fills every enabled [`InputAction`], in `Stage::Input`, so
+/// gameplay sees this frame. A disabled
 /// action keeps its last value rather than faking a release.
 pub fn read_input_actions(resources: &mut kooch_core::resource::Resources) {
     use kooch_ecs::Query;
@@ -341,10 +395,11 @@ pub fn read_input_actions(resources: &mut kooch_core::resource::Resources) {
     let Some(backend) = resources.remove::<Box<dyn crate::backend::InputBackend>>() else {
         return;
     };
-    let Some(loaded) = resources.remove::<LoadedActions>() else {
+    let Some(mut loaded) = resources.remove::<LoadedActions>() else {
         resources.insert(backend);
         return;
     };
+    loaded.sample(&*backend);
 
     {
         let query = Query::<&mut InputAction>::new(resources);

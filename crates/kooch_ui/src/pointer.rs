@@ -191,6 +191,20 @@ pub(crate) fn event(
     })
 }
 
+/// The documents that sent `action` this frame, once per send: `ui_actions(resources, "hud.count")`.
+pub fn ui_actions(resources: &Resources, action: &str) -> Vec<Entity> {
+    resources
+        .get::<Events<UiEvent>>()
+        .map(|events| {
+            events
+                .read()
+                .filter(|event| event.action == action)
+                .map(|event| event.document)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Sent for systems to read next frame, and run now when the project registered the action.
 pub(crate) fn dispatch(resources: &mut Resources, event: UiEvent) {
     let handlers: Vec<UiAction> = resources
