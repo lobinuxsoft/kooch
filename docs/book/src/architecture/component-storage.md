@@ -47,6 +47,7 @@ lookup, not a preference: whichever holds it is where it is.
 | | |
 |---|---|
 | `registry.get_cpu::<T>()` | `Option<ComponentView<T>>`, not `Option<&ComponentStorage<T>>`. `get`, `contains`, `len`, `iter`, `revision` all work as before. It is `Copy`. |
+| `registry.component::<T>(entity)` | `Option<&T>`: the view and `get` in one call, for a single lookup. Hold the view instead when looking up many entities. |
 | `registry.get_cpu_mut::<T>()` | `Option<ComponentViewMut<T>>`. Bind it `mut`. `into_mut(entity)` when the view is a temporary and the `&mut T` has to outlive it. |
 | **`move_entity::take::<T>(resources, entity)`** | The only complete way to remove a component. |
 | `view.unpark(entity)` | Takes a value out of the **inbox only**. Named for what it can do: a column loses a row only when the whole table does. Fine when an archetype change follows; it removes nothing on its own. |
