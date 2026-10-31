@@ -37,6 +37,21 @@ pub struct UiDocument {
     /// Over the screen, or in the world at this entity.
     #[reflect(choices = MODE_CHOICES)]
     pub mode: u32,
+    /// Where the pointer is (Vector2). Empty reads the engine's default: the mouse.
+    #[reflect(asset = "kooch_input::actions::action::Action")]
+    pub point: Option<Guid>,
+    /// Presses what the pointer is over. Default: left mouse button.
+    #[reflect(asset = "kooch_input::actions::action::Action")]
+    pub click: Option<Guid>,
+    /// Moves focus (Vector2). Default: arrows, d-pad, left stick.
+    #[reflect(asset = "kooch_input::actions::action::Action")]
+    pub navigate: Option<Guid>,
+    /// Presses what has focus. Default: Enter, Space, South.
+    #[reflect(asset = "kooch_input::actions::action::Action")]
+    pub submit: Option<Guid>,
+    /// Sends `on:cancel`. Default: Escape, East.
+    #[reflect(asset = "kooch_input::actions::action::Action")]
+    pub cancel: Option<Guid>,
 }
 
 impl Component for UiDocument {}

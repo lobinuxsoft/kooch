@@ -1,0 +1,10 @@
+(
+    id: "6b1d0c52-4e2f-4a51-9c0e-0a7f3d1e2b05",
+    name: "ui_cancel",
+    control_type: Button,
+    bindings: [
+        (role: Whole(Key(Escape)), processors: []),
+        (role: Whole(Button(East)), processors: []),
+    ],
+    processors: [],
+)

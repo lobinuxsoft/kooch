@@ -393,6 +393,7 @@ fn describe(path: ControlPath) -> String {
         ControlPath::Axis(axis) => format!("{axis:?}"),
         ControlPath::MouseMotion(axis) => format!("Motion {axis:?}"),
         ControlPath::MouseScroll(axis) => format!("Scroll {axis:?}"),
+        ControlPath::Pointer(axis) => format!("Pointer {axis:?}"),
     };
     format!("{device} / {control}")
 }
