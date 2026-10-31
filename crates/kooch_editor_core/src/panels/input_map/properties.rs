@@ -49,6 +49,31 @@ pub(super) fn draw_properties(
                     ui.data_mut(|d| d.remove::<String>(id));
                 }
             });
+            labeled_control(ui, "Map", |ui, room| {
+                // Same as the name: committed on Enter or focus loss, not per keystroke.
+                let id = ui.make_persistent_id(("input_action_map", index));
+                let mut map_name = ui
+                    .data(|d| d.get_temp::<String>(id))
+                    .unwrap_or_else(|| action.map.clone());
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut map_name)
+                        .hint_text("always on")
+                        .desired_width(room),
+                );
+                if response.changed() {
+                    ui.data_mut(|d| d.insert_temp(id, map_name.clone()));
+                }
+                if response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    let trimmed = map_name.trim();
+                    if trimmed != action.map {
+                        out.push(InputMapAction::SetMap {
+                            action: index,
+                            map: trimmed.to_owned(),
+                        });
+                    }
+                    ui.data_mut(|d| d.remove::<String>(id));
+                }
+            });
             ui.horizontal_wrapped(|ui| {
                 ui.label("Type");
                 for control_type in [

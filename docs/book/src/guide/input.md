@@ -4,6 +4,22 @@ A game never names a key. It points a component at an `.inputaction` asset, and 
 which controls feed it — keys, mouse buttons, gamepad buttons and axes, **mouse motion** and the **mouse wheel**.
 Actions are authored in the Input Map panel.
 
+## Action maps: switching a group off
+
+An action's **Map** field, in the Input Map panel, names the group it belongs to — `Player`, `UI`,
+`Vehicle`. Switching a map off makes every action in it read as released and at rest, wherever it
+is read from:
+
+```rust,ignore
+if let Some(loaded) = resources.get_mut::<LoadedActions>() {
+    loaded.set_map("Player", !menu_open);
+}
+```
+
+A pause menu switches `Player` off, so a jump pressed under the menu is not waiting when it closes;
+the UI's own actions sit in `UI` and keep answering. An action with no map is always on — the one
+that opens and closes the pause belongs there. Stop switches every map back on.
+
 ## Looking around: the mouse and the stick in one action
 
 A camera that turns needs a `Vector2` action — call it `look` — with two composites:

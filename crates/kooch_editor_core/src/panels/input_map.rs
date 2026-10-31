@@ -71,6 +71,11 @@ pub(crate) enum InputMapAction {
         action: usize,
         name: String,
     },
+    /// Move an action to another action map; empty is always on.
+    SetMap {
+        action: usize,
+        map: String,
+    },
     /// Change what an action produces.
     SetControlType {
         action: usize,

@@ -18,4 +18,5 @@
         (role: Part(name: Right, path: Axis(LeftStickX)), processors: []),
     ],
     processors: [],
+    map: "UI",
 )

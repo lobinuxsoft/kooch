@@ -57,7 +57,10 @@ pub(crate) fn read(resources: &Resources, document: &UiDocument) -> UiInput {
         let action = field
             .and_then(|guid| loaded.and_then(|loaded| loaded.get(guid)))
             .unwrap_or(fallback);
-        evaluate(action, backend)
+        match loaded {
+            Some(loaded) => loaded.read(action, backend),
+            None => evaluate(action, backend),
+        }
     };
     let point = value(document.point, &defaults.point).vector2();
     UiInput {
