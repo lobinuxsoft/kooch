@@ -3,10 +3,11 @@
 use std::collections::HashMap;
 
 use kooch_core::resource::Resources;
+use kooch_core::run_state::Playing;
 use kooch_ecs::Entity;
 use kooch_ecs::query::Query;
 
-use crate::{UiDocument, UiTree};
+use crate::{UiDocument, UiPointer, UiTree};
 
 /// The node tree of each entity with a [`UiDocument`].
 #[derive(Debug, Default)]
@@ -26,11 +27,23 @@ impl UiTrees {
     }
 }
 
-/// Drops the tree of every entity that no longer has a [`UiDocument`], despawned or not.
+/// Drops the tree of every entity that no longer has a [`UiDocument`], despawned or not, and every
+/// tree on Stop: Stop restores the entities, and a tree the game wrote into is play state too.
 pub fn prune_trees(resources: &mut Resources) {
+    let playing = Playing::is_playing(resources);
+    let stopped = resources
+        .insert(WasPlaying(playing))
+        .is_some_and(|was| was.0 && !playing);
     let mut documents = Vec::new();
     Query::<&UiDocument>::new(resources).for_each_entity(|entity, _| documents.push(entity));
     if let Some(trees) = resources.get_mut::<UiTrees>() {
-        trees.0.retain(|entity, _| documents.contains(entity));
+        trees
+            .0
+            .retain(|entity, _| !stopped && documents.contains(entity));
+    }
+    if stopped {
+        resources.insert(UiPointer::default());
     }
 }
+
+struct WasPlaying(bool);
