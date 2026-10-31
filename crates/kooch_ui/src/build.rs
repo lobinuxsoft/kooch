@@ -1,15 +1,17 @@
 //! A [`UiTree`] from a parsed `.kxml` and its sheet.
 
 use crate::cascade::resolve;
+use crate::restyle::Styled;
 use crate::source::{ElementKind, NO_PARENT, UiSource};
-use crate::style::UiStyleSheet;
+use crate::style::{ResolvedStyle, UiStyleSheet};
 use crate::{UiNode, UiTree};
 
 /// A label's size when nothing up its chain sets `font-size`, in canvas units.
 pub const DEFAULT_FONT_SIZE: f32 = 24.0;
 
 pub fn build_tree(source: &UiSource, sheet: Option<&UiStyleSheet>) -> UiTree {
-    let styles = resolve(source, sheet);
+    let states = vec![0; source.elements.len()];
+    let styles = resolve(source, sheet, &states);
     let mut tree: Option<UiTree> = None;
     let mut nodes: Vec<Option<UiNode>> = Vec::with_capacity(source.elements.len());
     for (element, style) in source.elements.iter().zip(&styles) {
@@ -42,16 +44,30 @@ pub fn build_tree(source: &UiSource, sheet: Option<&UiStyleSheet>) -> UiTree {
         {
             tree.set_click(node, action);
         }
-        tree.set_background(node, style.paint.background);
-        tree.set_border_color(node, style.paint.border);
-        tree.set_radius(node, style.paint.radius);
         if let Some(text) = &element.text {
             tree.set_text(node, text, style.font_size.unwrap_or(DEFAULT_FONT_SIZE));
-            if let Some(family) = &style.font_family {
-                tree.set_font(node, family);
-            }
         }
-        tree.set_text_color(node, style.paint.text);
+        apply(tree, node, style);
     }
-    tree.unwrap_or_else(|| UiTree::new(taffy::Style::default()))
+    let mut tree = tree.unwrap_or_else(|| UiTree::new(taffy::Style::default()));
+    tree.styled = Some(Styled {
+        source: source.clone(),
+        sheet: sheet.cloned(),
+        nodes,
+        states,
+        dirty: false,
+    });
+    tree
+}
+
+/// What a style paints on a node; layout is set where the node is made, or by the restyle.
+pub(crate) fn apply(tree: &mut UiTree, node: UiNode, style: &ResolvedStyle) {
+    tree.set_background(node, style.paint.background);
+    tree.set_border_color(node, style.paint.border);
+    tree.set_radius(node, style.paint.radius);
+    tree.set_text_color(node, style.paint.text);
+    tree.set_text_size(node, style.font_size.unwrap_or(DEFAULT_FONT_SIZE));
+    if let Some(family) = &style.font_family {
+        tree.set_font(node, family);
+    }
 }

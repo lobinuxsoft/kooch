@@ -1,5 +1,4 @@
-//! Which rules reach which element, and in what order. States (`:hover`…) wait for UI input
-//! (#96 phase 6): a rule that needs one does not apply yet.
+//! Which rules reach which element, and in what order.
 
 use taffy::Size;
 use taffy::prelude::percent;
@@ -10,8 +9,12 @@ use crate::style::{Compound, ResolvedStyle, STATE_ROOT, Selector, UiStyleSheet};
 /// CSS's: names, then classes and states, then elements.
 type Specificity = (u32, u32, u32);
 
-/// One style per element, in `source.elements` order.
-pub fn resolve(source: &UiSource, sheet: Option<&UiStyleSheet>) -> Vec<ResolvedStyle> {
+/// One style per element, in `source.elements` order. `states` holds each element's `STATE_*`.
+pub fn resolve(
+    source: &UiSource,
+    sheet: Option<&UiStyleSheet>,
+    states: &[u8],
+) -> Vec<ResolvedStyle> {
     let mut resolved: Vec<ResolvedStyle> = Vec::with_capacity(source.elements.len());
     let mut matched: Vec<(Specificity, usize)> = Vec::new();
     for (index, element) in source.elements.iter().enumerate() {
@@ -25,7 +28,7 @@ pub fn resolve(source: &UiSource, sheet: Option<&UiStyleSheet>) -> Vec<ResolvedS
                 let best = entry
                     .selectors
                     .iter()
-                    .filter(|selector| matches(selector, &source.elements, index))
+                    .filter(|selector| matches(selector, &source.elements, states, index))
                     .map(specificity)
                     .max();
                 if let Some(best) = best {
@@ -65,11 +68,11 @@ fn inherited(parent: &ResolvedStyle) -> ResolvedStyle {
 }
 
 /// Descendant combinators only, so the nearest matching ancestor is always the right one to try.
-fn matches(selector: &Selector, elements: &[Element], index: usize) -> bool {
+fn matches(selector: &Selector, elements: &[Element], states: &[u8], index: usize) -> bool {
     let Some((subject, ancestors)) = selector.0.split_last() else {
         return false;
     };
-    if !compound_matches(subject, elements, index) {
+    if !compound_matches(subject, elements, states, index) {
         return false;
     }
     let mut current = index;
@@ -80,7 +83,7 @@ fn matches(selector: &Selector, elements: &[Element], index: usize) -> bool {
                 return false;
             }
             current = parent as usize;
-            if compound_matches(compound, elements, current) {
+            if compound_matches(compound, elements, states, current) {
                 break;
             }
         }
@@ -88,13 +91,19 @@ fn matches(selector: &Selector, elements: &[Element], index: usize) -> bool {
     true
 }
 
-fn compound_matches(compound: &Compound, elements: &[Element], index: usize) -> bool {
+fn compound_matches(
+    compound: &Compound,
+    elements: &[Element],
+    states: &[u8],
+    index: usize,
+) -> bool {
     let element = &elements[index];
-    let states = if element.parent == NO_PARENT {
+    let root = if element.parent == NO_PARENT {
         STATE_ROOT
     } else {
         0
     };
+    let states = states[index] | root;
     compound
         .element
         .as_deref()
