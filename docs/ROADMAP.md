@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-10-30 — 🎯 **The pad drives the ball, and the UI has its model.** Triggers report how far they are pulled and pads rumble — from the game, through the editor's Play — so roll-a-ball drives by torque, regulated by trigger travel. A child can now follow only its parent's position (`PositionOnly`), which is what a heading arrow on a rolling ball needs. Proxima's fit no longer draws a hard line at the terminator: only the shadow maps draw hard edges. And the runtime UI is decided as a document per entity, UI Toolkit style, overlay or world, with a material per element (#96, #280).
+Last updated 2026-10-30 (late) — 🎯 **The game's UI answers the mouse.** UI files are `.kxml`/`.kcss`, plain XML and CSS so any editor highlights them. A button declared with `on:click` runs a named action or sends a `UiEvent`, and while the pointer is over the UI the game does not see the click — in the editor's Play too, which used to swallow every click over the game image. Decided: a World document renders to a texture any mesh can show, the UI Builder is its own panel without a camera, and SVG goes in through usvg + lyon (#1700). Next: `:hover`/`:active`/`:focus` and pad navigation (#96 phase 6).
 
 
 ---
