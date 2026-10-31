@@ -25,6 +25,10 @@ impl UiTrees {
     pub fn get_mut(&mut self, document: Entity) -> Option<&mut UiTree> {
         self.0.get_mut(&document)
     }
+
+    pub(crate) fn for_each_mut(&mut self, mut each: impl FnMut(&mut UiTree)) {
+        self.0.values_mut().for_each(|tree| each(tree));
+    }
 }
 
 /// Drops the tree of every entity that no longer has a [`UiDocument`], despawned or not, and every

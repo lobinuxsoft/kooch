@@ -8,6 +8,7 @@ use kooch_ecs::{Entity, ViewSize};
 use kooch_input::{InputBackend, MouseButton};
 
 use crate::layout::CANVAS_HEIGHT;
+use crate::style::{STATE_ACTIVE, STATE_FOCUS, STATE_HOVER};
 use crate::{MODE_OVERLAY, UiDocument, UiNode, UiTrees};
 
 /// Something the UI did, named by the action the file gave it.
@@ -31,6 +32,8 @@ pub struct UiPointer {
     pub over: Option<(Entity, UiNode)>,
     /// The action node a press started on; a release over the same one is a click.
     pressed: Option<(Entity, UiNode)>,
+    /// The action node last pressed, until a press lands elsewhere: what `:focus` selects.
+    pub focused: Option<(Entity, UiNode)>,
     /// A press that started over the game stays the game's until released, even across the UI.
     game_held: bool,
     was_down: bool,
@@ -60,10 +63,12 @@ pub fn pick_pointer(resources: &mut Resources) {
         return;
     };
     let hit = hit(resources);
-    let mut pointer = resources.get::<UiPointer>().copied().unwrap_or_default();
+    let was = resources.get::<UiPointer>().copied().unwrap_or_default();
+    let mut pointer = was;
     let target = hit.and_then(|(document, node)| action_node(resources, document, node));
     let mut clicked = None;
     if down && !pointer.was_down {
+        pointer.focused = target;
         match target {
             Some(target) => pointer.pressed = Some(target),
             None => pointer.game_held = hit.is_none(),
@@ -83,8 +88,39 @@ pub fn pick_pointer(resources: &mut Resources) {
         backend.claim_pointer(claimed);
     }
     resources.insert(pointer);
+    show_states(resources, &was, &pointer);
     if let Some(event) = clicked.and_then(|(document, node)| click(resources, document, node)) {
         dispatch(resources, event);
+    }
+}
+
+/// `:hover` and `:active` hold on the node and its ancestors, as in CSS; `:focus` on the node only.
+fn show_states(resources: &mut Resources, was: &UiPointer, now: &UiPointer) {
+    let Some(trees) = resources.get_mut::<UiTrees>() else {
+        return;
+    };
+    let changes = [
+        (was.over, now.over, STATE_HOVER, true),
+        (was.pressed, now.pressed, STATE_ACTIVE, true),
+        (was.focused, now.focused, STATE_FOCUS, false),
+    ];
+    for (before, after, bit, up) in changes {
+        if before == after {
+            continue;
+        }
+        for (target, on) in [(before, false), (after, true)] {
+            let Some((document, node)) = target else {
+                continue;
+            };
+            let Some(tree) = trees.get_mut(document) else {
+                continue;
+            };
+            let mut current = Some(node);
+            while let Some(node) = current {
+                tree.set_state(node, bit, on);
+                current = tree.parent(node).filter(|_| up);
+            }
+        }
     }
 }
 

@@ -79,6 +79,8 @@ pub struct UiTree {
     laid_out: Option<Vec2>,
     /// The files this tree was built from; `None` for one built in code.
     pub(crate) origin: Option<crate::documents::Origin>,
+    /// The cascade's inputs, for a tree built from files: what states restyle from.
+    pub(crate) styled: Option<crate::restyle::Styled>,
 }
 
 // SAFETY: taffy's lengths are `!Send` only for the pointer a `calc()` length carries, and taffy is
@@ -107,6 +109,7 @@ impl UiTree {
             rastered: None,
             laid_out: None,
             origin: None,
+            styled: None,
         };
         // Logical units: rounding here would snap to a pixel the screen does not have. The draw
         // rounds, in physical pixels.
@@ -158,6 +161,18 @@ impl UiTree {
         let _ = self.layout.set_node_context(id, Some(node.0));
         let _ = self.layout.mark_dirty(id);
         self.laid_out = None;
+    }
+
+    /// Resizes a node's text, keeping its content. Nothing for a node without text.
+    pub fn set_text_size(&mut self, node: UiNode, size: f32) {
+        let Some(content) = self.text[node.0 as usize]
+            .as_ref()
+            .filter(|text| text.size != size)
+            .map(|text| text.content.clone())
+        else {
+            return;
+        };
+        self.set_text(node, &content, size);
     }
 
     /// Shapes a node's text with `family` first (`"Fira Code"`), then Inter. Set after `set_text`.

@@ -1,7 +1,7 @@
 # UI files
 
-> 🚧 Templates (`use`), states (`:hover`…) and bindings are parsed but not live yet: they arrive
-> with the rest of #280 and #96's input phase. Of the events, `on:click` is live.
+> 🚧 Templates (`use`) and bindings are parsed but not live yet: they arrive with the rest of #280.
+> Of the events, `on:click` is live; of the states, `:hover`, `:active` and `:focus`.
 
 A `UiDocument` points at two files, split like Unity's UXML and USS:
 
@@ -140,6 +140,11 @@ is of the parent. Nothing else.
 **Selectors.** Element (`slider`), class (`.card`), name (`#label`), the descendant combinator (a
 space), and the states `:hover`, `:active`, `:focus`, `:checked`, `:disabled`. Specificity and
 precedence are CSS's: name over class over element, and the later rule wins a tie.
+
+**States.** `:hover` holds on the node under the pointer and its ancestors, `:active` on the node a
+press started on (and its ancestors) until release, `:focus` on the last action node pressed until
+a press lands elsewhere. A state change runs the cascade again and overwrites what code wrote to the
+node's paint — text content survives. `:checked` and `:disabled` wait for toggles and `disabled`.
 
 **Variables.** `--name: value` in `:root`, read with `var(--name)`.
 
