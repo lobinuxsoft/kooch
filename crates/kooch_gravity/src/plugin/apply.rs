@@ -17,10 +17,7 @@ pub fn apply_gravity_sources(resources: &mut Resources) {
     if field.is_empty() {
         return;
     }
-    let dt = resources
-        .get::<Time>()
-        .map(|time| time.fixed_delta_secs())
-        .unwrap_or(1.0 / 60.0);
+    let dt = Time::of(resources).fixed_delta_secs();
 
     // A source that moved, appeared or changed has to reach bodies that
     // have already settled, or switching a gravity zone on would do

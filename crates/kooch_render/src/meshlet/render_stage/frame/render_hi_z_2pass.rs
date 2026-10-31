@@ -155,10 +155,7 @@ impl MeshletRenderStage {
                 camera_position: cam_pos,
                 size: self.views[view_id].render_size,
                 mip_bias_scale: 1.0,
-                time: resources
-                    .get::<kooch_core::time::Time>()
-                    .map(|t| t.elapsed_secs())
-                    .unwrap_or(0.0),
+                time: kooch_core::time::Time::of(resources).elapsed_secs(),
             };
             self.masked.frame(queue, &frame);
             let view = &mut self.views[view_id];

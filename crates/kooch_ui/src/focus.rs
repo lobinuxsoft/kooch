@@ -52,9 +52,7 @@ impl UiTree {
 
 /// After [`pick_pointer`](crate::pick_pointer), which may have asked for focus.
 pub fn navigate_focus(resources: &mut Resources) {
-    let dt = resources
-        .get::<Time>()
-        .map_or(0.0, |time| time.unscaled_delta_secs());
+    let dt = Time::of(resources).unscaled_delta_secs();
     let mut focus = resources.get::<UiFocus>().copied().unwrap_or_default();
     let was = focus;
     let appeared = reveal(resources);

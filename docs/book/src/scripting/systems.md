@@ -132,6 +132,15 @@ all**, so nothing that must happen once per frame belongs there.
 `warn_once!` is `warn!` that fires once per call site, for a system that finds something missing
 every frame: `warn_once!("no PlayerInput on any entity")`.
 
+### Reading the clock
+
+`Time::of(resources)` is the clock, never missing: an app without one (a bare test) gets a stand-in
+at its start with a 60 Hz frame, the same answer for every system.
+
+```rust,ignore
+let dt = Time::of(resources).delta_secs();
+```
+
 ### Time scale
 
 `Time::set_scale` sets how fast game time runs: `0.0` pauses gameplay, `0.5` is slow motion.

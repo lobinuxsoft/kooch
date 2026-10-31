@@ -176,10 +176,7 @@ fn render_passes(
         SkyRenderPass::active_sky(resources),
         setup.stack.base.as_ref(),
     ) {
-        let time_secs = resources
-            .get::<Time>()
-            .map(|t| t.elapsed_secs())
-            .unwrap_or(0.0);
+        let time_secs = Time::of(resources).elapsed_secs();
         sky_pass.render(
             gpu.queue(),
             &mut encoder,

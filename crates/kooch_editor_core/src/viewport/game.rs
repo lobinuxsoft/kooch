@@ -103,10 +103,7 @@ pub(crate) fn render_game_view(
         });
 
     let sky_drawn = if let Some(active_sky) = SkyRenderPass::active_sky(resources) {
-        let time_secs = resources
-            .get::<Time>()
-            .map(|t| t.elapsed_secs())
-            .unwrap_or(0.0);
+        let time_secs = Time::of(resources).elapsed_secs();
         sky_pass.render(
             gpu.queue(),
             &mut encoder,

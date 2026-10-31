@@ -435,10 +435,7 @@ impl MeshletRenderStage {
                 .filter(|(_, i)| i.flags & INSTANCE_CASTS_NO_SHADOW == 0)
                 .map(|(_, i)| i.material_id)
                 .collect();
-            let time = resources
-                .get::<kooch_core::time::Time>()
-                .map(|t| t.elapsed_secs())
-                .unwrap_or_default();
+            let time = kooch_core::time::Time::of(resources).elapsed_secs();
             self.shadow_alpha
                 .bake(device, queue, &mut encoder, materials, &see_through, time);
         }

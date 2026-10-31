@@ -130,10 +130,7 @@ impl MeshletRenderStage {
                 camera_position: cam_pos,
                 size: stage.render_size(),
                 mip_bias_scale: stage.mip_bias_scale(),
-                time: resources
-                    .get::<kooch_core::time::Time>()
-                    .map(|t| t.elapsed_secs())
-                    .unwrap_or(0.0),
+                time: kooch_core::time::Time::of(resources).elapsed_secs(),
             };
             self.masked.frame(queue, &frame);
             let view = &mut self.views[view_id];
@@ -211,10 +208,7 @@ impl MeshletRenderStage {
             .expect("path selected only when vbuf64_stage is Some");
         // #1159 — the clock a moving surface reads, taken once for the whole frame so every
         // material's pass agrees on what time it is.
-        let time = resources
-            .get::<kooch_core::time::Time>()
-            .map(|t| t.elapsed_secs())
-            .unwrap_or_default();
+        let time = kooch_core::time::Time::of(resources).elapsed_secs();
         let frame_dlss_commands = {
             profiling::scope!("shade");
             let shade_query = scopes.map(|s| s.begin("shade", &mut encoder));
