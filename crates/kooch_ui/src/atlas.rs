@@ -1,6 +1,10 @@
-//! Rasterized glyphs, packed into one `R8` atlas the draw samples (#96 phase 4 uploads it).
+//! Rasterized glyphs and decoded images, packed into one RGBA8 atlas the draw samples: one
+//! texture, one instanced draw (#96, #1708).
 
 use std::collections::HashMap;
+use std::time::SystemTime;
+
+use kooch_core::Guid;
 
 use etagere::{AtlasAllocator, size2};
 use swash::FontRef;
@@ -32,13 +36,21 @@ pub struct AtlasGlyph {
     pub top: i32,
 }
 
-/// The atlas: pixels, what is where, and what changed since the last upload.
+/// An image's texels in the atlas, `[x0, y0, x1, y1]`, and the file's mtime it was read at.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AtlasImage {
+    pub rect: [u32; 4],
+    pub modified: SystemTime,
+}
+
+/// The atlas: RGBA8 pixels, what is where, and what changed since the last upload.
 pub struct GlyphAtlas {
     allocator: AtlasAllocator,
     side: u32,
     pixels: Vec<u8>,
     /// `None`: a glyph with no ink (a space). Cached too, so it is not rasterized every frame.
     glyphs: HashMap<GlyphKey, Option<AtlasGlyph>>,
+    images: HashMap<Guid, (etagere::AllocId, AtlasImage)>,
     /// Bounds of what was written since [`take_dirty`](Self::take_dirty), `[x0, y0, x1, y1]`.
     dirty: Option<[u32; 4]>,
     /// Bumped when a full atlas is cleared: every quad built before points at freed space.
@@ -56,8 +68,9 @@ impl GlyphAtlas {
         Self {
             allocator: AtlasAllocator::new(size2(side as i32, side as i32)),
             side,
-            pixels: vec![0; (side * side) as usize],
+            pixels: vec![0; (side * side * 4) as usize],
             glyphs: HashMap::new(),
+            images: HashMap::new(),
             dirty: None,
             generation: 0,
         }
@@ -67,6 +80,7 @@ impl GlyphAtlas {
         self.side
     }
 
+    /// RGBA8, row by row.
     pub fn pixels(&self) -> &[u8] {
         &self.pixels
     }
@@ -128,9 +142,11 @@ impl GlyphAtlas {
         };
         let (x0, y0) = (slot.rectangle.min.x as u32, slot.rectangle.min.y as u32);
         for row in 0..h {
-            let from = (row * w) as usize;
-            let to = ((y0 + row) * self.side + x0) as usize;
-            self.pixels[to..to + w as usize].copy_from_slice(&image.data[from..from + w as usize]);
+            for column in 0..w {
+                let coverage = image.data[(row * w + column) as usize];
+                let to = (((y0 + row) * self.side + x0 + column) * 4) as usize;
+                self.pixels[to..to + 4].fill(coverage);
+            }
         }
         self.grow_dirty([x0, y0, x0 + w, y0 + h]);
         let glyph = AtlasGlyph {
@@ -143,9 +159,56 @@ impl GlyphAtlas {
         Some(glyph)
     }
 
+    pub fn image(&self, guid: Guid) -> Option<AtlasImage> {
+        self.images.get(&guid).map(|(_, image)| *image)
+    }
+
+    /// Packs an RGBA8 image, replacing what `guid` had. Its edge is repeated one texel out, so
+    /// filtering at the border does not pull in a neighbour.
+    pub(crate) fn insert_image(
+        &mut self,
+        guid: Guid,
+        modified: SystemTime,
+        (w, h): (u32, u32),
+        rgba: &[u8],
+    ) -> Option<AtlasImage> {
+        if w == 0 || h == 0 {
+            return None;
+        }
+        if let Some((id, _)) = self.images.remove(&guid) {
+            self.allocator.deallocate(id);
+        }
+        let padded = size2(w as i32 + 2, h as i32 + 2);
+        let slot = match self.allocator.allocate(padded) {
+            Some(slot) => slot,
+            None => {
+                self.clear();
+                self.allocator.allocate(padded)?
+            }
+        };
+        let (x0, y0) = (slot.rectangle.min.x as u32, slot.rectangle.min.y as u32);
+        for row in 0..h + 2 {
+            let from_row = row.saturating_sub(1).min(h - 1);
+            for column in 0..w + 2 {
+                let from_column = column.saturating_sub(1).min(w - 1);
+                let from = ((from_row * w + from_column) * 4) as usize;
+                let to = (((y0 + row) * self.side + x0 + column) * 4) as usize;
+                self.pixels[to..to + 4].copy_from_slice(&rgba[from..from + 4]);
+            }
+        }
+        self.grow_dirty([x0, y0, x0 + w + 2, y0 + h + 2]);
+        let image = AtlasImage {
+            rect: [x0 + 1, y0 + 1, x0 + 1 + w, y0 + 1 + h],
+            modified,
+        };
+        self.images.insert(guid, (slot.id, image));
+        Some(image)
+    }
+
     fn clear(&mut self) {
         self.allocator.clear();
         self.glyphs.clear();
+        self.images.clear();
         self.pixels.fill(0);
         self.generation = self.generation.wrapping_add(1);
         self.dirty = Some([0, 0, self.side, self.side]);

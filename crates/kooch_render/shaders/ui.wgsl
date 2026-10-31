@@ -1,5 +1,5 @@
-// ui.wgsl — the UI's panels and glyphs, one instanced quad each (#96). The rounded box is Bevy's
-// `ui.wgsl` signed distance, antialiased over one physical pixel.
+// ui.wgsl — the UI's panels, images and glyphs, one instanced quad each (#96, #1708). The rounded
+// box is Bevy's `ui.wgsl` signed distance, antialiased over one physical pixel.
 
 struct Screen {
     size: vec2<f32>,
@@ -8,8 +8,10 @@ struct Screen {
 
 @group(0) @binding(0) var<uniform> screen: Screen;
 @group(0) @binding(1) var atlas: texture_2d<f32>;
+@group(0) @binding(2) var images: sampler;
 
 const QUAD_GLYPH: u32 = 1u;
+const QUAD_IMAGE: u32 = 2u;
 
 struct Instance {
     @location(0) min: vec2<f32>,
@@ -68,6 +70,11 @@ fn fs_ui(in: Varyings) -> @location(0) vec4<f32> {
     let p = in.position.xy;
     if p.x < in.clip.x || p.y < in.clip.y || p.x >= in.clip.z || p.y >= in.clip.w {
         discard;
+    }
+    if (in.flags & QUAD_IMAGE) != 0u {
+        let side = vec2<f32>(textureDimensions(atlas));
+        let texel = textureSampleLevel(atlas, images, in.uv / side, 0.0) * in.color;
+        return vec4<f32>(texel.rgb * texel.a, texel.a);
     }
     if (in.flags & QUAD_GLYPH) != 0u {
         let coverage = textureLoad(atlas, vec2<i32>(floor(in.uv)), 0).r;

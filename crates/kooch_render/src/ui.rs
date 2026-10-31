@@ -43,10 +43,16 @@ impl UiPass {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
             ],
@@ -137,7 +143,7 @@ impl UiPass {
                 &upload.texels,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(x1 - x0),
+                    bytes_per_row: Some((x1 - x0) * 4),
                     rows_per_image: Some(y1 - y0),
                 },
                 wgpu::Extent3d {
@@ -222,7 +228,7 @@ fn atlas_and_bind(
     side: u32,
 ) -> (wgpu::Texture, wgpu::BindGroup) {
     let atlas = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("ui_glyph_atlas"),
+        label: Some("ui_atlas"),
         size: wgpu::Extent3d {
             width: side,
             height: side,
@@ -231,11 +237,18 @@ fn atlas_and_bind(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::R8Unorm,
+        // Not sRGB: the colours are display-space already, like the surface they land on.
+        format: wgpu::TextureFormat::Rgba8Unorm,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
     let view = atlas.create_view(&Default::default());
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("ui_images"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
     let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("ui_bg"),
         layout,
@@ -247,6 +260,10 @@ fn atlas_and_bind(
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(&sampler),
             },
         ],
     });

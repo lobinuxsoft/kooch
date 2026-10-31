@@ -172,7 +172,22 @@ node's paint — text content survives. `:checked` and `:disabled` wait for togg
 | `border-radius` | length |
 | `font-family` | `"Inter"`, `"Fira Code"`, or a font the project registers |
 | `font-size` | length |
+| `background-image` | `url("button.png")` relative to the `.kcss`, PNG or JPEG; `none` |
+| `-kooch-slice` | length, one to four: image texels kept unstretched at each edge |
+| `-kooch-tint` | colour that multiplies the image |
 | `-kooch-material` | a path to a `.shader` with `kind: ui` (#1690) |
+
+**Images.** A `background-image` draws over the `background-color`, stretched to the node's box,
+or 9-sliced when `-kooch-slice` is set: the corners keep their size (one canvas unit per texel) and
+the edges and middle stretch. A state rule can swap it, which is how a button gets art per state:
+
+```css
+.button        { background-image: url("button.png"); -kooch-slice: 12px; }
+.button:hover  { background-image: url("button_hover.png"); }
+.button:active { background-image: url("button_press.png"); }
+```
+
+Saving the PNG shows the change without Play. Images are not clipped to `border-radius`.
 
 A bare `0` is a length. Colours are sRGB: `hsl()`, `lab()` and the rest are a warning.
 

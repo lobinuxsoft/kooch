@@ -52,7 +52,7 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
     frame
 }
 
-/// The editor's end. Keeps the atlas on the CPU, so frames that land between two draws merge
+/// The editor's end. Keeps the RGBA8 atlas on the CPU, so frames that land between two draws merge
 /// into one upload instead of the later one dropping the earlier one's glyphs.
 #[derive(Default)]
 pub struct UiReceiver {
@@ -73,7 +73,7 @@ impl UiReceiver {
         self.fresh = true;
         if frame.atlas_side != self.side {
             self.side = frame.atlas_side;
-            self.atlas = vec![0; (self.side * self.side) as usize];
+            self.atlas = vec![0; (self.side * self.side * 4) as usize];
             self.dirty = None;
         }
         let Some(upload) = frame.upload else {
@@ -113,13 +113,13 @@ impl UiReceiver {
         let Ok(texels) = STANDARD.decode(&upload.texels) else {
             return false;
         };
-        let width = (x1 - x0) as usize;
-        if texels.len() != width * (y1 - y0) as usize {
+        let row_bytes = (x1 - x0) as usize * 4;
+        if texels.len() != row_bytes * (y1 - y0) as usize {
             return false;
         }
-        for (row, y) in texels.chunks_exact(width).zip(y0..y1) {
-            let start = (y * self.side + x0) as usize;
-            self.atlas[start..start + width].copy_from_slice(row);
+        for (row, y) in texels.chunks_exact(row_bytes).zip(y0..y1) {
+            let start = (y * self.side + x0) as usize * 4;
+            self.atlas[start..start + row_bytes].copy_from_slice(row);
         }
         self.dirty = Some(
             self.dirty
@@ -150,8 +150,8 @@ fn union(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
 fn region(atlas: &[u8], side: u32, [x0, y0, x1, y1]: [u32; 4]) -> Vec<u8> {
     (y0..y1)
         .flat_map(|y| {
-            let start = (y * side + x0) as usize;
-            atlas[start..start + (x1 - x0) as usize].iter().copied()
+            let start = (y * side + x0) as usize * 4;
+            atlas[start..start + (x1 - x0) as usize * 4].iter().copied()
         })
         .collect()
 }

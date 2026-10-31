@@ -1,6 +1,7 @@
 //! A [`UiTree`] from a parsed `.kxml` and its sheet.
 
 use crate::cascade::resolve;
+use crate::images::UiImage;
 use crate::restyle::Styled;
 use crate::source::{ElementKind, NO_PARENT, UiSource};
 use crate::style::{ResolvedStyle, UiStyleSheet};
@@ -70,4 +71,10 @@ pub(crate) fn apply(tree: &mut UiTree, node: UiNode, style: &ResolvedStyle) {
     if let Some(family) = &style.font_family {
         tree.set_font(node, family);
     }
+    let image = style.image.map(|guid| UiImage {
+        guid,
+        slice: style.slice,
+        tint: style.tint.unwrap_or([1.0; 4]),
+    });
+    tree.set_image(node, image);
 }

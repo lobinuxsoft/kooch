@@ -14,6 +14,10 @@ pub struct ResolvedStyle {
     pub font_family: Option<Box<str>>,
     pub font_size: Option<f32>,
     pub material: Option<Box<str>>,
+    /// The resolved asset; `None` when unset, `none`, or a url no asset answers.
+    pub image: Option<kooch_core::Guid>,
+    pub slice: [f32; 4],
+    pub tint: Option<[f32; 4]>,
 }
 
 impl ResolvedStyle {
@@ -46,6 +50,11 @@ impl ResolvedStyle {
             Declaration::FontFamily(family) => self.font_family = Some(family.clone()),
             Declaration::FontSize(size) => self.font_size = Some(*size),
             Declaration::Material(path) => self.material = Some(path.clone()),
+            Declaration::BackgroundImage(image) => {
+                self.image = image.as_ref().and_then(|image| image.guid);
+            }
+            Declaration::Slice(slice) => self.slice = *slice,
+            Declaration::Tint(rgba) => self.tint = Some(*rgba),
         }
     }
 }

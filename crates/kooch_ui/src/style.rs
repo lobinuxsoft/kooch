@@ -6,7 +6,7 @@ mod resolved;
 mod sheet;
 mod tokens;
 
-pub use declaration::{Axis, Declaration, Edge};
+pub use declaration::{Axis, Declaration, Edge, ImageRef};
 pub use resolved::ResolvedStyle;
 pub use sheet::{
     Compound, STATE_ACTIVE, STATE_CHECKED, STATE_DISABLED, STATE_FOCUS, STATE_HOVER, STATE_ROOT,

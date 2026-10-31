@@ -26,6 +26,10 @@ impl UiTrees {
         self.0.get_mut(&document)
     }
 
+    pub(crate) fn for_each(&self, each: impl FnMut(&UiTree)) {
+        self.0.values().for_each(each);
+    }
+
     pub(crate) fn for_each_mut(&mut self, mut each: impl FnMut(&mut UiTree)) {
         self.0.values_mut().for_each(|tree| each(tree));
     }

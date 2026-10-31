@@ -71,6 +71,7 @@ pub struct UiTree {
     /// Border width from the layout, uniform: the left edge's.
     border: Vec<f32>,
     paint: Vec<Paint>,
+    pub(crate) image: Vec<Option<crate::images::UiImage>>,
     text: Vec<Option<Text>>,
     glyphs: Vec<GlyphQuad>,
     /// Physical pixels per canvas unit and atlas generation the glyphs were built for.
@@ -104,6 +105,7 @@ impl UiTree {
             rect: Vec::new(),
             border: Vec::new(),
             paint: Vec::new(),
+            image: Vec::new(),
             text: Vec::new(),
             glyphs: Vec::new(),
             rastered: None,
@@ -408,6 +410,7 @@ impl UiTree {
         self.rect.push(UiRect::default());
         self.border.push(0.0);
         self.paint.push(Paint::default());
+        self.image.push(None);
         self.text.push(None);
         index
     }

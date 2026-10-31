@@ -10,7 +10,7 @@ use kooch_core::schedule::Order;
 
 use crate::{
     GlyphAtlas, UiActions, UiDocument, UiEvent, UiFonts, UiPointer, UiTrees, build_documents,
-    draw_documents, layout_documents, pick_pointer, prune_trees, restyle_documents,
+    draw_documents, layout_documents, load_images, pick_pointer, prune_trees, restyle_documents,
 };
 
 /// Only the components: what the editor needs to offer and inspect them, without running any UI.
@@ -55,10 +55,16 @@ impl Plugin for UiPlugin {
             Order::after("build_documents"),
             restyle_documents,
         );
-        // After gameplay's `Update`, which is where a game edits its trees.
+        // Before layout: a full atlas clears, and the glyphs rasterize again against it.
         app.add_ordered(
             Stage::PostUpdate,
             Order::after("restyle_documents"),
+            load_images,
+        );
+        // After gameplay's `Update`, which is where a game edits its trees.
+        app.add_ordered(
+            Stage::PostUpdate,
+            Order::after("load_images"),
             layout_documents,
         );
         app.add_ordered(
