@@ -16,7 +16,7 @@ pub fn draw_documents(resources: &mut Resources) {
     let screen = [0.0, 0.0, physical.x as f32, physical.y as f32];
     let mut overlays: Vec<Entity> = Vec::new();
     Query::<&UiDocument>::new(resources).for_each_entity(|entity, document| {
-        if document.mode == MODE_OVERLAY {
+        if document.mode == MODE_OVERLAY && !document.hidden {
             overlays.push(entity);
         }
     });

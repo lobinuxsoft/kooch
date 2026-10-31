@@ -25,6 +25,22 @@ the project in the Kóoch editor adds `"*.kxml": "xml"` and `"*.kcss": "css"` to
 and `bind:`; the engine declares them itself when it is missing. A property that is Kóoch's own
 carries the `-kooch-` prefix, which CSS linters skip as vendor-specific.
 
+### Layers
+
+One `UiDocument` is one layer: the HUD, the pause menu and a dialog are three entities, each with
+its own focus and its own input actions. Screens that replace each other — main menu, options,
+credits — are one layer that swaps its **Source**. Find a layer by the data component on its entity
+(`Query<(&UiDocument, &PauseMenu)>`), never by a name in the file.
+
+**Hidden** keeps a layer's tree but stops drawing it, picking it and reading its actions; the focus
+it held is dropped, with `on:blur`. Showing it again hands focus to its `autofocus`, so opening a
+menu lands on its first button. Turning a layer off by clearing its Source instead rebuilds it from
+the files and loses whatever the game wrote into it.
+
+Many panels in one document work too, and are the cheaper choice for parts that always show
+together. Layers cost little: all of them draw in one call, and a layer that did not change does
+not lay out or shape text again; each still reads its two files' dates once a frame.
+
 ## Markup
 
 ```xml

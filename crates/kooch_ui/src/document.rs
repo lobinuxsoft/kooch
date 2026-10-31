@@ -37,6 +37,8 @@ pub struct UiDocument {
     /// Over the screen, or in the world at this entity.
     #[reflect(choices = MODE_CHOICES)]
     pub mode: u32,
+    /// Kept but not drawn, picked or read: a menu that comes and goes keeps its tree.
+    pub hidden: bool,
     /// Where the pointer is (Vector2). Empty reads the engine's default: the mouse.
     #[reflect(asset = "kooch_input::actions::action::Action")]
     pub point: Option<Guid>,
