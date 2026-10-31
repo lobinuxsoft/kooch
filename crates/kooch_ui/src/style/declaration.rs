@@ -58,6 +58,19 @@ pub enum Declaration {
     FontSize(f32),
     /// A `.shader` path with `kind: ui` (#1690).
     Material(Box<str>),
+    /// `none` clears one a less specific rule set: a state can drop its image.
+    BackgroundImage(Option<ImageRef>),
+    /// Image texels kept unstretched at each edge, top-right-bottom-left (#1708).
+    Slice([f32; 4]),
+    /// Multiplies the image, sRGB straight alpha.
+    Tint([f32; 4]),
+}
+
+/// A `url()` as written, relative to its `.kcss`, and the asset it names once the sheet is loaded.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageRef {
+    pub url: Box<str>,
+    pub guid: Option<kooch_core::Guid>,
 }
 
 const EDGES: [Edge; 4] = [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left];
@@ -116,6 +129,9 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Vec<Declaration>, String> 
         "font-family" => one(D::FontFamily(family(text)?)),
         "font-size" => one(D::FontSize(px(text)?)),
         "-kooch-material" => one(D::Material(quoted(text)?)),
+        "background-image" => one(D::BackgroundImage(image(text)?)),
+        "-kooch-slice" => one(D::Slice(slice(text)?)),
+        "-kooch-tint" => one(D::Tint(color(text)?)),
         _ => return Err(format!("`{name}` is not a .kcss property")),
     };
     parsed.map_err(|message| format!("{name}: {message}"))
@@ -215,6 +231,43 @@ fn quoted(text: &str) -> Result<Box<str>, String> {
     let parsed: Result<Box<str>, cssparser::ParseError<'_, ()>> =
         parser.parse_entirely(|parser| Ok(parser.expect_string()?.as_ref().into()));
     parsed.map_err(|_| format!("`{text}` is not a quoted string"))
+}
+
+/// One to four `px` values, top-right-bottom-left as in CSS.
+fn slice(text: &str) -> Result<[f32; 4], String> {
+    let values = components(text)
+        .iter()
+        .map(|part| px(part))
+        .collect::<Result<Vec<_>, _>>()?;
+    match values.as_slice() {
+        [all] => Ok([*all; 4]),
+        [vertical, horizontal] => Ok([*vertical, *horizontal, *vertical, *horizontal]),
+        [top, horizontal, bottom] => Ok([*top, *horizontal, *bottom, *horizontal]),
+        [top, right, bottom, left] => Ok([*top, *right, *bottom, *left]),
+        _ => Err(format!("`{text}` is one to four lengths")),
+    }
+}
+
+/// `url("a.png")`, `url(a.png)` or `none`.
+fn image(text: &str) -> Result<Option<ImageRef>, String> {
+    if text.trim() == "none" {
+        return Ok(None);
+    }
+    let mut input = ParserInput::new(text);
+    let mut parser = Parser::new(&mut input);
+    let parsed: Result<Box<str>, cssparser::ParseError<'_, ()>> = parser.parse_entirely(|parser| {
+        let token = parser.next()?.clone();
+        match token {
+            Token::UnquotedUrl(url) => Ok(url.as_ref().into()),
+            Token::Function(name) if name.eq_ignore_ascii_case("url") => {
+                parser.parse_nested_block(|parser| Ok(parser.expect_string()?.as_ref().into()))
+            }
+            token => Err(parser.new_unexpected_token_error(token)),
+        }
+    });
+    parsed
+        .map(|url| Some(ImageRef { url, guid: None }))
+        .map_err(|_| format!("`{text}` is not a url() or none"))
 }
 
 /// A quoted name, or bare words joined as CSS does.

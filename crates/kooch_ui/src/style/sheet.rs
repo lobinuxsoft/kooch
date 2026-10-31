@@ -71,6 +71,20 @@ unsafe impl Send for UiStyleSheet {}
 unsafe impl Sync for UiStyleSheet {}
 
 impl UiStyleSheet {
+    /// Gives every `url()` the asset it names; the loader knows where the sheet lives, the parser
+    /// does not.
+    pub fn resolve_images(&mut self, mut guid_of: impl FnMut(&str) -> Option<kooch_core::Guid>) {
+        for declaration in self
+            .rules
+            .iter_mut()
+            .flat_map(|rule| &mut rule.declarations)
+        {
+            if let Declaration::BackgroundImage(Some(image)) = declaration {
+                image.guid = guid_of(&image.url);
+            }
+        }
+    }
+
     pub fn parse(source: &str) -> Self {
         // Two passes: a `var()` may come before the `:root` that sets it.
         let vars = variables(source);

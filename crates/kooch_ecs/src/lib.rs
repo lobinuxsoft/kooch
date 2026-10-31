@@ -23,7 +23,6 @@ pub mod order;
 pub mod orthographic_camera;
 pub mod persistent_id;
 pub mod perspective_camera;
-pub mod ui_draw;
 pub mod plugin;
 pub mod point_light;
 pub mod post_process;
@@ -40,6 +39,7 @@ pub mod spline;
 pub mod spot_light;
 pub mod storage;
 pub mod streamed;
+pub mod ui_draw;
 // 🔴 NOT behind `testing`, despite the name. The name is the serialised type path of what lives here
 // (`kooch_ecs::testing::spin::Spin`) and a scene resolves a component by that string, so renaming
 // the module would drop `Spin` from every entity that has one, silently.
@@ -69,7 +69,6 @@ pub use order::Order;
 pub use orthographic_camera::OrthographicCamera;
 pub use persistent_id::{EntityGuid, PersistentId, PersistentIdAllocator};
 pub use perspective_camera::{PerspectiveCamera, ViewAspect, ViewSize};
-pub use ui_draw::{AtlasUpload, QUAD_GLYPH, UiDrawList, UiQuad};
 pub use plugin::EcsPlugin;
 pub use point_light::PointLight;
 pub use post_process::{PostEffect, PostProcess};
@@ -86,3 +85,4 @@ pub use sky_renderer::SkyRenderer;
 pub use spot_light::SpotLight;
 pub use streamed::StreamedComponents;
 pub use transform::Transform;
+pub use ui_draw::{AtlasUpload, QUAD_GLYPH, QUAD_IMAGE, UiDrawList, UiQuad};

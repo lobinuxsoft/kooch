@@ -1,6 +1,6 @@
 //! Each document's tree from its files (#280), built again when they change on disk.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
 use kooch_core::Guid;
@@ -96,8 +96,16 @@ fn read_tree(
     let sheet = match style {
         Some(guid) => {
             let path = path_of(database, guid)?;
-            let sheet = UiStyleSheet::parse(&read(server, &path)?);
+            let mut sheet = UiStyleSheet::parse(&read(server, &path)?);
             warn_skipped(&path, &sheet);
+            let folder = path.parent().unwrap_or(Path::new(""));
+            sheet.resolve_images(|url| {
+                let guid = database.guid_for(&normalise(&folder.join(url)));
+                if guid.is_none() {
+                    tracing::warn!("{}: image `{url}` is not a known asset", path.display());
+                }
+                guid
+            });
             sheet
         }
         None => UiStyleSheet::parse(DEFAULT_SHEET),
@@ -107,7 +115,22 @@ fn read_tree(
 
 const DEFAULT_SHEET: &str = include_str!("default.kcss");
 
-fn path_of(database: &AssetDatabase, guid: Guid) -> Result<PathBuf, String> {
+/// `a/b/../c` → `a/c`: the database keys paths as scanned, and those have no `..`.
+fn normalise(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+pub(crate) fn path_of(database: &AssetDatabase, guid: Guid) -> Result<PathBuf, String> {
     database
         .entry(guid)
         .map(|entry| entry.path.clone())
@@ -115,17 +138,20 @@ fn path_of(database: &AssetDatabase, guid: Guid) -> Result<PathBuf, String> {
 }
 
 /// Through the server when there is one: a packaged game has nothing on disk.
-fn read(server: Option<&mut AssetServer>, path: &Path) -> Result<String, String> {
-    let bytes = match server {
+pub(crate) fn read_bytes(server: Option<&mut AssetServer>, path: &Path) -> Result<Vec<u8>, String> {
+    match server {
         Some(server) => server.read_bytes(path).map_err(|e| e.to_string()),
         None => std::fs::read(path).map_err(|e| e.to_string()),
     }
-    .map_err(|e| format!("{}: {e}", path.display()))?;
-    String::from_utf8(bytes).map_err(|e| format!("{}: {e}", path.display()))
+    .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn read(server: Option<&mut AssetServer>, path: &Path) -> Result<String, String> {
+    String::from_utf8(read_bytes(server, path)?).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// The newest of the files' mtimes.
-fn stamp(database: &AssetDatabase, source: Guid, sheet: Option<Guid>) -> SystemTime {
+pub(crate) fn stamp(database: &AssetDatabase, source: Guid, sheet: Option<Guid>) -> SystemTime {
     [Some(source), sheet]
         .into_iter()
         .flatten()

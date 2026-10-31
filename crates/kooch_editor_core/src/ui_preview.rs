@@ -34,6 +34,7 @@ pub(crate) fn preview_ui_system(resources: &mut Resources) {
     }
     kooch_ui::prune_trees(resources);
     kooch_ui::build_documents(resources);
+    kooch_ui::load_images(resources);
     kooch_ui::layout_documents(resources);
     kooch_ui::draw_documents(resources);
 }
