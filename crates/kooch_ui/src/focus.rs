@@ -57,15 +57,16 @@ pub fn navigate_focus(resources: &mut Resources) {
         .map_or(0.0, |time| time.delta().as_secs_f32());
     let mut focus = resources.get::<UiFocus>().copied().unwrap_or_default();
     let was = focus;
+    let appeared = reveal(resources);
     match focus.requested.take() {
         Some(node) => focus.focused = node,
-        None if focus.focused.is_none() => focus.focused = take_autofocus(resources),
+        None if appeared.is_some() => focus.focused = appeared,
         None => {}
     }
-    if focus
-        .focused
-        .is_some_and(|(document, _)| tree(resources, document).is_none())
-    {
+    if focus.focused.is_some_and(|(document, _)| {
+        tree(resources, document).is_none()
+            || document_of(resources, document).is_none_or(|d| d.hidden)
+    }) {
         focus.focused = None;
     }
     let mut events = Vec::new();
@@ -189,16 +190,23 @@ fn cancel(resources: &Resources, document: Entity, node: UiNode) -> Option<UiEve
     None
 }
 
-/// The first `autofocus` of a freshly built tree. Taken once: a press on the game drops focus, and
-/// it stays dropped.
-fn take_autofocus(resources: &mut Resources) -> Option<(Entity, UiNode)> {
+/// The `autofocus` of a document that just appeared, built or unhidden: opening a menu focuses it.
+/// Only then: a press on the game drops focus, and it stays dropped.
+fn reveal(resources: &mut Resources) -> Option<(Entity, UiNode)> {
+    let mut documents = Vec::new();
+    Query::<&UiDocument>::new(resources)
+        .for_each_entity(|entity, document| documents.push((entity, document.hidden)));
     let trees = resources.get_mut::<UiTrees>()?;
     let mut found = None;
-    trees.for_each_entity_mut(|document, tree| {
-        if let Some(node) = tree.autofocus.take() {
-            found = found.or(Some((document, node)));
+    for (entity, hidden) in documents {
+        let Some(tree) = trees.get_mut(entity) else {
+            continue;
+        };
+        if !hidden && !tree.shown {
+            found = found.or(tree.autofocus.map(|node| (entity, node)));
         }
-    });
+        tree.shown = !hidden;
+    }
     found
 }
 

@@ -111,7 +111,7 @@ pub fn pick_pointer(resources: &mut Resources) {
 fn overlays(resources: &Resources) -> Vec<(Entity, UiInput)> {
     let mut documents = Vec::new();
     Query::<&UiDocument>::new(resources).for_each_entity(|entity, document| {
-        if document.mode == MODE_OVERLAY {
+        if document.mode == MODE_OVERLAY && !document.hidden {
             documents.push((entity, document.clone()));
         }
     });

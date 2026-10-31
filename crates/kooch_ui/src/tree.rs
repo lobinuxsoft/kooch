@@ -70,8 +70,10 @@ pub struct UiTree {
     pub(crate) handlers: Vec<(UiNode, crate::UiEventKind, Box<str>)>,
     /// Nodes with an action that `tabindex="-1"` keeps out of focus.
     pub(crate) unfocusable: Vec<UiNode>,
-    /// The node `autofocus` names, until focus takes it.
+    /// The node `autofocus` names: it takes focus each time the document appears.
     pub(crate) autofocus: Option<UiNode>,
+    /// Drawn last frame: what tells a document that just appeared from one already up.
+    pub(crate) shown: bool,
     material: Vec<u32>,
     rect: Vec<UiRect>,
     /// Border width from the layout, uniform: the left edge's.
@@ -110,6 +112,7 @@ impl UiTree {
             handlers: Vec::new(),
             unfocusable: Vec::new(),
             autofocus: None,
+            shown: false,
             material: Vec::new(),
             rect: Vec::new(),
             border: Vec::new(),
