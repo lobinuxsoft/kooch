@@ -48,6 +48,14 @@ impl UiTree {
         }
     }
 
+    /// A reloaded sheet: the cascade runs again over the live tree, which keeps its nodes.
+    pub(crate) fn set_sheet(&mut self, sheet: UiStyleSheet) {
+        if let Some(styled) = self.styled.as_mut() {
+            styled.sheet = Some(sheet);
+            styled.dirty = true;
+        }
+    }
+
     fn restyle(&mut self) {
         let Some(styled) = self.styled.take() else {
             return;

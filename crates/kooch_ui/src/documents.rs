@@ -1,4 +1,5 @@
-//! Each document's tree from its files (#280), built again when they change on disk.
+//! Each document's tree from its files (#280): built again when its markup changes on disk,
+//! restyled in place when only its sheet does.
 
 use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
@@ -14,7 +15,7 @@ use crate::build::build_tree;
 use crate::source::UiSource;
 use crate::style::{UiStyleSheet, warn_skipped};
 use crate::templates::expand;
-use crate::{UiDocument, UiTree, UiTrees};
+use crate::{UiDocument, UiFocus, UiTree, UiTrees};
 
 /// What a tree was built from, so an unchanged document is not read again.
 #[derive(Debug, Clone, PartialEq)]
@@ -23,7 +24,15 @@ pub(crate) struct Origin {
     style: Option<Guid>,
     /// The `<use>` files it read, so editing a template rebuilds what uses it.
     templates: Vec<PathBuf>,
-    modified: SystemTime,
+    /// Newest mtime of the source and its templates, and the sheet's.
+    markup: SystemTime,
+    sheet: SystemTime,
+}
+
+enum Work {
+    Build(UiTree),
+    /// `None` when the sheet failed to read: the old look stays until it is fixed.
+    Restyle(Option<UiStyleSheet>, SystemTime),
 }
 
 /// A document without `source` is left alone: its tree is built in code.
@@ -38,7 +47,7 @@ pub fn build_documents(resources: &mut Resources) {
         return;
     }
     let mut server = resources.remove::<AssetServer>();
-    let mut built = Vec::new();
+    let mut work = Vec::new();
     if let Some(database) = resources.get::<AssetDatabase>() {
         let trees = resources.get::<UiTrees>();
         for (entity, source, style) in documents {
@@ -47,21 +56,62 @@ pub fn build_documents(resources: &mut Resources) {
                 .and_then(|tree| tree.origin.as_ref())
                 .filter(|origin| origin.source == source && origin.style == style);
             // Stat, not read: its files' dates, once a frame per document.
-            if previous.is_some_and(|origin| {
-                origin.modified == stamp(database, source, style, &origin.templates)
-            }) {
-                continue;
+            let sheet = sheet_stamp(database, style);
+            match previous {
+                Some(origin)
+                    if origin.markup == stamp(database, source, None, &origin.templates) =>
+                {
+                    if origin.sheet == sheet {
+                        continue;
+                    }
+                    // In place, so what the game wrote, hid or focused survives the edit.
+                    let read = read_sheet(database, server.as_mut(), style)
+                        .inspect_err(|error| tracing::warn!("UI style not reloaded: {error}"))
+                        .ok();
+                    work.push((entity, Work::Restyle(read, sheet)));
+                }
+                _ => work.push((
+                    entity,
+                    Work::Build(build(database, server.as_mut(), source, style)),
+                )),
             }
-            built.push((entity, build(database, server.as_mut(), source, style)));
         }
     }
     if let Some(server) = server {
         resources.insert(server);
     }
+    let focused = resources.get::<UiFocus>().and_then(|focus| focus.focused);
+    let mut refocus = None;
     if let Some(trees) = resources.get_mut::<UiTrees>() {
-        for (entity, tree) in built {
-            trees.insert(entity, tree);
+        for (entity, work) in work {
+            match work {
+                Work::Build(tree) => {
+                    // A rebuilt tree numbers its nodes anew: focus follows the node's name.
+                    if let Some((_, node)) = focused.filter(|(own, _)| *own == entity) {
+                        refocus = trees
+                            .get(entity)
+                            .and_then(|old| old.name(node))
+                            .and_then(|name| tree.query(name))
+                            .map(|node| (entity, node));
+                    }
+                    trees.insert(entity, tree);
+                }
+                Work::Restyle(sheet, stamp) => {
+                    let Some(tree) = trees.get_mut(entity) else {
+                        continue;
+                    };
+                    if let Some(sheet) = sheet {
+                        tree.set_sheet(sheet);
+                    }
+                    if let Some(origin) = tree.origin.as_mut() {
+                        origin.sheet = stamp;
+                    }
+                }
+            }
         }
+    }
+    if let (Some(node), Some(focus)) = (refocus, resources.get_mut::<UiFocus>()) {
+        focus.request(Some(node));
     }
 }
 
@@ -84,13 +134,13 @@ fn build(
     tree.origin = Some(Origin {
         source,
         style,
-        modified: stamp(database, source, style, &templates),
+        markup: stamp(database, source, None, &templates),
+        sheet: sheet_stamp(database, style),
         templates,
     });
     tree
 }
 
-/// The document's `style`, or the engine's default sheet when it has none.
 fn read_tree(
     database: &AssetDatabase,
     mut server: Option<&mut AssetServer>,
@@ -108,6 +158,18 @@ fn read_tree(
         templates,
         0,
     )?;
+    Ok(build_tree(
+        &markup,
+        Some(&read_sheet(database, server, style)?),
+    ))
+}
+
+/// The document's `style` over the controls' sheet, or the engine's default sheet when it has none.
+fn read_sheet(
+    database: &AssetDatabase,
+    server: Option<&mut AssetServer>,
+    style: Option<Guid>,
+) -> Result<UiStyleSheet, String> {
     let sheet = match style {
         Some(guid) => {
             let path = path_of(database, guid)?;
@@ -129,7 +191,7 @@ fn read_tree(
     let mut base = UiStyleSheet::parse(CONTROLS_SHEET);
     base.rules.extend(sheet.rules);
     base.warnings = sheet.warnings;
-    Ok(build_tree(&markup, Some(&base)))
+    Ok(base)
 }
 
 const DEFAULT_SHEET: &str = include_str!("default.kcss");
@@ -168,6 +230,12 @@ pub(crate) fn read_bytes(server: Option<&mut AssetServer>, path: &Path) -> Resul
 
 fn read(server: Option<&mut AssetServer>, path: &Path) -> Result<String, String> {
     String::from_utf8(read_bytes(server, path)?).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn sheet_stamp(database: &AssetDatabase, style: Option<Guid>) -> SystemTime {
+    style.map_or(SystemTime::UNIX_EPOCH, |guid| {
+        stamp(database, guid, None, &[])
+    })
 }
 
 /// The newest of the files' mtimes.
