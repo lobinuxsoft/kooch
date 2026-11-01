@@ -829,6 +829,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e9de72ce2ad1f90dc62fa25f0f430ef85eb4b0d8fa0be4f30373bc40a21d28e"
 
 [[package]]
+name = "derive_more"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d751e9e49156b02b44f9c1815bcb94b984cdcc4396ecc32521c739452808b134"
+dependencies = [
+ "derive_more-impl",
+]
+
+[[package]]
+name = "derive_more-impl"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "799a97264921d8623a957f6c3b9011f3b5492f557bbb7a5a19b7fa6d06ba8dcb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "rustc_version",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "digest"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1267,14 +1288,14 @@ dependencies = [
 
 [[package]]
 name = "example_plugin"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "kooch_plugin_api",
 ]
 
 [[package]]
 name = "example_post_process"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "kooch_plugin_api",
  "kooch_plugin_render",
@@ -2266,7 +2287,7 @@ dependencies = [
 
 [[package]]
 name = "kooch"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2298,7 +2319,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_audio"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "glam 0.33.12",
  "kira",
@@ -2309,7 +2330,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_blockmesh"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "glam 0.33.12",
  "kooch_core",
@@ -2324,7 +2345,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_camera"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "glam 0.33.12",
  "kooch_core",
@@ -2337,7 +2358,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_character"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "glam 0.33.12",
  "kooch_core",
@@ -2349,7 +2370,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_core"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "bytemuck",
  "dlss_wgpu",
@@ -2377,7 +2398,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_ecs"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2394,7 +2415,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_ecs_macros"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2403,7 +2424,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_editor"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "kooch_core",
  "kooch_ecs",
@@ -2416,7 +2437,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_editor_core"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2467,7 +2488,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_gizmos"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2480,7 +2501,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_gizmos_handles"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "glam 0.33.12",
  "kooch_gizmos",
@@ -2488,7 +2509,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_gravity"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2501,7 +2522,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_input"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "gilrs",
  "glam 0.33.12",
@@ -2517,7 +2538,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_lighting"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2531,7 +2552,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_pack"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "aes-gcm",
  "hkdf",
@@ -2543,7 +2564,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_physics"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "glam 0.33.12",
  "kooch_core",
@@ -2556,11 +2577,11 @@ dependencies = [
 
 [[package]]
 name = "kooch_plugin_api"
-version = "0.98.99"
+version = "0.98.100"
 
 [[package]]
 name = "kooch_plugin_render"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "kooch_plugin_api",
  "wgpu",
@@ -2568,7 +2589,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_remote"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "base64 0.23.1",
  "bytemuck",
@@ -2583,7 +2604,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_render"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "base64 0.23.1",
  "bytemuck",
@@ -2612,25 +2633,29 @@ dependencies = [
 
 [[package]]
 name = "kooch_ui"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "cssparser",
  "cssparser-color",
  "etagere",
  "fontique",
  "glam 0.33.12",
+ "image",
  "kooch_core",
  "kooch_ecs",
+ "kooch_input",
  "parley",
+ "ron",
  "roxmltree",
  "swash",
  "taffy",
  "tracing",
+ "xmlem",
 ]
 
 [[package]]
 name = "kooch_window"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "image",
  "kooch_core",
@@ -2641,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_world"
-version = "0.98.99"
+version = "0.98.100"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2817,6 +2842,12 @@ checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
 ]
+
+[[package]]
+name = "matches"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2532096657941c2fea9c289d370a250971c689d4f143798ff67113ec042024a5"
 
 [[package]]
 name = "matrixmultiply"
@@ -3019,6 +3050,12 @@ checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
 ]
+
+[[package]]
+name = "new_debug_unreachable"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nix"
@@ -3738,6 +3775,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "phf_codegen"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49aa7f9d80421bca176ca8dbfebe668cc7a2684708594ec9f3c0db0805d5d6e1"
+dependencies = [
+ "phf_generator",
+ "phf_shared",
+]
+
+[[package]]
 name = "phf_generator"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3899,6 +3946,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a6394b9e965e73d0a289ee54f589087e2c676aedf60885baf52c76b771e4958"
 
 [[package]]
+name = "precomputed-hash"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
+
+[[package]]
 name = "presser"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4025,6 +4078,39 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+
+[[package]]
+name = "qname"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f18e6c74b75dd2f063cc96927b39f006d75e4312047b4af19e9b1778acd7bc6f"
+dependencies = [
+ "qname-impl",
+ "qname-macro",
+]
+
+[[package]]
+name = "qname-impl"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6affe2792e23edafc810686ea4f0615307c135648338a772b50cf5e00723688b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "qname-macro"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e02415ec47c54e8e1165e03ae9faccd70a6d4ebe1b9c7c5bc6fc723492a28fd2"
+dependencies = [
+ "proc-macro2",
+ "qname-impl",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "quick-error"
@@ -4433,6 +4519,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "selectors"
+version = "0.39.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bad7c25c97cc59c4858df8724a3789caa6ee509b628dfe6df34e8a8084c8a84e"
+dependencies = [
+ "bitflags 2.13.2",
+ "cssparser",
+ "derive_more",
+ "log",
+ "new_debug_unreachable",
+ "phf",
+ "phf_codegen",
+ "precomputed-hash",
+ "rustc-hash 2.1.3",
+ "servo_arc",
+ "smallvec",
+]
+
+[[package]]
 name = "self_cell"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4500,6 +4605,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7523beb55eece201a2356bee0bbca0d1ab466c14c07703b2e0ee6d42cb0c2c"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "servo_arc"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "170fb83ab34de17dc69aa7c67482b22218ddb85da56546f9bd6b929e32a05930"
+dependencies = [
+ "stable_deref_trait",
 ]
 
 [[package]]
@@ -5223,6 +5337,189 @@ name = "typewit"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "214ca0b2191785cbc06209b9ca1861e048e39b5ba33574b3cedd58363d5bb5f6"
+
+[[package]]
+name = "unic-char-property"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8c57a407d9b6fa02b4795eb81c5b6652060a15a7903ea981f3d723e6c0be221"
+dependencies = [
+ "unic-char-range",
+]
+
+[[package]]
+name = "unic-char-range"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0398022d5f700414f6b899e10b8348231abf9173fa93144cbc1a43b9793c1fbc"
+
+[[package]]
+name = "unic-common"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80d7ff825a6a654ee85a63e80f92f054f904f21e7d12da4e22f9834a4aaa35bc"
+
+[[package]]
+name = "unic-ucd"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "625b18f7601e1127504a20ae731dc3c7826d0e86d5f7fe3434f8137669240efd"
+dependencies = [
+ "unic-ucd-age",
+ "unic-ucd-bidi",
+ "unic-ucd-block",
+ "unic-ucd-case",
+ "unic-ucd-category",
+ "unic-ucd-common",
+ "unic-ucd-hangul",
+ "unic-ucd-ident",
+ "unic-ucd-name",
+ "unic-ucd-name_aliases",
+ "unic-ucd-normal",
+ "unic-ucd-segment",
+ "unic-ucd-version",
+]
+
+[[package]]
+name = "unic-ucd-age"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c8cfdfe71af46b871dc6af2c24fcd360e2f3392ee4c5111877f2947f311671c"
+dependencies = [
+ "unic-char-property",
+ "unic-char-range",
+ "unic-ucd-version",
+]
+
+[[package]]
+name = "unic-ucd-bidi"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1d568b51222484e1f8209ce48caa6b430bf352962b877d592c29ab31fb53d8c"
+dependencies = [
+ "unic-char-property",
+ "unic-char-range",
+ "unic-ucd-version",
+]
+
+[[package]]
+name = "unic-ucd-block"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b2a16f2d7ecd25325a1053ca5a66e7fa1b68911a65c5e97f8d2e1b236b6f1d7"
+dependencies = [
+ "unic-char-property",
+ "unic-char-range",
+ "unic-ucd-version",
+]
+
+[[package]]
+name = "unic-ucd-case"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d98d6246a79bac6cf66beee01422bda7c882e11d837fa4969bfaaba5fdea6d3"
+dependencies = [
+ "unic-char-property",
+ "unic-char-range",
+ "unic-ucd-version",
+]
+
+[[package]]
+name = "unic-ucd-category"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b8d4591f5fcfe1bd4453baaf803c40e1b1e69ff8455c47620440b46efef91c0"
+dependencies = [
+ "matches",
+ "unic-char-property",
+ "unic-char-range",
+ "unic-ucd-version",
+]
+
+[[package]]
+name = "unic-ucd-common"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9b78b910beafa1aae5c59bf00877c6cece1c5db28a1241ad801e86cecdff4ad"
+dependencies = [
+ "unic-char-property",
+ "unic-char-range",
+ "unic-ucd-version",
+]
+
+[[package]]
+name = "unic-ucd-hangul"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb1dc690e19010e1523edb9713224cba5ef55b54894fe33424439ec9a40c0054"
+dependencies = [
+ "unic-ucd-version",
+]
+
+[[package]]
+name = "unic-ucd-ident"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e230a37c0381caa9219d67cf063aa3a375ffed5bf541a452db16e744bdab6987"
+dependencies = [
+ "unic-char-property",
+ "unic-char-range",
+ "unic-ucd-version",
+]
+
+[[package]]
+name = "unic-ucd-name"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c8fc55a45b2531089dc1773bf60c1f104b38e434b774ffc37b9c29a9b0f492e"
+dependencies = [
+ "unic-char-property",
+ "unic-ucd-hangul",
+ "unic-ucd-version",
+]
+
+[[package]]
+name = "unic-ucd-name_aliases"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b7674212643087699ba247a63dd05f1204c7e4880ec9342e545a7cffcc6a46f"
+dependencies = [
+ "unic-char-property",
+ "unic-ucd-version",
+]
+
+[[package]]
+name = "unic-ucd-normal"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86aed873b8202d22b13859dda5fe7c001d271412c31d411fd9b827e030569410"
+dependencies = [
+ "unic-char-property",
+ "unic-char-range",
+ "unic-ucd-category",
+ "unic-ucd-hangul",
+ "unic-ucd-version",
+]
+
+[[package]]
+name = "unic-ucd-segment"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2079c122a62205b421f499da10f3ee0f7697f012f55b675e002483c73ea34700"
+dependencies = [
+ "unic-char-property",
+ "unic-char-range",
+ "unic-ucd-version",
+]
+
+[[package]]
+name = "unic-ucd-version"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96bd2f2237fe450fcd0a1d2f5f4e91711124f7857ba2e964247776ebeeb7b0c4"
+dependencies = [
+ "unic-common",
+]
 
 [[package]]
 name = "unicode-general-category"
@@ -6175,6 +6472,24 @@ name = "xml-rs"
 version = "0.8.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
+
+[[package]]
+name = "xmlem"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36c639082004b5cb20332beeed784ad82d1d832935c4ab64bb255cf83bc06c33"
+dependencies = [
+ "cssparser",
+ "indexmap",
+ "once_cell",
+ "precomputed-hash",
+ "qname",
+ "quick-xml",
+ "selectors",
+ "slotmap",
+ "tracing",
+ "unic-ucd",
+]
 
 [[package]]
 name = "yazi"

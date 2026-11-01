@@ -1,7 +1,10 @@
 //! The UI Builder (#280 phase 8): a `.kxml` on a canvas of its own, at a chosen resolution, drawn by
 //! the same pass that draws it in the game.
 
+mod edit;
+
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use kooch_core::Guid;
 use kooch_core::asset_database::AssetDatabase;
@@ -11,6 +14,7 @@ use kooch_core::resource::Resources;
 use kooch_ecs::UiDrawList;
 use kooch_ecs::query::Query;
 use kooch_render::ui::UiPass;
+use kooch_ui::markup::Markup;
 use kooch_ui::taffy::{AvailableSpace, Size};
 use kooch_ui::{CANVAS_HEIGHT, GlyphAtlas, UiDocument, UiFonts, UiTree};
 
@@ -45,6 +49,17 @@ pub(crate) struct UiBuilder {
     pub texture: Option<egui::TextureId>,
     /// Pixels the panel shows the canvas at; `None` while the tab is not drawn.
     pub request: Option<(u32, u32)>,
+    /// The file as edited, written only on save.
+    markup: Markup,
+    /// Differs from the file on disk.
+    pub dirty: bool,
+    /// The canvas has to be built again from `markup`.
+    edited: bool,
+    /// The file's and its sheet's mtimes when last read: a change on disk rebuilds.
+    read_at: (SystemTime, SystemTime),
+    pub selected: Option<u32>,
+    /// Why the markup in memory does not build, shown over the canvas.
+    pub error: Option<String>,
     tree: Option<UiTree>,
     atlas: GlyphAtlas,
     list: UiDrawList,
@@ -57,7 +72,7 @@ pub(crate) struct UiBuilder {
 impl UiBuilder {
     pub(crate) fn set_style(&mut self, style: Option<Guid>) {
         self.style = style;
-        self.tree = None;
+        self.edited = true;
     }
 
     /// Before the UI: the target takes the size the panel asked for last frame.
@@ -116,17 +131,22 @@ impl UiBuilder {
         let mut server = resources.remove::<AssetServer>();
         if let Some(database) = resources.get::<AssetDatabase>() {
             self.sheets = sheets(database);
-            if self
-                .tree
-                .as_ref()
-                .is_none_or(|tree| kooch_ui::stale(database, tree))
-            {
-                self.tree = Some(kooch_ui::build_file(
+            self.reread(database);
+            if std::mem::take(&mut self.edited) || self.tree.is_none() {
+                match kooch_ui::build_markup(
                     database,
                     server.as_mut(),
-                    self.source,
+                    &self.markup.write(),
+                    &self.path,
                     self.style,
-                ));
+                ) {
+                    Ok(tree) => {
+                        self.tree = Some(tree);
+                        self.error = None;
+                    }
+                    // The last tree that built stays up, under the error.
+                    Err(error) => self.error = Some(error),
+                }
             }
         }
         if let Some(server) = server {
@@ -159,6 +179,16 @@ pub(crate) fn open(resources: &mut Resources, path: &Path) {
         tracing::error!(file = %path.display(), "not a known asset; cannot open it in the UI Builder");
         return;
     };
+    let markup = match std::fs::read_to_string(path)
+        .map_err(|error| error.to_string())
+        .and_then(|text| Markup::parse(&text))
+    {
+        Ok(markup) => markup,
+        Err(error) => {
+            tracing::error!(file = %path.display(), %error, "cannot open it in the UI Builder");
+            return;
+        }
+    };
     if let Some(builder) = resources.get_mut::<UiBuilder>()
         && builder.source == source
     {
@@ -173,6 +203,9 @@ pub(crate) fn open(resources: &mut Resources, path: &Path) {
     });
     // Another file reuses the canvas's GPU objects and glyphs.
     let old = resources.remove::<UiBuilder>();
+    if let Some(old) = old.as_ref().filter(|old| old.dirty) {
+        tracing::warn!(file = %old.path.display(), "closed in the UI Builder with unsaved changes");
+    }
     let (atlas, target, pass) = match old {
         Some(old) => (old.atlas, old.target, old.pass),
         None => (GlyphAtlas::default(), None, None),
@@ -189,6 +222,12 @@ pub(crate) fn open(resources: &mut Resources, path: &Path) {
         focus_requested: true,
         texture: None,
         request: None,
+        markup,
+        dirty: false,
+        edited: true,
+        read_at: (SystemTime::UNIX_EPOCH, SystemTime::UNIX_EPOCH),
+        selected: None,
+        error: None,
         tree: None,
         atlas,
         list: UiDrawList::default(),

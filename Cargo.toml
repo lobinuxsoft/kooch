@@ -30,7 +30,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.98.99"
+version = "0.98.100"
 edition = "2024"
 license = "LicenseRef-Proprietary"
 repository = "https://github.com/lobinuxsoft/kooch"
@@ -96,6 +96,7 @@ cssparser = "0.37"
 cssparser-color = "0.5"
 # `.kxml` markup (#280): read-only XML; the document is built from it, never written back.
 roxmltree = "0.21"
+xmlem = "0.5"
 # Without `calc`: a calc length is a raw pointer, the one thing keeping the tree off `Send`.
 taffy = { version = "0.15", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "block_layout", "content_size", "parse"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

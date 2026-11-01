@@ -38,6 +38,35 @@ impl UiTree {
         })
     }
 
+    /// The element of the opened file `node` came from: see `Element::origin`.
+    pub fn element_of(&self, node: UiNode) -> Option<u32> {
+        let styled = self.styled.as_ref()?;
+        let element = styled.nodes.iter().position(|n| *n == Some(node))?;
+        Some(styled.source.elements[element].origin)
+    }
+
+    /// The first node an element of the opened file became: a `<use>`'s is its instance's root.
+    pub fn node_of(&self, origin: u32) -> Option<UiNode> {
+        let styled = self.styled.as_ref()?;
+        styled
+            .source
+            .elements
+            .iter()
+            .zip(&styled.nodes)
+            .find(|(element, _)| element.origin == origin)
+            .and_then(|(_, node)| *node)
+    }
+
+    /// The topmost shown node under `point`, whatever it does: what the UI Builder selects.
+    pub fn hit(&self, point: glam::Vec2) -> Option<UiNode> {
+        (0..self.len() as u32).rev().map(UiNode).find(|&node| {
+            !self.culled(node)
+                && self.rect(node).is_some_and(|rect| {
+                    point.cmpge(rect.min).all() && point.cmplt(rect.min + rect.size).all()
+                })
+        })
+    }
+
     pub fn has_class(&self, node: UiNode, class: &str) -> bool {
         self.with_class(class).any(|own| own == node)
     }
