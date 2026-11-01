@@ -16,8 +16,10 @@ so you design without running the game, and the game's in Play.
 Create the two files under `assets/`, pick the `.kxml` as the document's **Source** and the `.kcss`
 as its **Style**. The markup never names a sheet: the same `.kxml` can wear another `.kcss` on
 another document. A document with no Style uses the engine's default sheet.
-Save either file and the Game View rebuilds the document — no Play needed. A document with no
-Source is left to code, as in [UI](./ui.md).
+Save either file and the Game View picks it up — no Play needed, and in Play too. Saving the
+`.kcss` restyles the live document: text the game wrote, values, hidden nodes, classes and focus all
+stay. Saving the `.kxml` (or a template it uses) rebuilds it; focus follows a node that has a
+`name`. A document with no Source is left to code, as in [UI](./ui.md).
 
 Both are plain XML and CSS, so any editor reads them as such once it knows the extension. Opening
 the project in the Kóoch editor adds `"*.kxml": "xml"` and `"*.kcss": "css"` to

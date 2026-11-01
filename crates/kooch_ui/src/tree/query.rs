@@ -14,6 +14,10 @@ impl UiTree {
             .map(|index| UiNode(index as u32))
     }
 
+    pub fn name(&self, node: UiNode) -> Option<&str> {
+        self.name.get(node.0 as usize)?.as_deref()
+    }
+
     pub fn set_name(&mut self, node: UiNode, name: &str) {
         if let Some(own) = self.name.get_mut(node.0 as usize) {
             *own = Some(name.into());
