@@ -1,5 +1,11 @@
-//! The selected element's attributes, its text and its inline style. Each edit goes to the markup in
-//! memory; Save writes the file.
+//! The selected element, as Unity's Builder Inspector lays it out: its attributes as typed fields
+//! from the element's schema, then the ones it does not know, then the inline style. A set
+//! attribute's label is bold and ↺ unsets it. Each edit goes to the markup in memory.
+
+use std::path::{Component, Path, PathBuf};
+
+use kooch_ui::schema::{AttributeKind, AttributeSpec};
+use kooch_ui::source::ElementKind;
 
 use crate::ui_builder::UiBuilder;
 
@@ -14,51 +20,192 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder) {
         builder.selected = None;
         return;
     };
+    let schema = ElementKind::from_tag(&inspected.tag).map_or(&[][..], ElementKind::attributes);
     egui::ScrollArea::vertical()
         .id_salt("ui_builder_inspector")
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.label(egui::RichText::new(format!("<{}>", inspected.tag)).monospace());
-            egui::Grid::new("ui_builder_fields")
-                .num_columns(2)
-                .striped(true)
+            egui::CollapsingHeader::new("Attributes")
+                .default_open(true)
                 .show(ui, |ui| {
-                    if let Some(value) = field(ui, "Name", &inspected.name) {
-                        builder.set_attribute(origin, "name", &value);
-                    }
-                    if let Some(value) = field(ui, "Class", &inspected.classes) {
-                        builder.set_attribute(origin, "class", &value);
-                    }
-                    if let Some(text) = &inspected.text
-                        && let Some(value) = field(ui, "Text", text)
-                    {
-                        builder.set_text(origin, &value);
-                    }
-                    for (key, value) in &inspected.attributes {
-                        if let Some(value) = field(ui, key, value) {
-                            builder.set_attribute(origin, key, &value);
-                        }
-                    }
+                    egui::Grid::new("ui_builder_fields")
+                        .num_columns(3)
+                        .striped(true)
+                        .show(ui, |ui| {
+                            let set = |value: &str| (!value.is_empty()).then(|| value.to_owned());
+                            text_row(ui, builder, origin, "name", set(&inspected.name), "");
+                            text_row(ui, builder, origin, "class", set(&inspected.classes), "");
+                            if let Some(text) = &inspected.text {
+                                label(ui, "text", "The label's content", true);
+                                let mut value = text.clone();
+                                if ui.add(text_edit(&mut value, "")).changed() {
+                                    builder.set_text(origin, &value);
+                                }
+                                ui.label("");
+                                ui.end_row();
+                            }
+                            for spec in schema {
+                                let value = attribute(&inspected.attributes, spec.key);
+                                typed_row(ui, builder, origin, spec, value);
+                            }
+                        });
                 });
-            add_attribute(ui, builder, origin);
-            ui.separator();
-            ui.strong("Inline style").on_hover_text(
-                "CSS declarations, one per line. They beat any rule of the sheet, as `style` does \
-                 in CSS.",
-            );
-            inline_style(ui, builder, origin, &inspected.style);
+            let others: Vec<(String, String)> = inspected
+                .attributes
+                .iter()
+                .filter(|(key, _)| schema.iter().all(|spec| spec.key != key))
+                .cloned()
+                .collect();
+            egui::CollapsingHeader::new("Other attributes")
+                .default_open(!others.is_empty())
+                .show(ui, |ui| {
+                    egui::Grid::new("ui_builder_others")
+                        .num_columns(3)
+                        .show(ui, |ui| {
+                            for (key, value) in others {
+                                text_row(ui, builder, origin, &key, Some(value), "");
+                            }
+                        });
+                    add_attribute(ui, builder, origin);
+                });
+            egui::CollapsingHeader::new("Inline style")
+                .default_open(true)
+                .show(ui, |ui| {
+                    ui.weak("CSS declarations, one per line. They beat any rule of the sheet.");
+                    inline_style(ui, builder, origin, &inspected.style);
+                });
         });
 }
 
-/// A labelled one-line field; the new value when it changed.
-fn field(ui: &mut egui::Ui, label: &str, value: &str) -> Option<String> {
-    ui.label(label);
-    let mut value = value.to_owned();
-    let changed = ui
-        .add(egui::TextEdit::singleline(&mut value).desired_width(f32::INFINITY))
-        .changed();
+fn attribute(attributes: &[(String, String)], key: &str) -> Option<String> {
+    attributes
+        .iter()
+        .find(|(own, _)| own == key)
+        .map(|(_, value)| value.clone())
+}
+
+/// One schema attribute, with the widget its kind takes.
+fn typed_row(
+    ui: &mut egui::Ui,
+    builder: &mut UiBuilder,
+    origin: u32,
+    spec: &AttributeSpec,
+    value: Option<String>,
+) {
+    match spec.kind {
+        AttributeKind::Bool => {
+            label(ui, spec.key, spec.hint, value.is_some());
+            let mut on = value.as_deref().unwrap_or(spec.default) != "false";
+            if ui.checkbox(&mut on, "").changed() {
+                builder.set_attribute(origin, spec.key, if on { "true" } else { "false" });
+            }
+            unset(ui, builder, origin, spec.key, value.is_some());
+        }
+        AttributeKind::Number => {
+            label(ui, spec.key, spec.hint, value.is_some());
+            let mut number: f32 = value
+                .as_deref()
+                .unwrap_or(spec.default)
+                .parse()
+                .unwrap_or_default();
+            if ui
+                .add(egui::DragValue::new(&mut number).speed(0.05))
+                .changed()
+            {
+                builder.set_attribute(origin, spec.key, &number.to_string());
+            }
+            unset(ui, builder, origin, spec.key, value.is_some());
+        }
+        AttributeKind::Template => template_row(ui, builder, origin, spec, value),
+        AttributeKind::Text | AttributeKind::Action | AttributeKind::Binding => {
+            let hint = match spec.kind {
+                AttributeKind::Action => "menu.resume",
+                AttributeKind::Binding => "Component.field",
+                _ => spec.default,
+            };
+            text_row(ui, builder, origin, spec.key, value, hint);
+            return;
+        }
+    }
     ui.end_row();
-    changed.then_some(value)
+}
+
+fn text_row(
+    ui: &mut egui::Ui,
+    builder: &mut UiBuilder,
+    origin: u32,
+    key: &str,
+    value: Option<String>,
+    hint: &str,
+) {
+    label(ui, key, "", value.is_some());
+    let mut text = value.clone().unwrap_or_default();
+    if ui.add(text_edit(&mut text, hint)).changed() {
+        builder.set_attribute(origin, key, &text);
+    }
+    unset(ui, builder, origin, key, value.is_some());
+    ui.end_row();
+}
+
+/// A `.kxml` of the project, written relative to the file being edited.
+fn template_row(
+    ui: &mut egui::Ui,
+    builder: &mut UiBuilder,
+    origin: u32,
+    spec: &AttributeSpec,
+    value: Option<String>,
+) {
+    label(ui, spec.key, spec.hint, value.is_some());
+    let folder = builder.path.parent().unwrap_or(Path::new("")).to_path_buf();
+    let mut picked = None;
+    egui::ComboBox::from_id_salt(("ui_builder_src", origin))
+        .selected_text(value.clone().unwrap_or_else(|| "(none)".to_owned()))
+        .width(ui.available_width())
+        .show_ui(ui, |ui| {
+            for path in &builder.templates {
+                let shown = relative(&folder, path).to_string_lossy().replace('\\', "/");
+                if ui
+                    .selectable_label(value.as_deref() == Some(shown.as_str()), &shown)
+                    .clicked()
+                {
+                    picked = Some(shown);
+                }
+            }
+        });
+    if let Some(src) = picked {
+        builder.set_attribute(origin, spec.key, &src);
+    }
+    unset(ui, builder, origin, spec.key, value.is_some());
+}
+
+/// Bold when the file sets it, as Unity marks an attribute that overrides its default.
+fn label(ui: &mut egui::Ui, key: &str, hint: &str, set: bool) {
+    let text = egui::RichText::new(key).monospace();
+    let response = ui.label(if set { text.strong() } else { text.weak() });
+    if !hint.is_empty() {
+        response.on_hover_text(hint);
+    }
+}
+
+fn unset(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, key: &str, set: bool) {
+    if !set {
+        ui.label("");
+        return;
+    }
+    if ui
+        .small_button("↺")
+        .on_hover_text("Remove it from the element: it reads its default")
+        .clicked()
+    {
+        builder.set_attribute(origin, key, "");
+    }
+}
+
+fn text_edit<'a>(text: &'a mut String, hint: &'a str) -> egui::TextEdit<'a> {
+    egui::TextEdit::singleline(text)
+        .hint_text(hint)
+        .desired_width(f32::INFINITY)
 }
 
 fn add_attribute(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32) {
@@ -78,8 +225,11 @@ fn add_attribute(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32) {
                 .desired_width(90.0),
         );
         if ui
-            .add_enabled(!key.trim().is_empty(), egui::Button::new("Add"))
-            .on_hover_text("`on:click`, `bind:value`, `min`… as the file writes them")
+            .add_enabled(
+                !key.trim().is_empty() && !value.is_empty(),
+                egui::Button::new("Add"),
+            )
+            .on_hover_text("Any attribute, as the file writes it")
             .clicked()
         {
             builder.set_attribute(origin, key.trim(), &value);
@@ -120,4 +270,19 @@ fn declarations(style: &str) -> Vec<&str> {
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect()
+}
+
+/// `to` from inside `folder`, with `..` where they part.
+fn relative(folder: &Path, to: &Path) -> PathBuf {
+    let from: Vec<Component> = folder.components().collect();
+    let target: Vec<Component> = to.components().collect();
+    let shared = from.iter().zip(&target).take_while(|(a, b)| a == b).count();
+    let mut out = PathBuf::new();
+    for _ in shared..from.len() {
+        out.push("..");
+    }
+    for part in &target[shared..] {
+        out.push(part);
+    }
+    out
 }

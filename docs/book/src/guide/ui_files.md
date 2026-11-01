@@ -299,9 +299,12 @@ on a canvas, drawn by the same pass that draws it in the game. No scene and no c
 
 - **Hierarchy** — the file's elements as it nests them; a `<use>` is one row, its template's
   inside stays the template's. Click a row, or the canvas, to select.
-- **Inspector** — the selected element's `name`, `class`, a label's text, every other attribute
-  as the file writes it (`on:click`, `bind:value`…), a row to add one, and its **inline style**:
-  CSS declarations, one per line.
+- **Inspector** — the selected element's attributes as typed fields, from what each element reads:
+  a checkbox for `disabled` or `checked`, a number for a slider's `min`/`max`/`step`, the
+  project's `.kxml` files for a `<use>`'s `src`, text for `on:*` actions and `bind:value`. A label
+  in **bold** is set in the file; **↺** removes it, and the element reads its default again.
+  Attributes the element does not know are listed under *Other attributes*, where any can be
+  added. Last, the **inline style**: CSS declarations, one per line.
 
 Edits stay in memory until **Save** writes the `.kxml`; the tab's title carries a `*` until then.
 The file keeps its comments, prefixes and attribute order, and is re-indented. Saved elsewhere while

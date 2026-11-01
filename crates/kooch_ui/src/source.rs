@@ -24,7 +24,7 @@ pub enum ElementKind {
 }
 
 impl ElementKind {
-    const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::Ui,
         Self::Panel,
         Self::Label,

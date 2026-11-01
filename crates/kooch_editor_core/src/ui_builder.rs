@@ -30,6 +30,7 @@ pub(crate) const RESOLUTIONS: &[(u32, u32, &str)] = &[
 ];
 
 const SHEET_TYPE: &str = "kooch_ui::style::sheet::UiStyleSheet";
+const SOURCE_TYPE: &str = "kooch_ui::source::UiSource";
 
 /// The open document and its canvas. Taken out of `Resources` for the frame, like the views.
 pub(crate) struct UiBuilder {
@@ -38,6 +39,8 @@ pub(crate) struct UiBuilder {
     pub style: Option<Guid>,
     /// Every `.kcss` in the project, for the toolbar.
     pub sheets: Vec<(Guid, String)>,
+    /// Every `.kxml`, by path, for a `<use src>`.
+    pub templates: Vec<PathBuf>,
     pub resolution: (u32, u32),
     /// Screen pixels per canvas pixel.
     pub zoom: f32,
@@ -131,6 +134,12 @@ impl UiBuilder {
         let mut server = resources.remove::<AssetServer>();
         if let Some(database) = resources.get::<AssetDatabase>() {
             self.sheets = sheets(database);
+            self.templates = database
+                .entries_of_type(SOURCE_TYPE)
+                .map(|(_, entry)| entry.path.clone())
+                .filter(|path| *path != self.path)
+                .collect();
+            self.templates.sort();
             self.reread(database);
             if std::mem::take(&mut self.edited) || self.tree.is_none() {
                 match kooch_ui::build_markup(
@@ -215,6 +224,7 @@ pub(crate) fn open(resources: &mut Resources, path: &Path) {
         source,
         style,
         sheets: Vec::new(),
+        templates: Vec::new(),
         resolution: (RESOLUTIONS[0].0, RESOLUTIONS[0].1),
         zoom: 1.0,
         pending_zoom: None,
