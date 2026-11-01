@@ -162,6 +162,11 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     );
 
     taken.resize_targets();
+    // Out for the frame like the views: the panel edits it and the canvas renders from it.
+    let mut ui_builder = resources.remove::<crate::ui_builder::UiBuilder>();
+    if let Some(builder) = ui_builder.as_mut() {
+        builder.prepare(&taken.gpu, &mut taken.overlay.renderer);
+    }
     let toolbar = toolbar_info(resources, &taken.overlay, &undo_stack, is_playing);
 
     if let Some(modes) = resources.get::<kooch_core::window_mode::DisplayModes>() {
@@ -302,6 +307,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             preview_request: &mut requests.preview,
             input_owner: &mut input_owner,
             game_clicked: &mut game_clicked,
+            ui_builder: ui_builder.as_mut(),
             shader_costs: &shader_costs,
             input: &mut viewport_input,
             controller: &controller_snapshot,
@@ -399,6 +405,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
 
     let viewport_start = std::time::Instant::now();
     taken.render_views(resources, project_loaded, &requests);
+    if let Some(mut builder) = ui_builder {
+        builder.render(&taken.gpu);
+        resources.insert(builder);
+    }
     stages.viewport_ms = crate::perf::ms_since(viewport_start);
 
     // egui-winit shows the cursor again whenever egui's icon changes; captured, egui has none.

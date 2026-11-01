@@ -1,0 +1,223 @@
+//! The UI Builder (#280 phase 8): a `.kxml` on a canvas of its own, at a chosen resolution, drawn by
+//! the same pass that draws it in the game.
+
+use std::path::{Path, PathBuf};
+
+use kooch_core::Guid;
+use kooch_core::asset_database::AssetDatabase;
+use kooch_core::asset_loader::AssetServer;
+use kooch_core::gpu::GpuContext;
+use kooch_core::resource::Resources;
+use kooch_ecs::UiDrawList;
+use kooch_ecs::query::Query;
+use kooch_render::ui::UiPass;
+use kooch_ui::taffy::{AvailableSpace, Size};
+use kooch_ui::{CANVAS_HEIGHT, GlyphAtlas, UiDocument, UiFonts, UiTree};
+
+use crate::viewport::ViewportTarget;
+
+/// Screens a document is designed for, handheld first.
+pub(crate) const RESOLUTIONS: &[(u32, u32, &str)] = &[
+    (1280, 800, "Handheld 1280×800"),
+    (1280, 720, "720p"),
+    (1920, 1080, "1080p"),
+    (2560, 1440, "1440p"),
+    (1080, 1920, "Portrait 1080×1920"),
+];
+
+const SHEET_TYPE: &str = "kooch_ui::style::sheet::UiStyleSheet";
+
+/// The open document and its canvas. Taken out of `Resources` for the frame, like the views.
+pub(crate) struct UiBuilder {
+    pub path: PathBuf,
+    source: Guid,
+    pub style: Option<Guid>,
+    /// Every `.kcss` in the project, for the toolbar.
+    pub sheets: Vec<(Guid, String)>,
+    pub resolution: (u32, u32),
+    /// Screen pixels per canvas pixel.
+    pub zoom: f32,
+    /// A zoom the toolbar picked, applied around the canvas's centre.
+    pub pending_zoom: Option<f32>,
+    /// The canvas's top-left from the panel's, in points; `None` frames it.
+    pub pan: Option<egui::Vec2>,
+    pub focus_requested: bool,
+    pub texture: Option<egui::TextureId>,
+    /// Pixels the panel shows the canvas at; `None` while the tab is not drawn.
+    pub request: Option<(u32, u32)>,
+    tree: Option<UiTree>,
+    atlas: GlyphAtlas,
+    list: UiDrawList,
+    /// The size `list` was built for: the target matches it only once resized.
+    drawn: Option<(u32, u32)>,
+    target: Option<ViewportTarget>,
+    pass: Option<UiPass>,
+}
+
+impl UiBuilder {
+    pub(crate) fn set_style(&mut self, style: Option<Guid>) {
+        self.style = style;
+        self.tree = None;
+    }
+
+    /// Before the UI: the target takes the size the panel asked for last frame.
+    pub(crate) fn prepare(&mut self, gpu: &GpuContext, renderer: &mut egui_wgpu::Renderer) {
+        if let Some(size) = self.request.take() {
+            match self.target.as_mut() {
+                Some(target) => {
+                    target.request_size(size);
+                    target.resize_if_needed(gpu.device(), renderer);
+                }
+                None => {
+                    self.target = Some(ViewportTarget::new(
+                        gpu.device(),
+                        renderer,
+                        gpu.format(),
+                        size,
+                    ))
+                }
+            }
+        }
+        self.texture = self.target.as_ref().map(ViewportTarget::texture_id);
+    }
+
+    /// Over transparent black: the panel's checkerboard shows through.
+    pub(crate) fn render(&mut self, gpu: &GpuContext) {
+        let (Some(target), Some(drawn)) = (self.target.as_ref(), self.drawn) else {
+            return;
+        };
+        if target.size() != drawn {
+            return;
+        }
+        let pass = self
+            .pass
+            .get_or_insert_with(|| UiPass::new(gpu.device(), gpu.format()));
+        let mut encoder = gpu
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("ui_builder"),
+            });
+        pass.draw(
+            gpu.device(),
+            gpu.queue(),
+            &mut encoder,
+            target.view(),
+            drawn,
+            &mut self.list,
+            true,
+        );
+        gpu.queue().submit(Some(encoder.finish()));
+    }
+
+    fn update(&mut self, resources: &mut Resources) {
+        let Some(size) = self.request else {
+            return;
+        };
+        let mut server = resources.remove::<AssetServer>();
+        if let Some(database) = resources.get::<AssetDatabase>() {
+            self.sheets = sheets(database);
+            if self
+                .tree
+                .as_ref()
+                .is_none_or(|tree| kooch_ui::stale(database, tree))
+            {
+                self.tree = Some(kooch_ui::build_file(
+                    database,
+                    server.as_mut(),
+                    self.source,
+                    self.style,
+                ));
+            }
+        }
+        if let Some(server) = server {
+            resources.insert(server);
+        }
+        let (Some(tree), Some(fonts)) = (self.tree.as_mut(), resources.get_mut::<UiFonts>()) else {
+            return;
+        };
+        let canvas = kooch_ui::canvas(glam::UVec2::new(self.resolution.0, self.resolution.1));
+        tree.layout(
+            Size {
+                width: AvailableSpace::Definite(canvas.x),
+                height: AvailableSpace::Definite(canvas.y),
+            },
+            fonts,
+        );
+        tree.rasterize(size.1.max(1) as f32 / CANVAS_HEIGHT, fonts, &mut self.atlas);
+        let physical = glam::UVec2::new(size.0, size.1);
+        kooch_ui::draw_tree(tree, &mut self.atlas, physical, &mut self.list);
+        self.drawn = Some(size);
+    }
+}
+
+/// Opens `path` in the Builder, wearing the sheet a document in the scene gives it.
+pub(crate) fn open(resources: &mut Resources, path: &Path) {
+    let Some(source) = resources
+        .get::<AssetDatabase>()
+        .and_then(|database| database.guid_for(path))
+    else {
+        tracing::error!(file = %path.display(), "not a known asset; cannot open it in the UI Builder");
+        return;
+    };
+    if let Some(builder) = resources.get_mut::<UiBuilder>()
+        && builder.source == source
+    {
+        builder.focus_requested = true;
+        return;
+    }
+    let mut style = None;
+    Query::<&UiDocument>::new(resources).for_each(|document| {
+        if style.is_none() && document.source == Some(source) {
+            style = document.style;
+        }
+    });
+    // Another file reuses the canvas's GPU objects and glyphs.
+    let old = resources.remove::<UiBuilder>();
+    let (atlas, target, pass) = match old {
+        Some(old) => (old.atlas, old.target, old.pass),
+        None => (GlyphAtlas::default(), None, None),
+    };
+    resources.insert(UiBuilder {
+        path: path.to_path_buf(),
+        source,
+        style,
+        sheets: Vec::new(),
+        resolution: (RESOLUTIONS[0].0, RESOLUTIONS[0].1),
+        zoom: 1.0,
+        pending_zoom: None,
+        pan: None,
+        focus_requested: true,
+        texture: None,
+        request: None,
+        tree: None,
+        atlas,
+        list: UiDrawList::default(),
+        drawn: None,
+        target,
+        pass,
+    });
+}
+
+/// Before the render: the open document, built when its files change and laid out at the canvas.
+pub(crate) fn builder_system(resources: &mut Resources) {
+    let Some(mut builder) = resources.remove::<UiBuilder>() else {
+        return;
+    };
+    builder.update(resources);
+    resources.insert(builder);
+}
+
+fn sheets(database: &AssetDatabase) -> Vec<(Guid, String)> {
+    let mut sheets: Vec<(Guid, String)> = database
+        .entries_of_type(SHEET_TYPE)
+        .map(|(guid, entry)| {
+            let name = entry
+                .path
+                .file_name()
+                .map_or_else(|| guid.to_string(), |n| n.to_string_lossy().into_owned());
+            (guid, name)
+        })
+        .collect();
+    sheets.sort_by(|a, b| a.1.cmp(&b.1));
+    sheets
+}

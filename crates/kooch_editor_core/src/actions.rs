@@ -423,6 +423,10 @@ pub(crate) enum EditorAction {
     OpenShaderGraph {
         path: std::path::PathBuf,
     },
+    /// Open a `.kxml` in the UI Builder (#280).
+    OpenUiBuilder {
+        path: std::path::PathBuf,
+    },
     /// Generate the `.shader` from the open graph and write it.
     SaveShaderGraph,
     /// The dock has brought the Shader Graph panel forward; stop asking.

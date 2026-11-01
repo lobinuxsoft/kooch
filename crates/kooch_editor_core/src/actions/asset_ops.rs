@@ -38,6 +38,7 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
         EditorAction::OpenInputMap { path } => open_input_map(resources, path),
         EditorAction::OpenShaderGraph { path } => open_shader_graph(resources, path),
         EditorAction::SaveShaderGraph => save_shader_graph(resources),
+        EditorAction::OpenUiBuilder { path } => crate::ui_builder::open(resources, path),
         EditorAction::ShaderGraphFocused => {
             if let Some(open) = resources.get_mut::<crate::state::OpenShaderGraph>() {
                 open.focus_requested = false;

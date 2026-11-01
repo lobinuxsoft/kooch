@@ -114,8 +114,9 @@ impl UiPass {
         }
     }
 
-    /// Uploads what changed and draws `list` over `target`. Takes the atlas upload, so it is
-    /// written once.
+    /// Uploads what changed and draws `list` over `target`, or over transparent black when `clear`.
+    /// Takes the atlas upload, so it is written once.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         device: &wgpu::Device,
@@ -124,6 +125,7 @@ impl UiPass {
         target: &wgpu::TextureView,
         size: (u32, u32),
         list: &mut UiDrawList,
+        clear: bool,
     ) {
         if list.atlas_side != self.atlas_side && list.atlas_side > 0 {
             let (atlas, bind) = atlas_and_bind(device, &self.layout, &self.screen, list.atlas_side);
@@ -153,7 +155,7 @@ impl UiPass {
                 },
             );
         }
-        if list.quads.is_empty() {
+        if list.quads.is_empty() && !clear {
             return;
         }
         let count = list.quads.len() as u64;
@@ -174,7 +176,10 @@ impl UiPass {
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
+                    load: match clear {
+                        true => wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        false => wgpu::LoadOp::Load,
+                    },
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -183,6 +188,9 @@ impl UiPass {
             occlusion_query_set: None,
             multiview_mask: None,
         });
+        if count == 0 {
+            return;
+        }
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind, &[]);
         pass.set_vertex_buffer(
@@ -207,7 +215,15 @@ pub fn draw_frame(
     let mut pass = resources
         .remove::<UiPass>()
         .unwrap_or_else(|| UiPass::new(gpu.device(), gpu.format()));
-    pass.draw(gpu.device(), gpu.queue(), encoder, target, size, &mut list);
+    pass.draw(
+        gpu.device(),
+        gpu.queue(),
+        encoder,
+        target,
+        size,
+        &mut list,
+        false,
+    );
     resources.insert(pass);
     resources.insert(list);
 }

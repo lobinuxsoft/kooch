@@ -72,6 +72,7 @@ pub(super) struct ViewportUi<'a> {
     pub(super) preview_request: &'a mut Option<crate::viewport::PreviewRequest>,
     pub(super) input_owner: &'a mut crate::input_focus::InputOwner,
     pub(super) game_clicked: &'a mut bool,
+    pub(super) ui_builder: Option<&'a mut crate::ui_builder::UiBuilder>,
 }
 
 /// Runs the egui UI for one frame. Produces the tessellation input and the
@@ -166,6 +167,7 @@ pub(super) fn run_editor_ui(
         input_owner,
         game_clicked,
         shader_costs,
+        ui_builder,
     } = viewport;
 
     // `run_ui` rather than `run`: egui 0.35 hands the closure a root `Ui`
@@ -174,6 +176,7 @@ pub(super) fn run_editor_ui(
     // 🔴 Reborrowed rather than moved: the closure runs more than once, and `Option<&mut _>` is
     // not `Copy`.
     let mut open_shader_graph = open_shader_graph;
+    let mut ui_builder = ui_builder;
     let full_output = overlay.ctx.run_ui(raw_input, |ui| {
         if project_loaded {
             play_focus::chord(ui, toolbar.is_playing, &mut actions);
@@ -263,6 +266,9 @@ pub(super) fn run_editor_ui(
                 &overlay.windows,
                 open_shader_graph.as_deref(),
                 open_input_map,
+                ui_builder
+                    .as_deref_mut()
+                    .is_some_and(|builder| std::mem::take(&mut builder.focus_requested)),
                 &mut actions,
             );
 
@@ -326,6 +332,7 @@ pub(super) fn run_editor_ui(
                 asset_detail,
                 open_input_map,
                 open_shader_graph: open_shader_graph.as_deref_mut(),
+                ui_builder: ui_builder.as_deref_mut(),
                 current_folder: &mut current_folder,
                 clipboard_has_entities: toolbar.clipboard_has_entities,
                 engine_assets_root,
