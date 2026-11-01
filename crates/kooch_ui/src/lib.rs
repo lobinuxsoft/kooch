@@ -18,6 +18,7 @@ pub mod markup;
 mod plugin;
 mod pointer;
 mod restyle;
+pub mod schema;
 pub mod source;
 pub mod style;
 mod templates;
