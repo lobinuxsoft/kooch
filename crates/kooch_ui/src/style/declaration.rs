@@ -121,6 +121,10 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Vec<Declaration>, String> 
             .collect()),
         _ if name.starts_with("margin-") => one(D::Margin(edge(&name[7..])?, layout(text)?)),
         _ if name.starts_with("padding-") => one(D::Padding(edge(&name[8..])?, layout(text)?)),
+        _ if name.starts_with("border-") && name.ends_with("-width") => one(D::BorderWidth(
+            edge(&name[7..name.len() - 6])?,
+            layout(text)?,
+        )),
         "background-color" => one(D::Background(color(text)?)),
         "color" => one(D::Color(color(text)?)),
         "border-color" => one(D::BorderColor(color(text)?)),
@@ -187,7 +191,7 @@ fn border(text: &str) -> Result<Vec<Declaration>, String> {
     Ok(out)
 }
 
-fn color(text: &str) -> Result<[f32; 4], String> {
+pub(super) fn color(text: &str) -> Result<[f32; 4], String> {
     let mut input = ParserInput::new(text);
     let mut parser = Parser::new(&mut input);
     match parser.parse_entirely(Color::parse) {

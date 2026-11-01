@@ -304,7 +304,11 @@ on a canvas, drawn by the same pass that draws it in the game. No scene and no c
   project's `.kxml` files for a `<use>`'s `src`, text for `on:*` actions and `bind:value`. A label
   in **bold** is set in the file; **↺** removes it, and the element reads its default again.
   Attributes the element does not know are listed under *Other attributes*, where any can be
-  added. Last, the **inline style**: CSS declarations, one per line.
+  added. Last, the **inline style**, grouped as Display, Position, Flex, Align, Size, Margin,
+  Padding, Text, Background and Border: a length with its unit (`px`, `%`, `auto`), a colour
+  picker, a list for keywords. A group in bold has something set; *Unset all* clears it. Setting
+  one side of a `margin: 2px 4px` splits it into its four sides. A value a field cannot show, like
+  a `calc()`, stays as text, and *CSS* below shows the whole attribute to edit by hand.
 
 Edits stay in memory until **Save** writes the `.kxml`; the tab's title carries a `*` until then.
 The file keeps its comments, prefixes and attribute order, and is re-indented. Saved elsewhere while

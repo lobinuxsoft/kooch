@@ -4,6 +4,7 @@
 
 mod hierarchy;
 mod inspector;
+mod styles;
 
 use crate::ui_builder::{RESOLUTIONS, UiBuilder};
 
