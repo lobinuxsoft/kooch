@@ -407,9 +407,11 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 }
             }
             EditorTab::Components => draw_components_content(ui, self.component_types),
-            EditorTab::UiBuilder => {
-                crate::panels::ui_builder::draw_ui_builder(ui, self.ui_builder.as_deref_mut())
-            }
+            EditorTab::UiBuilder => crate::panels::ui_builder::draw_ui_builder(
+                ui,
+                self.ui_builder.as_deref_mut(),
+                self.asset_catalog,
+            ),
             EditorTab::Systems => {
                 crate::panels::systems::draw_systems_content(ui, self.systems, self.actions)
             }
