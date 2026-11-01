@@ -9,7 +9,7 @@ use kooch_ecs::component::ComponentRegistry;
 use kooch_core::schedule::Order;
 
 use crate::{
-    GlyphAtlas, UiActions, UiDocument, UiEvent, UiFocus, UiFonts, UiPointer, UiTrees,
+    GlyphAtlas, UiActions, UiDocument, UiEvent, UiFocus, UiFonts, UiPointer, UiTrees, bind_values,
     build_documents, draw_documents, layout_documents, load_images, navigate_focus, pick_pointer,
     prune_trees, restyle_documents,
 };
@@ -53,6 +53,11 @@ impl Plugin for UiPlugin {
             Stage::PreUpdate,
             Order::after("pick_pointer"),
             navigate_focus,
+        );
+        app.add_ordered(
+            Stage::PreUpdate,
+            Order::after("navigate_focus"),
+            bind_values,
         );
         // Ungated: a document removed while stopped frees its tree too.
         app.add_system(Stage::PostUpdate, prune_trees);

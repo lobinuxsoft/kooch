@@ -60,6 +60,7 @@ impl UiTree {
                     apply(self, node, style);
                 }
             }
+            self.show_values();
         }
         self.styled = Some(Styled {
             dirty: false,

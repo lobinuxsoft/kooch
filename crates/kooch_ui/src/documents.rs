@@ -125,10 +125,15 @@ fn read_tree(
         }
         None => UiStyleSheet::parse(DEFAULT_SHEET),
     };
-    Ok(build_tree(&markup, Some(&sheet)))
+    // The controls' look first: a tie of specificity goes to the later rule, the document's.
+    let mut base = UiStyleSheet::parse(CONTROLS_SHEET);
+    base.rules.extend(sheet.rules);
+    base.warnings = sheet.warnings;
+    Ok(build_tree(&markup, Some(&base)))
 }
 
 const DEFAULT_SHEET: &str = include_str!("default.kcss");
+const CONTROLS_SHEET: &str = include_str!("controls.kcss");
 
 /// `a/b/../c` → `a/c`: the database keys paths as scanned, and those have no `..`.
 pub(crate) fn normalise(path: &Path) -> PathBuf {
