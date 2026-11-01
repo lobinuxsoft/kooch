@@ -1,6 +1,7 @@
 //! The selected element, as Unity's Builder Inspector lays it out: its attributes as typed fields
 //! from the element's schema, then the ones it does not know, then the inline style. A set
-//! attribute's label is bold and ↺ unsets it. Each edit goes to the markup in memory.
+//! attribute's label is bold and ↺ unsets it; the inline style by category, with the CSS behind.
+//! Each edit goes to the markup in memory.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -72,8 +73,13 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder) {
             egui::CollapsingHeader::new("Inline style")
                 .default_open(true)
                 .show(ui, |ui| {
-                    ui.weak("CSS declarations, one per line. They beat any rule of the sheet.");
-                    inline_style(ui, builder, origin, &inspected.style);
+                    super::styles::draw(ui, builder, origin, &inspected.style);
+                    egui::CollapsingHeader::new("CSS")
+                        .id_salt("ui_builder_css")
+                        .show(ui, |ui| {
+                            ui.weak("One declaration per line. They beat any rule of the sheet.");
+                            inline_style(ui, builder, origin, &inspected.style);
+                        });
                 });
         });
 }
