@@ -61,6 +61,7 @@ impl UiTree {
                 }
             }
             self.show_values();
+            self.hide_again();
         }
         self.styled = Some(Styled {
             dirty: false,

@@ -59,6 +59,10 @@ fn push_tree(
     let mut next = 0;
     for index in 0..tree.len() as u32 {
         let node = UiNode(index);
+        // Its glyphs were never built, so `next` stays in step.
+        if tree.culled(node) {
+            continue;
+        }
         let (Some(rect), Some(paint), Some(border)) =
             (tree.rect(node), tree.paint(node), tree.border(node))
         else {
