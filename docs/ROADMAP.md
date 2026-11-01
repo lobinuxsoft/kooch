@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-10-30 (late) — 🎯 **The game's UI answers the mouse.** UI files are `.kxml`/`.kcss`, plain XML and CSS so any editor highlights them. A button declared with `on:click` runs a named action or sends a `UiEvent`, and while the pointer is over the UI the game does not see the click — in the editor's Play too, which used to swallow every click over the game image. Decided: a World document renders to a texture any mesh can show, the UI Builder is its own panel without a camera, and SVG goes in through usvg + lyon (#1700). Next: `:hover`/`:active`/`:focus` and pad navigation (#96 phase 6).
+Last updated 2026-11-01 — 🎯 **A pause menu built from files, driven by a pad.** The UI reads Input Actions like the game (one input system, the mouse included), moves focus with the stick, and turns whole layers on and off without rebuilding them. Pause stops game time and silences the game's action map. Templates instance a `.kxml` with per-instance overrides; toggles and sliders bind both ways to a component's field (`bind:value`). Game code got shorter: edge helpers on actions, `Time::of`, `ComponentRegistry::component`. In the editor's Play the cursor follows what the game asks for. Next: querying and restyling nodes from code (#96 phase 7), hot reload (#280 phase 7), then the UI Builder.
 
 
 ---
