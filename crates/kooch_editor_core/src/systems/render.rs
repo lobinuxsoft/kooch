@@ -264,7 +264,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         taken.overlay.pinned_gizmos.iter().copied().collect();
     let game_rig = rig_view::selected_rig(resources, &taken.overlay.selected_entities, &pinned);
     let ui_start = std::time::Instant::now();
-    let (full_output, mut actions) = run_editor_ui(
+    let (mut full_output, mut actions) = run_editor_ui(
         &mut taken.overlay,
         &mut taken.project_state,
         &mut taken.dlss,
@@ -401,6 +401,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     taken.render_views(resources, project_loaded, &requests);
     stages.viewport_ms = crate::perf::ms_since(viewport_start);
 
+    // egui-winit shows the cursor again whenever egui's icon changes; captured, egui has none.
+    if cursor == kooch_input::CursorMode::Captured {
+        full_output.platform_output.cursor_icon = egui::CursorIcon::None;
+    }
     let present_start = std::time::Instant::now();
     // Out and back like `gpu`: the frame's resolve and boundary need `&mut`.
     let mut scopes = resources.remove::<kooch_core::gpu::GpuScopes>();
