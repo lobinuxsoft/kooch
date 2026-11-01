@@ -136,12 +136,14 @@ impl UiTree {
         self.control(node).map(|control| control.kind)
     }
 
-    /// Flips a toggle. Whether it changed.
+    /// Flips a toggle; anything else, a slider included, is left as is. Whether it changed.
     pub(crate) fn flip(&mut self, node: UiNode) -> bool {
-        let Some(value) = self.value(node) else {
-            return false;
-        };
-        self.change(node, 1.0 - value, true)
+        match self.control(node) {
+            Some(control) if control.kind == ControlKind::Toggle => {
+                self.change(node, 1.0 - control.value, true)
+            }
+            _ => false,
+        }
     }
 
     /// Moves a slider by one step, `sign` sets the way. Whether it changed.
