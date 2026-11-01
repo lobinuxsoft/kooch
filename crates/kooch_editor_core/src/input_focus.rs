@@ -53,24 +53,39 @@ pub(crate) fn resolve(focused_tab: Option<EditorTab>, text_edit_focused: bool) -
     }
 }
 
-/// The cursor while the editor plays the game (#1266): a click on the game image hands it over,
-/// `Esc` takes it back, and so does anything that ends the game's hold on input — stopping, or
-/// another panel taking focus. The editor must always be able to get its cursor back.
+/// The game's last [`kooch_input::CursorMode`] request, sent by the host when it changes.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GameCursor {
+    pub(crate) wants: kooch_input::CursorMode,
+    /// Arrived since the editor last applied it.
+    pub(crate) fresh: bool,
+}
+
+/// A game that never asks keeps the editor's old rule: a click captures.
+impl Default for GameCursor {
+    fn default() -> Self {
+        Self {
+            wants: kooch_input::CursorMode::Captured,
+            fresh: false,
+        }
+    }
+}
+
+/// The cursor while the editor plays the game (#1266): the game's request applies when it changes
+/// or on a click on the game image — a click on its UI keeps it free, as in a built game. `Esc`,
+/// stopping, or another panel taking focus take it back: the editor must always get its cursor.
 pub(crate) fn cursor_while_playing(
     was: kooch_input::CursorMode,
     playing: bool,
     game_owns_input: bool,
-    clicked_game: bool,
     escape: bool,
+    game: Option<kooch_input::CursorMode>,
 ) -> kooch_input::CursorMode {
     use kooch_input::CursorMode;
     if !playing || !game_owns_input || escape {
         return CursorMode::Free;
     }
-    match clicked_game {
-        true => CursorMode::Captured,
-        false => was,
-    }
+    game.unwrap_or(was)
 }
 
 #[cfg(test)]

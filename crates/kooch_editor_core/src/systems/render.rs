@@ -370,6 +370,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     }
     // The editor's own window is the one the mouse is on, so the capture is the editor's to apply,
     // whatever process is running the game.
+    let game = resources.get_or_default::<crate::input_focus::GameCursor>();
+    let request = (game_clicked || game.fresh).then_some(game.wants);
+    game.fresh = false;
     let cursor = crate::input_focus::cursor_while_playing(
         resources
             .get::<kooch_input::CursorMode>()
@@ -379,10 +382,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             .get::<PlayState>()
             .is_some_and(PlayState::is_playing),
         input_owner == crate::input_focus::InputOwner::Game,
-        game_clicked,
         resources
             .get::<Box<dyn kooch_input::InputBackend>>()
             .is_some_and(|input| input.just_pressed(kooch_input::ids::KeyCode::Escape)),
+        request,
     );
     resources.insert(cursor);
 

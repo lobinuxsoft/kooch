@@ -24,7 +24,7 @@ pub mod winit_gilrs_backend;
 pub use backend::{
     GamepadAxis, GamepadButton, GamepadId, InputBackend, InputEvent, KeyCode, MouseButton,
 };
-pub use cursor::CursorMode;
+pub use cursor::{CURSOR_SIGNAL, CursorMode};
 pub use mock_backend::MockInputBackend;
 pub use plugin::{InputPlugin, PendingMotion, PendingWindowEvents};
 pub use remote_backend::{GamepadSnapshot, InputSnapshot, RemoteInputBackend};

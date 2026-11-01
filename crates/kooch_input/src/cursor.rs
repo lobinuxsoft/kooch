@@ -9,7 +9,7 @@ use kooch_window::WindowHandle;
 use winit::window::CursorGrabMode;
 
 /// How the cursor should behave. Absent means no opinion: the window keeps whatever it has.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum CursorMode {
     /// Visible, and free to leave the window.
     #[default]
@@ -18,6 +18,10 @@ pub enum CursorMode {
     /// forever.
     Captured,
 }
+
+/// The host's name for its [`CursorMode`] when it changes: in Play the editor owns the window the
+/// mouse is on, so it applies what the game asked for.
+pub const CURSOR_SIGNAL: &str = "input.cursor";
 
 /// What was last put on the window, so a request is applied once and a platform that drops the
 /// grab when focus goes (X11 does) gets it back when focus returns.

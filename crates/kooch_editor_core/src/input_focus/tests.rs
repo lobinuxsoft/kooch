@@ -60,16 +60,20 @@ mod cursor {
     use super::super::cursor_while_playing;
     use kooch_input::CursorMode::{Captured, Free};
 
-    /// A click on the game image hands the cursor over, and it stays handed over.
+    /// The game's request applies, and holds until something changes it.
     #[test]
-    fn a_click_captures_and_holds() {
+    fn the_game_request_applies() {
         assert_eq!(
-            cursor_while_playing(Free, true, true, true, false),
+            cursor_while_playing(Free, true, true, false, Some(Captured)),
             Captured
         );
         assert_eq!(
-            cursor_while_playing(Captured, true, true, false, false),
+            cursor_while_playing(Captured, true, true, false, None),
             Captured
+        );
+        assert_eq!(
+            cursor_while_playing(Captured, true, true, false, Some(Free)),
+            Free
         );
     }
 
@@ -77,23 +81,15 @@ mod cursor {
     /// A captured cursor with no way out is an editor you can only kill.
     #[test]
     fn every_way_out_frees_it() {
+        let game = Some(Captured);
+        assert_eq!(cursor_while_playing(Captured, true, true, true, game), Free);
         assert_eq!(
-            cursor_while_playing(Captured, true, true, false, true),
+            cursor_while_playing(Captured, false, true, false, game),
             Free
         );
         assert_eq!(
-            cursor_while_playing(Captured, false, true, false, false),
+            cursor_while_playing(Captured, true, false, false, game),
             Free
         );
-        assert_eq!(
-            cursor_while_playing(Captured, true, false, false, false),
-            Free
-        );
-    }
-
-    /// Not playing, a click on the game image is a click on a picture.
-    #[test]
-    fn a_click_while_stopped_is_nothing() {
-        assert_eq!(cursor_while_playing(Free, false, true, true, false), Free);
     }
 }

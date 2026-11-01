@@ -55,28 +55,43 @@ pub(crate) fn send_input_to_host(resources: &mut Resources) {
     });
 }
 
-/// Plays on the editor's pads the rumble the project asked for: in Play the editor holds them (#57).
-pub(crate) fn play_host_rumble(resources: &mut Resources) {
+/// Applies what the project sent: rumble on the editor's pads (#57), and the cursor mode the game
+/// asked for. In Play the editor holds both.
+pub(crate) fn read_host_signals(resources: &mut Resources) {
     let signals = resources
         .get_mut::<RemoteState>()
         .and_then(|state| state.session.as_mut())
         .map(|session| session.take_signals())
         .unwrap_or_default();
-    if signals.is_empty() {
-        return;
-    }
-    let Some(backend) = resources.get_mut::<Box<dyn InputBackend>>() else {
-        return;
-    };
     for signal in signals {
-        if signal.name != kooch_input::RUMBLE_SIGNAL {
-            continue;
-        }
-        match kooch_remote::serde_json::from_value::<kooch_input::RumbleSignal>(signal.payload) {
-            Ok(rumble) => backend.rumble(kooch_input::GamepadId(rumble.pad), rumble.rumble),
-            Err(error) => {
-                tracing::warn!(%error, "the project sent a rumble this editor cannot read")
+        match signal.name.as_str() {
+            kooch_input::RUMBLE_SIGNAL => {
+                match kooch_remote::serde_json::from_value::<kooch_input::RumbleSignal>(
+                    signal.payload,
+                ) {
+                    Ok(rumble) => {
+                        if let Some(backend) = resources.get_mut::<Box<dyn InputBackend>>() {
+                            backend.rumble(kooch_input::GamepadId(rumble.pad), rumble.rumble);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "the project sent a rumble this editor cannot read")
+                    }
+                }
             }
+            kooch_input::CURSOR_SIGNAL => {
+                match kooch_remote::serde_json::from_value::<kooch_input::CursorMode>(
+                    signal.payload,
+                ) {
+                    Ok(wants) => {
+                        resources.insert(crate::input_focus::GameCursor { wants, fresh: true });
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "the project sent a cursor this editor cannot read")
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }
