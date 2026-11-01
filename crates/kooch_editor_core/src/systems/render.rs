@@ -378,9 +378,13 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             .get::<kooch_input::CursorMode>()
             .copied()
             .unwrap_or_default(),
+        // Either a game process of its own or the remote host: the remote one never set `PlayState`.
         resources
             .get::<PlayState>()
-            .is_some_and(PlayState::is_playing),
+            .is_some_and(PlayState::is_playing)
+            || resources
+                .get::<crate::remote_session::RemoteState>()
+                .is_some_and(|state| state.playing),
         input_owner == crate::input_focus::InputOwner::Game,
         resources
             .get::<Box<dyn kooch_input::InputBackend>>()
