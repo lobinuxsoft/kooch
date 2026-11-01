@@ -199,6 +199,9 @@ it this frame, once per send.
 
 ## Style
 
+An element's own `style="…"` holds declarations like a rule's block, without a selector, and beats
+every rule of the sheet, as in CSS. `var()` and `url()` images belong in the sheet, not inline.
+
 ```css
 :root { --accent: #ff8a1f; }
 
@@ -294,4 +297,13 @@ on a canvas, drawn by the same pass that draws it in the game. No scene and no c
   **Fit** frames the whole canvas. The canvas is rendered at the size it is shown, so text stays
   sharp up to 4096 pixels a side.
 
-Saving either file updates the canvas. Editing the tree from the Builder comes next (#280).
+- **Hierarchy** — the file's elements as it nests them; a `<use>` is one row, its template's
+  inside stays the template's. Click a row, or the canvas, to select.
+- **Inspector** — the selected element's `name`, `class`, a label's text, every other attribute
+  as the file writes it (`on:click`, `bind:value`…), a row to add one, and its **inline style**:
+  CSS declarations, one per line.
+
+Edits stay in memory until **Save** writes the `.kxml`; the tab's title carries a `*` until then.
+The file keeps its comments, prefixes and attribute order, and is re-indented. Saved elsewhere while
+the Builder has no edits of its own, the file is read again; a `.kcss` saved anywhere restyles the
+canvas.

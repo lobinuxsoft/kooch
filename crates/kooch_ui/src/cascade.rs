@@ -43,6 +43,12 @@ pub fn resolve(
                 }
             }
         }
+        // Inline last: it beats any rule, as in CSS.
+        if let Some((_, inline)) = element.attributes.iter().find(|(key, _)| &**key == "style") {
+            for declaration in UiStyleSheet::parse_inline(inline) {
+                style.apply(&declaration);
+            }
+        }
         resolved.push(style);
     }
     resolved

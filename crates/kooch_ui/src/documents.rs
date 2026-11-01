@@ -115,24 +115,6 @@ pub fn build_documents(resources: &mut Resources) {
     }
 }
 
-/// A tree from files that belongs to no entity: the UI Builder's.
-pub fn build_file(
-    database: &AssetDatabase,
-    server: Option<&mut AssetServer>,
-    source: Guid,
-    style: Option<Guid>,
-) -> UiTree {
-    build(database, server, source, style)
-}
-
-/// Whether a file `tree` was built from changed on disk since; a tree built in code never is.
-pub fn stale(database: &AssetDatabase, tree: &UiTree) -> bool {
-    tree.origin.as_ref().is_some_and(|origin| {
-        origin.markup != stamp(database, origin.source, None, &origin.templates)
-            || origin.sheet != sheet_stamp(database, origin.style)
-    })
-}
-
 /// A file that fails still gets a tree, empty, stamped: it is read again when it changes, not
 /// every frame.
 fn build(
@@ -167,11 +149,34 @@ fn read_tree(
     templates: &mut Vec<PathBuf>,
 ) -> Result<UiTree, String> {
     let source_path = path_of(database, source)?;
-    let markup = UiSource::parse(&read(server.as_deref_mut(), &source_path)?)
-        .map_err(|e| format!("{}: {e}", source_path.display()))?;
+    let text = read(server.as_deref_mut(), &source_path)?;
+    tree_from(database, server, &text, &source_path, style, templates)
+}
+
+/// A tree from markup in memory, its `<use>` paths read from beside `path`: the UI Builder's,
+/// mid-edit. Nothing on it is stamped, so [`stale`] never asks for it.
+pub fn build_markup(
+    database: &AssetDatabase,
+    server: Option<&mut AssetServer>,
+    text: &str,
+    path: &Path,
+    style: Option<Guid>,
+) -> Result<UiTree, String> {
+    tree_from(database, server, text, path, style, &mut Vec::new())
+}
+
+fn tree_from(
+    database: &AssetDatabase,
+    mut server: Option<&mut AssetServer>,
+    text: &str,
+    source_path: &Path,
+    style: Option<Guid>,
+    templates: &mut Vec<PathBuf>,
+) -> Result<UiTree, String> {
+    let markup = UiSource::parse(text).map_err(|e| format!("{}: {e}", source_path.display()))?;
     let markup = expand(
         markup,
-        &source_path,
+        source_path,
         &mut |path| read(server.as_deref_mut(), path),
         templates,
         0,

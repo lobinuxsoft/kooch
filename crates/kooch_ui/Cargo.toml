@@ -22,4 +22,5 @@ ron.workspace = true
 cssparser.workspace = true
 cssparser-color.workspace = true
 roxmltree.workspace = true
+xmlem.workspace = true
 tracing.workspace = true

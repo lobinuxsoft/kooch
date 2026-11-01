@@ -61,6 +61,9 @@ pub struct Element {
     pub attributes: Vec<(Box<str>, Box<str>)>,
     /// A `<use>`'s `<set node attribute=value>` children: node name, attribute, value.
     pub overrides: Vec<(Box<str>, Box<str>, Box<str>)>,
+    /// The element of the opened file this one came from, in document order: itself, or the
+    /// `<use>` or control that put it here. What the UI Builder selects.
+    pub origin: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -141,6 +144,7 @@ fn push(
         text: None,
         attributes: Vec::new(),
         overrides: Vec::new(),
+        origin: out.len() as u32,
     };
     for attribute in node.attributes() {
         let local = attribute.name();

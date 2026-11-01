@@ -1,5 +1,9 @@
-//! The UI Builder panel: a toolbar and the canvas. The middle button pans, the wheel zooms around
-//! the cursor one step at a time and F frames the canvas, as Unity's UI Builder does.
+//! The UI Builder panel: a toolbar, the hierarchy, the canvas and the Inspector. The middle button
+//! pans, the wheel zooms around the cursor one step at a time and F frames the canvas, as Unity's
+//! UI Builder does.
+
+mod hierarchy;
+mod inspector;
 
 use crate::ui_builder::{RESOLUTIONS, UiBuilder};
 
@@ -14,6 +18,9 @@ const FRAME_MARGIN: f32 = 20.0;
 const CHECKER: f32 = 16.0;
 /// Largest side the canvas renders at: past it a deep zoom magnifies instead of re-rendering.
 const MAX_SIDE: f32 = 4096.0;
+/// Shares of the panel the hierarchy and the Inspector take beside the canvas.
+const HIERARCHY_SHARE: f32 = 0.18;
+const INSPECTOR_SHARE: f32 = 0.24;
 
 pub(crate) fn draw_ui_builder(ui: &mut egui::Ui, builder: Option<&mut UiBuilder>) {
     let Some(builder) = builder else {
@@ -24,7 +31,20 @@ pub(crate) fn draw_ui_builder(ui: &mut egui::Ui, builder: Option<&mut UiBuilder>
     };
     toolbar(ui, builder);
     ui.separator();
-    canvas(ui, builder);
+    let full = ui.available_rect_before_wrap();
+    let left = full.with_max_x(full.min.x + full.width() * HIERARCHY_SHARE);
+    let right = full.with_min_x(full.max.x - full.width() * INSPECTOR_SHARE);
+    let middle = full.with_min_x(left.max.x).with_max_x(right.min.x);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(left.shrink(4.0)), |ui| {
+        hierarchy::draw(ui, builder);
+    });
+    ui.scope_builder(egui::UiBuilder::new().max_rect(middle), |ui| {
+        canvas(ui, builder);
+    });
+    ui.scope_builder(egui::UiBuilder::new().max_rect(right.shrink(4.0)), |ui| {
+        inspector::draw(ui, builder);
+    });
+    ui.advance_cursor_after_rect(full);
 }
 
 fn toolbar(ui: &mut egui::Ui, builder: &mut UiBuilder) {
@@ -34,7 +54,17 @@ fn toolbar(ui: &mut egui::Ui, builder: &mut UiBuilder) {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        ui.strong(name);
+        ui.strong(match builder.dirty {
+            true => format!("{name} *"),
+            false => name,
+        });
+        if ui
+            .add_enabled(builder.dirty, egui::Button::new("Save"))
+            .on_hover_text("Write the edits to the .kxml")
+            .clicked()
+        {
+            builder.save();
+        }
         ui.separator();
 
         let current = RESOLUTIONS
@@ -152,6 +182,21 @@ fn canvas(ui: &mut egui::Ui, builder: &mut UiBuilder) {
         *pan += response.drag_delta();
     }
     let canvas = egui::Rect::from_min_size(rect.min + *pan, resolution * builder.zoom / ppp);
+    // Canvas units per point: the layout is 1080 units tall whatever the resolution.
+    let units = kooch_ui::CANVAS_HEIGHT / canvas.height().max(1.0);
+    let to_screen = |rect: kooch_ui::UiRect| {
+        egui::Rect::from_min_size(
+            canvas.min + egui::vec2(rect.min.x, rect.min.y) / units,
+            egui::vec2(rect.size.x, rect.size.y) / units,
+        )
+    };
+    let under = response.hover_pos().and_then(|pos| {
+        let point = (pos - canvas.min) * units;
+        builder.hit(glam::Vec2::new(point.x, point.y))
+    });
+    if response.clicked() {
+        builder.selected = under;
+    }
 
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, ui.visuals().extreme_bg_color);
@@ -166,6 +211,24 @@ fn canvas(ui: &mut egui::Ui, builder: &mut UiBuilder) {
         egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
         egui::StrokeKind::Outside,
     );
+    let accent = ui.visuals().selection.stroke.color;
+    if let Some(rect) = under.and_then(|origin| builder.rect_of(origin)) {
+        let stroke = egui::Stroke::new(1.0, accent.gamma_multiply(0.5));
+        painter.rect_stroke(to_screen(rect), 0.0, stroke, egui::StrokeKind::Outside);
+    }
+    if let Some(rect) = builder.selected.and_then(|origin| builder.rect_of(origin)) {
+        let stroke = egui::Stroke::new(2.0, accent);
+        painter.rect_stroke(to_screen(rect), 0.0, stroke, egui::StrokeKind::Outside);
+    }
+    if let Some(error) = &builder.error {
+        painter.text(
+            rect.left_top() + egui::vec2(8.0, 8.0),
+            egui::Align2::LEFT_TOP,
+            error,
+            egui::FontId::proportional(13.0),
+            ui.visuals().error_fg_color,
+        );
+    }
 
     // Rendered at the size it is shown, so text stays sharp at any zoom, up to `MAX_SIDE`.
     let pixels = resolution * builder.zoom;

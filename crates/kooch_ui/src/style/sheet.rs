@@ -85,6 +85,18 @@ impl UiStyleSheet {
         }
     }
 
+    /// An inline `style="…"`: one block's declarations, with no selector and no `var()` to read.
+    pub fn parse_inline(text: &str) -> Vec<Declaration> {
+        let vars = HashMap::new();
+        let mut input = ParserInput::new(text);
+        let mut parser = Parser::new(&mut input);
+        let mut body = Body { vars: &vars };
+        RuleBodyParser::new(&mut parser, &mut body)
+            .filter_map(Result::ok)
+            .flatten()
+            .collect()
+    }
+
     pub fn parse(source: &str) -> Self {
         // Two passes: a `var()` may come before the `:root` that sets it.
         let vars = variables(source);

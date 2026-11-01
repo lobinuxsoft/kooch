@@ -62,6 +62,7 @@ fn splice(
     let base = out.len() as u32;
     // Skipping the `<ui>` moves every index down by one.
     for mut element in inner.elements.into_iter().skip(1) {
+        element.origin = with.origin;
         element.parent = match element.parent {
             0 => parent,
             own => base + own - 1,
