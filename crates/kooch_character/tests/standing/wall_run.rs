@@ -239,8 +239,7 @@ fn jump_profile() {
     let mut resources = world();
     let hero = on_the_floor(&mut resources);
     let resting = position(&resources, hero).y;
-    // The harness never advances `Time`, so the step is the physics fallback the systems actually
-    // used — `FALLBACK_DT` in `kooch_physics::plugin::systems`.
+    // The harness never advances `Time`, so the step is `Time::of`'s stand-in, 1/60.
     let dt = 1.0 / 60.0f32;
 
     let body = resources

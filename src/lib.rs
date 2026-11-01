@@ -12,6 +12,10 @@ pub const LICENSE: &str = include_str!("../LICENSE.md");
 // written in this file.
 #[cfg(all(feature = "physics", feature = "render"))]
 pub mod collider_meshes;
+#[cfg(all(feature = "input", feature = "remote"))]
+mod input_remote;
+#[cfg(all(feature = "input", feature = "remote"))]
+pub use input_remote::InputRemotePlugin;
 #[cfg(feature = "profiling")]
 pub mod profiler;
 mod scene_bootstrap;
@@ -487,99 +491,6 @@ impl kooch_core::plugin::Plugin for PhysicsRemotePlugin {
 
     fn name(&self) -> &str {
         "PhysicsRemotePlugin"
-    }
-}
-
-/// Receives the input the editor captured: a windowless host gets no key events, so Play plus a key
-/// did nothing (#710). `RemoteInputBackend` feeds the same `InputBackend` a game reads; here for
-/// the same reason as [`PhysicsRemotePlugin`].
-#[cfg(all(feature = "input", feature = "remote"))]
-pub struct InputRemotePlugin;
-
-#[cfg(all(feature = "input", feature = "remote"))]
-impl kooch_core::plugin::Plugin for InputRemotePlugin {
-    fn build(&self, app: &mut kooch_core::app::App) {
-        let backend: Box<dyn kooch_input::InputBackend> =
-            Box::new(kooch_input::RemoteInputBackend::new());
-        app.insert_resource(backend);
-        // The host has no `InputPlugin`, so this is its frame boundary: without it no edge ever
-        // expired and the event queue grew for the whole Play session (#766).
-        app.add_event::<kooch_input::InputEvent>();
-        app.add_system(kooch_core::stage::Stage::Input, pump_remote_input);
-        // After gameplay, so a rumble asked this frame leaves with the next pull.
-        app.add_system(kooch_core::stage::Stage::PostUpdate, forward_rumble);
-        app.add_system(
-            kooch_core::stage::Stage::Startup,
-            |resources: &mut kooch_core::resource::Resources| {
-                if !resources.contains::<kooch_remote::extensions::RemoteExtensions>() {
-                    resources.insert(kooch_remote::extensions::RemoteExtensions::default());
-                }
-                let Some(extensions) =
-                    resources.get_mut::<kooch_remote::extensions::RemoteExtensions>()
-                else {
-                    return;
-                };
-                extensions.register(
-                    "input.state",
-                    Box::new(|resources, payload| {
-                        let snapshot: kooch_input::InputSnapshot =
-                            kooch_remote::serde_json::from_value(payload.clone())
-                                .map_err(|e| format!("malformed input snapshot: {e}"))?;
-                        let backend = resources
-                            .get_mut::<Box<dyn kooch_input::InputBackend>>()
-                            .ok_or_else(|| "this host has no input backend".to_owned())?;
-                        // Through the trait, not a downcast: a real-device backend ignores
-                        // snapshots by default.
-                        backend.apply_snapshot(&snapshot);
-                        Ok(kooch_remote::serde_json::Value::Null)
-                    }),
-                );
-            },
-        );
-    }
-
-    fn name(&self) -> &str {
-        "InputRemotePlugin"
-    }
-}
-
-/// Hands the editor the rumbles the game asked for: the editor's process holds the pads (#57).
-#[cfg(all(feature = "input", feature = "remote"))]
-fn forward_rumble(resources: &mut kooch_core::resource::Resources) {
-    let Some(backend) = resources.get_mut::<Box<dyn kooch_input::InputBackend>>() else {
-        return;
-    };
-    let rumbles = backend.take_rumbles();
-    if rumbles.is_empty() {
-        return;
-    }
-    let outbox = resources.get_or_default::<kooch_remote::HostOutbox>();
-    for (pad, rumble) in rumbles {
-        let signal = kooch_input::RumbleSignal {
-            pad: pad.index(),
-            rumble,
-        };
-        match kooch_remote::serde_json::to_value(signal) {
-            Ok(payload) => outbox.push(kooch_input::RUMBLE_SIGNAL, payload),
-            Err(error) => tracing::warn!(%error, "could not encode a rumble"),
-        }
-    }
-}
-
-/// The host's half of `InputPlugin`'s frame: publish the edges the snapshots brought, hand the
-/// events to the game.
-#[cfg(all(feature = "input", feature = "remote"))]
-fn pump_remote_input(resources: &mut kooch_core::resource::Resources) {
-    let Some(backend) = resources.get_mut::<Box<dyn kooch_input::InputBackend>>() else {
-        return;
-    };
-    backend.begin_frame();
-    let events = backend.poll();
-    if let Some(buffer) = resources.get_mut::<kooch_core::event::Events<kooch_input::InputEvent>>()
-    {
-        for event in events {
-            buffer.send(event);
-        }
     }
 }
 

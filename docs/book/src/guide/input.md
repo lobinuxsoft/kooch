@@ -121,11 +121,11 @@ to the window instead — motion arrives either way, which is all mouse look rea
 the **Game** panel to the front with the keyboard and the cursor; stopping brings the **Edit View**
 back. Only the edge moves panels: one you switch to mid-play stays where you put it.
 
-While playing, **`Esc`** gives the cursor back without stopping, and a **click on the game image**
-takes it again. Stopping or clicking another panel frees it too: the editor can always get its
-cursor back. The editor
-applies this to its own window whatever process is running the game, so it works the same locally
-and over a remote session.
+While playing, the editor applies the game's `CursorMode` to its own window: when the game changes
+it, and on each **click on the game image**. A click on the game's UI therefore keeps the cursor
+free if the game asks for that, as in its build; a game that never asks gets captured by a click.
+**`Esc`** gives the cursor back without stopping, and so do stopping and clicking another panel: the
+editor can always get its cursor back.
 
 A game reads the same input under Play as in its build. The editor sends what it holds; the game
 process turns that into one frame of `just_pressed` per press and drains the input events once per
