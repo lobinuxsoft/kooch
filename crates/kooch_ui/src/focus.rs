@@ -39,7 +39,10 @@ impl UiFocus {
 
 /// A node focus can land on: one with an action, unless `tabindex="-1"` or disabled.
 pub(crate) fn focusable(tree: &UiTree, node: UiNode) -> bool {
-    tree.interactive(node) && !tree.unfocusable.contains(&node) && !tree.disabled(node)
+    tree.interactive(node)
+        && !tree.unfocusable.contains(&node)
+        && !tree.disabled(node)
+        && !tree.culled(node)
 }
 
 impl UiTree {
@@ -62,8 +65,8 @@ pub fn navigate_focus(resources: &mut Resources) {
         None if appeared.is_some() => focus.focused = appeared,
         None => {}
     }
-    if focus.focused.is_some_and(|(document, _)| {
-        tree(resources, document).is_none()
+    if focus.focused.is_some_and(|(document, node)| {
+        tree(resources, document).is_none_or(|tree| tree.culled(node))
             || document_of(resources, document).is_none_or(|d| d.hidden)
     }) {
         focus.focused = None;

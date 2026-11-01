@@ -72,6 +72,10 @@ pub struct UiTree {
     pub(crate) unfocusable: Vec<UiNode>,
     /// Nodes that neither click nor take focus, sparse.
     disabled: Vec<UiNode>,
+    /// Nodes the game hid, sparse, with the display each had.
+    hidden: Vec<(UiNode, taffy::Display)>,
+    /// Hidden itself or under a hidden ancestor, per node; set by the layout.
+    culled: Vec<bool>,
     /// Toggles and sliders, sparse.
     pub(crate) controls: Vec<crate::controls::Control>,
     /// The node `autofocus` names: it takes focus each time the document appears.
@@ -116,6 +120,8 @@ impl UiTree {
             handlers: Vec::new(),
             unfocusable: Vec::new(),
             disabled: Vec::new(),
+            hidden: Vec::new(),
+            culled: Vec::new(),
             controls: Vec::new(),
             autofocus: None,
             shown: false,
@@ -279,10 +285,11 @@ impl UiTree {
             let Ok(own) = self.layout.layout(self.taffy[index]) else {
                 continue;
             };
-            let origin = match self.parent[index] {
-                u32::MAX => Vec2::ZERO,
-                parent => self.rect[parent as usize].min,
+            let (origin, culled) = match self.parent[index] {
+                u32::MAX => (Vec2::ZERO, false),
+                parent => (self.rect[parent as usize].min, self.culled[parent as usize]),
             };
+            self.culled[index] = culled || !self.visible(UiNode(index as u32));
             let min = origin + Vec2::new(own.location.x, own.location.y);
             let inset = Vec2::new(
                 own.padding.left + own.border.left,
@@ -317,7 +324,7 @@ impl UiTree {
             let generation = atlas.generation();
             self.glyphs.clear();
             for (index, text) in self.text.iter_mut().enumerate() {
-                let Some(text) = text.as_mut() else {
+                let Some(text) = text.as_mut().filter(|_| !self.culled[index]) else {
                     continue;
                 };
                 let origin = text.origin;
@@ -382,21 +389,6 @@ impl UiTree {
         self.rect.get(node.0 as usize).copied()
     }
 
-    /// The first node with this name, in creation order. A scan: the game asks once and keeps the
-    /// handle.
-    pub fn query(&self, name: &str) -> Option<UiNode> {
-        self.name
-            .iter()
-            .position(|own| own.as_deref() == Some(name))
-            .map(|index| UiNode(index as u32))
-    }
-
-    pub fn set_name(&mut self, node: UiNode, name: &str) {
-        if let Some(own) = self.name.get_mut(node.0 as usize) {
-            *own = Some(name.into());
-        }
-    }
-
     pub fn set_click(&mut self, node: UiNode, action: &str) {
         if let Some(own) = self.click.get_mut(node.0 as usize) {
             *own = Some(action.into());
@@ -436,7 +428,9 @@ impl UiTree {
                 let i = node.0 as usize;
                 let rect = self.rect[i];
                 let inside = point.cmpge(rect.min).all() && point.cmplt(rect.min + rect.size).all();
-                inside && (self.interactive(node) || self.paint[i].background[3] > 0.0)
+                inside
+                    && !self.culled[i]
+                    && (self.interactive(node) || self.paint[i].background[3] > 0.0)
             })
     }
 
@@ -470,6 +464,7 @@ impl UiTree {
         self.paint.push(Paint::default());
         self.image.push(None);
         self.text.push(None);
+        self.culled.push(false);
         index
     }
 }
@@ -539,5 +534,6 @@ fn space_key(space: AvailableSpace) -> f32 {
     }
 }
 
+mod query;
 #[cfg(test)]
 mod tests;

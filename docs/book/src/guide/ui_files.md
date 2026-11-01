@@ -67,6 +67,19 @@ not lay out or shape text again; each still reads its two files' dates once a fr
 Every element takes `name` (what `tree.query` finds, unique in the document) and `class` (any
 number, space separated).
 
+Code reads and changes a document through its tree, without touching entities:
+
+```rust
+let tree = resources.get_mut::<UiTrees>().unwrap().get_mut(document).unwrap();
+let coins: Vec<UiNode> = tree.with_class("coin").collect();
+tree.set_class(coins[0], "taken", true); // the sheet's `.taken` rules apply this frame
+let hint = tree.query("hint").unwrap();
+tree.set_visible(hint, false); // `display: none`: no space, no draw, no pointer, no focus
+```
+
+Showing a node again gives it back the display the sheet sets. Hiding a whole layer is
+`UiDocument.hidden`.
+
 ### Templates
 
 `use` instances a file. `<set node="…" attribute="…"/>` inside it overrides one attribute of a named
