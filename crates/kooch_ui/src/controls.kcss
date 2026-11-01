@@ -1,0 +1,46 @@
+/* What toggles and sliders look like under every sheet: a document's own rules come after. */
+
+toggle {
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  background-color: #2a2f3d;
+  border-radius: 6px;
+}
+
+toggle .toggle-check {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+}
+
+toggle:checked .toggle-check {
+  background-color: #6c8cff;
+}
+
+slider {
+  flex-direction: row;
+  align-items: center;
+  width: 240px;
+  height: 24px;
+}
+
+slider .slider-fill {
+  height: 6px;
+  background-color: #6c8cff;
+  border-radius: 3px;
+}
+
+slider .slider-rest {
+  height: 6px;
+  background-color: #3a4050;
+  border-radius: 3px;
+}
+
+slider .slider-thumb {
+  width: 18px;
+  height: 18px;
+  background-color: #e8eaf0;
+  border-radius: 9px;
+}

@@ -1,8 +1,7 @@
 # UI files
 
-> 🚧 Bindings are parsed but not live yet: they arrive with the rest of #280.
-> Of the states, `:hover`, `:active`, `:focus` and `:disabled` are live; `:checked` arrives with the
-> toggles of #280's bindings phase.
+> 🚧 `bind:value` reaches components on the document's entity; a resource as its target is not
+> live yet.
 
 A `UiDocument` points at two files, split like Unity's UXML and USS:
 
@@ -61,8 +60,8 @@ not lay out or shape text again; each still reads its two files' dates once a fr
 | `panel` | A box that lays out its children. |
 | `label` | Text: the element's content. |
 | `button` | A panel that can be clicked and focused. |
-| `toggle` | A checkbox; its value is a `bool`. |
-| `slider` | A track with a thumb; its value is an `f32` between `min` and `max`. |
+| `toggle` | A checkbox; its value is `0` or `1`. `checked="true"` starts it on. |
+| `slider` | A track with a thumb; its value is an `f32` between `min` and `max` (default `0`–`1`), starting at `value`. `step` snaps it; without one the pad moves it a tenth of the range. |
 | `use` | Another `.kxml`, instanced here. |
 
 Every element takes `name` (what `tree.query` finds, unique in the document) and `class` (any
@@ -112,9 +111,15 @@ editor can list the actions on offer, and it works the same when the game runs i
 stops the pointer, so the click does not reach the game. Code turns it on and off with
 `UiTree::set_disabled(node, on)`.
 
-`bind:value="Type.field"` keeps a `toggle` or `slider` in step with a field of a resource or of a
-component on the document's entity, both ways: moving the slider writes the field, and changing the
-field moves the slider.
+`bind:value="Type.field"` keeps a `toggle` or `slider` in step with a field of a component on the
+document's entity, both ways: moving the slider writes the field, and changing the field moves the
+slider. `Type` is the reflected component's name; the field may be a float, an integer or a `bool`.
+The UI holds no value of its own that matters: the field does.
+
+A click or `Submit` flips a toggle; a slider follows a held press, and a focused one moves with
+left/right on the pad or keys (up/down still move focus). Each sends `on:change`, its event's
+`value` the new one. Code reads and sets a control with `UiTree::value` / `set_value`; setting from
+code sends no `on:change`.
 
 A system hears the UI the way it hears input, by reading events. They are read the frame after the
 click:
@@ -174,8 +179,8 @@ takes the stick; the game still reads them too, so a button that keeps focus ans
 A system answers an action by name: `ui_actions(resources, "hud.count")` is every document that sent
 it this frame, once per send.
 
-> Live today: `on:click`, `on:focus`/`on:blur`, `on:cancel` and pad navigation on Overlay
-> documents. `on:change` and `bind:value` arrive with #280's bindings phase.
+> Live today: `on:click`, `on:focus`/`on:blur`, `on:cancel`, `on:change`, `bind:value` and pad
+> navigation on Overlay documents.
 
 ## Style
 
@@ -205,7 +210,13 @@ precedence are CSS's: name over class over element, and the later rule wins a ti
 **States.** `:hover` holds on the node under the pointer and its ancestors, `:active` on the node a
 press started on (and its ancestors) until release, `:focus` on the last action node pressed until
 a press lands elsewhere. A state change runs the cascade again and overwrites what code wrote to the
-node's paint — text content survives. `:checked` and `:disabled` wait for toggles and `disabled`.
+node's paint — text content survives. `:checked` holds on a toggle that is on, `:disabled` on a
+`disabled` node.
+
+**Control parts.** A toggle and a slider are drawn with nodes the engine adds under them, styled
+like any other: `toggle .toggle-check` (paint it under `toggle:checked`), and `slider .slider-fill`,
+`.slider-thumb`, `.slider-rest`. The fill and the rest split the track by the value; the default
+base sheet under every document's own gives all of them a look, which the document's rules override.
 
 **Variables.** `--name: value` in `:root`, read with `var(--name)`.
 

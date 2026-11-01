@@ -72,6 +72,8 @@ pub struct UiTree {
     pub(crate) unfocusable: Vec<UiNode>,
     /// Nodes that neither click nor take focus, sparse.
     disabled: Vec<UiNode>,
+    /// Toggles and sliders, sparse.
+    pub(crate) controls: Vec<crate::controls::Control>,
     /// The node `autofocus` names: it takes focus each time the document appears.
     pub(crate) autofocus: Option<UiNode>,
     /// Drawn last frame: what tells a document that just appeared from one already up.
@@ -114,6 +116,7 @@ impl UiTree {
             handlers: Vec::new(),
             unfocusable: Vec::new(),
             disabled: Vec::new(),
+            controls: Vec::new(),
             autofocus: None,
             shown: false,
             material: Vec::new(),
@@ -144,6 +147,22 @@ impl UiTree {
         self.layout.add_child(above, node).ok()?;
         self.laid_out = None;
         Some(self.append(node, parent.0))
+    }
+
+    /// Grows a node by `grow` against a zero basis: how a slider's parts split its track.
+    pub(crate) fn set_grow(&mut self, node: UiNode, grow: f32) {
+        let Some(&id) = self.taffy.get(node.0 as usize) else {
+            return;
+        };
+        let Ok(style) = self.layout.style(id) else {
+            return;
+        };
+        let style = Style {
+            flex_grow: grow,
+            flex_basis: taffy::Dimension::length(0.0),
+            ..style.clone()
+        };
+        self.set_style(node, style);
     }
 
     pub fn set_style(&mut self, node: UiNode, style: Style) {
@@ -417,7 +436,7 @@ impl UiTree {
                 let i = node.0 as usize;
                 let rect = self.rect[i];
                 let inside = point.cmpge(rect.min).all() && point.cmplt(rect.min + rect.size).all();
-                inside && (self.click[i].is_some() || self.paint[i].background[3] > 0.0)
+                inside && (self.interactive(node) || self.paint[i].background[3] > 0.0)
             })
     }
 

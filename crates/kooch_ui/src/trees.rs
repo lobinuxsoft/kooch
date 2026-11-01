@@ -39,6 +39,12 @@ impl UiTrees {
         self.0.values().for_each(each);
     }
 
+    pub(crate) fn for_each_entity_mut(&mut self, mut each: impl FnMut(Entity, &mut UiTree)) {
+        self.0
+            .iter_mut()
+            .for_each(|(entity, tree)| each(*entity, tree));
+    }
+
     pub(crate) fn for_each_mut(&mut self, mut each: impl FnMut(&mut UiTree)) {
         self.0.values_mut().for_each(|tree| each(tree));
     }

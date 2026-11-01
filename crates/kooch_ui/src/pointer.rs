@@ -7,6 +7,7 @@ use kooch_ecs::query::Query;
 use kooch_ecs::{Entity, ViewSize};
 use kooch_input::InputBackend;
 
+use crate::controls::ControlKind;
 use crate::focus::{UiFocus, focusable};
 use crate::layout::CANVAS_HEIGHT;
 use crate::style::{STATE_ACTIVE, STATE_HOVER};
@@ -20,6 +21,8 @@ pub struct UiEvent {
     pub node: UiNode,
     pub kind: UiEventKind,
     pub action: String,
+    /// A `Change`'s new value: a toggle's `0` or `1`, a slider's number.
+    pub value: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +31,7 @@ pub enum UiEventKind {
     Focus,
     Blur,
     Cancel,
+    Change,
 }
 
 /// Where the pointer is in the UI. A game asks `over` before treating a click as its own.
@@ -92,6 +96,25 @@ pub fn pick_pointer(resources: &mut Resources) {
         pointer.pressed = None;
         pointer.game_held = false;
     }
+    let mut changed = None;
+    if down && let Some((document, node)) = pointer.pressed {
+        let x = overlays
+            .iter()
+            .find(|(entity, _)| *entity == document)
+            .and_then(|(_, input)| input.point)
+            .map(|point| point.x * to_canvas(resources));
+        if let (Some(x), Some(tree)) = (x, trees_mut(resources, document))
+            && tree.control_kind(node) == Some(ControlKind::Slider)
+            && tree.slide_to(node, x)
+        {
+            changed = Some((document, node));
+        }
+    }
+    if let Some((document, node)) = clicked
+        && trees_mut(resources, document).is_some_and(|tree| tree.flip(node))
+    {
+        changed = Some((document, node));
+    }
     pointer.was_down = down;
     pointer.over = hit;
     let claimed = (hit.is_some() && !pointer.game_held) || pointer.pressed.is_some();
@@ -105,6 +128,21 @@ pub fn pick_pointer(resources: &mut Resources) {
     {
         dispatch(resources, event);
     }
+    if let Some(event) =
+        changed.and_then(|(document, node)| event(resources, document, node, UiEventKind::Change))
+    {
+        dispatch(resources, event);
+    }
+}
+
+fn trees_mut(resources: &mut Resources, document: Entity) -> Option<&mut crate::UiTree> {
+    resources.get_mut::<UiTrees>()?.get_mut(document)
+}
+
+/// Canvas units per physical pixel: the pointer arrives in pixels, rects are in canvas units.
+fn to_canvas(resources: &Resources) -> f32 {
+    let physical = resources.get::<ViewSize>().copied().unwrap_or_default().0;
+    CANVAS_HEIGHT / physical.y.max(1) as f32
 }
 
 /// Every Overlay document and what its actions read, in spawn order.
@@ -147,8 +185,7 @@ fn show_states(resources: &mut Resources, was: &UiPointer, now: &UiPointer) {
 
 /// The topmost Overlay node under its document's pointer: documents last-drawn first.
 fn hit(resources: &Resources, overlays: &[(Entity, UiInput)]) -> Option<(Entity, UiNode)> {
-    let physical = resources.get::<ViewSize>().copied().unwrap_or_default().0;
-    let to_canvas = CANVAS_HEIGHT / physical.y.max(1) as f32;
+    let to_canvas = to_canvas(resources);
     let trees = resources.get::<UiTrees>()?;
     overlays.iter().rev().find_map(|&(entity, input)| {
         let node = trees.get(entity)?.pick(input.point? * to_canvas)?;
@@ -162,7 +199,7 @@ fn action_node(resources: &Resources, document: Entity, node: UiNode) -> Option<
     let tree = resources.get::<UiTrees>()?.get(document)?;
     let mut current = Some(node);
     while let Some(node) = current {
-        if tree.click(node).is_some() {
+        if tree.interactive(node) {
             return Some((document, node));
         }
         current = tree.parent(node);
@@ -188,6 +225,9 @@ pub(crate) fn event(
         node,
         kind,
         action: action.to_owned(),
+        value: (kind == UiEventKind::Change)
+            .then(|| tree.value(node))
+            .flatten(),
     })
 }
 

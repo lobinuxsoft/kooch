@@ -1,6 +1,7 @@
 //! A [`UiTree`] from a parsed `.kxml` and its sheet.
 
 use crate::cascade::resolve;
+use crate::controls::{SLIDER_FILL, SLIDER_REST, SLIDER_THUMB};
 use crate::images::UiImage;
 use crate::restyle::Styled;
 use crate::source::{NO_PARENT, UiSource};
@@ -11,6 +12,7 @@ use crate::{UiEventKind, UiNode, UiTree};
 pub const DEFAULT_FONT_SIZE: f32 = 24.0;
 
 pub fn build_tree(source: &UiSource, sheet: Option<&UiStyleSheet>) -> UiTree {
+    let source = &crate::controls::with_parts(source);
     let states: Vec<u8> = source
         .elements
         .iter()
@@ -50,6 +52,9 @@ pub fn build_tree(source: &UiSource, sheet: Option<&UiStyleSheet>) -> UiTree {
                     .handlers
                     .push((node, UiEventKind::Focus, value.clone())),
                 "on:blur" => tree.handlers.push((node, UiEventKind::Blur, value.clone())),
+                "on:change" => tree
+                    .handlers
+                    .push((node, UiEventKind::Change, value.clone())),
                 "on:cancel" => tree
                     .handlers
                     .push((node, UiEventKind::Cancel, value.clone())),
@@ -59,12 +64,15 @@ pub fn build_tree(source: &UiSource, sheet: Option<&UiStyleSheet>) -> UiTree {
                 _ => {}
             }
         }
+        tree.controls
+            .extend(crate::controls::declared(element, node));
         if let Some(text) = &element.text {
             tree.set_text(node, text, style.font_size.unwrap_or(DEFAULT_FONT_SIZE));
         }
         apply(tree, node, style);
     }
     let mut tree = tree.unwrap_or_else(|| UiTree::new(taffy::Style::default()));
+    find_parts(&mut tree, source, &nodes);
     tree.styled = Some(Styled {
         source: source.clone(),
         sheet: sheet.cloned(),
@@ -72,6 +80,8 @@ pub fn build_tree(source: &UiSource, sheet: Option<&UiStyleSheet>) -> UiTree {
         states,
         dirty: false,
     });
+    // After `styled`: `:checked` is a state, and states need it.
+    tree.show_values();
     tree
 }
 
@@ -91,4 +101,29 @@ pub(crate) fn apply(tree: &mut UiTree, node: UiNode, style: &ResolvedStyle) {
         tint: style.tint.unwrap_or([1.0; 4]),
     });
     tree.set_image(node, image);
+}
+
+/// Each slider's fill, thumb and rest: the parts `with_parts` appended under it, in that order.
+fn find_parts(tree: &mut UiTree, source: &UiSource, nodes: &[Option<UiNode>]) {
+    for control in &mut tree.controls {
+        let Some(element) = nodes.iter().position(|n| *n == Some(control.node)) else {
+            continue;
+        };
+        let parts: Vec<UiNode> = source
+            .elements
+            .iter()
+            .zip(nodes)
+            .filter(|(child, _)| {
+                child.parent == element as u32
+                    && child
+                        .classes
+                        .iter()
+                        .any(|class| [SLIDER_FILL, SLIDER_THUMB, SLIDER_REST].contains(&&**class))
+            })
+            .filter_map(|(_, node)| *node)
+            .collect();
+        if let [fill, thumb, rest] = parts[..] {
+            control.parts = Some([fill, thumb, rest]);
+        }
+    }
 }

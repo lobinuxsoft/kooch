@@ -7,6 +7,7 @@ use kooch_core::time::Time;
 use kooch_ecs::Entity;
 use kooch_ecs::query::Query;
 
+use crate::controls::ControlKind;
 use crate::pointer::{dispatch, event};
 use crate::style::{STATE_ACTIVE, STATE_FOCUS};
 use crate::ui_input::read;
@@ -38,7 +39,7 @@ impl UiFocus {
 
 /// A node focus can land on: one with an action, unless `tabindex="-1"` or disabled.
 pub(crate) fn focusable(tree: &UiTree, node: UiNode) -> bool {
-    tree.click(node).is_some() && !tree.unfocusable.contains(&node) && !tree.disabled(node)
+    tree.interactive(node) && !tree.unfocusable.contains(&node) && !tree.disabled(node)
 }
 
 impl UiTree {
@@ -78,7 +79,14 @@ pub fn navigate_focus(resources: &mut Resources) {
                 focus.submit_was = input.submit;
                 focus.cancel_was = input.cancel;
             }
-            steer(resources, &mut focus, document, input.navigate, dt);
+            if let Some((sign, node)) = steer(resources, &mut focus, document, input.navigate, dt)
+                && resources
+                    .get_mut::<UiTrees>()
+                    .and_then(|trees| trees.get_mut(document))
+                    .is_some_and(|tree| tree.step(node, sign))
+            {
+                events.extend(event(resources, document, node, UiEventKind::Change));
+            }
             if input.submit && !focus.submit_was {
                 focus.submitting = focus.focused;
             }
@@ -88,6 +96,13 @@ pub fn navigate_focus(resources: &mut Resources) {
                     .filter(|_| focus.submitting == focus.focused)
                 {
                     events.extend(event(resources, document, node, UiEventKind::Click));
+                    if resources
+                        .get_mut::<UiTrees>()
+                        .and_then(|trees| trees.get_mut(document))
+                        .is_some_and(|tree| tree.flip(node))
+                    {
+                        events.extend(event(resources, document, node, UiEventKind::Change));
+                    }
                 }
                 focus.submitting = None;
             }
@@ -122,11 +137,18 @@ pub fn navigate_focus(resources: &mut Resources) {
     }
 }
 
-/// A direction fires once when pushed, then repeats while held.
-fn steer(resources: &Resources, focus: &mut UiFocus, document: Entity, navigate: Vec2, dt: f32) {
+/// A direction fires once when pushed, then repeats while held. Sideways on a focused slider it
+/// moves the slider instead of the focus: returns the way and the slider.
+fn steer(
+    resources: &Resources,
+    focus: &mut UiFocus,
+    document: Entity,
+    navigate: Vec2,
+    dt: f32,
+) -> Option<(f32, UiNode)> {
     let Some(direction) = quantize(navigate) else {
         focus.held = None;
-        return;
+        return None;
     };
     let fire = if focus.held == Some(direction) {
         focus.repeat_in -= dt;
@@ -141,15 +163,17 @@ fn steer(resources: &Resources, focus: &mut UiFocus, document: Entity, navigate:
     };
     focus.held = Some(direction);
     if !fire {
-        return;
+        return None;
     }
-    let Some((_, from)) = focus.focused else {
-        return;
-    };
-    if let Some(next) = tree(resources, document).and_then(|tree| neighbour(tree, from, direction))
-    {
+    let (_, from) = focus.focused?;
+    let tree = tree(resources, document)?;
+    if direction.x != 0.0 && tree.control_kind(from) == Some(ControlKind::Slider) {
+        return Some((direction.x, from));
+    }
+    if let Some(next) = neighbour(tree, from, direction) {
         focus.focused = Some((document, next));
     }
+    None
 }
 
 /// Past halfway, along whichever axis is pushed further, in canvas space (`+Y` down).
