@@ -34,11 +34,8 @@ pub(crate) fn draw_entity_picker(
 
     // The list runs only while the popup is open: filtering a scene's entities is not something to
     // pay for a closed dropdown every frame.
-    let slot = super::search_combo::search_combo(
-        ui,
-        ("entity_picker", salt),
-        selected_text,
-        |ui, needle| {
+    let slot =
+        crate::widgets::search_combo(ui, ("entity_picker", salt), selected_text, |ui, needle| {
             if ui.selectable_label(current.is_none(), "(None)").clicked() {
                 if current.is_some() {
                     new_value = Some(ReflectValue::EntityRef(None));
@@ -70,8 +67,7 @@ pub(crate) fn draw_entity_picker(
                     false => ui.weak(format!("(no entity carries a {requires})")),
                 };
             }
-        },
-    );
+        });
 
     // Drop target: an entity dragged out of the World panel, which sets a bare `Entity` as its
     // payload — the same one reparenting uses.

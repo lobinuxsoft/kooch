@@ -2,6 +2,9 @@
 //! pans, the wheel zooms around the cursor one step at a time and F frames the canvas, as Unity's
 //! UI Builder does.
 
+use crate::panels::inspector::AssetCatalogEntry;
+use crate::ui_builder::SHEET_TYPE;
+
 mod hierarchy;
 mod inspector;
 mod styles;
@@ -23,14 +26,18 @@ const MAX_SIDE: f32 = 4096.0;
 const HIERARCHY_SHARE: f32 = 0.18;
 const INSPECTOR_SHARE: f32 = 0.24;
 
-pub(crate) fn draw_ui_builder(ui: &mut egui::Ui, builder: Option<&mut UiBuilder>) {
+pub(crate) fn draw_ui_builder(
+    ui: &mut egui::Ui,
+    builder: Option<&mut UiBuilder>,
+    catalog: &[AssetCatalogEntry],
+) {
     let Some(builder) = builder else {
         ui.centered_and_justified(|ui| {
             ui.label("Double-click a .kxml in the Asset Browser to open it here.");
         });
         return;
     };
-    toolbar(ui, builder);
+    toolbar(ui, builder, catalog);
     ui.separator();
     let full = ui.available_rect_before_wrap();
     let left = full.with_max_x(full.min.x + full.width() * HIERARCHY_SHARE);
@@ -43,12 +50,12 @@ pub(crate) fn draw_ui_builder(ui: &mut egui::Ui, builder: Option<&mut UiBuilder>
         canvas(ui, builder);
     });
     ui.scope_builder(egui::UiBuilder::new().max_rect(right.shrink(4.0)), |ui| {
-        inspector::draw(ui, builder);
+        inspector::draw(ui, builder, catalog);
     });
     ui.advance_cursor_after_rect(full);
 }
 
-fn toolbar(ui: &mut egui::Ui, builder: &mut UiBuilder) {
+fn toolbar(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEntry]) {
     ui.horizontal(|ui| {
         let name = builder
             .path
@@ -91,31 +98,15 @@ fn toolbar(ui: &mut egui::Ui, builder: &mut UiBuilder) {
             .response
             .on_hover_text("The screen the canvas is laid out for");
 
-        let sheet = builder
-            .style
-            .and_then(|guid| builder.sheets.iter().find(|(own, _)| *own == guid))
-            .map_or("Default sheet".to_owned(), |(_, name)| name.clone());
-        let mut picked = None;
-        egui::ComboBox::from_id_salt("ui_builder_sheet")
-            .selected_text(sheet)
-            .show_ui(ui, |ui| {
-                if ui
-                    .selectable_label(builder.style.is_none(), "Default sheet")
-                    .clicked()
-                {
-                    picked = Some(None);
-                }
-                for (guid, name) in &builder.sheets {
-                    if ui
-                        .selectable_label(builder.style == Some(*guid), name)
-                        .clicked()
-                    {
-                        picked = Some(Some(*guid));
-                    }
-                }
-            })
-            .response
-            .on_hover_text("The .kcss the canvas wears; the markup never names one");
+        // The .kcss the canvas wears; (None) is the default sheet.
+        let picked = crate::widgets::asset_picker(
+            ui,
+            "ui_builder_sheet",
+            builder.style,
+            SHEET_TYPE,
+            catalog,
+            None,
+        );
         if let Some(style) = picked {
             builder.set_style(style);
         }

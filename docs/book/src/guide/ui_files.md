@@ -301,7 +301,7 @@ on a canvas, drawn by the same pass that draws it in the game. No scene and no c
   inside stays the template's. Click a row, or the canvas, to select.
 - **Inspector** — the selected element's attributes as typed fields, from what each element reads:
   a checkbox for `disabled` or `checked`, a number for a slider's `min`/`max`/`step`, the
-  project's `.kxml` files for a `<use>`'s `src`, text for `on:*` actions and `bind:value`. A label
+  editor's asset picker for a `<use>`'s `src` (search, or drop a `.kxml` from the Asset Browser), text for `on:*` actions and `bind:value`. A label
   in **bold** is set in the file; **↺** removes it, and the element reads its default again.
   Attributes the element does not know are listed under *Other attributes*, where any can be
   added. Last, the **inline style**, grouped as Display, Position, Flex, Align, Size, Margin,

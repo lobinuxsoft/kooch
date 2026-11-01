@@ -6,7 +6,6 @@ mod choices;
 mod entity_picker;
 mod list;
 mod nested;
-mod search_combo;
 mod value_widget;
 
 pub(crate) use self::asset::AssetCatalogEntry;

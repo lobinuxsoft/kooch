@@ -8,9 +8,10 @@ use std::path::{Component, Path, PathBuf};
 use kooch_ui::schema::{AttributeKind, AttributeSpec};
 use kooch_ui::source::ElementKind;
 
-use crate::ui_builder::UiBuilder;
+use crate::panels::inspector::AssetCatalogEntry;
+use crate::ui_builder::{SOURCE_TYPE, UiBuilder};
 
-pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder) {
+pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEntry]) {
     ui.strong("Inspector");
     ui.separator();
     let Some(origin) = builder.selected else {
@@ -48,7 +49,7 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder) {
                             }
                             for spec in schema {
                                 let value = attribute(&inspected.attributes, spec.key);
-                                typed_row(ui, builder, origin, spec, value);
+                                typed_row(ui, builder, origin, spec, value, catalog);
                             }
                         });
                 });
@@ -98,6 +99,7 @@ fn typed_row(
     origin: u32,
     spec: &AttributeSpec,
     value: Option<String>,
+    catalog: &[AssetCatalogEntry],
 ) {
     match spec.kind {
         AttributeKind::Bool => {
@@ -123,7 +125,7 @@ fn typed_row(
             }
             unset(ui, builder, origin, spec.key, value.is_some());
         }
-        AttributeKind::Template => template_row(ui, builder, origin, spec, value),
+        AttributeKind::Template => template_row(ui, builder, origin, spec, value, catalog),
         AttributeKind::Text | AttributeKind::Action | AttributeKind::Binding => {
             let hint = match spec.kind {
                 AttributeKind::Action => "menu.resume",
@@ -154,33 +156,40 @@ fn text_row(
     ui.end_row();
 }
 
-/// A `.kxml` of the project, written relative to the file being edited.
+/// A `.kxml` of the project through the editor's asset picker, written relative to the file.
 fn template_row(
     ui: &mut egui::Ui,
     builder: &mut UiBuilder,
     origin: u32,
     spec: &AttributeSpec,
     value: Option<String>,
+    catalog: &[AssetCatalogEntry],
 ) {
     label(ui, spec.key, spec.hint, value.is_some());
     let folder = builder.path.parent().unwrap_or(Path::new("")).to_path_buf();
-    let mut picked = None;
-    egui::ComboBox::from_id_salt(("ui_builder_src", origin))
-        .selected_text(value.clone().unwrap_or_else(|| "(none)".to_owned()))
-        .width(ui.available_width())
-        .show_ui(ui, |ui| {
-            for path in &builder.templates {
-                let shown = relative(&folder, path).to_string_lossy().replace('\\', "/");
-                if ui
-                    .selectable_label(value.as_deref() == Some(shown.as_str()), &shown)
-                    .clicked()
-                {
-                    picked = Some(shown);
-                }
+    let written = |path: &Path| relative(&folder, path).to_string_lossy().replace('\\', "/");
+    let current = value.as_deref().and_then(|value| {
+        catalog
+            .iter()
+            .find(|entry| entry.type_name == SOURCE_TYPE && written(&entry.path) == value)
+            .map(|entry| entry.guid)
+    });
+    let picked = crate::widgets::asset_picker(
+        ui,
+        ("ui_builder_src", origin),
+        current,
+        SOURCE_TYPE,
+        catalog,
+        Some(builder.source),
+    );
+    match picked {
+        Some(Some(guid)) => {
+            if let Some(entry) = catalog.iter().find(|entry| entry.guid == guid) {
+                builder.set_attribute(origin, spec.key, &written(&entry.path));
             }
-        });
-    if let Some(src) = picked {
-        builder.set_attribute(origin, spec.key, &src);
+        }
+        Some(None) => builder.set_attribute(origin, spec.key, ""),
+        None => {}
     }
     unset(ui, builder, origin, spec.key, value.is_some());
 }
