@@ -115,6 +115,24 @@ pub fn build_documents(resources: &mut Resources) {
     }
 }
 
+/// A tree from files that belongs to no entity: the UI Builder's.
+pub fn build_file(
+    database: &AssetDatabase,
+    server: Option<&mut AssetServer>,
+    source: Guid,
+    style: Option<Guid>,
+) -> UiTree {
+    build(database, server, source, style)
+}
+
+/// Whether a file `tree` was built from changed on disk since; a tree built in code never is.
+pub fn stale(database: &AssetDatabase, tree: &UiTree) -> bool {
+    tree.origin.as_ref().is_some_and(|origin| {
+        origin.markup != stamp(database, origin.source, None, &origin.templates)
+            || origin.sheet != sheet_stamp(database, origin.style)
+    })
+}
+
 /// A file that fails still gets a tree, empty, stamped: it is read again when it changes, not
 /// every frame.
 fn build(

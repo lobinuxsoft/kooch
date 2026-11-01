@@ -12,6 +12,7 @@ pub(crate) mod performance;
 pub(crate) mod profiler;
 pub(crate) mod shader_graph;
 pub(crate) mod systems;
+pub(crate) mod ui_builder;
 pub(crate) mod view;
 pub(crate) mod world;
 

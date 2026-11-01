@@ -90,7 +90,8 @@ impl EditorAction {
             // The graph is a document this side owns, like the map above.
             | Self::OpenShaderGraph { .. }
             | Self::SaveShaderGraph
-            | Self::ShaderGraphFocused => false,
+            | Self::ShaderGraphFocused
+            | Self::OpenUiBuilder { .. } => false,
 
             // Only the scene's history needs the world. A prefab or an
             // input map is a document this side owns, and undoing an edit
@@ -201,6 +202,7 @@ impl EditorAction {
             | Self::OpenShaderGraph { .. }
             | Self::SaveShaderGraph
             | Self::ShaderGraphFocused
+            | Self::OpenUiBuilder { .. }
             | Self::SetIdeCommand { .. }
             | Self::SetLaunchEnv { .. }
             | Self::EditMaterial { .. }

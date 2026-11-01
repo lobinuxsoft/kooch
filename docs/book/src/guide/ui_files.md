@@ -279,3 +279,19 @@ Saving the PNG shows the change without Play. Images are not clipped to `border-
 A bare `0` is a length. Colours are sRGB: `hsl()`, `lab()` and the rest are a warning.
 
 Anything else is a warning naming the file and line, and the rule's other properties still apply.
+
+## UI Builder
+
+Double-click a `.kxml` in the Asset Browser and it opens in the **UI Builder**: the document alone
+on a canvas, drawn by the same pass that draws it in the game. No scene and no camera behind it.
+
+- **Resolution** — the screen the canvas is laid out for: the handheld's 1280×800 first, then 720p,
+  1080p, 1440p and a portrait phone. The layout is the game's: 1080 canvas units tall, the width
+  from the aspect.
+- **Sheet** — the `.kcss` the canvas wears. The markup never names one, so the Builder starts with
+  the sheet a document in the open scene pairs it with, and the toolbar picks another.
+- **Zoom** — the wheel zooms one step around the cursor, the middle button pans, and **F** or
+  **Fit** frames the whole canvas. The canvas is rendered at the size it is shown, so text stays
+  sharp up to 4096 pixels a side.
+
+Saving either file updates the canvas. Editing the tree from the Builder comes next (#280).

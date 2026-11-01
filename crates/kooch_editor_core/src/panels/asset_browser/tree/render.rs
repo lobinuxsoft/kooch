@@ -226,6 +226,14 @@ pub(super) fn render_leaf(
             EditorAction::OpenShaderGraph {
                 path: leaf.path.clone(),
             }
+        } else if leaf
+            .path
+            .extension()
+            .is_some_and(|e| e == kooch_ui::source::UI_EXTENSION)
+        {
+            EditorAction::OpenUiBuilder {
+                path: leaf.path.clone(),
+            }
         } else if super::menus::is_scene(&leaf.path) {
             EditorAction::OpenScene {
                 path: Some(leaf.path.clone()),

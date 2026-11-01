@@ -14,6 +14,7 @@ pub(super) fn show_opened(
     windows: &OsWindows,
     open_shader_graph: Option<&OpenShaderGraph>,
     open_input_map: Option<&OpenInputMap>,
+    open_ui_builder: bool,
     actions: &mut Vec<EditorAction>,
 ) {
     // Opening an asset has to show it. A panel that loaded the
@@ -42,5 +43,16 @@ pub(super) fn show_opened(
             dock.add_window(vec![EditorTab::InputMap]);
         }
         actions.push(EditorAction::InputMapFocused);
+    }
+    if open_ui_builder && !crate::os_windows::shown(dock, windows, EditorTab::UiBuilder) {
+        // A canvas needs room, like a graph.
+        let surface = dock.add_window(vec![EditorTab::UiBuilder]);
+        let screen = ui.max_rect();
+        let size = egui::vec2(screen.width() * 0.7, screen.height() * 0.75);
+        if let Some(window) = dock.get_window_state_mut(surface) {
+            window
+                .set_size(size)
+                .set_position(screen.center() - size / 2.0);
+        }
     }
 }

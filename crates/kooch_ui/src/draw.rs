@@ -31,21 +31,40 @@ pub fn draw_documents(resources: &mut Resources) {
         }
     }
     if let Some(atlas) = resources.get_mut::<GlyphAtlas>() {
-        list.atlas_side = atlas.side();
-        // Grown over one not uploaded yet, not replacing it: a frame the renderer skipped would
-        // otherwise lose its glyphs.
-        if let Some(dirty) = atlas.take_dirty() {
-            let rect = match list.atlas_upload.take() {
-                Some(pending) => union(pending.rect, dirty),
-                None => dirty,
-            };
-            list.atlas_upload = Some(AtlasUpload {
-                rect,
-                texels: region(atlas, rect),
-            });
-        }
+        upload(atlas, &mut list);
     }
     resources.insert(list);
+}
+
+/// One tree over a target of `physical` pixels, its atlas's changes included: the UI Builder's
+/// canvas, which belongs to no entity.
+pub fn draw_tree(
+    tree: &UiTree,
+    atlas: &mut GlyphAtlas,
+    physical: glam::UVec2,
+    list: &mut UiDrawList,
+) {
+    let scale = physical.y.max(1) as f32 / CANVAS_HEIGHT;
+    let screen = [0.0, 0.0, physical.x as f32, physical.y as f32];
+    list.quads.clear();
+    push_tree(tree, atlas, scale, screen, &mut list.quads);
+    upload(atlas, list);
+}
+
+fn upload(atlas: &mut GlyphAtlas, list: &mut UiDrawList) {
+    list.atlas_side = atlas.side();
+    // Grown over one not uploaded yet, not replacing it: a frame the renderer skipped would
+    // otherwise lose its glyphs.
+    if let Some(dirty) = atlas.take_dirty() {
+        let rect = match list.atlas_upload.take() {
+            Some(pending) => union(pending.rect, dirty),
+            None => dirty,
+        };
+        list.atlas_upload = Some(AtlasUpload {
+            rect,
+            texels: region(atlas, rect),
+        });
+    }
 }
 
 fn push_tree(

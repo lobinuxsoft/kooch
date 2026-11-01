@@ -49,6 +49,8 @@ pub(crate) enum EditorTab {
     Performance,
     /// What runs each frame, and what is switched off (#982).
     Systems,
+    /// A `.kxml` on a canvas of its own (#280).
+    UiBuilder,
 }
 
 /// The `.shader` open in the Shader Graph panel, as its graph.
@@ -112,6 +114,7 @@ pub(crate) const ALL_TABS: &[EditorTab] = &[
     EditorTab::Profiler,
     EditorTab::Performance,
     EditorTab::Systems,
+    EditorTab::UiBuilder,
 ];
 
 impl EditorTab {
@@ -129,6 +132,7 @@ impl EditorTab {
             Self::Components => format!("{} Components", crate::icons::LIST_BULLETS),
             Self::AssetBrowser => format!("{} Assets", crate::icons::FOLDER_OPEN),
             Self::InputMap => format!("{} Input Map", crate::icons::SLIDERS),
+            Self::UiBuilder => format!("{} UI Builder", crate::icons::SLIDERS),
             Self::ShaderGraph => format!("{} Shader Graph", crate::icons::TREE_STRUCTURE),
             Self::Console => format!("{} Console", crate::icons::TERMINAL),
             Self::Build => format!("{} Build", crate::icons::PACKAGE),
