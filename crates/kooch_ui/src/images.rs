@@ -45,37 +45,54 @@ pub fn load_images(resources: &mut Resources) {
     if wanted.is_empty() {
         return;
     }
+    let Some(mut atlas) = resources.remove::<GlyphAtlas>() else {
+        return;
+    };
     let mut server = resources.remove::<AssetServer>();
-    let mut decoded = Vec::new();
-    if let (Some(database), Some(atlas)) = (
-        resources.get::<AssetDatabase>(),
-        resources.get::<GlyphAtlas>(),
-    ) {
-        for guid in wanted {
-            let modified = stamp(database, guid, None, &[]);
-            if atlas
-                .image(guid)
-                .is_some_and(|image| image.modified == modified)
-            {
-                continue;
-            }
-            match decode(database, server.as_mut(), guid) {
-                Ok(image) => decoded.push((guid, modified, image)),
-                Err(error) => tracing::warn!("UI image not loaded: {error}"),
-            }
-        }
+    if let Some(database) = resources.get::<AssetDatabase>() {
+        pack(wanted, database, server.as_mut(), &mut atlas);
     }
     if let Some(server) = server {
         resources.insert(server);
     }
-    if let Some(atlas) = resources.get_mut::<GlyphAtlas>() {
-        for (guid, modified, image) in decoded {
-            if atlas
-                .insert_image(guid, modified, image.dimensions(), image.as_raw())
-                .is_none()
-            {
-                tracing::warn!("UI image {guid} does not fit the atlas");
+    resources.insert(atlas);
+}
+
+/// [`load_images`] for one tree drawn with an atlas of its own, as the UI Builder's canvas is.
+pub fn load_tree_images(
+    tree: &UiTree,
+    database: &AssetDatabase,
+    server: Option<&mut AssetServer>,
+    atlas: &mut GlyphAtlas,
+) {
+    let wanted: HashSet<Guid> = tree.image.iter().flatten().map(|i| i.guid).collect();
+    pack(wanted, database, server, atlas);
+}
+
+fn pack(
+    wanted: HashSet<Guid>,
+    database: &AssetDatabase,
+    mut server: Option<&mut AssetServer>,
+    atlas: &mut GlyphAtlas,
+) {
+    for guid in wanted {
+        let modified = stamp(database, guid, None, &[]);
+        if atlas
+            .image(guid)
+            .is_some_and(|image| image.modified == modified)
+        {
+            continue;
+        }
+        match decode(database, server.as_deref_mut(), guid) {
+            Ok(image) => {
+                if atlas
+                    .insert_image(guid, modified, image.dimensions(), image.as_raw())
+                    .is_none()
+                {
+                    tracing::warn!("UI image {guid} does not fit the atlas");
+                }
             }
+            Err(error) => tracing::warn!("UI image not loaded: {error}"),
         }
     }
 }

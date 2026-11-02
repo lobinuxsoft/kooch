@@ -36,7 +36,7 @@ pub use document::{MODE_CHOICES, MODE_OVERLAY, MODE_WORLD, UiDocument};
 pub use documents::{build_documents, build_markup};
 pub use draw::{draw_documents, draw_tree};
 pub use focus::{UiFocus, navigate_focus};
-pub use images::{UiImage, load_images};
+pub use images::{UiImage, load_images, load_tree_images};
 pub use layout::{CANVAS_HEIGHT, canvas, layout_documents};
 pub use plugin::{UiComponentsPlugin, UiPlugin};
 pub use pointer::{UiAction, UiActions, UiEvent, UiEventKind, UiPointer, pick_pointer, ui_actions};

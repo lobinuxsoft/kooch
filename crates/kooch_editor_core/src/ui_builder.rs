@@ -156,6 +156,10 @@ impl UiBuilder {
                     Err(error) => self.error = Some(error),
                 }
             }
+            // The canvas draws with its own atlas, which the game's `load_images` never fills.
+            if let Some(tree) = self.tree.as_ref() {
+                kooch_ui::load_tree_images(tree, database, server.as_mut(), &mut self.atlas);
+            }
         }
         if let Some(server) = server {
             resources.insert(server);
