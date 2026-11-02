@@ -297,8 +297,10 @@ on a canvas, drawn by the same pass that draws it in the game. No scene and no c
   **Fit** frames the whole canvas. The canvas is rendered at the size it is shown, so text stays
   sharp up to 4096 pixels a side.
 
-- **Hierarchy** — the file's elements as it nests them; a `<use>` is one row, its template's
-  inside stays the template's. Click a row, or the canvas, to select. Drag a row to move it: onto
+- **Hierarchy** — the file's elements as it nests them. Under a `<use>`, greyed, its template's
+  nodes: select a named one and the Inspector overrides it on this instance only, written as a
+  `<set node="…">` (an empty field reads the template). An unnamed node needs a `name` in its
+  template first. Click a row, or the canvas, to select. Drag a row to move it: onto
   the middle of a `panel`, `button` or the root it goes inside, last; onto a row's top or bottom
   edge it goes before or after. The right-click menu renames (sets `name`; a double-click does
   too), duplicates (**Ctrl+D**) and deletes (**Del**).
