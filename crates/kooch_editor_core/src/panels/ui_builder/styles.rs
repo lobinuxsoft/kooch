@@ -7,7 +7,7 @@ use std::path::Path;
 
 use kooch_core::Guid;
 
-use crate::panels::inspector::AssetCatalogEntry;
+use crate::panels::inspector::{AssetCatalogEntry, AssetSource};
 use crate::ui_builder::UiBuilder;
 
 /// What the asset fields pick from, and the folder their `url()`s are relative to.
@@ -15,6 +15,8 @@ struct Assets<'a> {
     fonts: &'a [(Guid, String)],
     catalog: &'a [AssetCatalogEntry],
     folder: &'a Path,
+    /// The project's `assets/`, where a build merges the engine's: an engine image is written there.
+    project: Option<&'a Path>,
 }
 
 pub(super) fn draw(
@@ -27,10 +29,15 @@ pub(super) fn draw(
     let mut style = InlineStyle::parse(written);
     let mut changed = false;
     let folder = builder.path.parent().unwrap_or(Path::new("")).to_path_buf();
+    let project = catalog
+        .iter()
+        .find(|entry| entry.guid == builder.source)
+        .and_then(|entry| entry.path.ancestors().nth(entry.name.components().count()));
     let assets = Assets {
         fonts: &builder.fonts,
         catalog,
         folder: &folder,
+        project,
     };
     for category in &CATEGORIES {
         let set = category
@@ -247,19 +254,25 @@ fn picker(
     crate::widgets::asset_picker(ui, id, current, kind, assets.catalog, None)
 }
 
+/// A project file shadows the engine's of the same name, as it does at runtime.
 fn find(assets: &Assets, kind: &str, written: &str) -> Option<Guid> {
     assets
         .catalog
         .iter()
-        .find(|entry| {
+        .filter(|entry| {
             entry.type_name == kind && relative(assets, entry.guid).as_deref() == Some(written)
         })
+        .min_by_key(|entry| entry.source != AssetSource::Project)
         .map(|entry| entry.guid)
 }
 
 fn relative(assets: &Assets, guid: Guid) -> Option<String> {
     let entry = assets.catalog.iter().find(|entry| entry.guid == guid)?;
-    let path = super::inspector::relative(assets.folder, &entry.path);
+    let path = match (entry.source, assets.project) {
+        (AssetSource::Engine, Some(project)) => project.join(&entry.name),
+        _ => entry.path.clone(),
+    };
+    let path = super::inspector::relative(assets.folder, &path);
     Some(path.to_string_lossy().replace('\\', "/"))
 }
 

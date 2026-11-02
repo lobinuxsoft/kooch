@@ -174,12 +174,13 @@ fn tree_from(
     templates: &mut Vec<PathBuf>,
 ) -> Result<UiTree, String> {
     let markup = UiSource::parse(text).map_err(|e| format!("{}: {e}", source_path.display()))?;
+    let engine = engine_assets(server.as_deref());
     let markup = expand(
         markup,
         source_path,
         &mut |path| read(server.as_deref_mut(), path),
         templates,
-        &|path| database.guid_for(path),
+        &|path| image_guid(database, engine.as_deref(), path),
         0,
     )?;
     Ok(build_tree(
@@ -194,6 +195,7 @@ fn read_sheet(
     server: Option<&mut AssetServer>,
     style: Option<Guid>,
 ) -> Result<UiStyleSheet, String> {
+    let engine = engine_assets(server.as_deref());
     let sheet = match style {
         Some(guid) => {
             let path = path_of(database, guid)?;
@@ -201,7 +203,7 @@ fn read_sheet(
             warn_skipped(&path, &sheet);
             let folder = path.parent().unwrap_or(Path::new(""));
             sheet.resolve_images(|url| {
-                let guid = database.guid_for(&normalise(&folder.join(url)));
+                let guid = image_guid(database, engine.as_deref(), &normalise(&folder.join(url)));
                 if guid.is_none() {
                     tracing::warn!("{}: image `{url}` is not a known asset", path.display());
                 }
@@ -220,6 +222,29 @@ fn read_sheet(
 
 const DEFAULT_SHEET: &str = include_str!("default.kcss");
 const CONTROLS_SHEET: &str = include_str!("controls.kcss");
+
+/// The engine's `assets/` while it is a tree of its own (the editor, Play); a build merges it into
+/// the project's, so there the path resolves as written.
+fn engine_assets(server: Option<&AssetServer>) -> Option<PathBuf> {
+    server?.asset_root().map(Path::to_path_buf)
+}
+
+/// The asset at `path`, or at its name under the engine's `assets/`: the editor writes an engine
+/// image where a build puts it, inside the project's.
+fn image_guid(database: &AssetDatabase, engine: Option<&Path>, path: &Path) -> Option<Guid> {
+    database.guid_for(path).or_else(|| {
+        let engine = engine?;
+        let parts: Vec<Component> = path.components().collect();
+        parts
+            .iter()
+            .enumerate()
+            .filter(|(_, part)| part.as_os_str() == "assets")
+            .find_map(|(at, _)| {
+                let name: PathBuf = parts[at + 1..].iter().collect();
+                database.guid_for(&engine.join(name))
+            })
+    })
+}
 
 /// `a/b/../c` → `a/c`: the database keys paths as scanned, and those have no `..`.
 pub(crate) fn normalise(path: &Path) -> PathBuf {

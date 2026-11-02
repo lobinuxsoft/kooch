@@ -34,6 +34,9 @@ pub(crate) struct AssetCatalogEntry {
     /// Full project-relative path. Surfaced on hover and used by the
     /// picker's search filter for substring matching.
     pub path: PathBuf,
+    /// The path under its own `assets/`: the name a shipped game, which merges the engine's tree
+    /// into the project's, knows it by.
+    pub name: PathBuf,
     /// Short display name shown by default in the picker — the
     /// file's basename. Falls back to the path's full display form
     /// when the basename is unavailable (very rare).
@@ -75,9 +78,16 @@ impl AssetCatalogEntry {
                 .map(|s| s.to_owned())
                 .unwrap_or_else(|| entry.path.display().to_string());
             let source = classify_source(&entry.path, engine_root, project_root);
+            let name = [engine_root, project_root]
+                .into_iter()
+                .flatten()
+                .find_map(|root| entry.path.strip_prefix(root).ok())
+                .unwrap_or(&entry.path)
+                .to_path_buf();
             out.push(AssetCatalogEntry {
                 guid,
                 path: entry.path.clone(),
+                name,
                 display_name,
                 source,
                 type_name,
