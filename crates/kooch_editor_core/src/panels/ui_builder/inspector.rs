@@ -31,8 +31,7 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
             egui::CollapsingHeader::new("Attributes")
                 .default_open(true)
                 .show(ui, |ui| {
-                    egui::Grid::new("ui_builder_fields")
-                        .num_columns(3)
+                    fields_grid(ui, "ui_builder_fields", ATTRIBUTE_LABELS)
                         .striped(true)
                         .show(ui, |ui| {
                             let set = |value: &str| (!value.is_empty()).then(|| value.to_owned());
@@ -65,13 +64,11 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
             egui::CollapsingHeader::new("Other attributes")
                 .default_open(!others.is_empty())
                 .show(ui, |ui| {
-                    egui::Grid::new("ui_builder_others")
-                        .num_columns(3)
-                        .show(ui, |ui| {
-                            for (key, value) in others {
-                                text_row(ui, builder, origin, &key, Some(value), "");
-                            }
-                        });
+                    fields_grid(ui, "ui_builder_others", ATTRIBUTE_LABELS).show(ui, |ui| {
+                        for (key, value) in others {
+                            text_row(ui, builder, origin, &key, Some(value), "");
+                        }
+                    });
                     add_attribute(ui, builder, origin);
                 });
             egui::CollapsingHeader::new("Inline style")
@@ -221,6 +218,17 @@ pub(super) fn unset(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, key
     {
         builder.set_attribute(origin, key, "");
     }
+}
+
+/// Room the label and ↺ columns take beside an attribute's field.
+const ATTRIBUTE_LABELS: f32 = 120.0;
+
+/// A label, field and ↺ grid whose field column is sized from the panel. Left to egui, a middle
+/// column is as wide as it was last frame, so a field that overflows it widens it every frame.
+pub(super) fn fields_grid(ui: &egui::Ui, id: impl egui::AsIdSalt, labels: f32) -> egui::Grid {
+    egui::Grid::new(id)
+        .num_columns(3)
+        .max_col_width((ui.available_width() - labels).max(80.0))
 }
 
 fn text_edit<'a>(text: &'a mut String, hint: &'a str) -> egui::TextEdit<'a> {
