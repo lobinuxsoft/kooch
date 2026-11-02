@@ -28,20 +28,26 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, writ
                     }
                     changed = true;
                 }
-                egui::Grid::new(("ui_builder_style_grid", category.title))
-                    .num_columns(3)
-                    .striped(true)
-                    .show(ui, |ui| {
-                        for spec in category.properties {
-                            changed |= row(ui, &mut style, origin, spec);
-                        }
-                    });
+                super::inspector::fields_grid(
+                    ui,
+                    ("ui_builder_style_grid", category.title),
+                    STYLE_LABELS,
+                )
+                .striped(true)
+                .show(ui, |ui| {
+                    for spec in category.properties {
+                        changed |= row(ui, &mut style, origin, spec);
+                    }
+                });
             });
     }
     if changed {
         builder.set_attribute(origin, "style", &style.write());
     }
 }
+
+/// Room the property names and ↺ take: `border-bottom-width` is the longest.
+const STYLE_LABELS: f32 = 170.0;
 
 fn row(ui: &mut egui::Ui, style: &mut InlineStyle, origin: u32, spec: &PropertySpec) -> bool {
     let value = style.get(spec.name);
