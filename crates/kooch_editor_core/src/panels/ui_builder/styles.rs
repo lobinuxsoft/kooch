@@ -3,12 +3,35 @@
 
 use kooch_ui::style::{CATEGORIES, InlineStyle, PropertyKind, PropertySpec, parse_color};
 
+use std::path::Path;
+
+use kooch_core::Guid;
+
+use crate::panels::inspector::AssetCatalogEntry;
 use crate::ui_builder::UiBuilder;
 
-pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, written: &str) {
+/// What the asset fields pick from, and the folder their `url()`s are relative to.
+struct Assets<'a> {
+    fonts: &'a [(Guid, String)],
+    catalog: &'a [AssetCatalogEntry],
+    folder: &'a Path,
+}
+
+pub(super) fn draw(
+    ui: &mut egui::Ui,
+    builder: &mut UiBuilder,
+    origin: u32,
+    written: &str,
+    catalog: &[AssetCatalogEntry],
+) {
     let mut style = InlineStyle::parse(written);
     let mut changed = false;
-    let fonts = &builder.fonts;
+    let folder = builder.path.parent().unwrap_or(Path::new("")).to_path_buf();
+    let assets = Assets {
+        fonts: &builder.fonts,
+        catalog,
+        folder: &folder,
+    };
     for category in &CATEGORIES {
         let set = category
             .properties
@@ -37,7 +60,7 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, writ
                 .striped(true)
                 .show(ui, |ui| {
                     for spec in category.properties {
-                        changed |= row(ui, &mut style, origin, spec, fonts);
+                        changed |= row(ui, &mut style, origin, spec, &assets);
                     }
                 });
             });
@@ -55,7 +78,7 @@ fn row(
     style: &mut InlineStyle,
     origin: u32,
     spec: &PropertySpec,
-    fonts: &[(String, String)],
+    assets: &Assets,
 ) -> bool {
     let value = style.get(spec.name);
     let text = egui::RichText::new(spec.name).monospace();
@@ -67,7 +90,7 @@ fn row(
     if !spec.hint.is_empty() {
         label.on_hover_text(spec.hint);
     }
-    let mut edited = field(ui, origin, spec, value.as_deref(), fonts).map(Some);
+    let mut edited = field(ui, origin, spec, value.as_deref(), assets).map(Some);
     if value.is_none() {
         ui.label("");
     } else if ui
@@ -91,7 +114,7 @@ fn field(
     origin: u32,
     spec: &PropertySpec,
     value: Option<&str>,
-    fonts: &[(String, String)],
+    assets: &Assets,
 ) -> Option<String> {
     match spec.kind {
         PropertyKind::Keyword(words) => {
@@ -145,39 +168,99 @@ fn field(
                 .then(|| hex(bytes))
         }
         PropertyKind::Text => text(ui, value),
-        PropertyKind::Font => font(ui, origin, value, fonts),
+        PropertyKind::Font => font(ui, origin, value, assets),
+        PropertyKind::Image => url(
+            ui,
+            origin,
+            value,
+            assets,
+            std::any::type_name::<kooch_render::Image>(),
+        ),
+        PropertyKind::Shader => quoted_path(ui, origin, value, assets),
     }
 }
 
-/// The engine's families and the project's, searched by name or file.
-fn font(
+/// A font file, written as the family inside it.
+fn font(ui: &mut egui::Ui, origin: u32, value: Option<&str>, assets: &Assets) -> Option<String> {
+    let family = value.map(|value| value.trim().trim_matches(['"', '\'']));
+    let current = family.and_then(|family| {
+        assets
+            .fonts
+            .iter()
+            .find(|(_, own)| own == family)
+            .map(|(guid, _)| *guid)
+    });
+    let picked = picker(
+        ui,
+        ("ui_builder_font", origin),
+        current,
+        kooch_ui::FONT_TYPE,
+        assets,
+    )?;
+    let guid = picked?;
+    // A file not registered yet has no family to write.
+    let (_, family) = assets.fonts.iter().find(|(own, _)| *own == guid)?;
+    Some(format!("\"{family}\""))
+}
+
+/// An image asset, written as `url()` relative to the open file.
+fn url(
     ui: &mut egui::Ui,
     origin: u32,
     value: Option<&str>,
-    fonts: &[(String, String)],
+    assets: &Assets,
+    kind: &str,
 ) -> Option<String> {
-    let shown = match value {
-        None => format!("{} (default)", kooch_ui::ENGINE_FAMILIES[0]),
-        Some(name) if fonts.iter().any(|(own, _)| own == name) => name.to_owned(),
-        Some(name) => format!("{name} (not found)"),
-    };
-    let mut picked = None;
-    crate::widgets::search_combo(ui, ("ui_builder_font", origin), shown, |ui, needle| {
-        let needle = needle.to_lowercase();
-        for (family, from) in fonts {
-            if !needle.is_empty()
-                && !family.to_lowercase().contains(&needle)
-                && !from.to_lowercase().contains(&needle)
-            {
-                continue;
-            }
-            let text = format!("{family} [{from}]");
-            if ui.selectable_label(value == Some(family), text).clicked() {
-                picked = Some(family.clone());
-            }
-        }
+    let written = value.and_then(|value| {
+        let inner = value.trim().strip_prefix("url(")?.strip_suffix(')')?;
+        Some(inner.trim().trim_matches(['"', '\'']).to_owned())
     });
-    picked
+    let current = written.and_then(|written| find(assets, kind, &written));
+    let picked = picker(ui, ("ui_builder_url", origin), current, kind, assets)?;
+    Some(match picked {
+        Some(guid) => format!("url(\"{}\")", relative(assets, guid)?),
+        None => "none".to_owned(),
+    })
+}
+
+/// A `kind: ui` shader, written as its quoted path relative to the open file.
+fn quoted_path(
+    ui: &mut egui::Ui,
+    origin: u32,
+    value: Option<&str>,
+    assets: &Assets,
+) -> Option<String> {
+    let kind = kooch_render::material::SHADER_TYPE_NAME;
+    let written = value.map(|value| value.trim().trim_matches(['"', '\'']).to_owned());
+    let current = written.and_then(|written| find(assets, kind, &written));
+    let picked = picker(ui, ("ui_builder_shader", origin), current, kind, assets)?;
+    Some(format!("\"{}\"", relative(assets, picked?)?))
+}
+
+fn picker(
+    ui: &mut egui::Ui,
+    id: (&str, u32),
+    current: Option<Guid>,
+    kind: &str,
+    assets: &Assets,
+) -> Option<Option<Guid>> {
+    crate::widgets::asset_picker(ui, id, current, kind, assets.catalog, None)
+}
+
+fn find(assets: &Assets, kind: &str, written: &str) -> Option<Guid> {
+    assets
+        .catalog
+        .iter()
+        .find(|entry| {
+            entry.type_name == kind && relative(assets, entry.guid).as_deref() == Some(written)
+        })
+        .map(|entry| entry.guid)
+}
+
+fn relative(assets: &Assets, guid: Guid) -> Option<String> {
+    let entry = assets.catalog.iter().find(|entry| entry.guid == guid)?;
+    let path = super::inspector::relative(assets.folder, &entry.path);
+    Some(path.to_string_lossy().replace('\\', "/"))
 }
 
 /// A number and its unit; `auto` and a bare `0` too.

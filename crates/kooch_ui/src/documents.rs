@@ -179,6 +179,7 @@ fn tree_from(
         source_path,
         &mut |path| read(server.as_deref_mut(), path),
         templates,
+        &|path| database.guid_for(path),
         0,
     )?;
     Ok(build_tree(

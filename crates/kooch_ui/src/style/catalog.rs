@@ -16,6 +16,10 @@ pub enum PropertyKind {
     Text,
     /// A family the engine embeds or the project holds as a font file.
     Font,
+    /// `url()` to an image asset, relative to the file writing it.
+    Image,
+    /// A quoted path to a `kind: ui` shader.
+    Shader,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,7 +39,7 @@ const fn prop(name: &'static str, kind: PropertyKind, hint: &'static str) -> Pro
     PropertySpec { name, kind, hint }
 }
 
-use PropertyKind::{Color, Font, Keyword, Length, Number, Px, Text};
+use PropertyKind::{Color, Font, Image, Keyword, Length, Number, Px, Shader, Text};
 
 const AUTO: PropertyKind = Length { auto: true };
 const FIXED: PropertyKind = Length { auto: false };
@@ -157,8 +161,8 @@ pub const CATEGORIES: [StyleCategory; 10] = [
             prop("background-color", Color, ""),
             prop(
                 "background-image",
-                Text,
-                "url(\"image.png\"), relative to the sheet; none clears it",
+                Image,
+                "url(\"image.png\"), relative to the file writing it; none clears it",
             ),
             prop("-kooch-tint", Color, "Multiplies the image"),
             prop(
@@ -166,7 +170,7 @@ pub const CATEGORIES: [StyleCategory; 10] = [
                 Text,
                 "Texels kept unstretched: top right bottom left",
             ),
-            prop("-kooch-material", Text, "\"path.shader\" with kind: ui"),
+            prop("-kooch-material", Shader, "\"path.shader\" with kind: ui"),
         ],
     },
     StyleCategory {

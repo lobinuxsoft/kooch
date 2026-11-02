@@ -63,6 +63,7 @@ pub(crate) fn with_parts(source: &UiSource) -> UiSource {
                 attributes: Vec::new(),
                 overrides: Vec::new(),
                 origin: element.origin,
+                image: None,
             });
         }
     }

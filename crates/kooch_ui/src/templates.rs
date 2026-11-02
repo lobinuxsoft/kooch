@@ -3,8 +3,14 @@
 
 use std::path::{Path, PathBuf};
 
+use kooch_core::Guid;
+
 use crate::documents::normalise;
 use crate::source::{Element, ElementKind, NO_PARENT, UiSource};
+use crate::style::{Declaration, UiStyleSheet};
+
+/// The asset at a path, for an inline `background-image`.
+pub(crate) type ImageOf<'a> = &'a dyn Fn(&Path) -> Option<Guid>;
 
 /// Deeper than this is a template using itself.
 const MAX_DEPTH: u8 = 8;
@@ -16,6 +22,7 @@ pub(crate) fn expand(
     at: &Path,
     read: &mut dyn FnMut(&Path) -> Result<String, String>,
     files: &mut Vec<PathBuf>,
+    image_of: ImageOf,
     depth: u8,
 ) -> Result<UiSource, String> {
     let mut out: Vec<Element> = Vec::with_capacity(source.elements.len());
@@ -28,7 +35,9 @@ pub(crate) fn expand(
         };
         moved.push(out.len() as u32);
         if element.kind != ElementKind::Use {
-            out.push(Element { parent, ..element });
+            let mut element = Element { parent, ..element };
+            inline_image(&mut element, at, image_of);
+            out.push(element);
             continue;
         }
         if depth >= MAX_DEPTH {
@@ -40,8 +49,8 @@ pub(crate) fn expand(
         files.push(path.clone());
         let inner =
             UiSource::parse(&read(&path)?).map_err(|e| format!("{}: {e}", path.display()))?;
-        let inner = expand(inner, &path, read, files, depth + 1)?;
-        splice(inner, &element, parent, &mut out)
+        let inner = expand(inner, &path, read, files, image_of, depth + 1)?;
+        splice(inner, &element, parent, &mut out, at, image_of)
             .map_err(|e| format!("{}: {e}", path.display()))?;
     }
     Ok(UiSource { elements: out })
@@ -54,6 +63,8 @@ fn splice(
     with: &Element,
     parent: u32,
     out: &mut Vec<Element>,
+    at: &Path,
+    image_of: ImageOf,
 ) -> Result<(), String> {
     let roots = inner.elements.iter().filter(|e| e.parent == 0).count();
     if roots != 1 {
@@ -77,14 +88,43 @@ fn splice(
     for (key, value) in with.attributes.iter().filter(|(key, _)| &**key != "src") {
         set(root, key, value);
     }
+    // What the `<use>` writes reads from the file that uses the template.
+    if attribute(with, "style").is_some() {
+        inline_image(root, at, image_of);
+    }
     for (node, key, value) in &with.overrides {
         let target = out[base as usize..]
             .iter_mut()
             .find(|e| e.name.as_deref() == Some(node))
             .ok_or_else(|| format!("`<set node=\"{node}\">` names no node of the template"))?;
         set(target, key, value);
+        if &**key == "style" {
+            inline_image(target, at, image_of);
+        }
     }
     Ok(())
+}
+
+/// The inline `background-image`'s asset, its `url()` relative to `at`, the file writing it.
+fn inline_image(element: &mut Element, at: &Path, image_of: ImageOf) {
+    let url = attribute(element, "style").and_then(|style| {
+        UiStyleSheet::parse_inline(style)
+            .into_iter()
+            .rev()
+            .find_map(|declaration| match declaration {
+                Declaration::BackgroundImage(image) => Some(image.map(|image| image.url)),
+                _ => None,
+            })
+            .flatten()
+    });
+    element.image = url.and_then(|url| {
+        let path = normalise(&at.parent().unwrap_or(Path::new("")).join(&*url));
+        let guid = image_of(&path);
+        if guid.is_none() {
+            tracing::warn!("{}: image `{url}` is not a known asset", at.display());
+        }
+        guid
+    });
 }
 
 fn set(element: &mut Element, key: &str, value: &str) {
@@ -121,7 +161,15 @@ fn a_template_instances_twice() {
         Ok(r#"<ui><button class="button"><label name="label">?</label></button></ui>"#.to_owned())
     };
     let mut files = Vec::new();
-    let page = expand(page, Path::new("ui/menu.kxml"), &mut read, &mut files, 0).unwrap();
+    let page = expand(
+        page,
+        Path::new("ui/menu.kxml"),
+        &mut read,
+        &mut files,
+        &|_| None,
+        0,
+    )
+    .unwrap();
     let names: Vec<_> = page.elements.iter().map(|e| e.name.as_deref()).collect();
     assert_eq!(
         names,
