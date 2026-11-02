@@ -102,6 +102,86 @@ impl Markup {
         }
     }
 
+    /// A `<use>`'s `<set>`s, one `(node, attribute, value)` each, in the file's order.
+    pub fn overrides(&self, origin: u32) -> Vec<(String, String, String)> {
+        let Some(element) = self.element(origin) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for set in self.sets(element) {
+            let Some(node) = set.attribute(&self.document, "node") else {
+                continue;
+            };
+            for (key, value) in set.attributes(&self.document) {
+                if key.to_string() != "node" {
+                    out.push((node.to_owned(), key.to_string(), value.clone()));
+                }
+            }
+        }
+        out
+    }
+
+    /// One attribute of a template's `node`, overridden on the `<use>` at `origin`. `None` removes
+    /// it, and a `<set>` left with nothing to set goes too.
+    pub fn set_override(
+        &mut self,
+        origin: u32,
+        node: &str,
+        key: &str,
+        value: Option<&str>,
+    ) -> bool {
+        let Some(element) = self.element(origin) else {
+            return false;
+        };
+        if !valid_name(key) || key == "node" {
+            return false;
+        }
+        let of_node: Vec<Element> = self
+            .sets(element)
+            .into_iter()
+            .filter(|set| set.attribute(&self.document, "node") == Some(node))
+            .collect();
+        let holding = of_node
+            .iter()
+            .copied()
+            .find(|set| set.attribute(&self.document, key).is_some());
+        match (value, holding) {
+            (Some(value), holding) => {
+                let set = match holding.or(of_node.first().copied()) {
+                    Some(set) => set,
+                    None => {
+                        let Ok(parsed) = "<set/>".parse::<Document>() else {
+                            return false;
+                        };
+                        let owned = snapshot(&parsed, parsed.root());
+                        let Some(set) = self.place(owned, Spot::Inside(element)) else {
+                            return false;
+                        };
+                        set.set_attribute(&mut self.document, "node", node);
+                        set
+                    }
+                };
+                set.set_attribute(&mut self.document, key, value);
+            }
+            (None, Some(set)) => {
+                set.remove_attribute(&mut self.document, key);
+                if set.attributes(&self.document).len() <= 1 {
+                    element.remove_child(&mut self.document, Node::Element(set));
+                }
+            }
+            (None, None) => {}
+        }
+        true
+    }
+
+    fn sets(&self, element: Element) -> Vec<Element> {
+        element
+            .children(&self.document)
+            .into_iter()
+            .filter(|child| child.name(&self.document) == "set")
+            .collect()
+    }
+
     /// Parses `snippet`, one element and its children, into `at`. Returns its origin.
     pub fn insert(&mut self, snippet: &str, at: Place) -> Option<u32> {
         let parsed = snippet.parse::<Document>().ok()?;

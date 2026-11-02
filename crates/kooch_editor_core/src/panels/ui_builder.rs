@@ -199,7 +199,7 @@ fn canvas(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEnt
         builder.hit(glam::Vec2::new(point.x, point.y))
     });
     if response.clicked() {
-        builder.selected = under;
+        builder.select(under, None);
     }
 
     let painter = ui.painter_at(rect);

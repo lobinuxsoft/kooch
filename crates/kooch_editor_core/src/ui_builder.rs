@@ -2,6 +2,7 @@
 //! the same pass that draws it in the game.
 
 mod edit;
+mod ghosts;
 mod known;
 
 use std::path::{Path, PathBuf};
@@ -58,6 +59,10 @@ pub(crate) struct UiBuilder {
     /// The file's and its sheet's mtimes when last read: a change on disk rebuilds.
     read_at: (SystemTime, SystemTime),
     pub selected: Option<u32>,
+    /// A named node of the selected `<use>`'s template: the Inspector edits its `<set>`.
+    pub inner: Option<String>,
+    /// Each `<use>` and its template's elements.
+    ghosts: Vec<(u32, Vec<ghosts::Ghost>)>,
     /// Why the markup in memory does not build, shown over the canvas.
     pub error: Option<String>,
     tree: Option<UiTree>,
@@ -135,6 +140,7 @@ impl UiBuilder {
             if std::mem::take(&mut self.edited) || self.tree.is_none() {
                 let text = self.markup.write();
                 self.known.refresh(database, &text, self.style);
+                self.ghosts = ghosts::of(&self.markup, &self.path);
                 match kooch_ui::build_markup(
                     database,
                     server.as_mut(),
@@ -228,6 +234,8 @@ pub(crate) fn open(resources: &mut Resources, path: &Path) {
         edited: true,
         read_at: (SystemTime::UNIX_EPOCH, SystemTime::UNIX_EPOCH),
         selected: None,
+        inner: None,
+        ghosts: Vec::new(),
         error: None,
         tree: None,
         known: known::Known::default(),

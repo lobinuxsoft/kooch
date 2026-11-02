@@ -19,7 +19,7 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
         return;
     };
     let Some(inspected) = builder.inspect(origin) else {
-        builder.selected = None;
+        builder.select(None, None);
         return;
     };
     let schema = ElementKind::from_tag(&inspected.tag).map_or(&[][..], ElementKind::attributes);
@@ -28,6 +28,13 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.label(egui::RichText::new(format!("<{}>", inspected.tag)).monospace());
+            if let Some(file) = &inspected.from {
+                ui.weak(format!(
+                    "#{} of {file}: a set field overrides it on this instance only; \
+                     an empty one reads the template.",
+                    inspected.name
+                ));
+            }
             egui::CollapsingHeader::new("Attributes")
                 .default_open(true)
                 .show(ui, |ui| {
@@ -35,12 +42,16 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
                         .striped(true)
                         .show(ui, |ui| {
                             let set = |value: &str| (!value.is_empty()).then(|| value.to_owned());
-                            text_row(ui, builder, origin, "name", set(&inspected.name), "");
+                            if inspected.from.is_none() {
+                                text_row(ui, builder, origin, "name", set(&inspected.name), "");
+                            }
                             super::classes::row(ui, builder, origin, &inspected.classes);
                             if let Some(text) = &inspected.text {
                                 label(ui, "text", "The label's content", true);
                                 let mut value = text.clone();
-                                if ui.add(text_edit(&mut value, "")).changed() {
+                                let hint =
+                                    attribute(&inspected.inherited, "text").unwrap_or_default();
+                                if ui.add(text_edit(&mut value, &hint)).changed() {
                                     builder.set_text(origin, &value);
                                 }
                                 ui.label("");
@@ -48,13 +59,17 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
                             }
                             for spec in schema {
                                 let value = attribute(&inspected.attributes, spec.key);
-                                typed_row(ui, builder, origin, spec, value, catalog);
+                                let base = attribute(&inspected.inherited, spec.key);
+                                typed_row(ui, builder, origin, spec, value, base, catalog);
                             }
                         });
                 });
-            egui::CollapsingHeader::new("Matching selectors")
-                .default_open(true)
-                .show(ui, |ui| super::classes::matching(ui, builder, origin));
+            // The canvas knows the instance, not which of its nodes came from where.
+            if inspected.from.is_none() {
+                egui::CollapsingHeader::new("Matching selectors")
+                    .default_open(true)
+                    .show(ui, |ui| super::classes::matching(ui, builder, origin));
+            }
             let others: Vec<(String, String)> = inspected
                 .attributes
                 .iter()
@@ -99,12 +114,14 @@ fn typed_row(
     origin: u32,
     spec: &AttributeSpec,
     value: Option<String>,
+    base: Option<String>,
     catalog: &[AssetCatalogEntry],
 ) {
+    let default = base.as_deref().unwrap_or(spec.default);
     match spec.kind {
         AttributeKind::Bool => {
             label(ui, spec.key, spec.hint, value.is_some());
-            let mut on = value.as_deref().unwrap_or(spec.default) != "false";
+            let mut on = value.as_deref().unwrap_or(default) != "false";
             if ui.checkbox(&mut on, "").changed() {
                 builder.set_attribute(origin, spec.key, if on { "true" } else { "false" });
             }
@@ -114,7 +131,7 @@ fn typed_row(
             label(ui, spec.key, spec.hint, value.is_some());
             let mut number: f32 = value
                 .as_deref()
-                .unwrap_or(spec.default)
+                .unwrap_or(default)
                 .parse()
                 .unwrap_or_default();
             if ui
@@ -132,8 +149,8 @@ fn typed_row(
         }
         AttributeKind::Text | AttributeKind::Binding => {
             let hint = match spec.kind {
-                AttributeKind::Binding => "Component.field",
-                _ => spec.default,
+                AttributeKind::Binding if base.is_none() => "Component.field",
+                _ => default,
             };
             text_row(ui, builder, origin, spec.key, value, hint);
             return;
