@@ -7,8 +7,9 @@ use kooch_core::asset_database::AssetDatabase;
 use kooch_ui::UiRect;
 use kooch_ui::markup::{Markup, Outline, Place};
 
-use super::UiBuilder;
 use super::ghosts::Ghost;
+use super::{Step, UiBuilder};
+use crate::history::MergeKey;
 
 /// The selected element, as the Inspector shows it.
 pub(crate) struct Inspected {
@@ -120,12 +121,15 @@ impl UiBuilder {
     /// An empty value removes the attribute.
     pub(crate) fn set_attribute(&mut self, origin: u32, key: &str, value: &str) {
         let value = (!value.trim().is_empty()).then_some(value);
-        let done = match self.node_in(origin).map(str::to_owned) {
-            Some(node) => self.markup.set_override(origin, &node, key, value),
+        let before = self.markup.write();
+        let node = self.node_in(origin).map(str::to_owned);
+        let done = match &node {
+            Some(node) => self.markup.set_override(origin, node, key, value),
             None => self.markup.set_attribute(origin, key, value),
         };
         if done {
-            self.changed();
+            let merge = MergeKey::of((origin, node, key));
+            self.changed(before, format!("Edit {key}"), Some(merge));
         }
     }
 
@@ -133,44 +137,58 @@ impl UiBuilder {
         if self.node_in(origin).is_some() {
             return self.set_attribute(origin, "text", text);
         }
+        let before = self.markup.write();
         self.markup.set_text(origin, text);
-        self.changed();
+        self.changed(
+            before,
+            "Edit text".into(),
+            Some(MergeKey::of((origin, "text"))),
+        );
     }
 
     /// Renames the element itself, never a node its template holds.
     pub(crate) fn rename(&mut self, origin: u32, name: &str) {
         let value = (!name.is_empty()).then_some(name);
+        let before = self.markup.write();
         if self.markup.set_attribute(origin, "name", value) {
-            self.changed();
+            self.changed(
+                before,
+                "Rename".into(),
+                Some(MergeKey::of((origin, "name"))),
+            );
         }
     }
 
     /// Selects what landed. `None` when the markup refused the spot.
     pub(crate) fn insert(&mut self, snippet: &str, at: Place) -> Option<u32> {
+        let before = self.markup.write();
         let origin = self.markup.insert(snippet, at)?;
         self.select(Some(origin), None);
-        self.changed();
+        self.changed(before, "Add element".into(), None);
         Some(origin)
     }
 
     pub(crate) fn move_to(&mut self, origin: u32, at: Place) {
+        let before = self.markup.write();
         if let Some(moved) = self.markup.move_to(origin, at) {
             self.select(Some(moved), None);
-            self.changed();
+            self.changed(before, "Move element".into(), None);
         }
     }
 
     pub(crate) fn duplicate(&mut self, origin: u32) {
+        let before = self.markup.write();
         if let Some(copy) = self.markup.duplicate(origin) {
             self.select(Some(copy), None);
-            self.changed();
+            self.changed(before, "Duplicate".into(), None);
         }
     }
 
     pub(crate) fn remove(&mut self, origin: u32) {
+        let before = self.markup.write();
         if self.markup.remove(origin) {
             self.select(None, None);
-            self.changed();
+            self.changed(before, "Delete".into(), None);
         }
     }
 
@@ -209,9 +227,40 @@ impl UiBuilder {
         tracing::info!(file = %self.path.display(), "UI document saved");
     }
 
-    fn changed(&mut self) {
+    /// Files `before` for undo: the frame's first edit, so one gesture is one step.
+    fn changed(&mut self, before: String, label: String, merge: Option<MergeKey>) {
         self.dirty = true;
         self.edited = true;
+        if self.step.is_none() {
+            self.step = Some(Step {
+                before,
+                label,
+                merge,
+            });
+        }
+    }
+
+    /// The markup as it would be saved.
+    pub(crate) fn text(&self) -> String {
+        self.markup.write()
+    }
+
+    /// Puts back what an undo or redo stepped to. The origins it had are not this one's.
+    pub(crate) fn restore(&mut self, text: &str) {
+        match Markup::parse(text) {
+            Ok(markup) => {
+                self.markup = markup;
+                self.select(None, None);
+                self.dirty = true;
+                self.edited = true;
+            }
+            Err(error) => tracing::error!(%error, "an undo step of the UI document does not parse"),
+        }
+    }
+
+    /// The edit this frame made, for the document's history.
+    pub(crate) fn take_step(&mut self) -> Option<Step> {
+        self.step.take()
     }
 
     /// A file saved elsewhere replaces the markup, unless it holds edits of ours; a sheet saved

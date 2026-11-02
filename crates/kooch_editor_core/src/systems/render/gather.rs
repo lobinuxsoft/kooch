@@ -79,6 +79,7 @@ pub(super) fn toolbar_info(
     overlay: &EditorOverlay,
     undo_stack: &UndoStack,
     is_playing: bool,
+    ui_document: Option<&std::path::Path>,
 ) -> ToolbarInfo {
     // 🔴 The Edit menu describes the history a Ctrl+Z would reach. With a project open that is the
     // remote one: the local stack describes the mirror and nothing will run it again.
@@ -95,6 +96,7 @@ pub(super) fn toolbar_info(
             .get::<crate::state::OpenShaderGraph>()
             .map(|open| open.path.clone())
             .as_deref(),
+        ui_document,
     );
     let (can_undo, can_redo, undo_desc, redo_desc) = match document.as_ref() {
         // A document of its own, with a history of its own.

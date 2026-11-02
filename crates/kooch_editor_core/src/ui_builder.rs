@@ -75,6 +75,15 @@ pub(crate) struct UiBuilder {
     drawn: Option<(u32, u32)>,
     target: Option<ViewportTarget>,
     pass: Option<UiPass>,
+    /// What this frame's first edit replaced, filed once the panel hands the Builder back.
+    step: Option<Step>,
+}
+
+/// One undo step: the markup before it, and what to call it.
+pub(crate) struct Step {
+    pub before: String,
+    pub label: String,
+    pub merge: Option<crate::history::MergeKey>,
 }
 
 impl UiBuilder {
@@ -260,6 +269,7 @@ pub(crate) fn open(resources: &mut Resources, path: &Path) {
         drawn: None,
         target,
         pass,
+        step: None,
     });
 }
 

@@ -180,7 +180,18 @@ pub(super) fn run_editor_ui(
     let full_output = overlay.ctx.run_ui(raw_input, |ui| {
         if project_loaded {
             play_focus::chord(ui, toolbar.is_playing, &mut actions);
-            crate::shortcuts::save(ui, &mut actions);
+            // The Builder's document is the focused panel's to save, as the shader graph's is not:
+            // Ctrl+S over it writes the `.kxml`.
+            match ui_builder.as_deref_mut() {
+                Some(builder)
+                    if overlay.focused_tab == Some(crate::state::EditorTab::UiBuilder) =>
+                {
+                    if crate::shortcuts::save_pressed(ui).is_some() && builder.dirty {
+                        builder.save();
+                    }
+                }
+                _ => crate::shortcuts::save(ui, &mut actions),
+            }
             // Before the dock is drawn, so the panel that follows the edge is this frame's.
             *game_clicked |= play_focus::follow(
                 &mut overlay.dock_state,

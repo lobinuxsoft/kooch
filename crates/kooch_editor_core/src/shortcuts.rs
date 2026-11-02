@@ -15,15 +15,17 @@ pub(crate) const SAVE_AS_CHORD: &str = "Ctrl+Shift+S";
 /// Queues a save of the active scene when Ctrl+S — or Ctrl+Shift+S, asking for a file — is
 /// pressed. Heard from every panel: saving is the project's, not the focused panel's.
 pub(crate) fn save(ui: &egui::Ui, actions: &mut Vec<EditorAction>) {
-    if ui.ctx().text_edit_focused() {
-        return;
-    }
-    let chord = ui.input(|i| {
-        (i.modifiers.command && i.key_pressed(egui::Key::S)).then_some(i.modifiers.shift)
-    });
-    if let Some(as_new) = chord {
+    if let Some(as_new) = save_pressed(ui) {
         actions.push(EditorAction::SaveScene { as_new });
     }
+}
+
+/// Ctrl+S this frame, and whether with Shift; never while a field is being typed in.
+pub(crate) fn save_pressed(ui: &egui::Ui) -> Option<bool> {
+    if ui.ctx().text_edit_focused() {
+        return None;
+    }
+    ui.input(|i| (i.modifiers.command && i.key_pressed(egui::Key::S)).then_some(i.modifiers.shift))
 }
 
 /// An editing command with a keyboard chord.

@@ -26,6 +26,8 @@ pub(crate) enum DocumentState {
         crate::shader_graph::Graph,
         crate::shader_graph::annotations::Annotations,
     ),
+    /// The UI Builder's markup, as it would be saved.
+    Ui(String),
 }
 
 /// One step: what the document was, and what to call putting it back.
@@ -95,18 +97,30 @@ pub(crate) fn record(
     label: &str,
     key: Option<MergeKey>,
 ) {
-    let Some(state) = capture(resources, document) else {
-        // Nothing to remember means nothing to undo. A document that
-        // could not be read is one the panel should not have been
-        // editing, and a step that cannot restore is worse than none.
-        tracing::debug!(
-            target: "kooch_editor_core::history",
-            ?document,
-            "not recording an edit to a document that could not be read",
-        );
-        return;
-    };
+    match capture(resources, document) {
+        Some(state) => file(resources, document, label, key, state),
+        None => {
+            // Nothing to remember means nothing to undo. A document that
+            // could not be read is one the panel should not have been
+            // editing, and a step that cannot restore is worse than none.
+            tracing::debug!(
+                target: "kooch_editor_core::history",
+                ?document,
+                "not recording an edit to a document that could not be read",
+            )
+        }
+    }
+}
 
+/// Files `state` as what the document was before an edit, for a panel that edits a copy taken out
+/// of `Resources` and so cannot be captured until it is back.
+pub(crate) fn file(
+    resources: &mut Resources,
+    document: &Document,
+    label: &str,
+    key: Option<MergeKey>,
+    state: DocumentState,
+) {
     if resources.get::<DocumentHistories>().is_none() {
         resources.insert(DocumentHistories::default());
     }
@@ -188,6 +202,10 @@ fn capture(resources: &mut Resources, document: &Document) -> Option<DocumentSta
             (open.path == *path)
                 .then(|| DocumentState::ShaderGraph(open.graph.clone(), open.annotations.clone()))
         }
+        Document::UiDocument(path) => {
+            let open = resources.get::<crate::ui_builder::UiBuilder>()?;
+            (open.path == *path).then(|| DocumentState::Ui(open.text()))
+        }
     }
 }
 
@@ -237,6 +255,13 @@ fn restore(resources: &mut Resources, document: &Document, state: DocumentState)
                 open.annotations = annotations;
                 // Put back in memory only: the file is still the user's to save.
                 open.dirty = true;
+            }
+        }
+        (Document::UiDocument(path), DocumentState::Ui(text)) => {
+            if let Some(open) = resources.get_mut::<crate::ui_builder::UiBuilder>()
+                && open.path == *path
+            {
+                open.restore(&text);
             }
         }
         (Document::Asset(guid), DocumentState::Material(snapshot)) => {

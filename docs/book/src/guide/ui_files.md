@@ -330,7 +330,9 @@ on a canvas, drawn by the same pass that draws it in the game. No scene and no c
   one side of a `margin: 2px 4px` splits it into its four sides. A value a field cannot show, like
   a `calc()`, stays as text, and *CSS* below shows the whole attribute to edit by hand.
 
-Edits stay in memory until **Save** writes the `.kxml`; the tab's title carries a `*` until then.
+Edits stay in memory until **Save** (or **Ctrl+S** with the Builder focused) writes the `.kxml`;
+the tab's title carries a `*` until then. **Ctrl+Z** and **Ctrl+Y** step back and forward through
+them, the Builder's own history: typing in one field is one step, up to the next click.
 The file keeps its comments, prefixes and attribute order, and is re-indented. Saved elsewhere while
 the Builder has no edits of its own, the file is read again; a `.kcss` saved anywhere restyles the
 canvas.
