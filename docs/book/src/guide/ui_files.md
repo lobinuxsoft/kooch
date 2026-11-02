@@ -262,7 +262,7 @@ base sheet under every document's own gives all of them a look, which the docume
 | `border-radius` | length |
 | `font-family` | `"Inter"`, `"Fira Code"`, or the family of a `.ttf`/`.otf` in the project |
 | `font-size` | length |
-| `background-image` | `url("button.png")` relative to the `.kcss`, PNG or JPEG; `none` |
+| `background-image` | `url("button.png")` relative to the file writing it (the `.kcss`, or the `.kxml` for an inline `style`), PNG or JPEG; `none` |
 | `-kooch-slice` | length, one to four: image texels kept unstretched at each edge |
 | `-kooch-tint` | colour that multiplies the image |
 | `-kooch-material` | a path to a `.shader` with `kind: ui` (#1690) |
@@ -318,6 +318,8 @@ on a canvas, drawn by the same pass that draws it in the game. No scene and no c
   mark means no system reads it, a typo or code still to write, and the copy button puts the
   `ui_actions` line on the clipboard. Classes are chips: click one to remove it, type in *+ class*
   or pick from **▾** the classes the sheet names; one no rule names shows in warning colour.
+  `font-family`, `background-image` and `-kooch-material` are asset pickers: search, or drop the
+  file from the Asset Browser; the engine's fonts are listed as `[engine]`.
   *Matching selectors* lists the sheet's rules that reach the element, strongest first, with
   their declarations and line, `:hover` and other states included. A label
   in **bold** is set in the file; **↺** removes it, and the element reads its default again.

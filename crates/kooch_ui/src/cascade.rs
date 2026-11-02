@@ -48,6 +48,9 @@ pub fn resolve(
             for declaration in UiStyleSheet::parse_inline(inline) {
                 style.apply(&declaration);
             }
+            if element.image.is_some() {
+                style.image = element.image;
+            }
         }
         resolved.push(style);
     }

@@ -48,7 +48,7 @@ tree.set_text(speed, "Velocidad: 12,5 m/s", 32.0);
 ```
 
 Text is shaped with **Inter**, which the engine ships (SIL Open Font License, in
-`crates/kooch_ui/assets/fonts/`); a glyph Inter lacks falls back to the system's sans-serif. The
+the engine's `assets/fonts/`); a glyph Inter lacks falls back to the system's sans-serif. The
 node is measured from its text, so a label pushes its siblings in a row. Ligatures and accents come
 from the shaper on their own.
 

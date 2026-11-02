@@ -12,10 +12,10 @@ use parley::{
 
 /// The engine's UI font, Inter (SIL OFL 1.1, `assets/fonts/Inter-OFL.txt`): variable, every weight
 /// in one file.
-static INTER: &[u8] = include_bytes!("../assets/fonts/Inter.ttf");
+static INTER: &[u8] = include_bytes!("../../../assets/fonts/Inter.ttf");
 /// Fira Code (SIL OFL 1.1, `assets/fonts/FiraCode-OFL.txt`): monospace with programming ligatures,
 /// asked for by family.
-static FIRA_CODE: &[u8] = include_bytes!("../assets/fonts/FiraCode-Regular.ttf");
+static FIRA_CODE: &[u8] = include_bytes!("../../../assets/fonts/FiraCode-Regular.ttf");
 
 /// Inter first; the system's sans-serif for any glyph it lacks.
 const FAMILY: &[FontFamilyName<'static>] = &[
@@ -45,7 +45,11 @@ impl Default for UiFonts {
             font,
             layout: LayoutContext::new(),
             scale: swash::scale::ScaleContext::new(),
-            families: Vec::new(),
+            // Embedded: already registered, never read again.
+            families: crate::font::ENGINE_FONTS
+                .iter()
+                .map(|(guid, name)| (*guid, (*name).into()))
+                .collect(),
             scanned: 0,
         }
     }

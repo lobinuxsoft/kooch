@@ -15,8 +15,22 @@ use crate::documents::{path_of, read_bytes};
 /// What the asset database types a font file as.
 pub const FONT_TYPE: &str = "kooch_ui::font::UiFont";
 
-/// The families the engine embeds, and so always ships.
-pub const ENGINE_FAMILIES: &[&str] = &["Inter", "Fira Code"];
+/// The families the engine embeds, and so always ships, by the GUID of their file under the
+/// engine's `assets/fonts/`: the editor picks them like any font asset.
+pub const ENGINE_FONTS: [(Guid, &str); 2] = [
+    (
+        Guid::from_bytes([
+            143, 133, 151, 34, 117, 205, 74, 127, 183, 60, 32, 96, 53, 13, 159, 181,
+        ]),
+        "Inter",
+    ),
+    (
+        Guid::from_bytes([
+            136, 161, 241, 127, 78, 237, 74, 194, 146, 230, 12, 5, 145, 204, 132, 26,
+        ]),
+        "Fira Code",
+    ),
+];
 
 /// A font file's bytes.
 #[derive(Debug, Clone)]
@@ -42,7 +56,7 @@ impl AssetLoader<UiFont> for UiFontLoader {
 kooch_core::register_asset!(UiFont, UiFontLoader);
 
 impl UiFonts {
-    /// The project's families, each with the font file that holds it.
+    /// Every family `font-family` can name, the engine's first, each with the file holding it.
     pub fn families(&self) -> &[(Guid, Box<str>)] {
         &self.families
     }

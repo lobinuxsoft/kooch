@@ -89,7 +89,7 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
             egui::CollapsingHeader::new("Inline style")
                 .default_open(true)
                 .show(ui, |ui| {
-                    super::styles::draw(ui, builder, origin, &inspected.style);
+                    super::styles::draw(ui, builder, origin, &inspected.style, catalog);
                     egui::CollapsingHeader::new("CSS")
                         .id_salt("ui_builder_css")
                         .show(ui, |ui| {
@@ -324,7 +324,7 @@ fn declarations(style: &str) -> Vec<&str> {
 }
 
 /// `to` from inside `folder`, with `..` where they part.
-fn relative(folder: &Path, to: &Path) -> PathBuf {
+pub(super) fn relative(folder: &Path, to: &Path) -> PathBuf {
     let from: Vec<Component> = folder.components().collect();
     let target: Vec<Component> = to.components().collect();
     let shared = from.iter().zip(&target).take_while(|(a, b)| a == b).count();

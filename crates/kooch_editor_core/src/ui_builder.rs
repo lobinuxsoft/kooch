@@ -67,8 +67,8 @@ pub(crate) struct UiBuilder {
     pub error: Option<String>,
     tree: Option<UiTree>,
     pub known: known::Known,
-    /// Every family `font-family` can name, and where it comes from.
-    pub fonts: Vec<(String, String)>,
+    /// Every family `font-family` can name, by the font file holding it.
+    pub fonts: Vec<(Guid, String)>,
     atlas: GlyphAtlas,
     list: UiDrawList,
     /// The size `list` was built for: the target matches it only once resized.
@@ -166,10 +166,14 @@ impl UiBuilder {
         if let Some(server) = server {
             resources.insert(server);
         }
-        if let (Some(fonts), Some(database)) =
-            (resources.get::<UiFonts>(), resources.get::<AssetDatabase>())
+        if let Some(fonts) = resources.get::<UiFonts>()
+            && fonts.families().len() != self.fonts.len()
         {
-            self.list_fonts(fonts, database);
+            self.fonts = fonts
+                .families()
+                .iter()
+                .map(|(guid, name)| (*guid, name.to_string()))
+                .collect();
         }
         let (Some(tree), Some(fonts)) = (self.tree.as_mut(), resources.get_mut::<UiFonts>()) else {
             return;
@@ -186,26 +190,6 @@ impl UiBuilder {
         let physical = glam::UVec2::new(size.0, size.1);
         kooch_ui::draw_tree(tree, &mut self.atlas, physical, &mut self.list);
         self.drawn = Some(size);
-    }
-}
-
-impl UiBuilder {
-    fn list_fonts(&mut self, fonts: &UiFonts, database: &AssetDatabase) {
-        let families = fonts.families();
-        if self.fonts.len() == kooch_ui::ENGINE_FAMILIES.len() + families.len() {
-            return;
-        }
-        let engine = kooch_ui::ENGINE_FAMILIES
-            .iter()
-            .map(|family| ((*family).to_owned(), "engine".to_owned()));
-        let project = families.iter().map(|(guid, family)| {
-            let file = database
-                .entry(*guid)
-                .and_then(|entry| entry.path.file_name())
-                .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
-            (family.to_string(), file)
-        });
-        self.fonts = engine.chain(project).collect();
     }
 }
 
