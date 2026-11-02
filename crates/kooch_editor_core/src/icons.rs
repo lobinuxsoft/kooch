@@ -137,3 +137,9 @@ pub const FILE_CODE: &str = "\u{e914}";
 
 /// File-text — notes and anything read rather than run.
 pub const FILE_TEXT: &str = "\u{e23a}";
+
+/// Check — something found where it should be.
+pub const CHECK: &str = "\u{e182}";
+
+/// Warning — something that will not do what it says.
+pub const WARNING: &str = "\u{e4e0}";

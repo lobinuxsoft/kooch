@@ -2,6 +2,7 @@
 //! the same pass that draws it in the game.
 
 mod edit;
+mod known;
 
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -60,6 +61,7 @@ pub(crate) struct UiBuilder {
     /// Why the markup in memory does not build, shown over the canvas.
     pub error: Option<String>,
     tree: Option<UiTree>,
+    pub known: known::Known,
     atlas: GlyphAtlas,
     list: UiDrawList,
     /// The size `list` was built for: the target matches it only once resized.
@@ -131,10 +133,12 @@ impl UiBuilder {
         if let Some(database) = resources.get::<AssetDatabase>() {
             self.reread(database);
             if std::mem::take(&mut self.edited) || self.tree.is_none() {
+                let text = self.markup.write();
+                self.known.refresh(database, &text, self.style);
                 match kooch_ui::build_markup(
                     database,
                     server.as_mut(),
-                    &self.markup.write(),
+                    &text,
                     &self.path,
                     self.style,
                 ) {
@@ -226,6 +230,7 @@ pub(crate) fn open(resources: &mut Resources, path: &Path) {
         selected: None,
         error: None,
         tree: None,
+        known: known::Known::default(),
         atlas,
         list: UiDrawList::default(),
         drawn: None,

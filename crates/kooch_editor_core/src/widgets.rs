@@ -4,7 +4,7 @@ mod asset_picker;
 mod search_combo;
 
 pub(crate) use asset_picker::asset_picker;
-pub(crate) use search_combo::search_combo;
+pub(crate) use search_combo::{search_combo, search_menu};
 
 /// Height of one list row, in points.
 pub(crate) fn row_height(ui: &egui::Ui) -> f32 {

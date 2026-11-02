@@ -54,6 +54,28 @@ pub fn resolve(
     resolved
 }
 
+/// The rules that reach element `index` in any state, weakest first, as the cascade applies them.
+pub fn matching_rules(source: &UiSource, sheet: &UiStyleSheet, index: usize) -> Vec<usize> {
+    // Every state on, so a `:hover` rule shows too; `:root` stays the root's alone.
+    let states = vec![!STATE_ROOT; source.elements.len()];
+    let mut matched: Vec<(Specificity, usize)> = sheet
+        .rules
+        .iter()
+        .enumerate()
+        .filter_map(|(rule, entry)| {
+            entry
+                .selectors
+                .iter()
+                .filter(|selector| matches(selector, &source.elements, &states, index))
+                .map(specificity)
+                .max()
+                .map(|best| (best, rule))
+        })
+        .collect();
+    matched.sort_unstable();
+    matched.into_iter().map(|(_, rule)| rule).collect()
+}
+
 /// An Overlay's root is the screen.
 fn root() -> ResolvedStyle {
     let mut style = ResolvedStyle::default();

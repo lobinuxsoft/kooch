@@ -5,6 +5,8 @@
 use crate::panels::inspector::AssetCatalogEntry;
 use crate::ui_builder::SHEET_TYPE;
 
+mod actions;
+mod classes;
 mod hierarchy;
 mod inspector;
 mod styles;

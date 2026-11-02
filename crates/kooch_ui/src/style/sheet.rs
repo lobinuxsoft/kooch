@@ -86,6 +86,20 @@ impl UiStyleSheet {
     }
 
     /// An inline `style="…"`: one block's declarations, with no selector and no `var()` to read.
+    /// Every class a selector names, sorted, once each.
+    pub fn classes(&self) -> Vec<&str> {
+        let mut classes: Vec<&str> = self
+            .rules
+            .iter()
+            .flat_map(|rule| &rule.selectors)
+            .flat_map(|selector| &selector.0)
+            .flat_map(|compound| compound.classes.iter().map(|class| &**class))
+            .collect();
+        classes.sort_unstable();
+        classes.dedup();
+        classes
+    }
+
     pub fn parse_inline(text: &str) -> Vec<Declaration> {
         let vars = HashMap::new();
         let mut input = ParserInput::new(text);
@@ -214,16 +228,46 @@ fn selector<'i>(input: &mut Parser<'i, '_>) -> Result<Selector, ParseError<'i, S
     Ok(Selector(compounds))
 }
 
+const STATES: [(u8, &str); 6] = [
+    (STATE_HOVER, "hover"),
+    (STATE_ACTIVE, "active"),
+    (STATE_FOCUS, "focus"),
+    (STATE_CHECKED, "checked"),
+    (STATE_DISABLED, "disabled"),
+    (STATE_ROOT, "root"),
+];
+
 fn state_bit(state: &str) -> Option<u8> {
-    Some(match state {
-        "hover" => STATE_HOVER,
-        "active" => STATE_ACTIVE,
-        "focus" => STATE_FOCUS,
-        "checked" => STATE_CHECKED,
-        "disabled" => STATE_DISABLED,
-        "root" => STATE_ROOT,
-        _ => return None,
-    })
+    STATES
+        .iter()
+        .find(|(_, name)| *name == state)
+        .map(|(bit, _)| *bit)
+}
+
+/// As written, `panel.menu button:hover`.
+impl std::fmt::Display for Selector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (at, compound) in self.0.iter().enumerate() {
+            if at > 0 {
+                f.write_str(" ")?;
+            }
+            if let Some(element) = &compound.element {
+                f.write_str(element)?;
+            }
+            if let Some(name) = &compound.name {
+                write!(f, "#{name}")?;
+            }
+            for class in &compound.classes {
+                write!(f, ".{class}")?;
+            }
+            for (bit, state) in STATES {
+                if compound.states & bit != 0 {
+                    write!(f, ":{state}")?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The declarations of one block.

@@ -30,6 +30,7 @@ mod ui_input;
 pub use atlas::{AtlasGlyph, AtlasImage, GlyphAtlas, GlyphKey};
 pub use bindings::bind_values;
 pub use build::{DEFAULT_FONT_SIZE, build_tree};
+pub use cascade::matching_rules;
 pub use controls::{SLIDER_FILL, SLIDER_REST, SLIDER_THUMB, TOGGLE_CHECK};
 pub use document::{MODE_CHOICES, MODE_OVERLAY, MODE_WORLD, UiDocument};
 pub use documents::{build_documents, build_markup};
