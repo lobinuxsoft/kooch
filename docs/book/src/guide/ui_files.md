@@ -313,7 +313,8 @@ on a canvas, drawn by the same pass that draws it in the game. No scene and no c
 - **Inspector** — the selected element's attributes as typed fields, from what each element reads:
   a checkbox for `disabled` or `checked`, a number for a slider's `min`/`max`/`step`, the
   editor's asset picker for a `<use>`'s `src` (search, or drop a `.kxml` from the Asset Browser),
-  text for `bind:value`. An `on:*` action is typed or picked from **▾**, which lists every action
+  text for `bind:value`. A bound toggle or slider gets a **preview** row: the value the canvas
+  shows, since the field it binds is the game's; it is never saved. An `on:*` action is typed or picked from **▾**, which lists every action
   the project's `.kxml` files send and its code reads with `ui_actions(resources, "…")`; a warning
   mark means no system reads it, a typo or code still to write, and the copy button puts the
   `ui_actions` line on the clipboard. Classes are chips: click one to remove it, type in *+ class*

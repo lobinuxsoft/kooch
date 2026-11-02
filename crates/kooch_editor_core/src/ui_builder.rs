@@ -77,6 +77,8 @@ pub(crate) struct UiBuilder {
     pass: Option<UiPass>,
     /// What this frame's first edit replaced, filed once the panel hands the Builder back.
     step: Option<Step>,
+    /// A bound control's value on the canvas, by element: the field it binds is the game's.
+    previews: Vec<(u32, f32)>,
 }
 
 /// One undo step: the markup before it, and what to call it.
@@ -187,6 +189,11 @@ impl UiBuilder {
         let (Some(tree), Some(fonts)) = (self.tree.as_mut(), resources.get_mut::<UiFonts>()) else {
             return;
         };
+        for &(origin, value) in &self.previews {
+            if let Some(node) = tree.node_of(origin) {
+                tree.set_value(node, value);
+            }
+        }
         let canvas = kooch_ui::canvas(glam::UVec2::new(self.resolution.0, self.resolution.1));
         tree.layout(
             Size {
@@ -270,6 +277,7 @@ pub(crate) fn open(resources: &mut Resources, path: &Path) {
         target,
         pass,
         step: None,
+        previews: Vec::new(),
     });
 }
 

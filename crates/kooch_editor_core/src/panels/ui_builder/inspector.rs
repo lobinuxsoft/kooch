@@ -62,6 +62,15 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
                                 let base = attribute(&inspected.inherited, spec.key);
                                 typed_row(ui, builder, origin, spec, value, base, catalog);
                             }
+                            if inspected.from.is_none() {
+                                preview_row(
+                                    ui,
+                                    builder,
+                                    origin,
+                                    &inspected.tag,
+                                    &inspected.attributes,
+                                );
+                            }
                         });
                 });
             // The canvas knows the instance, not which of its nodes came from where.
@@ -98,6 +107,44 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
                         });
                 });
         });
+}
+
+/// A bound control's value on the canvas: what the game's field would hold.
+fn preview_row(
+    ui: &mut egui::Ui,
+    builder: &mut UiBuilder,
+    origin: u32,
+    tag: &str,
+    attributes: &[(String, String)],
+) {
+    if attribute(attributes, "bind:value").is_none() {
+        return;
+    }
+    let Some(mut value) = builder.value_of(origin) else {
+        return;
+    };
+    let hint = "Shown on the canvas only, never saved: in the game the bound field sets it";
+    let changed = match tag {
+        "toggle" => {
+            label(ui, "preview", hint, false);
+            let mut on = value > 0.5;
+            let changed = ui.checkbox(&mut on, "").changed();
+            value = on as u8 as f32;
+            changed
+        }
+        "slider" => {
+            label(ui, "preview", hint, false);
+            let number = |key| attribute(attributes, key).and_then(|text| text.parse::<f32>().ok());
+            let (min, max) = (number("min").unwrap_or(0.0), number("max").unwrap_or(1.0));
+            ui.add(egui::Slider::new(&mut value, min..=max)).changed()
+        }
+        _ => return,
+    };
+    if changed {
+        builder.set_preview(origin, value);
+    }
+    ui.label("");
+    ui.end_row();
 }
 
 fn attribute(attributes: &[(String, String)], key: &str) -> Option<String> {
