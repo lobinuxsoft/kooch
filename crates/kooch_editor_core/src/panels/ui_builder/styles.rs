@@ -108,6 +108,16 @@ fn row(
         edited = Some(None);
     }
     ui.end_row();
+    if spec.name.ends_with("gap") && value.as_deref().is_some_and(|value| value.contains('%')) {
+        ui.label("");
+        ui.colored_label(
+            ui.visuals().warn_fg_color,
+            "A % gap is a share of this element's own size: without a set height (or width) it is \
+             laid out with none, then overflows. Set the size, or use px.",
+        );
+        ui.label("");
+        ui.end_row();
+    }
     let Some(value) = edited else {
         return false;
     };

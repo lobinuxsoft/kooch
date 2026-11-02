@@ -254,7 +254,7 @@ base sheet under every document's own gives all of them a look, which the docume
 | `flex-basis` | length, `auto` |
 | `align-items`, `align-self`, `align-content` | `flex-start`, `flex-end`, `center`, `stretch`, `baseline` |
 | `justify-content` | `flex-start`, `flex-end`, `center`, `space-between`, `space-around`, `space-evenly` |
-| `gap` | length, one or two |
+| `gap` | length, one or two. A `%` is of the element's own size, as in CSS: one with an `auto` size is laid out with no gap, which then overflows it |
 | `margin`, `padding` | length, one to four, and the `-top`/`-right`/`-bottom`/`-left` longhands |
 | `background-color`, `color` | `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()`, `rgba()`, a CSS colour name |
 | `border` | `<width> <color>` |
