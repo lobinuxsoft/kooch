@@ -106,6 +106,11 @@ const USE: [AttributeSpec; 2] = [
 ];
 
 impl ElementKind {
+    /// Takes child elements: what the UI Builder drops into.
+    pub fn holds_children(self) -> bool {
+        matches!(self, Self::Ui | Self::Panel | Self::Button)
+    }
+
     /// The attributes this element reads besides `name`, `class` and `style`, in the order the
     /// Inspector lists them.
     pub fn attributes(self) -> &'static [AttributeSpec] {
