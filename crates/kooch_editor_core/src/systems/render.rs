@@ -167,7 +167,13 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     if let Some(builder) = ui_builder.as_mut() {
         builder.prepare(&taken.gpu, &mut taken.overlay.renderer);
     }
-    let toolbar = toolbar_info(resources, &taken.overlay, &undo_stack, is_playing);
+    let toolbar = toolbar_info(
+        resources,
+        &taken.overlay,
+        &undo_stack,
+        is_playing,
+        ui_builder.as_ref().map(|builder| builder.path.as_path()),
+    );
 
     if let Some(modes) = resources.get::<kooch_core::window_mode::DisplayModes>() {
         taken.overlay.game_resolution.sizes = crate::panels::game::display_sizes(modes);
@@ -407,7 +413,18 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     taken.render_views(resources, project_loaded, &requests);
     if let Some(mut builder) = ui_builder {
         builder.render(&taken.gpu);
+        let step = builder.take_step();
+        let document = crate::history::Document::UiDocument(builder.path.clone());
         resources.insert(builder);
+        if let Some(step) = step {
+            crate::history::documents::file(
+                resources,
+                &document,
+                &step.label,
+                step.merge,
+                crate::history::documents::DocumentState::Ui(step.before),
+            );
+        }
     }
     stages.viewport_ms = crate::perf::ms_since(viewport_start);
 

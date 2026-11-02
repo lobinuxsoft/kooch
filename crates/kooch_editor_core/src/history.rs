@@ -28,6 +28,8 @@ pub(crate) enum Document {
     InputMap(PathBuf),
     /// The shader graph open in its panel, keyed by file for the same reason (#1211).
     ShaderGraph(PathBuf),
+    /// The `.kxml` open in the UI Builder, keyed by file for the same reason.
+    UiDocument(PathBuf),
 }
 
 /// What kind of document an asset guid names.
@@ -43,6 +45,7 @@ pub(crate) fn resolve(
     selected_asset: Option<(Guid, AssetKind)>,
     input_map: Option<&Path>,
     shader_graph: Option<&Path>,
+    ui_document: Option<&Path>,
 ) -> Option<Document> {
     match focused_tab? {
         // The two panels that show the scene. A selected asset does not
@@ -60,6 +63,7 @@ pub(crate) fn resolve(
         EditorTab::ShaderGraph => {
             shader_graph.map(|path| Document::ShaderGraph(path.to_path_buf()))
         }
+        EditorTab::UiBuilder => ui_document.map(|path| Document::UiDocument(path.to_path_buf())),
         _ => None,
     }
 }
@@ -79,6 +83,7 @@ impl Document {
             Document::Asset(_) => "this asset",
             Document::InputMap(_) => "this input map",
             Document::ShaderGraph(_) => "this shader graph",
+            Document::UiDocument(_) => "this UI document",
         }
     }
 }
