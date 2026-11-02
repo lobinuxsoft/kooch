@@ -8,9 +8,7 @@ mod list;
 mod nested;
 mod value_widget;
 
-pub(crate) use self::asset::AssetCatalogEntry;
-#[cfg(test)]
-pub(crate) use self::asset::AssetSource;
+pub(crate) use self::asset::{AssetCatalogEntry, AssetSource};
 pub(crate) use self::asset_picker::draw_asset_picker;
 pub(super) use self::choices::{
     bits_for, choices_for, draw_readonly_value, fields_for, layer_for, layers_for, range_for,

@@ -351,8 +351,9 @@ fn reachable_guids(
             continue;
         }
         if let Some(text) = read_if_text(&path) {
-            read.insert(path);
             queue.extend(guids_in(&text));
+            queue.extend(url_guids(&path, &text, project_root, engine_root));
+            read.insert(path);
         }
     }
 
@@ -442,6 +443,40 @@ fn guids_in(text: &str) -> Vec<String> {
                 && candidate.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
         })
         .map(normalise_guid)
+        .collect()
+}
+
+/// What a UI file's `url()`s name. The editor writes an engine image under the project's
+/// `assets/`, where this build merges it, so a path missing there is looked up in the engine's.
+fn url_guids(
+    path: &Path,
+    text: &str,
+    project_root: &Path,
+    engine_root: Option<&Path>,
+) -> Vec<String> {
+    let folder = path.parent().unwrap_or(Path::new(""));
+    let project = project_root.join("assets");
+    text.split("url(")
+        .skip(1)
+        .filter_map(|rest| rest.split(')').next())
+        .filter_map(|url| {
+            let url = url.trim().trim_matches(['"', '\'']);
+            let mut file = PathBuf::new();
+            for part in folder.join(url).components() {
+                match part {
+                    std::path::Component::ParentDir => {
+                        file.pop();
+                    }
+                    std::path::Component::CurDir => {}
+                    other => file.push(other),
+                }
+            }
+            if !file.is_file() {
+                let name = file.strip_prefix(&project).ok()?;
+                file = engine_root?.join("assets").join(name);
+            }
+            guid_of(&file)
+        })
         .collect()
 }
 

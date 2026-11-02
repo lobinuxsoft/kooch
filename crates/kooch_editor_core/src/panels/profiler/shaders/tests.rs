@@ -11,6 +11,7 @@ fn shader(path: &str) -> AssetCatalogEntry {
     AssetCatalogEntry {
         guid: Guid::new_v4(),
         path: PathBuf::from(path),
+        name: PathBuf::from(path),
         display_name: Path::new(path)
             .file_name()
             .unwrap()

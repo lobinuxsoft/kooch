@@ -7,6 +7,7 @@ fn entry(path: &str, type_name: &str) -> AssetCatalogEntry {
     AssetCatalogEntry {
         guid: Guid::new_v4(),
         path: PathBuf::from(path),
+        name: PathBuf::from(path),
         display_name: path.to_owned(),
         source: AssetSource::Project,
         type_name: type_name.to_owned(),
