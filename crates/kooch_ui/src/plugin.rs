@@ -10,8 +10,8 @@ use kooch_core::schedule::Order;
 
 use crate::{
     GlyphAtlas, UiActions, UiDocument, UiEvent, UiFocus, UiFonts, UiPointer, UiTrees, bind_values,
-    build_documents, draw_documents, layout_documents, load_images, navigate_focus, pick_pointer,
-    prune_trees, restyle_documents,
+    build_documents, draw_documents, layout_documents, load_fonts, load_images, navigate_focus,
+    pick_pointer, prune_trees, restyle_documents,
 };
 
 /// Only the components: what the editor needs to offer and inspect them, without running any UI.
@@ -61,7 +61,13 @@ impl Plugin for UiPlugin {
         );
         // Ungated: a document removed while stopped frees its tree too.
         app.add_system(Stage::PostUpdate, prune_trees);
-        app.add_system(Stage::PostUpdate, build_documents);
+        // Before the build: a document shapes its text with the fonts registered by then.
+        app.add_system(Stage::PostUpdate, load_fonts);
+        app.add_ordered(
+            Stage::PostUpdate,
+            Order::after("load_fonts"),
+            build_documents,
+        );
         app.add_ordered(
             Stage::PostUpdate,
             Order::after("build_documents"),

@@ -28,6 +28,10 @@ pub struct UiFonts {
     pub(crate) font: FontContext,
     pub(crate) layout: LayoutContext<()>,
     pub(crate) scale: swash::scale::ScaleContext,
+    /// The project's families and their files, as [`load_fonts`](crate::load_fonts) found them.
+    pub(crate) families: Vec<(kooch_core::Guid, Box<str>)>,
+    /// The asset database's size when fonts were last looked for.
+    pub(crate) scanned: usize,
 }
 
 impl Default for UiFonts {
@@ -41,6 +45,8 @@ impl Default for UiFonts {
             font,
             layout: LayoutContext::new(),
             scale: swash::scale::ScaleContext::new(),
+            families: Vec::new(),
+            scanned: 0,
         }
     }
 }

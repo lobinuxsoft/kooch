@@ -33,6 +33,7 @@ pub(crate) fn preview_ui_system(resources: &mut Resources) {
         return;
     }
     kooch_ui::prune_trees(resources);
+    kooch_ui::load_fonts(resources);
     kooch_ui::build_documents(resources);
     kooch_ui::load_images(resources);
     kooch_ui::layout_documents(resources);
