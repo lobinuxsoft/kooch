@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-11-01 — 🎯 **A pause menu built from files, driven by a pad.** The UI reads Input Actions like the game (one input system, the mouse included), moves focus with the stick, and turns whole layers on and off without rebuilding them. Pause stops game time and silences the game's action map. Templates instance a `.kxml` with per-instance overrides; toggles and sliders bind both ways to a component's field (`bind:value`). Game code got shorter: edge helpers on actions, `Time::of`, `ComponentRegistry::component`. In the editor's Play the cursor follows what the game asks for. Next: querying and restyling nodes from code (#96 phase 7), hot reload (#280 phase 7), then the UI Builder.
+Last updated 2026-11-01 — 🎯 **A UI Builder you can edit a menu in.** Its own canvas at a chosen resolution, the document tree, and an Inspector typed per element: attributes with real widgets, inline styles in Unity's categories, every asset picked from one searchable picker, classes as chips with the sheet rules that reach the element, and actions listed from what the project's `.kxml` send and its code reads. Hot reload restyles without rebuilding. Next: the Library (#280 8.2d), elements and templates dragged in.
 
 
 ---
@@ -207,6 +207,27 @@ what the engine did before any of this existed, for the reason
 `settings.rs:510` argues at length: a serde default is not a
 recommendation, it is what an old file silently becomes. A project that
 wants these values sets them.
+
+---
+
+## 🎯 2026-11-01 — the UI Builder: open a `.kxml`, see it, edit it without touching the file
+
+**What the user gets:** double-click a `.kxml` and it opens on its own canvas at the device's
+resolution (1280×800 handheld, 1920×1080…), with the hierarchy beside it and an Inspector for the
+selected node. Edits stay in memory until Save, comments included.
+
+- **Hot reload** (#1737): a sheet edit restyles the live UI without rebuilding the tree.
+- **Canvas and tree** (#1738, #1739): pan/zoom re-draw at the new scale, so text stays sharp.
+- **A typed Inspector** (#1740, #1741): each element lists its own attributes with a widget per
+  type; inline styles come in Unity's categories (Display, Flex, Size, Margin…), raw CSS stays
+  as the advanced view.
+- **One asset picker everywhere** (#1742): search, "(None)", drag from the Asset Browser.
+- **Classes and actions** (#1743): classes as chips, flagged when no rule names them, with the
+  matching selectors strongest first. `on:*` fields list the actions the project's `.kxml` send
+  and its code reads with `ui_actions`, mark the ones nothing reads, and copy the line to read one.
+- **Fixed** (#1744): the Inspector's field column widened every frame.
+
+**Decided:** positioning is taffy only, no anchors (Unity 6.7 has none either).
 
 ---
 
