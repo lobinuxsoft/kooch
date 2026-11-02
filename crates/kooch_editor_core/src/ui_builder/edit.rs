@@ -250,11 +250,26 @@ impl UiBuilder {
         match Markup::parse(text) {
             Ok(markup) => {
                 self.markup = markup;
+                self.previews.clear();
                 self.select(None, None);
                 self.dirty = true;
                 self.edited = true;
             }
             Err(error) => tracing::error!(%error, "an undo step of the UI document does not parse"),
+        }
+    }
+
+    /// What a control shows on the canvas: its preview, or what the markup gives it.
+    pub(crate) fn value_of(&self, origin: u32) -> Option<f32> {
+        let tree = self.tree.as_ref()?;
+        tree.value(tree.node_of(origin)?)
+    }
+
+    /// Shows `value` on the canvas only; the file never holds it.
+    pub(crate) fn set_preview(&mut self, origin: u32, value: f32) {
+        match self.previews.iter_mut().find(|(own, _)| *own == origin) {
+            Some(slot) => slot.1 = value,
+            None => self.previews.push((origin, value)),
         }
     }
 
@@ -278,6 +293,7 @@ impl UiBuilder {
             {
                 Ok(markup) => {
                     self.markup = markup;
+                    self.previews.clear();
                     self.edited = true;
                 }
                 Err(error) => self.error = Some(error),
