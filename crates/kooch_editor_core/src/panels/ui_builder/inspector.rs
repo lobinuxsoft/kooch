@@ -169,8 +169,7 @@ fn template_row(
     catalog: &[AssetCatalogEntry],
 ) {
     label(ui, spec.key, spec.hint, value.is_some());
-    let folder = builder.path.parent().unwrap_or(Path::new("")).to_path_buf();
-    let written = |path: &Path| relative(&folder, path).to_string_lossy().replace('\\', "/");
+    let written = |path: &Path| template_src(builder, path);
     let current = value.as_deref().and_then(|value| {
         catalog
             .iter()
@@ -195,6 +194,12 @@ fn template_row(
         None => {}
     }
     unset(ui, builder, origin, spec.key, value.is_some());
+}
+
+/// A template's `src`: relative to the open file, with forward slashes.
+pub(super) fn template_src(builder: &UiBuilder, path: &Path) -> String {
+    let folder = builder.path.parent().unwrap_or(Path::new(""));
+    relative(folder, path).to_string_lossy().replace('\\', "/")
 }
 
 /// Bold when the file sets it, as Unity marks an attribute that overrides its default.

@@ -298,7 +298,16 @@ on a canvas, drawn by the same pass that draws it in the game. No scene and no c
   sharp up to 4096 pixels a side.
 
 - **Hierarchy** — the file's elements as it nests them; a `<use>` is one row, its template's
-  inside stays the template's. Click a row, or the canvas, to select.
+  inside stays the template's. Click a row, or the canvas, to select. Drag a row to move it: onto
+  the middle of a `panel`, `button` or the root it goes inside, last; onto a row's top or bottom
+  edge it goes before or after. The right-click menu renames (sets `name`; a double-click does
+  too), duplicates (**Ctrl+D**) and deletes (**Del**).
+- **Library** — under the hierarchy: the standard elements (`panel`, `label`, `button`, `toggle`,
+  `slider`) and, under *Project*, every other `.kxml`, which lands as a `<use>`. Drag one onto the
+  hierarchy the same way, or onto the canvas: it goes inside what holds children, after what does
+  not. A double-click adds it to the selection. A `.kxml` dragged from the Asset Browser lands as
+  a `<use>` too. What lands is selected, with a default to be seen: a label reads *Label*, a
+  button holds one.
 - **Inspector** — the selected element's attributes as typed fields, from what each element reads:
   a checkbox for `disabled` or `checked`, a number for a slider's `min`/`max`/`step`, the
   editor's asset picker for a `<use>`'s `src` (search, or drop a `.kxml` from the Asset Browser),

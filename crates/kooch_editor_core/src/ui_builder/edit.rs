@@ -5,7 +5,7 @@ use std::time::SystemTime;
 
 use kooch_core::asset_database::AssetDatabase;
 use kooch_ui::UiRect;
-use kooch_ui::markup::{Markup, Outline};
+use kooch_ui::markup::{Markup, Outline, Place};
 
 use super::UiBuilder;
 
@@ -58,6 +58,47 @@ impl UiBuilder {
     pub(crate) fn set_text(&mut self, origin: u32, text: &str) {
         self.markup.set_text(origin, text);
         self.changed();
+    }
+
+    /// Selects what landed. `None` when the markup refused the spot.
+    pub(crate) fn insert(&mut self, snippet: &str, at: Place) -> Option<u32> {
+        let origin = self.markup.insert(snippet, at)?;
+        self.selected = Some(origin);
+        self.changed();
+        Some(origin)
+    }
+
+    pub(crate) fn move_to(&mut self, origin: u32, at: Place) {
+        if let Some(moved) = self.markup.move_to(origin, at) {
+            self.selected = Some(moved);
+            self.changed();
+        }
+    }
+
+    pub(crate) fn duplicate(&mut self, origin: u32) {
+        if let Some(copy) = self.markup.duplicate(origin) {
+            self.selected = Some(copy);
+            self.changed();
+        }
+    }
+
+    pub(crate) fn remove(&mut self, origin: u32) {
+        if self.markup.remove(origin) {
+            self.selected = None;
+            self.changed();
+        }
+    }
+
+    pub(crate) fn tag(&self, origin: u32) -> Option<&str> {
+        self.markup.tag(origin)
+    }
+
+    /// Takes child elements, so a drop on it lands inside.
+    pub(crate) fn holds_children(&self, origin: u32) -> bool {
+        self.markup
+            .tag(origin)
+            .and_then(kooch_ui::source::ElementKind::from_tag)
+            .is_some_and(kooch_ui::source::ElementKind::holds_children)
     }
 
     /// The element under a point of the canvas, in canvas units.

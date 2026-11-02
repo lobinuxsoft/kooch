@@ -7,8 +7,10 @@ use crate::ui_builder::SHEET_TYPE;
 
 mod actions;
 mod classes;
+mod drop;
 mod hierarchy;
 mod inspector;
+mod library;
 mod styles;
 
 use crate::ui_builder::{RESOLUTIONS, UiBuilder};
@@ -26,6 +28,8 @@ const CHECKER: f32 = 16.0;
 const MAX_SIDE: f32 = 4096.0;
 /// Shares of the panel the hierarchy and the Inspector take beside the canvas.
 const HIERARCHY_SHARE: f32 = 0.18;
+/// Share of the left column the hierarchy keeps above the Library.
+const TREE_SHARE: f32 = 0.6;
 const INSPECTOR_SHARE: f32 = 0.24;
 
 pub(crate) fn draw_ui_builder(
@@ -45,12 +49,18 @@ pub(crate) fn draw_ui_builder(
     let left = full.with_max_x(full.min.x + full.width() * HIERARCHY_SHARE);
     let right = full.with_min_x(full.max.x - full.width() * INSPECTOR_SHARE);
     let middle = full.with_min_x(left.max.x).with_max_x(right.min.x);
-    ui.scope_builder(egui::UiBuilder::new().max_rect(left.shrink(4.0)), |ui| {
-        hierarchy::draw(ui, builder);
+    let tree = left.with_max_y(left.min.y + left.height() * TREE_SHARE);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(tree.shrink(4.0)), |ui| {
+        hierarchy::draw(ui, builder, catalog);
     });
+    ui.scope_builder(
+        egui::UiBuilder::new().max_rect(left.with_min_y(tree.max.y).shrink(4.0)),
+        |ui| library::draw(ui, builder, catalog),
+    );
     ui.scope_builder(egui::UiBuilder::new().max_rect(middle), |ui| {
-        canvas(ui, builder);
+        canvas(ui, builder, catalog);
     });
+    drop::ghost(ui.ctx(), builder);
     ui.scope_builder(egui::UiBuilder::new().max_rect(right.shrink(4.0)), |ui| {
         inspector::draw(ui, builder, catalog);
     });
@@ -139,7 +149,7 @@ fn toolbar(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEn
     });
 }
 
-fn canvas(ui: &mut egui::Ui, builder: &mut UiBuilder) {
+fn canvas(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEntry]) {
     let (rect, response) =
         ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
     let ppp = ui.ctx().pixels_per_point();
@@ -213,6 +223,24 @@ fn canvas(ui: &mut egui::Ui, builder: &mut UiBuilder) {
     if let Some(rect) = builder.selected.and_then(|origin| builder.rect_of(origin)) {
         let stroke = egui::Stroke::new(2.0, accent);
         painter.rect_stroke(to_screen(rect), 0.0, stroke, egui::StrokeKind::Outside);
+    }
+    // A drop lands inside what holds children, after what does not.
+    if drop::current(ui.ctx()).is_some()
+        && let Some(pointer) = ui.ctx().pointer_latest_pos()
+        && rect.contains(pointer)
+    {
+        let point = (pointer - canvas.min) * units;
+        let target = builder.hit(glam::Vec2::new(point.x, point.y)).unwrap_or(0);
+        let at = match target != 0 && !builder.holds_children(target) {
+            true => kooch_ui::markup::Place::After(target),
+            false => kooch_ui::markup::Place::Inside(target),
+        };
+        if let Some(area) = builder.rect_of(target) {
+            drop::mark(&painter, to_screen(area), at, accent);
+        }
+        if let Some(dragged) = drop::released(ui.ctx()) {
+            drop::apply(builder, dragged, at, catalog);
+        }
     }
     if let Some(error) = &builder.error {
         painter.text(

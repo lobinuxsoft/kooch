@@ -1,7 +1,7 @@
 //! An opened `.kxml` as an editable XML tree (#280 phase 8): edited in memory, written on save,
 //! with its comments, prefixes and attribute order kept. Indentation is redone on write.
 
-use xmlem::{Document, Element};
+use xmlem::{Document, Element, NewElement, Node};
 
 /// One row of the UI Builder's hierarchy.
 #[derive(Debug, Clone, PartialEq)]
@@ -12,6 +12,15 @@ pub struct Outline {
     pub tag: String,
     pub name: Option<String>,
     pub classes: Option<String>,
+}
+
+/// Where an element lands, by the origin of the one it goes into or beside.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+    /// Its last child.
+    Inside(u32),
+    Before(u32),
+    After(u32),
 }
 
 pub struct Markup {
@@ -93,6 +102,116 @@ impl Markup {
         }
     }
 
+    /// Parses `snippet`, one element and its children, into `at`. Returns its origin.
+    pub fn insert(&mut self, snippet: &str, at: Place) -> Option<u32> {
+        let parsed = snippet.parse::<Document>().ok()?;
+        let owned = snapshot(&parsed, parsed.root());
+        let spot = self.spot(at)?;
+        let element = self.place(owned, spot)?;
+        self.origin_of(element)
+    }
+
+    /// The root stays: a file has one.
+    pub fn remove(&mut self, origin: u32) -> bool {
+        let Some(element) = self.element(origin) else {
+            return false;
+        };
+        let Some(parent) = element.parent(&self.document) else {
+            return false;
+        };
+        parent.remove_child(&mut self.document, Node::Element(element));
+        true
+    }
+
+    /// A copy right after it. Returns the copy's origin.
+    pub fn duplicate(&mut self, origin: u32) -> Option<u32> {
+        let element = self.element(origin)?;
+        element.parent(&self.document)?;
+        let owned = snapshot(&self.document, element);
+        let copy = self.place(owned, Spot::After(element))?;
+        self.origin_of(copy)
+    }
+
+    /// Refused into itself or its own subtree. Returns its new origin.
+    pub fn move_to(&mut self, origin: u32, at: Place) -> Option<u32> {
+        let element = self.element(origin)?;
+        let parent = element.parent(&self.document)?;
+        let spot = self.spot(at)?;
+        let anchor = match spot {
+            Spot::Inside(anchor) | Spot::Before(anchor) | Spot::After(anchor) => anchor,
+        };
+        if self.within(anchor, element) {
+            return (anchor == element && !matches!(spot, Spot::Inside(_))).then_some(origin);
+        }
+        let owned = snapshot(&self.document, element);
+        parent.remove_child(&mut self.document, Node::Element(element));
+        let moved = self.place(owned, spot)?;
+        self.origin_of(moved)
+    }
+
+    /// `element` is `ancestor` or inside it.
+    fn within(&self, element: Element, ancestor: Element) -> bool {
+        let mut at = Some(element);
+        while let Some(current) = at {
+            if current == ancestor {
+                return true;
+            }
+            at = current.parent(&self.document);
+        }
+        false
+    }
+
+    /// Resolved before anything moves: an edit shifts every origin after it.
+    fn spot(&self, at: Place) -> Option<Spot> {
+        let spot = match at {
+            Place::Inside(origin) => Spot::Inside(self.element(origin)?),
+            Place::Before(origin) => Spot::Before(self.element(origin)?),
+            Place::After(origin) => Spot::After(self.element(origin)?),
+        };
+        match spot {
+            Spot::Before(anchor) | Spot::After(anchor) => {
+                anchor.parent(&self.document)?;
+            }
+            Spot::Inside(_) => {}
+        }
+        Some(spot)
+    }
+
+    fn place(&mut self, owned: Owned, spot: Spot) -> Option<Element> {
+        let Owned::Element(new, children) = owned else {
+            return None;
+        };
+        let document = &mut self.document;
+        let element = match spot {
+            Spot::Inside(parent) => parent.append_new_element(document, new),
+            Spot::After(sibling) => sibling.append_new_element_after(document, new),
+            Spot::Before(sibling) => match sibling.prev_sibling_element(document) {
+                Some(previous) => previous.append_new_element_after(document, new),
+                // `xmlem` only inserts after: land after the first child, then move it behind.
+                None => {
+                    let element = sibling.append_new_element_after(document, new);
+                    let first = snapshot(document, sibling);
+                    let parent = sibling.parent(document)?;
+                    parent.remove_child(document, Node::Element(sibling));
+                    if let Owned::Element(first, grand) = first {
+                        let moved = element.append_new_element_after(document, first);
+                        fill(document, moved, grand);
+                    }
+                    element
+                }
+            },
+        };
+        fill(&mut self.document, element, children);
+        Some(element)
+    }
+
+    fn origin_of(&self, element: Element) -> Option<u32> {
+        self.elements()
+            .iter()
+            .position(|(own, _)| *own == element)
+            .map(|at| at as u32)
+    }
+
     fn element(&self, origin: u32) -> Option<Element> {
         self.elements()
             .get(origin as usize)
@@ -104,6 +223,60 @@ impl Markup {
         let mut out = Vec::new();
         walk(&self.document, self.document.root(), 0, &mut out);
         out
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Spot {
+    Inside(Element),
+    Before(Element),
+    After(Element),
+}
+
+/// A subtree held apart from any document, to be written back elsewhere.
+enum Owned {
+    Element(NewElement, Vec<Owned>),
+    Text(String),
+    CData(String),
+    Comment(String),
+}
+
+fn snapshot(document: &Document, element: Element) -> Owned {
+    let new = NewElement {
+        name: element.qname(document).clone(),
+        attrs: element.attributes(document).clone(),
+    };
+    let children = element
+        .child_nodes(document)
+        .iter()
+        .filter_map(|node| match *node {
+            Node::Element(child) => Some(snapshot(document, child)),
+            Node::Text(text) => Some(Owned::Text(text.as_str(document).to_owned())),
+            Node::CDataSection(data) => Some(Owned::CData(data.as_str(document).to_owned())),
+            Node::Comment(comment) => Some(Owned::Comment(comment.as_str(document).to_owned())),
+            _ => None,
+        })
+        .collect();
+    Owned::Element(new, children)
+}
+
+fn fill(document: &mut Document, parent: Element, children: Vec<Owned>) {
+    for child in children {
+        match child {
+            Owned::Element(new, grand) => {
+                let element = parent.append_new_element(document, new);
+                fill(document, element, grand);
+            }
+            Owned::Text(text) => {
+                parent.append_text(document, &text);
+            }
+            Owned::CData(data) => {
+                parent.append_cdata(document, &data);
+            }
+            Owned::Comment(comment) => {
+                parent.append_comment(document, &comment);
+            }
+        }
     }
 }
 
@@ -158,4 +331,29 @@ fn a_save_keeps_prefixes_and_comments() {
     }
     let parsed = crate::source::UiSource::parse(&written).unwrap();
     assert_eq!(parsed.elements.len(), markup.outline().len());
+}
+
+#[test]
+fn edits_keep_the_order() {
+    let text = "<ui><panel name=\"a\"><label>A</label></panel><panel name=\"b\"/></ui>";
+    let mut markup = Markup::parse(text).unwrap();
+    let names = |markup: &Markup| -> Vec<String> {
+        markup
+            .outline()
+            .iter()
+            .map(|row| row.name.clone().unwrap_or(row.tag.clone()))
+            .collect()
+    };
+    assert_eq!(markup.move_to(3, Place::Before(1)), Some(1));
+    assert_eq!(names(&markup), ["ui", "b", "a", "label"]);
+    assert_eq!(markup.move_to(2, Place::Inside(2)), None);
+    assert_eq!(
+        markup.insert("<button><label>Go</label></button>", Place::After(1)),
+        Some(2)
+    );
+    assert_eq!(names(&markup), ["ui", "b", "button", "label", "a", "label"]);
+    assert_eq!(markup.duplicate(4), Some(6));
+    assert!(markup.remove(2));
+    assert_eq!(names(&markup), ["ui", "b", "a", "label", "a", "label"]);
+    assert!(markup.write().contains("<label>A</label>"));
 }
