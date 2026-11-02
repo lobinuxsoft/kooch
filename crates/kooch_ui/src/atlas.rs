@@ -6,13 +6,16 @@ use std::time::SystemTime;
 
 use kooch_core::Guid;
 
-use etagere::{AtlasAllocator, size2};
+use etagere::{Allocation, BucketedAtlasAllocator, size2};
 use swash::FontRef;
 use swash::scale::{Render, Source, StrikeWith};
 use swash::zeno::{Format, Vector};
 
 /// Fractions of a pixel a glyph's x is snapped to: four is where more stops being visible.
 const SUBPIXEL: f32 = 4.0;
+
+/// The atlas doubles up to this before it clears instead: 64 MiB of RGBA8 at the top.
+const MAX_SIDE: u32 = 4096;
 
 /// What makes two rasterized glyphs the same bitmap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -45,7 +48,7 @@ pub struct AtlasImage {
 
 /// The atlas: RGBA8 pixels, what is where, and what changed since the last upload.
 pub struct GlyphAtlas {
-    allocator: AtlasAllocator,
+    allocator: BucketedAtlasAllocator,
     side: u32,
     pixels: Vec<u8>,
     /// `None`: a glyph with no ink (a space). Cached too, so it is not rasterized every frame.
@@ -66,7 +69,7 @@ impl Default for GlyphAtlas {
 impl GlyphAtlas {
     pub fn new(side: u32) -> Self {
         Self {
-            allocator: AtlasAllocator::new(size2(side as i32, side as i32)),
+            allocator: BucketedAtlasAllocator::new(size2(side as i32, side as i32)),
             side,
             pixels: vec![0; (side * side * 4) as usize],
             glyphs: HashMap::new(),
@@ -102,8 +105,7 @@ impl GlyphAtlas {
         self.dirty.take()
     }
 
-    /// The glyph's slot, rasterizing it on first use. A full atlas is cleared and starts over: the
-    /// glyphs a frame needs fit, and the ones it stopped needing are what made it full.
+    /// The glyph's slot, rasterizing it on first use.
     pub(crate) fn glyph(
         &mut self,
         scale: &mut swash::scale::ScaleContext,
@@ -133,13 +135,7 @@ impl GlyphAtlas {
             self.glyphs.insert(key, None);
             return None;
         }
-        let slot = match self.allocator.allocate(size2(w as i32, h as i32)) {
-            Some(slot) => slot,
-            None => {
-                self.clear();
-                self.allocator.allocate(size2(w as i32, h as i32))?
-            }
-        };
+        let slot = self.allocate(w, h)?;
         let (x0, y0) = (slot.rectangle.min.x as u32, slot.rectangle.min.y as u32);
         for row in 0..h {
             for column in 0..w {
@@ -178,14 +174,7 @@ impl GlyphAtlas {
         if let Some((id, _)) = self.images.remove(&guid) {
             self.allocator.deallocate(id);
         }
-        let padded = size2(w as i32 + 2, h as i32 + 2);
-        let slot = match self.allocator.allocate(padded) {
-            Some(slot) => slot,
-            None => {
-                self.clear();
-                self.allocator.allocate(padded)?
-            }
-        };
+        let slot = self.allocate(w + 2, h + 2)?;
         let (x0, y0) = (slot.rectangle.min.x as u32, slot.rectangle.min.y as u32);
         for row in 0..h + 2 {
             let from_row = row.saturating_sub(1).min(h - 1);
@@ -203,6 +192,39 @@ impl GlyphAtlas {
         };
         self.images.insert(guid, (slot.id, image));
         Some(image)
+    }
+
+    /// A slot, doubling the atlas while it is under [`MAX_SIDE`]; at the top, clearing it. Clearing
+    /// first would evict what the frame still shows, and it would be packed again next frame.
+    fn allocate(&mut self, w: u32, h: u32) -> Option<Allocation> {
+        if w > MAX_SIDE || h > MAX_SIDE {
+            return None;
+        }
+        let size = size2(w as i32, h as i32);
+        loop {
+            if let Some(slot) = self.allocator.allocate(size) {
+                return Some(slot);
+            }
+            if self.side >= MAX_SIDE {
+                self.clear();
+                return self.allocator.allocate(size);
+            }
+            self.grow(self.side * 2);
+        }
+    }
+
+    /// Keeps every slot where it is: the quads built before still point at their texels.
+    fn grow(&mut self, side: u32) {
+        let mut pixels = vec![0; (side * side * 4) as usize];
+        let row = (self.side * 4) as usize;
+        for (y, from) in self.pixels.chunks_exact(row).enumerate() {
+            let to = y * (side * 4) as usize;
+            pixels[to..to + row].copy_from_slice(from);
+        }
+        self.allocator.grow(size2(side as i32, side as i32));
+        self.pixels = pixels;
+        self.side = side;
+        self.dirty = Some([0, 0, side, side]);
     }
 
     fn clear(&mut self) {
