@@ -37,7 +37,7 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
                         .show(ui, |ui| {
                             let set = |value: &str| (!value.is_empty()).then(|| value.to_owned());
                             text_row(ui, builder, origin, "name", set(&inspected.name), "");
-                            text_row(ui, builder, origin, "class", set(&inspected.classes), "");
+                            super::classes::row(ui, builder, origin, &inspected.classes);
                             if let Some(text) = &inspected.text {
                                 label(ui, "text", "The label's content", true);
                                 let mut value = text.clone();
@@ -53,6 +53,9 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
                             }
                         });
                 });
+            egui::CollapsingHeader::new("Matching selectors")
+                .default_open(true)
+                .show(ui, |ui| super::classes::matching(ui, builder, origin));
             let others: Vec<(String, String)> = inspected
                 .attributes
                 .iter()
@@ -126,9 +129,12 @@ fn typed_row(
             unset(ui, builder, origin, spec.key, value.is_some());
         }
         AttributeKind::Template => template_row(ui, builder, origin, spec, value, catalog),
-        AttributeKind::Text | AttributeKind::Action | AttributeKind::Binding => {
+        AttributeKind::Action => {
+            super::actions::row(ui, builder, origin, spec, value, catalog);
+            return;
+        }
+        AttributeKind::Text | AttributeKind::Binding => {
             let hint = match spec.kind {
-                AttributeKind::Action => "menu.resume",
                 AttributeKind::Binding => "Component.field",
                 _ => spec.default,
             };
@@ -195,7 +201,7 @@ fn template_row(
 }
 
 /// Bold when the file sets it, as Unity marks an attribute that overrides its default.
-fn label(ui: &mut egui::Ui, key: &str, hint: &str, set: bool) {
+pub(super) fn label(ui: &mut egui::Ui, key: &str, hint: &str, set: bool) {
     let text = egui::RichText::new(key).monospace();
     let response = ui.label(if set { text.strong() } else { text.weak() });
     if !hint.is_empty() {
@@ -203,7 +209,7 @@ fn label(ui: &mut egui::Ui, key: &str, hint: &str, set: bool) {
     }
 }
 
-fn unset(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, key: &str, set: bool) {
+pub(super) fn unset(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, key: &str, set: bool) {
     if !set {
         ui.label("");
         return;

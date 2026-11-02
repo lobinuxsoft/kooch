@@ -10,10 +10,26 @@ pub(crate) fn search_combo(
     selected_text: String,
     list: impl FnOnce(&mut egui::Ui, &str),
 ) -> egui::Response {
+    search_menu(ui, id_salt, None, selected_text, list)
+}
+
+/// [`search_combo`] at `width`: a narrow one is a ▾ beside a field it fills.
+pub(crate) fn search_menu(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    width: Option<f32>,
+    selected_text: String,
+    list: impl FnOnce(&mut egui::Ui, &str),
+) -> egui::Response {
     let id = egui::Id::new(&id_salt);
     let search_id = ui.id().with((id, "search"));
     let list_height = ui.spacing().combo_height;
-    let response = egui::ComboBox::from_id_salt(id)
+    let combo = egui::ComboBox::from_id_salt(id);
+    let combo = match width {
+        Some(width) => combo.width(width),
+        None => combo,
+    };
+    let response = combo
         .selected_text(selected_text)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         // The list scrolls on its own; the popup never does, so the header cannot scroll away.
