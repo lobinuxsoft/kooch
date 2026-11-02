@@ -14,6 +14,8 @@ pub enum PropertyKind {
     Px,
     Color,
     Text,
+    /// A family the engine embeds or the project holds as a font file.
+    Font,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,7 +35,7 @@ const fn prop(name: &'static str, kind: PropertyKind, hint: &'static str) -> Pro
     PropertySpec { name, kind, hint }
 }
 
-use PropertyKind::{Color, Keyword, Length, Number, Px, Text};
+use PropertyKind::{Color, Font, Keyword, Length, Number, Px, Text};
 
 const AUTO: PropertyKind = Length { auto: true };
 const FIXED: PropertyKind = Length { auto: false };
@@ -141,7 +143,11 @@ pub const CATEGORIES: [StyleCategory; 10] = [
         title: "Text",
         properties: &[
             prop("color", Color, "Passes down to its children"),
-            prop("font-family", Text, "A font of the project; passes down"),
+            prop(
+                "font-family",
+                Font,
+                "A family of the engine or the project; passes down",
+            ),
             prop("font-size", Px, "Passes down"),
         ],
     },

@@ -62,6 +62,10 @@ resources.get_mut::<UiTrees>().unwrap().write_text(document, "clicks", "Clicks: 
 **Fira Code** ships too, with its programming ligatures (`=>`, `!=`): `tree.set_font(node, "Fira
 Code")` after `set_text`.
 
+A `.ttf` or `.otf` under the project's `assets/` is a font asset: the UI registers it on start and
+names it by the family written inside it (`"Roboto"`, not `Roboto-Regular.ttf`), and the build
+ships it with the game. The UI Builder's `font-family` field lists every family it can name.
+
 Sizes are in canvas units, and glyphs are rasterized at the screen's **physical** size: text stays
 sharp at 720p and at 1440p.
 

@@ -8,6 +8,7 @@ use crate::ui_builder::UiBuilder;
 pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, written: &str) {
     let mut style = InlineStyle::parse(written);
     let mut changed = false;
+    let fonts = &builder.fonts;
     for category in &CATEGORIES {
         let set = category
             .properties
@@ -36,7 +37,7 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, writ
                 .striped(true)
                 .show(ui, |ui| {
                     for spec in category.properties {
-                        changed |= row(ui, &mut style, origin, spec);
+                        changed |= row(ui, &mut style, origin, spec, fonts);
                     }
                 });
             });
@@ -49,7 +50,13 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, writ
 /// Room the property names and ↺ take: `border-bottom-width` is the longest.
 const STYLE_LABELS: f32 = 170.0;
 
-fn row(ui: &mut egui::Ui, style: &mut InlineStyle, origin: u32, spec: &PropertySpec) -> bool {
+fn row(
+    ui: &mut egui::Ui,
+    style: &mut InlineStyle,
+    origin: u32,
+    spec: &PropertySpec,
+    fonts: &[(String, String)],
+) -> bool {
     let value = style.get(spec.name);
     let text = egui::RichText::new(spec.name).monospace();
     let label = ui.label(if value.is_some() {
@@ -60,7 +67,7 @@ fn row(ui: &mut egui::Ui, style: &mut InlineStyle, origin: u32, spec: &PropertyS
     if !spec.hint.is_empty() {
         label.on_hover_text(spec.hint);
     }
-    let mut edited = field(ui, origin, spec, value.as_deref()).map(Some);
+    let mut edited = field(ui, origin, spec, value.as_deref(), fonts).map(Some);
     if value.is_none() {
         ui.label("");
     } else if ui
@@ -84,6 +91,7 @@ fn field(
     origin: u32,
     spec: &PropertySpec,
     value: Option<&str>,
+    fonts: &[(String, String)],
 ) -> Option<String> {
     match spec.kind {
         PropertyKind::Keyword(words) => {
@@ -137,7 +145,39 @@ fn field(
                 .then(|| hex(bytes))
         }
         PropertyKind::Text => text(ui, value),
+        PropertyKind::Font => font(ui, origin, value, fonts),
     }
+}
+
+/// The engine's families and the project's, searched by name or file.
+fn font(
+    ui: &mut egui::Ui,
+    origin: u32,
+    value: Option<&str>,
+    fonts: &[(String, String)],
+) -> Option<String> {
+    let shown = match value {
+        None => format!("{} (default)", kooch_ui::ENGINE_FAMILIES[0]),
+        Some(name) if fonts.iter().any(|(own, _)| own == name) => name.to_owned(),
+        Some(name) => format!("{name} (not found)"),
+    };
+    let mut picked = None;
+    crate::widgets::search_combo(ui, ("ui_builder_font", origin), shown, |ui, needle| {
+        let needle = needle.to_lowercase();
+        for (family, from) in fonts {
+            if !needle.is_empty()
+                && !family.to_lowercase().contains(&needle)
+                && !from.to_lowercase().contains(&needle)
+            {
+                continue;
+            }
+            let text = format!("{family} [{from}]");
+            if ui.selectable_label(value == Some(family), text).clicked() {
+                picked = Some(family.clone());
+            }
+        }
+    });
+    picked
 }
 
 /// A number and its unit; `auto` and a bare `0` too.

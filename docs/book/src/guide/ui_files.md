@@ -260,7 +260,7 @@ base sheet under every document's own gives all of them a look, which the docume
 | `border` | `<width> <color>` |
 | `border-width`, `border-color` | length; colour |
 | `border-radius` | length |
-| `font-family` | `"Inter"`, `"Fira Code"`, or a font the project registers |
+| `font-family` | `"Inter"`, `"Fira Code"`, or the family of a `.ttf`/`.otf` in the project |
 | `font-size` | length |
 | `background-image` | `url("button.png")` relative to the `.kcss`, PNG or JPEG; `none` |
 | `-kooch-slice` | length, one to four: image texels kept unstretched at each edge |
