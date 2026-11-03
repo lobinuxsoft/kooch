@@ -72,10 +72,26 @@ pub const CATEGORIES: [StyleCategory; 10] = [
                 Keyword(&["relative", "absolute"]),
                 "absolute leaves the flow; the insets place it in its parent",
             ),
-            prop("top", AUTO, ""),
-            prop("right", AUTO, ""),
-            prop("bottom", AUTO, ""),
-            prop("left", AUTO, ""),
+            prop(
+                "top",
+                AUTO,
+                "Distance from its parent's top edge; with position: absolute, where it sits",
+            ),
+            prop(
+                "right",
+                AUTO,
+                "Distance from its parent's right edge; with position: absolute, where it sits",
+            ),
+            prop(
+                "bottom",
+                AUTO,
+                "Distance from its parent's bottom edge; with position: absolute, where it sits",
+            ),
+            prop(
+                "left",
+                AUTO,
+                "Distance from its parent's left edge; with position: absolute, where it sits",
+            ),
         ],
     },
     StyleCategory {
@@ -89,7 +105,7 @@ pub const CATEGORIES: [StyleCategory; 10] = [
             prop(
                 "flex-wrap",
                 Keyword(&["nowrap", "wrap", "wrap-reverse"]),
-                "",
+                "wrap breaks its children into more lines when they do not fit",
             ),
             prop("flex-grow", Number, "Share of the free space it takes"),
             prop("flex-shrink", Number, "Share of the overflow it gives up"),
@@ -117,30 +133,70 @@ pub const CATEGORIES: [StyleCategory; 10] = [
     StyleCategory {
         title: "Size",
         properties: &[
-            prop("width", AUTO, ""),
-            prop("height", AUTO, ""),
-            prop("min-width", AUTO, ""),
-            prop("min-height", AUTO, ""),
-            prop("max-width", AUTO, ""),
-            prop("max-height", AUTO, ""),
+            prop(
+                "width",
+                AUTO,
+                "Its width; auto fits its content, % is of its parent's",
+            ),
+            prop(
+                "height",
+                AUTO,
+                "Its height; auto fits its content, % is of its parent's",
+            ),
+            prop("min-width", AUTO, "It never gets narrower than this"),
+            prop("min-height", AUTO, "It never gets shorter than this"),
+            prop("max-width", AUTO, "It never gets wider than this"),
+            prop("max-height", AUTO, "It never gets taller than this"),
         ],
     },
     StyleCategory {
         title: "Margin",
         properties: &[
-            prop("margin-top", AUTO, ""),
-            prop("margin-right", AUTO, ""),
-            prop("margin-bottom", AUTO, ""),
-            prop("margin-left", AUTO, ""),
+            prop(
+                "margin-top",
+                AUTO,
+                "Space outside it, above; auto pushes it down",
+            ),
+            prop(
+                "margin-right",
+                AUTO,
+                "Space outside it, to the right; auto pushes it left",
+            ),
+            prop(
+                "margin-bottom",
+                AUTO,
+                "Space outside it, below; auto pushes it up",
+            ),
+            prop(
+                "margin-left",
+                AUTO,
+                "Space outside it, to the left; auto pushes it right",
+            ),
         ],
     },
     StyleCategory {
         title: "Padding",
         properties: &[
-            prop("padding-top", FIXED, ""),
-            prop("padding-right", FIXED, ""),
-            prop("padding-bottom", FIXED, ""),
-            prop("padding-left", FIXED, ""),
+            prop(
+                "padding-top",
+                FIXED,
+                "Space inside it, between its top edge and its children",
+            ),
+            prop(
+                "padding-right",
+                FIXED,
+                "Space inside it, between its right edge and its children",
+            ),
+            prop(
+                "padding-bottom",
+                FIXED,
+                "Space inside it, between its bottom edge and its children",
+            ),
+            prop(
+                "padding-left",
+                FIXED,
+                "Space inside it, between its left edge and its children",
+            ),
         ],
     },
     StyleCategory {
@@ -158,7 +214,11 @@ pub const CATEGORIES: [StyleCategory; 10] = [
     StyleCategory {
         title: "Background",
         properties: &[
-            prop("background-color", Color, ""),
+            prop(
+                "background-color",
+                Color,
+                "Fills its box, under the background image",
+            ),
             prop(
                 "background-image",
                 Image,
@@ -176,12 +236,28 @@ pub const CATEGORIES: [StyleCategory; 10] = [
     StyleCategory {
         title: "Border",
         properties: &[
-            prop("border-color", Color, ""),
-            prop("border-top-width", FIXED, ""),
-            prop("border-right-width", FIXED, ""),
-            prop("border-bottom-width", FIXED, ""),
-            prop("border-left-width", FIXED, ""),
-            prop("border-radius", Px, ""),
+            prop("border-color", Color, "The border's colour"),
+            prop("border-top-width", FIXED, "The border's thickness on top"),
+            prop(
+                "border-right-width",
+                FIXED,
+                "The border's thickness on the right",
+            ),
+            prop(
+                "border-bottom-width",
+                FIXED,
+                "The border's thickness at the bottom",
+            ),
+            prop(
+                "border-left-width",
+                FIXED,
+                "The border's thickness on the left",
+            ),
+            prop(
+                "border-radius",
+                Px,
+                "Rounds its corners, background and border",
+            ),
         ],
     },
 ];

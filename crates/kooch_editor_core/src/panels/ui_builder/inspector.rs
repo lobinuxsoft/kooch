@@ -8,6 +8,7 @@ use std::path::{Component, Path, PathBuf};
 use kooch_ui::schema::{AttributeKind, AttributeSpec};
 use kooch_ui::source::ElementKind;
 
+use crate::icons;
 use crate::panels::inspector::AssetCatalogEntry;
 use crate::ui_builder::{SOURCE_TYPE, UiBuilder};
 
@@ -43,7 +44,15 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
                         .show(ui, |ui| {
                             let set = |value: &str| (!value.is_empty()).then(|| value.to_owned());
                             if inspected.from.is_none() {
-                                text_row(ui, builder, origin, "name", set(&inspected.name), "");
+                                text_row(
+                                    ui,
+                                    builder,
+                                    origin,
+                                    "name",
+                                    NAME_HINT,
+                                    set(&inspected.name),
+                                    "",
+                                );
                             }
                             super::classes::row(ui, builder, origin, &inspected.classes);
                             if let Some(text) = &inspected.text {
@@ -90,7 +99,7 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
                 .show(ui, |ui| {
                     fields_grid(ui, "ui_builder_others", ATTRIBUTE_LABELS).show(ui, |ui| {
                         for (key, value) in others {
-                            text_row(ui, builder, origin, &key, Some(value), "");
+                            text_row(ui, builder, origin, &key, OTHER_HINT, Some(value), "");
                         }
                     });
                     add_attribute(ui, builder, origin);
@@ -199,7 +208,7 @@ fn typed_row(
                 AttributeKind::Binding if base.is_none() => "Component.field",
                 _ => default,
             };
-            text_row(ui, builder, origin, spec.key, value, hint);
+            text_row(ui, builder, origin, spec.key, spec.hint, value, hint);
             return;
         }
     }
@@ -211,10 +220,11 @@ fn text_row(
     builder: &mut UiBuilder,
     origin: u32,
     key: &str,
+    about: &str,
     value: Option<String>,
     hint: &str,
 ) {
-    label(ui, key, "", value.is_some());
+    label(ui, key, about, value.is_some());
     let mut text = value.clone().unwrap_or_default();
     if ui.add(text_edit(&mut text, hint)).changed() {
         builder.set_attribute(origin, key, &text);
@@ -267,12 +277,19 @@ pub(super) fn template_src(builder: &UiBuilder, path: &Path) -> String {
 }
 
 /// Bold when the file sets it, as Unity marks an attribute that overrides its default.
+/// The field's name, with an info icon when it has a hint: the hover is what it does.
 pub(super) fn label(ui: &mut egui::Ui, key: &str, hint: &str, set: bool) {
     let text = egui::RichText::new(key).monospace();
-    let response = ui.label(if set { text.strong() } else { text.weak() });
-    if !hint.is_empty() {
-        response.on_hover_text(hint);
-    }
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let name = ui.label(if set { text.strong() } else { text.weak() });
+        if hint.is_empty() {
+            return;
+        }
+        let icon = ui.weak(icons::INFO);
+        name.on_hover_text(hint);
+        icon.on_hover_text(hint);
+    });
 }
 
 pub(super) fn unset(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, key: &str, set: bool) {
@@ -290,7 +307,10 @@ pub(super) fn unset(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, key
 }
 
 /// Room the label and ↺ columns take beside an attribute's field.
-const ATTRIBUTE_LABELS: f32 = 120.0;
+const ATTRIBUTE_LABELS: f32 = 135.0;
+
+const NAME_HINT: &str = "What code finds it by with tree.query; unique in the document";
+const OTHER_HINT: &str = "Not one this element knows: the game ignores it unless code reads it";
 
 /// A label, field and ↺ grid whose field column is sized from the panel. Left to egui, a middle
 /// column is as wide as it was last frame, so a field that overflows it widens it every frame.
