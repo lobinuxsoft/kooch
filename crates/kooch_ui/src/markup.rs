@@ -12,6 +12,8 @@ pub struct Outline {
     pub tag: String,
     pub name: Option<String>,
     pub classes: Option<String>,
+    /// The author's note, `doc=""`.
+    pub doc: Option<String>,
 }
 
 /// Where an element lands, by the origin of the one it goes into or beside.
@@ -48,6 +50,7 @@ impl Markup {
                 tag: element.name(&self.document).to_owned(),
                 name: element.attribute(&self.document, "name").map(Into::into),
                 classes: element.attribute(&self.document, "class").map(Into::into),
+                doc: element.attribute(&self.document, "doc").map(Into::into),
             })
             .collect()
     }

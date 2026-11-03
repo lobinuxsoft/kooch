@@ -166,6 +166,8 @@ fn push(
                     .collect();
             }
             (None, "style") if kind == ElementKind::Ui => {}
+            // The author's note, for the editor only.
+            (None, "doc") => {}
             (Some(prefix), _) => element
                 .attributes
                 .push((format!("{prefix}:{local}").into(), attribute.value().into())),
