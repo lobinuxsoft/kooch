@@ -44,8 +44,11 @@ pub(super) fn draw(
             .properties
             .iter()
             .any(|spec| style.get(spec.name).is_some());
-        let title = egui::RichText::new(category.title);
-        egui::CollapsingHeader::new(if set { title.strong() } else { title })
+        let title = match set {
+            true => egui::RichText::new(format!("{}*", category.title)).strong(),
+            false => egui::RichText::new(category.title),
+        };
+        egui::CollapsingHeader::new(title)
             .id_salt(("ui_builder_style", category.title))
             .show(ui, |ui| {
                 if set

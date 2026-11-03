@@ -316,7 +316,7 @@ on a canvas, drawn by the same pass that draws it in the game. No scene and no c
   a `<use>` too. What lands is selected, with a default to be seen: a label reads *Label*, a
   button holds one.
 - **Inspector** — every field's name says what it does on hover (the ⓘ beside it), and one
-  the element sets is bold and ends in `*`. The selected
+  the element sets is bold and ends in `*`, and so does the style group holding it. The selected
   element's attributes as typed fields, from what each element reads:
   a checkbox for `disabled` or `checked`, a number for a slider's `min`/`max`/`step`, the
   editor's asset picker for a `<use>`'s `src` (search, or drop a `.kxml` from the Asset Browser),
