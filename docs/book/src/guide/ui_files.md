@@ -67,7 +67,9 @@ not lay out or shape text again; each still reads its two files' dates once a fr
 | `use` | Another `.kxml`, instanced here. |
 
 Every element takes `name` (what `tree.query` finds, unique in the document) and `class` (any
-number, space separated).
+number, space separated). `doc` is a note for whoever edits the document next: the UI Builder shows it on hover
+in the hierarchy (rows with one are marked 🗒) and edits it in the Inspector under `name`; the game
+never reads it.
 
 Code reads and changes a document through its tree, without touching entities:
 
