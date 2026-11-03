@@ -2,7 +2,7 @@
 //! directories, Unity / Godot style.
 
 mod tree;
-mod ui_list;
+mod ui_tree;
 
 pub(crate) use tree::AssetNav;
 
@@ -109,57 +109,58 @@ pub(crate) fn draw_asset_browser_content(
     let mut rename: Option<RenameState> = ui.ctx().data(|d| d.get_temp(rename_id));
     let mut pending: Option<PendingCreate> = ui.ctx().data(|d| d.get_temp(pending_id));
 
-    if on_kooch_ui && let Some(panel) = ui_panel {
-        let roots: Vec<&Path> = project_root.into_iter().chain(engine_root).collect();
-        ui_list::draw(
-            ui,
-            panel,
-            catalog,
-            &roots,
-            selected_asset,
-            current_folder,
-            actions,
-        );
-        return;
-    }
-
     if focused {
         handle_keyboard(ui, nav, actions);
     }
 
-    egui::ScrollArea::vertical()
-        // Width comes from the panel, not from the longest file name. Left to shrink, the whole
-        // tree — rows, drop targets and all — ends wherever the text does, and the rest of the
-        // panel does nothing when clicked.
-        .auto_shrink([false, true])
-        .id_salt("asset_browser_grid")
-        .show(ui, |ui| {
-            let mut ctx = RenderCtx {
-                needle: &needle,
-                actions,
-                rename: &mut rename,
-                pending: &mut pending,
-                writable: true,
-                nav,
-                has_settings: has_render_settings(catalog, project_root),
-                project_root,
-                main_scene,
-            };
-            // Cleared here and refilled as rows are drawn, so the list the
-            // keyboard reads next frame is exactly what is on screen now.
-            ctx.nav.rows.clear();
+    if on_kooch_ui && let Some(panel) = ui_panel {
+        let roots: Vec<(&str, &Path)> = project_root
+            .map(|root| ("Project", root))
+            .into_iter()
+            .chain(engine_root.map(|root| ("Engine (read-only)", root)))
+            .collect();
+        let inputs = ui_tree::Inputs {
+            catalog,
+            roots: &roots,
+            needle: &needle,
+            main_scene,
+        };
+        ui_tree::draw(ui, panel, &inputs, nav, actions);
+    } else {
+        egui::ScrollArea::vertical()
+            // Width comes from the panel, not from the longest file name. Left to shrink, the whole
+            // tree — rows, drop targets and all — ends wherever the text does, and the rest of the
+            // panel does nothing when clicked.
+            .auto_shrink([false, true])
+            .id_salt("asset_browser_grid")
+            .show(ui, |ui| {
+                let mut ctx = RenderCtx {
+                    needle: &needle,
+                    actions,
+                    rename: &mut rename,
+                    pending: &mut pending,
+                    writable: true,
+                    nav,
+                    has_settings: has_render_settings(catalog, project_root),
+                    project_root,
+                    main_scene,
+                };
+                // Cleared here and refilled as rows are drawn, so the list the
+                // keyboard reads next frame is exactly what is on screen now.
+                ctx.nav.rows.clear();
 
-            if let Some(root) = project_root {
-                let entries = entries_under(catalog, root);
-                ctx.writable = true;
-                tree::render_root(ui, "Project", root, &entries, &mut ctx);
-            }
-            if let Some(root) = engine_root {
-                let entries = entries_under(catalog, root);
-                ctx.writable = false;
-                tree::render_root(ui, "Engine (read-only)", root, &entries, &mut ctx);
-            }
-        });
+                if let Some(root) = project_root {
+                    let entries = entries_under(catalog, root);
+                    ctx.writable = true;
+                    tree::render_root(ui, "Project", root, &entries, &mut ctx);
+                }
+                if let Some(root) = engine_root {
+                    let entries = entries_under(catalog, root);
+                    ctx.writable = false;
+                    tree::render_root(ui, "Engine (read-only)", root, &entries, &mut ctx);
+                }
+            });
+    }
 
     // The single writer. The cursor was moved above by whichever hand the user used, and this is
     // where — and the only place — that becomes a selection. Placed after the tree so it reads the
