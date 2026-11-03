@@ -79,6 +79,8 @@ pub(crate) struct UiBuilder {
     step: Option<Step>,
     /// A bound control's value on the canvas, by element: the field it binds is the game's.
     previews: Vec<(u32, f32)>,
+    /// A label's text on the canvas, by element: in the game, code writes it.
+    texts: Vec<(u32, String)>,
 }
 
 /// One undo step: the markup before it, and what to call it.
@@ -161,7 +163,13 @@ impl UiBuilder {
                     &self.path,
                     self.style,
                 ) {
-                    Ok(tree) => {
+                    Ok(mut tree) => {
+                        // Written once per build, not per frame: reshaping text is not free.
+                        for (origin, text) in &self.texts {
+                            if let Some(node) = tree.node_of(*origin) {
+                                tree.write_text(node, text);
+                            }
+                        }
                         self.tree = Some(tree);
                         self.error = None;
                     }
@@ -278,6 +286,7 @@ pub(crate) fn open(resources: &mut Resources, path: &Path) {
         pass,
         step: None,
         previews: Vec::new(),
+        texts: Vec::new(),
     });
 }
 

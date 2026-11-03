@@ -265,6 +265,7 @@ impl UiBuilder {
             Ok(markup) => {
                 self.markup = markup;
                 self.previews.clear();
+                self.texts.clear();
                 self.select(None, None);
                 self.dirty = true;
                 self.edited = true;
@@ -284,6 +285,29 @@ impl UiBuilder {
         match self.previews.iter_mut().find(|(own, _)| *own == origin) {
             Some(slot) => slot.1 = value,
             None => self.previews.push((origin, value)),
+        }
+    }
+
+    /// A label's preview text, if it has one.
+    pub(crate) fn text_preview(&self, origin: u32) -> Option<&str> {
+        let at = self.texts.iter().find(|(own, _)| *own == origin)?;
+        Some(&at.1)
+    }
+
+    /// Shows `text` on the label on the canvas only; empty goes back to the file's.
+    pub(crate) fn set_text_preview(&mut self, origin: u32, text: &str) {
+        self.texts.retain(|(own, _)| *own != origin);
+        let shown = match text.is_empty() {
+            true => self.markup.text(origin).unwrap_or_default(),
+            false => {
+                self.texts.push((origin, text.to_owned()));
+                text.to_owned()
+            }
+        };
+        if let Some(tree) = self.tree.as_mut()
+            && let Some(node) = tree.node_of(origin)
+        {
+            tree.write_text(node, &shown);
         }
     }
 
@@ -308,6 +332,7 @@ impl UiBuilder {
                 Ok(markup) => {
                     self.markup = markup;
                     self.previews.clear();
+                    self.texts.clear();
                     self.edited = true;
                 }
                 Err(error) => self.error = Some(error),

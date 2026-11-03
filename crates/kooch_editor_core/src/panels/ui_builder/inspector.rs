@@ -71,6 +71,9 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
                                 let base = attribute(&inspected.inherited, spec.key);
                                 typed_row(ui, builder, origin, spec, value, base, catalog);
                             }
+                            if inspected.from.is_none() && inspected.tag == "label" {
+                                text_preview_row(ui, builder, origin);
+                            }
                             if inspected.from.is_none() {
                                 preview_row(
                                     ui,
@@ -116,6 +119,21 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
                         });
                 });
         });
+}
+
+/// A label's text on the canvas: what code would write there in the game.
+fn text_preview_row(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32) {
+    let hint = "Shown on the canvas only, never saved: in the game, code writes it";
+    let mut text = builder.text_preview(origin).unwrap_or_default().to_owned();
+    label(ui, "preview", hint, false);
+    if ui
+        .add(text_edit(&mut text, "Text the game writes"))
+        .changed()
+    {
+        builder.set_text_preview(origin, &text);
+    }
+    ui.label("");
+    ui.end_row();
 }
 
 /// A bound control's value on the canvas: what the game's field would hold.
@@ -279,7 +297,11 @@ pub(super) fn template_src(builder: &UiBuilder, path: &Path) -> String {
 /// Bold when the file sets it, as Unity marks an attribute that overrides its default.
 /// The field's name, with an info icon when it has a hint: the hover is what it does.
 pub(super) fn label(ui: &mut egui::Ui, key: &str, hint: &str, set: bool) {
-    let text = egui::RichText::new(key).monospace();
+    let shown = match set {
+        true => format!("{key}*"),
+        false => key.to_owned(),
+    };
+    let text = egui::RichText::new(shown).monospace();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let name = ui.label(if set { text.strong() } else { text.weak() });
