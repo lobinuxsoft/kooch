@@ -8,6 +8,7 @@ use taffy::{AvailableSpace, NodeId, Size, Style, TaffyTree};
 
 use crate::atlas::{GlyphAtlas, GlyphKey, subpixel};
 use crate::text::{Text, UiFonts, measure};
+use scroll::UNCLIPPED;
 
 /// A node of one [`UiTree`]: dense from the root, which is `0`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -84,6 +85,10 @@ pub struct UiTree {
     pub(crate) shown: bool,
     material: Vec<u32>,
     rect: Vec<UiRect>,
+    /// How far a container's children are moved up and left by scrolling, in canvas units.
+    scroll: Vec<Vec2>,
+    /// `[x0, y0, x1, y1]` of what can be seen of each node: every `overflow` ancestor cuts it.
+    clip: Vec<[f32; 4]>,
     /// Border width from the layout, uniform: the left edge's.
     border: Vec<f32>,
     paint: Vec<Paint>,
@@ -94,6 +99,8 @@ pub struct UiTree {
     rastered: Option<(f32, u32)>,
     /// Size the rects were computed for; `None` once anything changed.
     laid_out: Option<Vec2>,
+    /// A scroll moved rects that taffy's layout still holds: they are placed again, not laid out.
+    moved: bool,
     /// The files this tree was built from; `None` for one built in code.
     pub(crate) origin: Option<crate::documents::Origin>,
     /// The cascade's inputs, for a tree built from files: what states restyle from.
@@ -127,6 +134,8 @@ impl UiTree {
             shown: false,
             material: Vec::new(),
             rect: Vec::new(),
+            scroll: Vec::new(),
+            clip: Vec::new(),
             border: Vec::new(),
             paint: Vec::new(),
             image: Vec::new(),
@@ -134,6 +143,7 @@ impl UiTree {
             glyphs: Vec::new(),
             rastered: None,
             laid_out: None,
+            moved: false,
             origin: None,
             styled: None,
         };
@@ -247,8 +257,16 @@ impl UiTree {
     /// nothing changed since. Returns whether it ran.
     pub fn layout(&mut self, available: Size<AvailableSpace>, fonts: &mut UiFonts) -> bool {
         let key = Vec2::new(space_key(available.width), space_key(available.height));
-        if self.laid_out == Some(key) || self.taffy.is_empty() {
+        if self.taffy.is_empty() {
             return false;
+        }
+        if self.laid_out == Some(key) {
+            if !std::mem::take(&mut self.moved) {
+                return false;
+            }
+            self.place(fonts, false);
+            self.rastered = None;
+            return true;
         }
         let text = &mut self.text;
         let measured = self.layout.compute_layout_with_measure(
@@ -281,15 +299,33 @@ impl UiTree {
         if measured.is_err() {
             return false;
         }
+        self.place(fonts, true);
+        self.laid_out = Some(key);
+        self.moved = false;
+        self.rastered = None;
+        true
+    }
+
+    /// Taffy's parent-relative boxes as absolute rects, scrolled and clipped. `remeasure` after a
+    /// layout, when lines may have broken at a trial width.
+    fn place(&mut self, fonts: &mut UiFonts, remeasure: bool) {
         for index in 0..self.taffy.len() {
             let Ok(own) = self.layout.layout(self.taffy[index]) else {
                 continue;
             };
-            let (origin, culled) = match self.parent[index] {
-                u32::MAX => (Vec2::ZERO, false),
-                parent => (self.rect[parent as usize].min, self.culled[parent as usize]),
+            let (origin, culled, clip) = match self.parent[index] {
+                u32::MAX => (Vec2::ZERO, false, UNCLIPPED),
+                parent => {
+                    let p = parent as usize;
+                    let origin = self.rect[p].min - self.scroll[p];
+                    (origin, self.culled[p], self.cut(p))
+                }
             };
             self.culled[index] = culled || !self.visible(UiNode(index as u32));
+            self.clip[index] = clip;
+            // Content that shrank leaves no offset past its end.
+            let limit = Vec2::new(own.scroll_width(), own.scroll_height());
+            self.scroll[index] = self.scroll[index].clamp(Vec2::ZERO, limit);
             let min = origin + Vec2::new(own.location.x, own.location.y);
             let inset = Vec2::new(
                 own.padding.left + own.border.left,
@@ -304,12 +340,11 @@ impl UiTree {
             // The last measure may have broken lines at a trial width; the box is final now.
             if let Some(text) = self.text[index].as_mut() {
                 text.origin = min + inset;
-                measure(text.shaped(fonts), Some(content));
+                if remeasure {
+                    measure(text.shaped(fonts), Some(content));
+                }
             }
         }
-        self.laid_out = Some(key);
-        self.rastered = None;
-        true
     }
 
     /// Rebuilds the glyph quads when the layout, the scale or the atlas changed. `scale` is
@@ -323,8 +358,11 @@ impl UiTree {
         for _ in 0..2 {
             let generation = atlas.generation();
             self.glyphs.clear();
-            for (index, text) in self.text.iter_mut().enumerate() {
-                let Some(text) = text.as_mut().filter(|_| !self.culled[index]) else {
+            for index in 0..self.text.len() {
+                if self.culled[index] || self.clipped(UiNode(index as u32)) {
+                    continue;
+                }
+                let Some(text) = self.text[index].as_mut() else {
                     continue;
                 };
                 let origin = text.origin;
@@ -428,7 +466,13 @@ impl UiTree {
                 let i = node.0 as usize;
                 let rect = self.rect[i];
                 let inside = point.cmpge(rect.min).all() && point.cmplt(rect.min + rect.size).all();
+                let clip = self.clip[i];
+                let seen = point.x >= clip[0]
+                    && point.y >= clip[1]
+                    && point.x < clip[2]
+                    && point.y < clip[3];
                 inside
+                    && seen
                     && !self.culled[i]
                     && (self.interactive(node) || self.paint[i].background[3] > 0.0)
             })
@@ -460,6 +504,8 @@ impl UiTree {
         self.click.push(None);
         self.material.push(Self::NO_MATERIAL);
         self.rect.push(UiRect::default());
+        self.scroll.push(Vec2::ZERO);
+        self.clip.push(UNCLIPPED);
         self.border.push(0.0);
         self.paint.push(Paint::default());
         self.image.push(None);
@@ -535,5 +581,6 @@ fn space_key(space: AvailableSpace) -> f32 {
 }
 
 mod query;
+mod scroll;
 #[cfg(test)]
 mod tests;

@@ -1,6 +1,7 @@
 //! The pointer over Overlay documents (#96 phase 6): what it is over, the clicks it lands, and
 //! keeping those clicks from the game. Read through each document's `point` and `click` actions.
 
+use glam::Vec2;
 use kooch_core::event::Events;
 use kooch_core::resource::Resources;
 use kooch_ecs::query::Query;
@@ -69,6 +70,7 @@ pub fn pick_pointer(resources: &mut Resources) {
     }
     let overlays = overlays(resources);
     let down = overlays.iter().any(|(_, input)| input.click);
+    scroll(resources, &overlays);
     let hit = hit(resources, &overlays);
     let was = resources.get::<UiPointer>().copied().unwrap_or_default();
     let mut pointer = was;
@@ -132,6 +134,29 @@ pub fn pick_pointer(resources: &mut Resources) {
         changed.and_then(|(document, node)| event(resources, document, node, UiEventKind::Change))
     {
         dispatch(resources, event);
+    }
+}
+
+/// Canvas units one wheel line moves a `scroll` panel.
+const LINE: f32 = 40.0;
+
+/// The wheel goes to the topmost document whose pointer is over a `scroll` panel.
+fn scroll(resources: &mut Resources, overlays: &[(Entity, UiInput)]) {
+    let to_canvas = to_canvas(resources);
+    let Some(trees) = resources.get_mut::<UiTrees>() else {
+        return;
+    };
+    for &(document, input) in overlays.iter().rev() {
+        let (Some(point), true) = (input.point, input.scroll != Vec2::ZERO) else {
+            continue;
+        };
+        // Away from the user is up, which shows what is above: the offset shrinks.
+        let delta = Vec2::new(input.scroll.x, -input.scroll.y) * LINE;
+        if let Some(tree) = trees.get_mut(document)
+            && tree.scroll_at(point * to_canvas, delta)
+        {
+            return;
+        }
     }
 }
 

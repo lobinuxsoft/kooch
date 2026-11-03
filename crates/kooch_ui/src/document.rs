@@ -45,6 +45,9 @@ pub struct UiDocument {
     /// Presses what the pointer is over. Default: left mouse button.
     #[reflect(asset = "kooch_input::actions::action::Action")]
     pub click: Option<Guid>,
+    /// Moves the `overflow: scroll` panel under the pointer (Vector2). Default: the mouse wheel.
+    #[reflect(asset = "kooch_input::actions::action::Action")]
+    pub scroll: Option<Guid>,
     /// Moves focus (Vector2). Default: arrows, d-pad, left stick.
     #[reflect(asset = "kooch_input::actions::action::Action")]
     pub navigate: Option<Guid>,

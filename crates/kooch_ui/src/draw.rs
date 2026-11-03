@@ -78,15 +78,27 @@ fn push_tree(
     let mut next = 0;
     for index in 0..tree.len() as u32 {
         let node = UiNode(index);
-        // Its glyphs were never built, so `next` stays in step.
-        if tree.culled(node) {
+        // Glyphs built for a node not drawn now are passed over, so `next` stays in step.
+        while next < glyphs.len() && glyphs[next].node < index {
+            next += 1;
+        }
+        if tree.culled(node) || tree.clipped(node) {
             continue;
         }
-        let (Some(rect), Some(paint), Some(border)) =
-            (tree.rect(node), tree.paint(node), tree.border(node))
-        else {
+        let (Some(rect), Some(paint), Some(border), Some(cut)) = (
+            tree.rect(node),
+            tree.paint(node),
+            tree.border(node),
+            tree.clip(node),
+        ) else {
             continue;
         };
+        let clip = [
+            (cut[0] * scale).max(screen[0]),
+            (cut[1] * scale).max(screen[1]),
+            (cut[2] * scale).min(screen[2]),
+            (cut[3] * scale).min(screen[3]),
+        ];
         if paint.background[3] > 0.0 || (border > 0.0 && paint.border[3] > 0.0) {
             // Rounded to whole physical pixels here: the layout is in canvas units on purpose.
             let min = (rect.min * scale).round();
@@ -94,7 +106,7 @@ fn push_tree(
             out.push(UiQuad {
                 min: min.into(),
                 size: (max - min).into(),
-                clip: screen,
+                clip,
                 color: paint.background,
                 border_color: paint.border,
                 radius: paint.radius * scale,
@@ -107,14 +119,14 @@ fn push_tree(
         {
             let min = (rect.min * scale).round();
             let max = ((rect.min + rect.size) * scale).round();
-            push_image(image, packed.rect, min, max, scale, screen, out);
+            push_image(image, packed.rect, min, max, scale, clip, out);
         }
         while next < glyphs.len() && glyphs[next].node == index {
             let glyph = glyphs[next];
             out.push(UiQuad {
                 min: glyph.min,
                 size: glyph.size,
-                clip: screen,
+                clip,
                 color: paint.text,
                 uv_min: [glyph.uv_min[0] as u32, glyph.uv_min[1] as u32],
                 uv_size: [glyph.uv_size[0] as u32, glyph.uv_size[1] as u32],
@@ -123,6 +135,48 @@ fn push_tree(
             });
             next += 1;
         }
+        push_thumb(tree, node, rect, paint.text, scale, clip, out);
+    }
+}
+
+/// Thumb width in canvas units, drawn over the content's edge: taffy reserves no gutter.
+const THUMB: f32 = 6.0;
+
+/// A thumb on each axis a `scroll` node's content overflows, sized by how much of it shows.
+fn push_thumb(
+    tree: &UiTree,
+    node: UiNode,
+    rect: crate::UiRect,
+    color: [f32; 4],
+    scale: f32,
+    clip: [f32; 4],
+    out: &mut Vec<UiQuad>,
+) {
+    let Some(extent) = tree.scroll_extent(node) else {
+        return;
+    };
+    let offset = tree.scroll(node);
+    let color = [color[0], color[1], color[2], color[3] * 0.35];
+    for axis in 0..2 {
+        if !(extent[axis] > 0.0) {
+            continue;
+        }
+        let span = rect.size[axis];
+        let length = (span * span / (span + extent[axis])).max(THUMB * 2.0);
+        let along = (span - length) * offset[axis] / extent[axis];
+        let mut min = rect.min;
+        let mut size = Vec2::splat(THUMB);
+        min[axis] += along;
+        size[axis] = length;
+        min[1 - axis] += rect.size[1 - axis] - THUMB;
+        out.push(UiQuad {
+            min: (min * scale).round().into(),
+            size: (size * scale).round().into(),
+            clip,
+            color,
+            radius: THUMB * scale / 2.0,
+            ..UiQuad::default()
+        });
     }
 }
 

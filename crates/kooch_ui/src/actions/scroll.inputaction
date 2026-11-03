@@ -1,0 +1,12 @@
+(
+    id: "6b1d0c52-4e2f-4a51-9c0e-0a7f3d1e2b06",
+    name: "ui_scroll",
+    control_type: Vector2,
+    bindings: [
+        (role: CompositeHead(Vector2(mode: Analog)), processors: []),
+        (role: Part(name: Right, path: MouseScroll(X)), processors: []),
+        (role: Part(name: Up, path: MouseScroll(Y)), processors: []),
+    ],
+    processors: [],
+    map: "UI",
+)

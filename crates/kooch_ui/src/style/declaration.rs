@@ -6,7 +6,7 @@ use cssparser::{Parser, ParserInput, Token};
 use cssparser_color::Color;
 use taffy::{
     AlignContent, AlignItems, Dimension, Display, FlexDirection, FlexWrap, LengthPercentage,
-    LengthPercentageAuto, Position,
+    LengthPercentageAuto, Overflow, Position,
 };
 
 use super::tokens::components;
@@ -30,6 +30,8 @@ pub enum Axis {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Declaration {
     Display(Display),
+    /// Both axes: a `scroll` container clips its children and takes the wheel (#1775).
+    Overflow(Overflow),
     Position(Position),
     Inset(Edge, LengthPercentageAuto),
     Size(Axis, Dimension),
@@ -81,6 +83,7 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Vec<Declaration>, String> 
     let one = |declaration| Ok(vec![declaration]);
     let parsed: Result<Vec<Declaration>, String> = match name {
         "display" => one(D::Display(layout(text)?)),
+        "overflow" => one(D::Overflow(layout(text)?)),
         "position" => one(D::Position(layout(text)?)),
         "top" | "right" | "bottom" | "left" => one(D::Inset(edge(name)?, layout(text)?)),
         "width" => one(D::Size(Axis::Width, layout(text)?)),

@@ -17,6 +17,8 @@ pub(crate) struct UiInput {
     /// Physical pixels, `+Y` down as the layout counts; `None` with no pointer.
     pub point: Option<Vec2>,
     pub click: bool,
+    /// Wheel lines this frame, `+Y` away from the user.
+    pub scroll: Vec2,
     /// `+Y` up, as a stick.
     pub navigate: Vec2,
     pub submit: bool,
@@ -26,6 +28,7 @@ pub(crate) struct UiInput {
 struct Defaults {
     point: Action,
     click: Action,
+    scroll: Action,
     navigate: Action,
     submit: Action,
     cancel: Action,
@@ -36,6 +39,7 @@ fn defaults() -> &'static Defaults {
     DEFAULTS.get_or_init(|| Defaults {
         point: parse(include_str!("actions/point.inputaction")),
         click: parse(include_str!("actions/click.inputaction")),
+        scroll: parse(include_str!("actions/scroll.inputaction")),
         navigate: parse(include_str!("actions/navigate.inputaction")),
         submit: parse(include_str!("actions/submit.inputaction")),
         cancel: parse(include_str!("actions/cancel.inputaction")),
@@ -67,6 +71,7 @@ pub(crate) fn read(resources: &Resources, document: &UiDocument) -> UiInput {
         // A pointer at the exact corner reads as none: the action has no "absent".
         point: (point != Vec2::ZERO).then(|| Vec2::new(point.x, -point.y)),
         click: value(document.click, &defaults.click).pressed,
+        scroll: value(document.scroll, &defaults.scroll).vector2(),
         navigate: value(document.navigate, &defaults.navigate).vector2(),
         submit: value(document.submit, &defaults.submit).pressed,
         cancel: value(document.cancel, &defaults.cancel).pressed,
