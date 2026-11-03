@@ -4,7 +4,7 @@
 use std::hash::{Hash, Hasher};
 
 use glam::Vec2;
-use taffy::{AvailableSpace, NodeId, Size, Style, TaffyTree};
+use taffy::{AvailableSpace, NodeId, Overflow, Size, Style, TaffyTree};
 
 use crate::atlas::{GlyphAtlas, GlyphKey, subpixel};
 use crate::text::{Text, UiFonts, measure};
@@ -53,6 +53,8 @@ impl Default for Paint {
     }
 }
 
+const UNCLIPPED: [f32; 4] = [f32::MIN, f32::MIN, f32::MAX, f32::MAX];
+
 /// One document's node tree. Grows only: a document that changes shape is rebuilt whole, and
 /// hiding a node is `Display::None`, not removal.
 #[derive(Debug)]
@@ -84,6 +86,10 @@ pub struct UiTree {
     pub(crate) shown: bool,
     material: Vec<u32>,
     rect: Vec<UiRect>,
+    /// How far a container's children are moved up and left by scrolling, in canvas units.
+    scroll: Vec<Vec2>,
+    /// `[x0, y0, x1, y1]` of what can be seen of each node: every `overflow` ancestor cuts it.
+    clip: Vec<[f32; 4]>,
     /// Border width from the layout, uniform: the left edge's.
     border: Vec<f32>,
     paint: Vec<Paint>,
@@ -94,6 +100,8 @@ pub struct UiTree {
     rastered: Option<(f32, u32)>,
     /// Size the rects were computed for; `None` once anything changed.
     laid_out: Option<Vec2>,
+    /// A scroll moved rects that taffy's layout still holds: they are placed again, not laid out.
+    moved: bool,
     /// The files this tree was built from; `None` for one built in code.
     pub(crate) origin: Option<crate::documents::Origin>,
     /// The cascade's inputs, for a tree built from files: what states restyle from.
@@ -127,6 +135,8 @@ impl UiTree {
             shown: false,
             material: Vec::new(),
             rect: Vec::new(),
+            scroll: Vec::new(),
+            clip: Vec::new(),
             border: Vec::new(),
             paint: Vec::new(),
             image: Vec::new(),
@@ -134,6 +144,7 @@ impl UiTree {
             glyphs: Vec::new(),
             rastered: None,
             laid_out: None,
+            moved: false,
             origin: None,
             styled: None,
         };
@@ -247,8 +258,16 @@ impl UiTree {
     /// nothing changed since. Returns whether it ran.
     pub fn layout(&mut self, available: Size<AvailableSpace>, fonts: &mut UiFonts) -> bool {
         let key = Vec2::new(space_key(available.width), space_key(available.height));
-        if self.laid_out == Some(key) || self.taffy.is_empty() {
+        if self.taffy.is_empty() {
             return false;
+        }
+        if self.laid_out == Some(key) {
+            if !std::mem::take(&mut self.moved) {
+                return false;
+            }
+            self.place(fonts, false);
+            self.rastered = None;
+            return true;
         }
         let text = &mut self.text;
         let measured = self.layout.compute_layout_with_measure(
@@ -281,15 +300,33 @@ impl UiTree {
         if measured.is_err() {
             return false;
         }
+        self.place(fonts, true);
+        self.laid_out = Some(key);
+        self.moved = false;
+        self.rastered = None;
+        true
+    }
+
+    /// Taffy's parent-relative boxes as absolute rects, scrolled and clipped. `remeasure` after a
+    /// layout, when lines may have broken at a trial width.
+    fn place(&mut self, fonts: &mut UiFonts, remeasure: bool) {
         for index in 0..self.taffy.len() {
             let Ok(own) = self.layout.layout(self.taffy[index]) else {
                 continue;
             };
-            let (origin, culled) = match self.parent[index] {
-                u32::MAX => (Vec2::ZERO, false),
-                parent => (self.rect[parent as usize].min, self.culled[parent as usize]),
+            let (origin, culled, clip) = match self.parent[index] {
+                u32::MAX => (Vec2::ZERO, false, UNCLIPPED),
+                parent => {
+                    let p = parent as usize;
+                    let origin = self.rect[p].min - self.scroll[p];
+                    (origin, self.culled[p], self.cut(p))
+                }
             };
             self.culled[index] = culled || !self.visible(UiNode(index as u32));
+            self.clip[index] = clip;
+            // Content that shrank leaves no offset past its end.
+            let limit = Vec2::new(own.scroll_width(), own.scroll_height());
+            self.scroll[index] = self.scroll[index].clamp(Vec2::ZERO, limit);
             let min = origin + Vec2::new(own.location.x, own.location.y);
             let inset = Vec2::new(
                 own.padding.left + own.border.left,
@@ -304,12 +341,97 @@ impl UiTree {
             // The last measure may have broken lines at a trial width; the box is final now.
             if let Some(text) = self.text[index].as_mut() {
                 text.origin = min + inset;
-                measure(text.shaped(fonts), Some(content));
+                if remeasure {
+                    measure(text.shaped(fonts), Some(content));
+                }
             }
         }
-        self.laid_out = Some(key);
-        self.rastered = None;
+    }
+
+    /// What a child of `index` can be seen in: its own clip, cut to its padding box on each axis
+    /// whose `overflow` is not `visible`.
+    fn cut(&self, index: usize) -> [f32; 4] {
+        let mut clip = self.clip[index];
+        let Ok(style) = self.layout.style(self.taffy[index]) else {
+            return clip;
+        };
+        let rect = self.rect[index];
+        let border = self.border[index];
+        let (min, max) = (rect.min + border, rect.min + rect.size - border);
+        if style.overflow.x != Overflow::Visible {
+            clip[0] = clip[0].max(min.x);
+            clip[2] = clip[2].min(max.x);
+        }
+        if style.overflow.y != Overflow::Visible {
+            clip[1] = clip[1].max(min.y);
+            clip[3] = clip[3].min(max.y);
+        }
+        clip
+    }
+
+    /// Wholly outside what its ancestors show: not drawn, rasterized or picked.
+    pub fn clipped(&self, node: UiNode) -> bool {
+        let i = node.0 as usize;
+        let (Some(rect), Some(clip)) = (self.rect.get(i), self.clip.get(i)) else {
+            return true;
+        };
+        let max = rect.min + rect.size;
+        !(rect.min.x < clip[2] && rect.min.y < clip[3] && max.x > clip[0] && max.y > clip[1])
+    }
+
+    /// `[x0, y0, x1, y1]` in canvas units of what can be seen of `node`.
+    pub fn clip(&self, node: UiNode) -> Option<[f32; 4]> {
+        self.clip.get(node.0 as usize).copied()
+    }
+
+    /// Scrolls the innermost `overflow: scroll` node under `point` by `delta` canvas units, clamped
+    /// to its content. Returns whether anything moved; the next [`layout`](Self::layout) places it.
+    pub fn scroll_at(&mut self, point: Vec2, delta: Vec2) -> bool {
+        let Some(node) = (0..self.rect.len()).rev().find(|&i| {
+            let rect = self.rect[i];
+            let clip = self.clip[i];
+            let inside = point.cmpge(rect.min).all() && point.cmplt(rect.min + rect.size).all();
+            let seen =
+                point.x >= clip[0] && point.y >= clip[1] && point.x < clip[2] && point.y < clip[3];
+            inside && seen && !self.culled[i] && self.scrolls(i)
+        }) else {
+            return false;
+        };
+        let Ok(own) = self.layout.layout(self.taffy[node]) else {
+            return false;
+        };
+        let limit = Vec2::new(own.scroll_width(), own.scroll_height());
+        let next = (self.scroll[node] + delta).clamp(Vec2::ZERO, limit);
+        if next == self.scroll[node] {
+            return false;
+        }
+        self.scroll[node] = next;
+        self.moved = true;
         true
+    }
+
+    /// The offset scrolling gave `node`'s children.
+    pub fn scroll(&self, node: UiNode) -> Vec2 {
+        self.scroll
+            .get(node.0 as usize)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// How far a `scroll` node can move on each axis; `None` for any other node.
+    pub fn scroll_extent(&self, node: UiNode) -> Option<Vec2> {
+        let index = node.0 as usize;
+        if index >= self.taffy.len() || !self.scrolls(index) {
+            return None;
+        }
+        let own = self.layout.layout(self.taffy[index]).ok()?;
+        Some(Vec2::new(own.scroll_width(), own.scroll_height()))
+    }
+
+    fn scrolls(&self, index: usize) -> bool {
+        self.layout.style(self.taffy[index]).is_ok_and(|style| {
+            style.overflow.x == Overflow::Scroll || style.overflow.y == Overflow::Scroll
+        })
     }
 
     /// Rebuilds the glyph quads when the layout, the scale or the atlas changed. `scale` is
@@ -323,8 +445,11 @@ impl UiTree {
         for _ in 0..2 {
             let generation = atlas.generation();
             self.glyphs.clear();
-            for (index, text) in self.text.iter_mut().enumerate() {
-                let Some(text) = text.as_mut().filter(|_| !self.culled[index]) else {
+            for index in 0..self.text.len() {
+                if self.culled[index] || self.clipped(UiNode(index as u32)) {
+                    continue;
+                }
+                let Some(text) = self.text[index].as_mut() else {
                     continue;
                 };
                 let origin = text.origin;
@@ -428,7 +553,13 @@ impl UiTree {
                 let i = node.0 as usize;
                 let rect = self.rect[i];
                 let inside = point.cmpge(rect.min).all() && point.cmplt(rect.min + rect.size).all();
+                let clip = self.clip[i];
+                let seen = point.x >= clip[0]
+                    && point.y >= clip[1]
+                    && point.x < clip[2]
+                    && point.y < clip[3];
                 inside
+                    && seen
                     && !self.culled[i]
                     && (self.interactive(node) || self.paint[i].background[3] > 0.0)
             })
@@ -460,6 +591,8 @@ impl UiTree {
         self.click.push(None);
         self.material.push(Self::NO_MATERIAL);
         self.rect.push(UiRect::default());
+        self.scroll.push(Vec2::ZERO);
+        self.clip.push(UNCLIPPED);
         self.border.push(0.0);
         self.paint.push(Paint::default());
         self.image.push(None);

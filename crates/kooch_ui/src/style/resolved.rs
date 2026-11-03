@@ -25,6 +25,12 @@ impl ResolvedStyle {
         let layout = &mut self.layout;
         match declaration {
             Declaration::Display(value) => layout.display = *value,
+            Declaration::Overflow(value) => {
+                layout.overflow = taffy::Point {
+                    x: *value,
+                    y: *value,
+                }
+            }
             Declaration::Position(value) => layout.position = *value,
             Declaration::Inset(edge, value) => *side(&mut layout.inset, *edge) = *value,
             Declaration::Size(axis, value) => *extent(&mut layout.size, *axis) = *value,

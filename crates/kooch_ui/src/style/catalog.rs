@@ -58,11 +58,18 @@ const ALIGN_CONTENT: PropertyKind = Keyword(&[
 pub const CATEGORIES: [StyleCategory; 10] = [
     StyleCategory {
         title: "Display",
-        properties: &[prop(
-            "display",
-            Keyword(&["flex", "grid", "block", "none"]),
-            "none takes it out of the layout",
-        )],
+        properties: &[
+            prop(
+                "display",
+                Keyword(&["flex", "grid", "block", "none"]),
+                "none takes it out of the layout",
+            ),
+            prop(
+                "overflow",
+                Keyword(&["visible", "hidden", "scroll"]),
+                "hidden cuts its children at its edge; scroll also lets the wheel move them",
+            ),
+        ],
     },
     StyleCategory {
         title: "Position",

@@ -174,12 +174,13 @@ With the cursor captured for mouse look there is no pointer, and nothing is pick
 ### Input
 
 The UI reads **Input Actions**, the same `.inputaction` assets the game reads — there is no second
-input system. A `UiDocument` has five action fields; an empty one reads the engine's default:
+input system. A `UiDocument` has six action fields; an empty one reads the engine's default:
 
 | Field | Type | Default |
 |---|---|---|
 | **Point** | Vector2 | the mouse (`Pointer X`/`Pointer Y`) |
 | **Click** | Button | left mouse button |
+| **Scroll** | Vector2 | the mouse wheel |
 | **Navigate** | Vector2 | arrows, d-pad, left stick |
 | **Submit** | Button | Enter, Space, South |
 | **Cancel** | Button | Escape, East |
@@ -189,7 +190,8 @@ focus, **Navigate** moves it to the nearest focusable node that way — once whe
 repeating after half a second — **Submit** clicks it, and **Cancel** sends the nearest `on:cancel`.
 Only the document holding focus reads Navigate, Submit and Cancel, so a HUD nobody focused never
 takes the stick; the game still reads them too, so a button that keeps focus answers the jump key.
-`tabindex="-1"` is for that.
+`tabindex="-1"` is for that. **Scroll** moves the innermost `overflow: scroll` panel under the
+pointer, 40 canvas units a wheel line.
 
 A system answers an action by name: `ui_actions(resources, "hud.count")` is every document that sent
 it this frame, once per send.
@@ -245,6 +247,7 @@ base sheet under every document's own gives all of them a look, which the docume
 | Property | Values |
 |---|---|
 | `display` | `flex`, `grid`, `none` |
+| `overflow` | `visible`, `hidden` (cuts its children at its padding box), `scroll` (also scrolls, with a thumb) |
 | `position` | `relative`, `absolute` |
 | `left`, `top`, `right`, `bottom` | length |
 | `width`, `height`, `min-width`, `min-height`, `max-width`, `max-height` | length, `auto` |
