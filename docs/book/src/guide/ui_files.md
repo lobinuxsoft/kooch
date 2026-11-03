@@ -296,6 +296,11 @@ on a canvas, drawn by the same pass that draws it in the game. No scene and no c
 - **Zoom** — the wheel zooms one step around the cursor, the middle button pans, and **F** or
   **Fit** frames the whole canvas. The canvas is rendered at the size it is shown, so text stays
   sharp up to 4096 pixels a side.
+- **Rect gizmo** — the selected element's handles write its `width`/`height` to the inline style,
+  in px. An element in the flow is placed by the layout, so it only grows from its right and
+  bottom. A `position: absolute` one gets all eight handles, and dragging it moves it: each edge
+  keeps the side it is pinned by (`left` or `right`, `top` or `bottom`), and an unpinned one gets
+  `left`/`top` from where it sits. A `%` the drag touches becomes px. One drag is one undo step.
 
 - **Hierarchy** — the file's elements as it nests them. Under a `<use>`, greyed, its template's
   nodes: select a named one and the Inspector overrides it on this instance only, written as a

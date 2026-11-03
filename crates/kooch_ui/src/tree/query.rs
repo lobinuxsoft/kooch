@@ -1,6 +1,6 @@
 //! What the game asks of a document (#96 phase 7): nodes by name or class, classes and visibility.
 
-use taffy::{Display, Style};
+use taffy::{CompactLength, Display, LengthPercentageAuto, Position, Style};
 
 use super::{UiNode, UiTree};
 
@@ -145,6 +145,26 @@ impl UiTree {
                 );
             }
         }
+    }
+
+    /// Whether it is `position: absolute`, and its insets in px (top, right, bottom, left): `None`
+    /// for `auto` or a `%`.
+    pub fn placement(&self, node: UiNode) -> Option<(bool, [Option<f32>; 4])> {
+        let style = self.style_of(node)?;
+        let px = |inset: LengthPercentageAuto| {
+            let raw = inset.into_raw();
+            (raw.tag() == CompactLength::LENGTH_TAG).then(|| raw.value())
+        };
+        let inset = style.inset;
+        Some((
+            style.position == Position::Absolute,
+            [
+                px(inset.top),
+                px(inset.right),
+                px(inset.bottom),
+                px(inset.left),
+            ],
+        ))
     }
 
     fn style_of(&self, node: UiNode) -> Option<Style> {
