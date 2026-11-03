@@ -73,6 +73,7 @@ pub(super) struct ViewportUi<'a> {
     pub(super) input_owner: &'a mut crate::input_focus::InputOwner,
     pub(super) game_clicked: &'a mut bool,
     pub(super) ui_builder: Option<&'a mut crate::ui_builder::UiBuilder>,
+    pub(super) ui_panels: Option<&'a mut crate::ui_panel::UiPanels>,
 }
 
 /// Runs the egui UI for one frame. Produces the tessellation input and the
@@ -168,6 +169,7 @@ pub(super) fn run_editor_ui(
         game_clicked,
         shader_costs,
         ui_builder,
+        ui_panels,
     } = viewport;
 
     // `run_ui` rather than `run`: egui 0.35 hands the closure a root `Ui`
@@ -177,6 +179,7 @@ pub(super) fn run_editor_ui(
     // not `Copy`.
     let mut open_shader_graph = open_shader_graph;
     let mut ui_builder = ui_builder;
+    let mut ui_panels = ui_panels;
     let full_output = overlay.ctx.run_ui(raw_input, |ui| {
         if project_loaded {
             play_focus::chord(ui, toolbar.is_playing, &mut actions);
@@ -344,6 +347,7 @@ pub(super) fn run_editor_ui(
                 open_input_map,
                 open_shader_graph: open_shader_graph.as_deref_mut(),
                 ui_builder: ui_builder.as_deref_mut(),
+                ui_panels: ui_panels.as_deref_mut(),
                 current_folder: &mut current_folder,
                 clipboard_has_entities: toolbar.clipboard_has_entities,
                 engine_assets_root,

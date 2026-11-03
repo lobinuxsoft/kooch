@@ -21,6 +21,7 @@ use render::render_children;
 
 pub(in crate::panels) use model::{FolderNode, PendingCreate, RenameState};
 pub(crate) use nav::AssetNav;
+pub(in crate::panels) use render::open_action;
 
 /// What drawing the tree needs.
 pub(crate) struct RenderCtx<'a> {

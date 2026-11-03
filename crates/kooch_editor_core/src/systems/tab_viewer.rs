@@ -126,6 +126,8 @@ pub(crate) struct EditorTabViewer<'a> {
     pub(crate) open_shader_graph: Option<&'a mut crate::state::OpenShaderGraph>,
     /// The `.kxml` open in the UI Builder (#280).
     pub(crate) ui_builder: Option<&'a mut crate::ui_builder::UiBuilder>,
+    /// Editor panels drawn by `kooch_ui` (#1776).
+    pub(crate) ui_panels: Option<&'a mut crate::ui_panel::UiPanels>,
     /// The Shader Graph preview's texture, the shape it is showing, and why it is not showing one.
     pub(crate) preview_texture_id: egui::TextureId,
     pub(crate) preview_primitive: usize,
@@ -451,6 +453,9 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.engine_assets_root,
                 self.project_assets_root,
                 self.main_scene,
+                self.ui_panels
+                    .as_deref_mut()
+                    .map(|panels| &mut panels.asset_browser),
                 self.actions,
             ),
         }
