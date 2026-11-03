@@ -1,6 +1,6 @@
 //! Icons and the drag preview — presentation with no state behind it.
 
-pub(super) fn draw_drag_preview(ui: &egui::Ui, icon: &str, name: &str) {
+pub(in crate::panels) fn draw_drag_preview(ui: &egui::Ui, icon: &str, name: &str) {
     let Some(pos) = ui.ctx().pointer_interact_pos() else {
         return;
     };

@@ -8,7 +8,7 @@ use crate::icons;
 
 use super::model::{CreateKind, FileLeaf, FolderNode, FolderRole, PendingCreate, RenameState};
 
-pub(super) fn folder_menu(
+pub(in crate::panels) fn folder_menu(
     ui: &mut egui::Ui,
     node: &FolderNode,
     writable: bool,
@@ -192,7 +192,7 @@ pub(super) fn folder_menu(
     }
 }
 
-pub(super) fn leaf_menu(
+pub(in crate::panels) fn leaf_menu(
     ui: &mut egui::Ui,
     leaf: &FileLeaf,
     writable: bool,
@@ -358,6 +358,47 @@ pub(super) fn is_shader(path: &Path) -> bool {
 pub(super) fn is_scene(path: &Path) -> bool {
     path.extension()
         .is_some_and(|ext| ext == crate::project::SCENE_EXTENSION)
+}
+
+/// What a double-click on `path` does.
+pub(in crate::panels) fn open_action(path: &Path) -> EditorAction {
+    // An asset the editor can edit opens in the editor; everything
+    // else goes to the IDE. Sending a `.inputmap` to a text editor
+    // was technically an answer and never the one anyone wanted.
+    let is_input_map = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case(kooch_input::actions::INPUT_ACTION_EXTENSION));
+    // 🔴 A scene opens the scene. It used to go to the IDE as text, which is a true answer to
+    // "what is this file" and never the one anybody double-clicking a level was asking.
+    let is_shader = path
+        .extension()
+        .is_some_and(|e| e == kooch_render::material::SHADER_EXTENSION);
+    if is_shader {
+        // A generated shader opens in the graph; a hand-written one says so in the Console.
+        EditorAction::OpenShaderGraph {
+            path: path.to_path_buf(),
+        }
+    } else if path
+        .extension()
+        .is_some_and(|e| e == kooch_ui::source::UI_EXTENSION)
+    {
+        EditorAction::OpenUiBuilder {
+            path: path.to_path_buf(),
+        }
+    } else if is_scene(path) {
+        EditorAction::OpenScene {
+            path: Some(path.to_path_buf()),
+        }
+    } else if is_input_map {
+        EditorAction::OpenInputMap {
+            path: path.to_path_buf(),
+        }
+    } else {
+        EditorAction::OpenInIde {
+            file: path.to_path_buf(),
+        }
+    }
 }
 
 #[cfg(test)]
