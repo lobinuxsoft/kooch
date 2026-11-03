@@ -14,7 +14,7 @@ use crate::actions::EditorAction;
 use crate::icons;
 use crate::panels::inspector::AssetCatalogEntry;
 
-use self::tree::{PendingCreate, RenameState, RenderCtx};
+use self::tree::{PendingCreate, RenameState};
 
 /// Content of the "Asset Browser" tab.
 pub(crate) fn draw_asset_browser_content(
@@ -40,27 +40,12 @@ pub(crate) fn draw_asset_browser_content(
         .ctx()
         .data(|d| d.get_temp::<String>(search_id))
         .unwrap_or_default();
-    let kooch_ui_id = ui.id().with("asset_browser_kooch_ui");
-    let mut on_kooch_ui: bool = ui.ctx().data(|d| d.get_temp(kooch_ui_id)).unwrap_or(false);
-    let search_resp = ui
-        .horizontal(|ui| {
-            if ui
-                .selectable_label(on_kooch_ui, "UI")
-                .on_hover_text("Draw the assets with kooch_ui: a preview of #280 phase 9")
-                .clicked()
-            {
-                on_kooch_ui = !on_kooch_ui;
-                ui.ctx()
-                    .data_mut(|d| d.insert_temp(kooch_ui_id, on_kooch_ui));
-            }
-            ui.add(
-                egui::TextEdit::singleline(&mut query)
-                    .id(search_id)
-                    .desired_width(f32::INFINITY)
-                    .hint_text(format!("{} Search assets…", icons::MAGNIFYING_GLASS)),
-            )
-        })
-        .inner;
+    let search_resp = ui.add(
+        egui::TextEdit::singleline(&mut query)
+            .id(search_id)
+            .desired_width(f32::INFINITY)
+            .hint_text(format!("{} Search assets…", icons::MAGNIFYING_GLASS)),
+    );
     if search_resp.changed() {
         ui.ctx()
             .data_mut(|d| d.insert_temp(search_id, query.clone()));
@@ -113,53 +98,27 @@ pub(crate) fn draw_asset_browser_content(
         handle_keyboard(ui, nav, actions);
     }
 
-    if on_kooch_ui && let Some(panel) = ui_panel {
-        let roots: Vec<(&str, &Path)> = project_root
-            .map(|root| ("Project", root))
-            .into_iter()
-            .chain(engine_root.map(|root| ("Engine (read-only)", root)))
-            .collect();
+    if let Some(panel) = ui_panel {
+        let mut roots: Vec<(&str, &Path, bool)> = Vec::new();
+        if let Some(root) = project_root {
+            roots.push(("Project", root, true));
+        }
+        if let Some(root) = engine_root {
+            roots.push(("Engine (read-only)", root, false));
+        }
         let inputs = ui_tree::Inputs {
             catalog,
             roots: &roots,
             needle: &needle,
             main_scene,
+            project_root,
+            has_settings: has_render_settings(catalog, project_root),
         };
-        ui_tree::draw(ui, panel, &inputs, nav, actions);
-    } else {
-        egui::ScrollArea::vertical()
-            // Width comes from the panel, not from the longest file name. Left to shrink, the whole
-            // tree — rows, drop targets and all — ends wherever the text does, and the rest of the
-            // panel does nothing when clicked.
-            .auto_shrink([false, true])
-            .id_salt("asset_browser_grid")
-            .show(ui, |ui| {
-                let mut ctx = RenderCtx {
-                    needle: &needle,
-                    actions,
-                    rename: &mut rename,
-                    pending: &mut pending,
-                    writable: true,
-                    nav,
-                    has_settings: has_render_settings(catalog, project_root),
-                    project_root,
-                    main_scene,
-                };
-                // Cleared here and refilled as rows are drawn, so the list the
-                // keyboard reads next frame is exactly what is on screen now.
-                ctx.nav.rows.clear();
-
-                if let Some(root) = project_root {
-                    let entries = entries_under(catalog, root);
-                    ctx.writable = true;
-                    tree::render_root(ui, "Project", root, &entries, &mut ctx);
-                }
-                if let Some(root) = engine_root {
-                    let entries = entries_under(catalog, root);
-                    ctx.writable = false;
-                    tree::render_root(ui, "Engine (read-only)", root, &entries, &mut ctx);
-                }
-            });
+        let edits = ui_tree::Edits {
+            rename: &mut rename,
+            pending: &mut pending,
+        };
+        ui_tree::draw(ui, panel, &inputs, edits, nav, actions);
     }
 
     // The single writer. The cursor was moved above by whichever hand the user used, and this is
@@ -252,14 +211,6 @@ fn has_render_settings(catalog: &[AssetCatalogEntry], project_root: Option<&Path
     catalog.iter().any(|entry| {
         entry.type_name == wanted && project_root.is_some_and(|root| entry.path.starts_with(root))
     })
-}
-
-/// Catalog entries whose path lives under `root`.
-fn entries_under<'a>(catalog: &'a [AssetCatalogEntry], root: &Path) -> Vec<&'a AssetCatalogEntry> {
-    catalog
-        .iter()
-        .filter(|e| e.path.starts_with(root))
-        .collect()
 }
 
 /// Moves the cursor through the tree, and acts on the row it lands on.

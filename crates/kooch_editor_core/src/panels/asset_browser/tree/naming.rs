@@ -6,7 +6,7 @@ use crate::actions::{EditorAction, NewFileKind};
 
 use super::model::{CreateKind, PendingCreate, RenameState};
 
-pub(super) fn rename_edit(
+pub(in crate::panels) fn rename_edit(
     ui: &mut egui::Ui,
     path: &Path,
     is_folder: bool,
@@ -67,7 +67,7 @@ pub(super) fn commit_name(path: &Path, buffer: &str, is_folder: bool) -> Option<
 
 /// Renders the inline creation name field. Commits on Enter (non-empty),
 /// cancels on Escape / focus loss.
-pub(super) fn create_edit(
+pub(in crate::panels) fn create_edit(
     ui: &mut egui::Ui,
     pending: &mut Option<PendingCreate>,
     actions: &mut Vec<EditorAction>,

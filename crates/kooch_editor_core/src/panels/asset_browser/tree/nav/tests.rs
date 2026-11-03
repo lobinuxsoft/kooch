@@ -1,4 +1,5 @@
 use super::*;
+use std::path::Path;
 
 fn folder(path: &str, open: bool) -> AssetRow {
     AssetRow {
@@ -107,15 +108,6 @@ fn a_cursor_whose_row_vanished_recovers_on_the_next_key() {
     assert!(n.current().is_none());
     n.step(1);
     assert_eq!(n.cursor.as_deref(), Some(Path::new("/p/assets")));
-}
-
-#[test]
-fn a_toggle_is_only_taken_by_the_folder_it_names() {
-    let mut n = nav();
-    n.toggle = Some((PathBuf::from("/p/src"), true));
-    assert_eq!(n.take_toggle_for(Path::new("/p/assets")), None);
-    assert_eq!(n.take_toggle_for(Path::new("/p/src")), Some(true));
-    assert_eq!(n.take_toggle_for(Path::new("/p/src")), None, "taken once");
 }
 
 /// The selection follows the cursor however it was moved, and reports

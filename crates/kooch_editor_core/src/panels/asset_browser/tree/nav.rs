@@ -1,6 +1,6 @@
 //! Keyboard navigation over the asset tree.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// One drawn row, in draw order.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,11 +105,6 @@ impl AssetNav {
         self.scroll_to_cursor = true;
     }
 
-    /// Whether `path` is where the cursor is.
-    pub(crate) fn is_cursor(&self, path: &Path) -> bool {
-        self.cursor.as_deref() == Some(path)
-    }
-
     /// The row the cursor has just landed on, reported once.
     pub(crate) fn take_cursor_move(&mut self) -> Option<AssetRow> {
         if self.cursor == self.last_synced {
@@ -117,18 +112,6 @@ impl AssetNav {
         }
         self.last_synced = self.cursor.clone();
         self.current().cloned()
-    }
-
-    /// Takes the pending toggle for `path`, if it is for this folder.
-    pub(crate) fn take_toggle_for(&mut self, path: &Path) -> Option<bool> {
-        match &self.toggle {
-            Some((p, open)) if p == path => {
-                let open = *open;
-                self.toggle = None;
-                Some(open)
-            }
-            _ => None,
-        }
     }
 }
 

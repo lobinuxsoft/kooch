@@ -87,9 +87,32 @@ pub(crate) struct UiPanel {
     texture: Option<egui::TextureId>,
     hovered: Option<UiNode>,
     pressed: Option<UiNode>,
+    /// Where the panel's top-left was on screen last shown: what turns rects into egui's.
+    origin: egui::Pos2,
 }
 
 impl UiPanel {
+    /// The node a gesture at screen `pos` would land on, for what egui knows and the panel does
+    /// not see: a drag from another panel ending over it.
+    pub(crate) fn node_at(&self, pos: egui::Pos2) -> Option<UiNode> {
+        let point = glam::Vec2::new(pos.x - self.origin.x, pos.y - self.origin.y);
+        target(self.tree.as_ref()?, point)
+    }
+
+    /// `node`'s rect on screen as last laid out, cut to what its ancestors show.
+    pub(crate) fn screen_rect(&self, node: UiNode) -> Option<egui::Rect> {
+        let tree = self.tree.as_ref()?;
+        let rect = tree.rect(node)?;
+        let clip = tree.clip(node)?;
+        let min = rect.min.max(glam::Vec2::new(clip[0], clip[1]));
+        let max = (rect.min + rect.size).min(glam::Vec2::new(clip[2], clip[3]));
+        let offset = self.origin.to_vec2();
+        Some(egui::Rect::from_min_max(
+            egui::pos2(min.x, min.y) + offset,
+            egui::pos2(max.x, max.y) + offset,
+        ))
+    }
+
     /// A new document: what the pointer held was the old one's.
     pub(crate) fn set_tree(&mut self, tree: UiTree) {
         self.tree = Some(tree);
@@ -183,6 +206,7 @@ impl UiPanel {
             ui.ctx().request_repaint();
         }
         self.request = Some((size, ppp));
+        self.origin = rect.min;
         if let (Some(texture), Some(drawn)) = (self.texture, self.drawn) {
             // At the size it was drawn, a frame behind a resize: cut, never stretched.
             let shown = egui::Rect::from_min_size(
