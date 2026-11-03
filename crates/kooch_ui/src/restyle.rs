@@ -56,7 +56,8 @@ impl UiTree {
         }
     }
 
-    fn restyle(&mut self) {
+    /// Runs the cascade again when a state or the sheet changed since: per gesture, not per frame.
+    pub fn restyle(&mut self) {
         let Some(styled) = self.styled.take() else {
             return;
         };

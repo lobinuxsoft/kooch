@@ -207,50 +207,52 @@ pub(super) fn render_leaf(
         ctx.nav.cursor = Some(leaf.path.clone());
     }
     if resp.double_clicked() {
-        // An asset the editor can edit opens in the editor; everything
-        // else goes to the IDE. Sending a `.inputmap` to a text editor
-        // was technically an answer and never the one anyone wanted.
-        let is_input_map = leaf
-            .path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case(kooch_input::actions::INPUT_ACTION_EXTENSION));
-        // 🔴 A scene opens the scene. It used to go to the IDE as text, which is a true answer to
-        // "what is this file" and never the one anybody double-clicking a level was asking.
-        let is_shader = leaf
-            .path
-            .extension()
-            .is_some_and(|e| e == kooch_render::material::SHADER_EXTENSION);
-        ctx.actions.push(if is_shader {
-            // A generated shader opens in the graph; a hand-written one says so in the Console.
-            EditorAction::OpenShaderGraph {
-                path: leaf.path.clone(),
-            }
-        } else if leaf
-            .path
-            .extension()
-            .is_some_and(|e| e == kooch_ui::source::UI_EXTENSION)
-        {
-            EditorAction::OpenUiBuilder {
-                path: leaf.path.clone(),
-            }
-        } else if super::menus::is_scene(&leaf.path) {
-            EditorAction::OpenScene {
-                path: Some(leaf.path.clone()),
-            }
-        } else if is_input_map {
-            EditorAction::OpenInputMap {
-                path: leaf.path.clone(),
-            }
-        } else {
-            EditorAction::OpenInIde {
-                file: leaf.path.clone(),
-            }
-        });
+        ctx.actions.push(open_action(&leaf.path));
     }
 
     let writable = ctx.writable;
     let actions = &mut *ctx.actions;
     let rename = &mut *ctx.rename;
     resp.context_menu(|ui| leaf_menu(ui, leaf, writable, root, actions, rename, is_main_scene));
+}
+
+/// What a double-click on `path` does.
+pub(in crate::panels) fn open_action(path: &Path) -> EditorAction {
+    // An asset the editor can edit opens in the editor; everything
+    // else goes to the IDE. Sending a `.inputmap` to a text editor
+    // was technically an answer and never the one anyone wanted.
+    let is_input_map = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case(kooch_input::actions::INPUT_ACTION_EXTENSION));
+    // 🔴 A scene opens the scene. It used to go to the IDE as text, which is a true answer to
+    // "what is this file" and never the one anybody double-clicking a level was asking.
+    let is_shader = path
+        .extension()
+        .is_some_and(|e| e == kooch_render::material::SHADER_EXTENSION);
+    if is_shader {
+        // A generated shader opens in the graph; a hand-written one says so in the Console.
+        EditorAction::OpenShaderGraph {
+            path: path.to_path_buf(),
+        }
+    } else if path
+        .extension()
+        .is_some_and(|e| e == kooch_ui::source::UI_EXTENSION)
+    {
+        EditorAction::OpenUiBuilder {
+            path: path.to_path_buf(),
+        }
+    } else if super::menus::is_scene(path) {
+        EditorAction::OpenScene {
+            path: Some(path.to_path_buf()),
+        }
+    } else if is_input_map {
+        EditorAction::OpenInputMap {
+            path: path.to_path_buf(),
+        }
+    } else {
+        EditorAction::OpenInIde {
+            file: path.to_path_buf(),
+        }
+    }
 }

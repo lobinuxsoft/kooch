@@ -36,15 +36,15 @@ pub fn draw_documents(resources: &mut Resources) {
     resources.insert(list);
 }
 
-/// One tree over a target of `physical` pixels, its atlas's changes included: the UI Builder's
-/// canvas, which belongs to no entity.
+/// One tree over a target of `physical` pixels at `scale` pixels per canvas unit, its atlas's
+/// changes included: a tree that belongs to no entity, as the editor's.
 pub fn draw_tree(
     tree: &UiTree,
     atlas: &mut GlyphAtlas,
+    scale: f32,
     physical: glam::UVec2,
     list: &mut UiDrawList,
 ) {
-    let scale = physical.y.max(1) as f32 / CANVAS_HEIGHT;
     let screen = [0.0, 0.0, physical.x as f32, physical.y as f32];
     list.quads.clear();
     push_tree(tree, atlas, scale, screen, &mut list.quads);

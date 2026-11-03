@@ -79,6 +79,7 @@ pub(crate) mod style;
 pub(crate) mod surface_snap;
 pub(crate) mod systems;
 mod ui_builder;
+mod ui_panel;
 mod ui_preview;
 pub(crate) mod undo;
 pub(crate) mod viewport;
@@ -131,6 +132,8 @@ impl Plugin for EditorPlugin {
         // Before the render, which draws what it leaves.
         app.add_system(Stage::PreRender, ui_preview::preview_ui_system);
         app.add_system(Stage::PreRender, ui_builder::builder_system);
+        app.insert_resource(ui_panel::UiPanels::default());
+        app.add_system(Stage::PreRender, ui_panel::ui_panels_system);
 
         // earn the next one. The baseline is what the accumulator falls back to after the runner
         // reads it, so a frame that asks for nothing is a frame that stops the loop.

@@ -167,6 +167,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     if let Some(builder) = ui_builder.as_mut() {
         builder.prepare(&taken.gpu, &mut taken.overlay.renderer);
     }
+    let mut ui_panels = resources.remove::<crate::ui_panel::UiPanels>();
+    if let Some(panels) = ui_panels.as_mut() {
+        panels.prepare(&taken.gpu, &mut taken.overlay.renderer);
+    }
     let toolbar = toolbar_info(
         resources,
         &taken.overlay,
@@ -314,6 +318,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             input_owner: &mut input_owner,
             game_clicked: &mut game_clicked,
             ui_builder: ui_builder.as_mut(),
+            ui_panels: ui_panels.as_mut(),
             shader_costs: &shader_costs,
             input: &mut viewport_input,
             controller: &controller_snapshot,
@@ -411,6 +416,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
 
     let viewport_start = std::time::Instant::now();
     taken.render_views(resources, project_loaded, &requests);
+    if let Some(mut panels) = ui_panels {
+        panels.render(&taken.gpu);
+        resources.insert(panels);
+    }
     if let Some(mut builder) = ui_builder {
         builder.render(&taken.gpu);
         let step = builder.take_step();

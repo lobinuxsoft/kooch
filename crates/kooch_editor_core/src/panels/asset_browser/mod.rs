@@ -2,6 +2,7 @@
 //! directories, Unity / Godot style.
 
 mod tree;
+mod ui_list;
 
 pub(crate) use tree::AssetNav;
 
@@ -26,6 +27,7 @@ pub(crate) fn draw_asset_browser_content(
     engine_root: Option<&Path>,
     project_root: Option<&Path>,
     main_scene: Option<&Path>,
+    ui_panel: Option<&mut crate::ui_panel::UiPanel>,
     actions: &mut Vec<EditorAction>,
 ) {
     // Full panel area, captured before content so drop detection can
@@ -38,12 +40,27 @@ pub(crate) fn draw_asset_browser_content(
         .ctx()
         .data(|d| d.get_temp::<String>(search_id))
         .unwrap_or_default();
-    let search_resp = ui.add(
-        egui::TextEdit::singleline(&mut query)
-            .id(search_id)
-            .desired_width(f32::INFINITY)
-            .hint_text(format!("{} Search assets…", icons::MAGNIFYING_GLASS)),
-    );
+    let kooch_ui_id = ui.id().with("asset_browser_kooch_ui");
+    let mut on_kooch_ui: bool = ui.ctx().data(|d| d.get_temp(kooch_ui_id)).unwrap_or(false);
+    let search_resp = ui
+        .horizontal(|ui| {
+            if ui
+                .selectable_label(on_kooch_ui, "UI")
+                .on_hover_text("Draw the assets with kooch_ui: a preview of #280 phase 9")
+                .clicked()
+            {
+                on_kooch_ui = !on_kooch_ui;
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(kooch_ui_id, on_kooch_ui));
+            }
+            ui.add(
+                egui::TextEdit::singleline(&mut query)
+                    .id(search_id)
+                    .desired_width(f32::INFINITY)
+                    .hint_text(format!("{} Search assets…", icons::MAGNIFYING_GLASS)),
+            )
+        })
+        .inner;
     if search_resp.changed() {
         ui.ctx()
             .data_mut(|d| d.insert_temp(search_id, query.clone()));
@@ -91,6 +108,20 @@ pub(crate) fn draw_asset_browser_content(
     let pending_id = egui::Id::new("asset_browser_pending_create");
     let mut rename: Option<RenameState> = ui.ctx().data(|d| d.get_temp(rename_id));
     let mut pending: Option<PendingCreate> = ui.ctx().data(|d| d.get_temp(pending_id));
+
+    if on_kooch_ui && let Some(panel) = ui_panel {
+        let roots: Vec<&Path> = project_root.into_iter().chain(engine_root).collect();
+        ui_list::draw(
+            ui,
+            panel,
+            catalog,
+            &roots,
+            selected_asset,
+            current_folder,
+            actions,
+        );
+        return;
+    }
 
     if focused {
         handle_keyboard(ui, nav, actions);

@@ -210,9 +210,10 @@ impl UiBuilder {
             },
             fonts,
         );
-        tree.rasterize(size.1.max(1) as f32 / CANVAS_HEIGHT, fonts, &mut self.atlas);
+        let scale = size.1.max(1) as f32 / CANVAS_HEIGHT;
+        tree.rasterize(scale, fonts, &mut self.atlas);
         let physical = glam::UVec2::new(size.0, size.1);
-        kooch_ui::draw_tree(tree, &mut self.atlas, physical, &mut self.list);
+        kooch_ui::draw_tree(tree, &mut self.atlas, scale, physical, &mut self.list);
         self.drawn = Some(size);
     }
 }
