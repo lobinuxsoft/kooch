@@ -55,6 +55,15 @@ impl Default for UiFonts {
     }
 }
 
+impl UiFonts {
+    /// A font only `font-family` reaches, by the family name inside the file: the editor's icons.
+    /// Not listed in [`families`](Self::families), which are the project's to pick.
+    pub fn register(&mut self, bytes: &'static [u8]) {
+        let data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(bytes);
+        self.font.collection.register_fonts(Blob::new(data), None);
+    }
+}
+
 /// One node's text, shaped in logical units.
 pub(crate) struct Text {
     pub content: String,

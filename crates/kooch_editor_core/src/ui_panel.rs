@@ -16,7 +16,14 @@ use crate::viewport::ViewportTarget;
 #[derive(Default)]
 pub(crate) struct UiPanels {
     pub asset_browser: UiPanel,
+    /// The editor's icon font is in the shared `UiFonts`.
+    icons: bool,
 }
+
+static PHOSPHOR: &[u8] = include_bytes!("../assets/fonts/Phosphor.ttf");
+
+/// The family name inside `Phosphor.ttf`: what a panel's sheet names to draw `crate::icons`.
+pub(crate) const ICON_FAMILY: &str = "Phosphor-Bold";
 
 impl UiPanels {
     fn each(&mut self) -> [&mut UiPanel; 1] {
@@ -42,6 +49,9 @@ pub(crate) fn ui_panels_system(resources: &mut Resources) {
         return;
     };
     if let Some(fonts) = resources.get_mut::<UiFonts>() {
+        if !std::mem::replace(&mut panels.icons, true) {
+            fonts.register(PHOSPHOR);
+        }
         for panel in panels.each() {
             panel.update(fonts);
         }

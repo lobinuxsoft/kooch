@@ -94,4 +94,42 @@ impl UiTree {
             style.overflow.x == Overflow::Scroll || style.overflow.y == Overflow::Scroll
         })
     }
+
+    /// Scrolls each `scroll` ancestor of `node` just enough to show it whole, or its start when it
+    /// is the larger. Reads this layout's rects: the move lands on the next one.
+    pub fn reveal(&mut self, node: UiNode) -> bool {
+        let Some(&rect) = self.rect.get(node.0 as usize) else {
+            return false;
+        };
+        let mut moved = false;
+        let mut current = self.parent(node);
+        while let Some(parent) = current {
+            let index = parent.0 as usize;
+            if self.scrolls(index)
+                && let Ok(own) = self.layout.layout(self.taffy[index])
+            {
+                let border = self.border[index];
+                let view_min = self.rect[index].min + border;
+                let view_max = self.rect[index].min + self.rect[index].size - border;
+                let mut offset = self.scroll[index];
+                for axis in 0..2 {
+                    let (min, max) = (rect.min[axis], rect.min[axis] + rect.size[axis]);
+                    if min < view_min[axis] {
+                        offset[axis] -= view_min[axis] - min;
+                    } else if max > view_max[axis] {
+                        offset[axis] += (max - view_max[axis]).min(min - view_min[axis]);
+                    }
+                }
+                let limit = Vec2::new(own.scroll_width(), own.scroll_height());
+                let offset = offset.clamp(Vec2::ZERO, limit);
+                if offset != self.scroll[index] {
+                    self.scroll[index] = offset;
+                    moved = true;
+                }
+            }
+            current = self.parent(parent);
+        }
+        self.moved |= moved;
+        moved
+    }
 }

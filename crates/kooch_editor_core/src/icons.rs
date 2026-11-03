@@ -77,6 +77,10 @@ pub const FOLDER_OPEN: &str = "\u{e256}";
 /// Folder icon — a closed folder, for a row whose contents are hidden.
 pub const FOLDER: &str = "\u{e24a}";
 
+/// Caret-right / caret-down — a closed and an open folder in the Asset Browser.
+pub const CARET_RIGHT: &str = "\u{e13a}";
+pub const CARET_DOWN: &str = "\u{e136}";
+
 /// Folder plus icon — used for "New Project" button.
 pub const FOLDER_PLUS: &str = "\u{e258}";
 
