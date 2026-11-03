@@ -78,7 +78,7 @@ pub(super) fn draw(
 }
 
 /// Room the property names and ↺ take: `border-bottom-width` is the longest.
-const STYLE_LABELS: f32 = 170.0;
+const STYLE_LABELS: f32 = 185.0;
 
 fn row(
     ui: &mut egui::Ui,
@@ -88,15 +88,7 @@ fn row(
     assets: &Assets,
 ) -> bool {
     let value = style.get(spec.name);
-    let text = egui::RichText::new(spec.name).monospace();
-    let label = ui.label(if value.is_some() {
-        text.strong()
-    } else {
-        text.weak()
-    });
-    if !spec.hint.is_empty() {
-        label.on_hover_text(spec.hint);
-    }
+    super::inspector::label(ui, spec.name, spec.hint, value.is_some());
     let mut edited = field(ui, origin, spec, value.as_deref(), assets).map(Some);
     if value.is_none() {
         ui.label("");

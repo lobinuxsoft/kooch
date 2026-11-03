@@ -143,3 +143,6 @@ pub const CHECK: &str = "\u{e182}";
 
 /// Warning — something that will not do what it says.
 pub const WARNING: &str = "\u{e4e0}";
+
+/// Info — a field that explains itself on hover.
+pub const INFO: &str = "\u{e2ce}";

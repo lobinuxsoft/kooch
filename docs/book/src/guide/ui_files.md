@@ -67,9 +67,7 @@ not lay out or shape text again; each still reads its two files' dates once a fr
 | `use` | Another `.kxml`, instanced here. |
 
 Every element takes `name` (what `tree.query` finds, unique in the document) and `class` (any
-number, space separated). `doc` is a note for whoever edits the document next: the UI Builder shows it on hover
-in the hierarchy (rows with one are marked 🗒) and edits it in the Inspector under `name`; the game
-never reads it.
+number, space separated).
 
 Code reads and changes a document through its tree, without touching entities:
 
@@ -312,7 +310,8 @@ on a canvas, drawn by the same pass that draws it in the game. No scene and no c
   not. A double-click adds it to the selection. A `.kxml` dragged from the Asset Browser lands as
   a `<use>` too. What lands is selected, with a default to be seen: a label reads *Label*, a
   button holds one.
-- **Inspector** — the selected element's attributes as typed fields, from what each element reads:
+- **Inspector** — every field's name says what it does on hover (the ⓘ beside it). The selected
+  element's attributes as typed fields, from what each element reads:
   a checkbox for `disabled` or `checked`, a number for a slider's `min`/`max`/`step`, the
   editor's asset picker for a `<use>`'s `src` (search, or drop a `.kxml` from the Asset Browser),
   text for `bind:value`. A bound toggle or slider gets a **preview** row: the value the canvas

@@ -50,12 +50,9 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
                             return;
                         }
                         let selected = builder.selected == Some(origin) && builder.inner.is_none();
-                        let mut response = ui
+                        let response = ui
                             .selectable_label(selected, label(&row))
                             .interact(egui::Sense::drag());
-                        if let Some(doc) = &row.doc {
-                            response = response.on_hover_text(doc);
-                        }
                         if response.clicked() {
                             builder.select(Some(origin), None);
                         }
@@ -179,12 +176,7 @@ fn ghosts(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, depth: u32) {
             let text = egui::RichText::new(text).italics();
             let response = ui
                 .add_enabled(why.is_none(), egui::Button::selectable(selected, text))
-                .on_hover_text(
-                    match ghost.attributes.iter().find(|(key, _)| key == "doc") {
-                        Some((_, doc)) => format!("In {}\n\n{doc}", ghost.file),
-                        None => format!("In {}", ghost.file),
-                    },
-                )
+                .on_hover_text(format!("In {}", ghost.file))
                 .on_disabled_hover_text(why.unwrap_or_default());
             if response.clicked() {
                 picked = ghost.name.clone();
@@ -208,9 +200,6 @@ fn label(row: &kooch_ui::markup::Outline) -> String {
         for class in classes.split_whitespace() {
             label.push_str(&format!(" .{class}"));
         }
-    }
-    if row.doc.is_some() {
-        label.push_str("  🗒");
     }
     label
 }
