@@ -8,6 +8,7 @@ use crate::ui_builder::SHEET_TYPE;
 mod actions;
 mod classes;
 mod drop;
+mod gizmo;
 mod hierarchy;
 mod inspector;
 mod library;
@@ -223,6 +224,13 @@ fn canvas(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEnt
     if let Some(rect) = builder.selected.and_then(|origin| builder.rect_of(origin)) {
         let stroke = egui::Stroke::new(2.0, accent);
         painter.rect_stroke(to_screen(rect), 0.0, stroke, egui::StrokeKind::Outside);
+        // A template's node is written as overrides, not as a rect of this file.
+        if let Some(origin) = builder
+            .selected
+            .filter(|o| *o != 0 && builder.inner.is_none())
+        {
+            gizmo::draw(ui, builder, origin, to_screen(rect), units, &response);
+        }
     }
     // A drop lands inside what holds children, after what does not.
     if drop::current(ui.ctx()).is_some()

@@ -210,6 +210,20 @@ impl UiBuilder {
         tree.element_of(tree.hit(point)?)
     }
 
+    /// What the rect gizmo starts a drag from: its rect, its parent's content corner, whether it is
+    /// absolute and its px insets.
+    pub(crate) fn placement(
+        &self,
+        origin: u32,
+    ) -> Option<(UiRect, glam::Vec2, bool, [Option<f32>; 4])> {
+        let tree = self.tree.as_ref()?;
+        let node = tree.node_of(origin)?;
+        let parent = tree.parent(node)?;
+        let corner = tree.rect(parent)?.min + glam::Vec2::splat(tree.border(parent).unwrap_or(0.0));
+        let (absolute, insets) = tree.placement(node)?;
+        Some((tree.rect(node)?, corner, absolute, insets))
+    }
+
     /// Where an element landed, in canvas units: a `<use>`'s is its instance's.
     pub(crate) fn rect_of(&self, origin: u32) -> Option<UiRect> {
         let tree = self.tree.as_ref()?;
