@@ -44,7 +44,6 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
                             let set = |value: &str| (!value.is_empty()).then(|| value.to_owned());
                             if inspected.from.is_none() {
                                 text_row(ui, builder, origin, "name", set(&inspected.name), "");
-                                doc_row(ui, builder, origin, &inspected.attributes);
                             }
                             super::classes::row(ui, builder, origin, &inspected.classes);
                             if let Some(text) = &inspected.text {
@@ -83,7 +82,7 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
             let others: Vec<(String, String)> = inspected
                 .attributes
                 .iter()
-                .filter(|(key, _)| key != "doc" && schema.iter().all(|spec| spec.key != key))
+                .filter(|(key, _)| schema.iter().all(|spec| spec.key != key))
                 .cloned()
                 .collect();
             egui::CollapsingHeader::new("Other attributes")
@@ -108,28 +107,6 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
                         });
                 });
         });
-}
-
-/// The author's note: multiline, so a paragraph reads as written.
-fn doc_row(
-    ui: &mut egui::Ui,
-    builder: &mut UiBuilder,
-    origin: u32,
-    attributes: &[(String, String)],
-) {
-    let value = attribute(attributes, "doc");
-    let hint = "A note for whoever edits this document; the game never reads it";
-    label(ui, "doc", hint, value.is_some());
-    let mut text = value.clone().unwrap_or_default();
-    let field = egui::TextEdit::multiline(&mut text)
-        .hint_text("Note")
-        .desired_rows(1)
-        .desired_width(f32::INFINITY);
-    if ui.add(field).changed() {
-        builder.set_attribute(origin, "doc", &text);
-    }
-    unset(ui, builder, origin, "doc", value.is_some());
-    ui.end_row();
 }
 
 /// A bound control's value on the canvas: what the game's field would hold.
