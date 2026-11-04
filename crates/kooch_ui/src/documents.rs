@@ -189,6 +189,60 @@ fn tree_from(
     ))
 }
 
+/// Instances `markup` — one `<use src="…">` with its attributes and `<set>`s, written as a
+/// `.kxml` writes it — as the last child of `parent` in `document`'s tree (#1784). `src` reads
+/// beside the document's file, in the editor and in a build. Returns the instance's root.
+///
+/// A rebuild from the file (an edit to it in the editor) drops instances: fill again when a node
+/// you instanced is gone.
+pub fn ui_instance(
+    resources: &mut Resources,
+    document: Entity,
+    parent: crate::UiNode,
+    markup: &str,
+) -> Result<crate::UiNode, String> {
+    let source = resources
+        .get::<UiTrees>()
+        .and_then(|trees| trees.get(document))
+        .and_then(|tree| tree.origin.as_ref())
+        .map(|origin| origin.source)
+        .ok_or("the document was not built from a file")?;
+    let mut server = resources.remove::<AssetServer>();
+    let expanded = match resources.get::<AssetDatabase>() {
+        Some(database) => instance_source(database, server.as_mut(), source, markup),
+        None => Err("no asset database".to_owned()),
+    };
+    if let Some(server) = server {
+        resources.insert(server);
+    }
+    let instance = expanded?;
+    let tree = resources
+        .get_mut::<UiTrees>()
+        .and_then(|trees| trees.get_mut(document))
+        .ok_or("the document has no tree")?;
+    crate::build::graft(tree, parent, &instance)
+        .ok_or_else(|| "the parent is not a node of the document".to_owned())
+}
+
+fn instance_source(
+    database: &AssetDatabase,
+    mut server: Option<&mut AssetServer>,
+    source: Guid,
+    markup: &str,
+) -> Result<UiSource, String> {
+    let at = path_of(database, source)?;
+    let parsed = UiSource::parse(&format!("<ui>{markup}</ui>"))?;
+    let engine = engine_assets(server.as_deref());
+    expand(
+        parsed,
+        &at,
+        &mut |path| read(server.as_deref_mut(), path),
+        &mut Vec::new(),
+        &|path| image_guid(database, engine.as_deref(), path),
+        0,
+    )
+}
+
 /// The document's `style` over the controls' sheet, or the engine's default sheet when it has none.
 fn read_sheet(
     database: &AssetDatabase,

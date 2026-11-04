@@ -25,6 +25,12 @@ impl ResolvedStyle {
         let layout = &mut self.layout;
         match declaration {
             Declaration::Display(value) => layout.display = *value,
+            Declaration::GridTemplate(Axis::Width, tracks) => {
+                layout.grid_template_columns = tracks.clone()
+            }
+            Declaration::GridTemplate(Axis::Height, tracks) => {
+                layout.grid_template_rows = tracks.clone()
+            }
             Declaration::Overflow(value) => {
                 layout.overflow = taffy::Point {
                     x: *value,

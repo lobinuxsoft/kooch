@@ -580,6 +580,7 @@ fn space_key(space: AvailableSpace) -> f32 {
     }
 }
 
+mod instances;
 mod query;
 mod scroll;
 #[cfg(test)]

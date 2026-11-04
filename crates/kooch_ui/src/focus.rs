@@ -131,6 +131,13 @@ pub fn navigate_focus(resources: &mut Resources) {
         }
         if let Some((document, node)) = focus.focused {
             events.extend(event(resources, document, node, UiEventKind::Focus));
+            // A pad moving through a scrolling list brings what it lands on into view.
+            if let Some(tree) = resources
+                .get_mut::<UiTrees>()
+                .and_then(|trees| trees.get_mut(document))
+            {
+                tree.reveal(node);
+            }
         }
     }
     show_states(resources, &was, &focus);
