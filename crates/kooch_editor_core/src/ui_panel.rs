@@ -5,6 +5,7 @@
 use kooch_core::Guid;
 use kooch_core::asset_database::AssetDatabase;
 use kooch_core::asset_loader::AssetServer;
+use kooch_core::dynamic::EditorHandlers;
 use kooch_core::gpu::GpuContext;
 use kooch_core::resource::Resources;
 use kooch_ecs::UiDrawList;
@@ -19,6 +20,8 @@ use crate::viewport::ViewportTarget;
 /// Every editor panel drawn by `kooch_ui`. Taken out of `Resources` for the frame, like the views.
 #[derive(Default)]
 pub(crate) struct UiPanels {
+    /// Out of `Resources` for the frame, like the panels: what a click runs.
+    pub handlers: Option<EditorHandlers>,
     pub asset_browser: UiPanel,
     /// The project's panels open in the dock or a window, by their `.kxml` (#1791).
     pub project: Vec<(Guid, UiPanel)>,
@@ -44,6 +47,15 @@ impl UiPanels {
             .iter_mut()
             .find(|(own, _)| *own == guid)
             .map(|(_, panel)| panel)
+    }
+
+    /// The open panel of `guid`, and what its `on:click`s can run.
+    pub(crate) fn project_shown(
+        &mut self,
+        guid: Guid,
+    ) -> (Option<&mut UiPanel>, Option<&EditorHandlers>) {
+        let panel = self.project.iter_mut().find(|(own, _)| *own == guid);
+        (panel.map(|(_, panel)| panel), self.handlers.as_ref())
     }
 
     pub(crate) fn name_of(&self, guid: Guid) -> Option<&str> {

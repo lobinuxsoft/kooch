@@ -43,12 +43,14 @@
 //! via [`Engine::set_data`].
 
 pub mod component;
+pub mod editor_call;
 pub mod engine_api;
 pub mod plugin;
 pub mod types;
 pub mod version;
 
 pub use component::{ComponentSchema, FieldKind, FieldSchema, RegisterError};
+pub use editor_call::{EditorCall, EditorHandler, EditorRequest, SelectedEntity};
 pub use engine_api::{Engine, PluginSystem};
 pub use plugin::{CREATE_SYMBOL, CreatePluginFn, KoochPlugin, STAMP_SYMBOL};
 pub use types::Stage;

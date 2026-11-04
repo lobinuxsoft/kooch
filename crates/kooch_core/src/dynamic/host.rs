@@ -1,5 +1,6 @@
 //! The engine's side of the plugin API.
 
+use kooch_plugin_api::EditorHandler;
 use kooch_plugin_api::component::{ComponentSchema, RegisterError};
 use kooch_plugin_api::engine_api::{Engine, PluginSystem};
 use kooch_plugin_api::types::{Order as PluginOrder, Stage as PluginStage};
@@ -11,6 +12,7 @@ use crate::stage::Stage;
 mod pass;
 
 use super::bridges::{ComponentBridge, EntityBridge};
+use super::editor_handlers::EditorHandlers;
 use super::plugin_data::PluginData;
 
 /// Translates a plugin's stage into the engine's.
@@ -154,6 +156,15 @@ impl Engine for EngineHost<'_> {
             pass,
         );
         true
+    }
+
+    fn add_editor_action(&mut self, name: &str, handler: EditorHandler) {
+        if self.resources.get::<EditorHandlers>().is_none() {
+            self.resources.insert(EditorHandlers::default());
+        }
+        if let Some(handlers) = self.resources.get_mut::<EditorHandlers>() {
+            handlers.add(name, handler);
+        }
     }
 
     fn log(&self, message: &str) {

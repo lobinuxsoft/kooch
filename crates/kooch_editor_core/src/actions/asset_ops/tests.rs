@@ -1,4 +1,4 @@
-use super::{to_pascal_case, to_snake_case};
+use super::{inside_assets, to_pascal_case, to_snake_case};
 
 #[test]
 fn pascal_case_from_various_inputs() {
@@ -151,4 +151,15 @@ fn a_new_build_preset_asks_too() {
         None,
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A project's action names this path, so it must not climb out of `assets/`.
+#[test]
+fn a_climbing_path_is_refused() {
+    let assets = std::path::Path::new("/game/assets");
+    assert!(inside_assets(assets, "config/ball.kcss").is_some());
+    assert!(inside_assets(assets, "../src/main.rs").is_none());
+    assert!(inside_assets(assets, "config/../../main.rs").is_none());
+    assert!(inside_assets(assets, "/etc/passwd").is_none());
+    assert!(inside_assets(assets, "").is_none());
 }

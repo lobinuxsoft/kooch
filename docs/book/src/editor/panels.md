@@ -36,4 +36,44 @@ the editor's Play like an Inspector edit does.
 
 Saving the `.kxml` or the `.kcss` updates the open panel.
 
-`on:click` running the project's code in the editor comes next (#279).
+## Running your code
+
+`on:click` in a panel runs a function of yours, in the editor. Put it under `src/tools/`, the code
+twin of `assets/editor/`: a game does not compile that folder, so it can name what a game does not
+have. Any `pub fn` there taking `&mut EditorCall` is an action, named after the function:
+
+```rust
+// src/tools/ball.rs
+use kooch::kooch_plugin_api::EditorCall;
+
+pub fn reset_tuning(call: &mut EditorCall) {
+    for ball in call.selected() {
+        call.set_number(ball, "RollDrive.max_torque", 6.0);
+    }
+}
+```
+
+```xml
+<ui xmlns:on="urn:kooch:on">
+  <button on:click="reset_tuning"><label>Reset</label></button>
+</ui>
+```
+
+The editor picks the function up on its next build of the project; a new one needs that build
+before the button answers. The signature has to fit on one line, or the scan misses it.
+
+`EditorCall` is what the action can see and ask for:
+
+| Call | What it does |
+|---|---|
+| `selected()` | The selected entities. |
+| `number(entity, "Type.field")` | A number or bool field of a selected entity, a bool as 0 or 1. |
+| `set_number(entity, "Type.field", value)` | Writes that field. **Ctrl+Z** undoes it, and it reaches the game. |
+| `write_asset("folder/file.kcss", text)` | Writes a text file under `assets/`, replacing what is there. |
+
+An action reads the editor's copy of the selection and asks for changes; the editor applies them
+when it returns, so `number` does not see a `set_number` from the same call. A panic in an action
+is logged and the editor keeps going.
+
+A file only joins the Asset Browser with an extension the engine knows. Your own asset types are
+#1796.

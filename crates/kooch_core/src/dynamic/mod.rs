@@ -8,6 +8,7 @@
 //! - [`EntityBridge`] / [`ComponentBridge`] — hooks the ECS installs
 //! - [`ResourceRegistry`] — name → `TypeId` for resource lookup
 //! - [`PluginData`] — host-owned storage that outlives a reload
+//! - [`EditorHandlers`] — the editor actions a project declared
 //!
 //! ```text
 //! App::load_plugin(path)
@@ -22,6 +23,7 @@
 //! see [`kooch_plugin_api::version`].
 
 pub mod bridges;
+pub mod editor_handlers;
 pub mod host;
 pub mod loader;
 pub mod plugin_data;
@@ -29,12 +31,15 @@ pub mod resource_registry;
 pub mod wrapper;
 
 pub use bridges::{ComponentBridge, EntityBridge};
+pub use editor_handlers::EditorHandlers;
 pub use host::EngineHost;
 pub use loader::{PluginLoadError, PluginLoader};
 // Re-exported because `PluginLoadError::Incompatible` carries one, so a
 // caller that wants to tell "rebuild me" apart from "this will never
 // load" already depends on the type.
+pub use kooch_plugin_api::types::pack_entity;
 pub use kooch_plugin_api::version::Incompatibility;
+pub use kooch_plugin_api::{EditorCall, EditorRequest, SelectedEntity};
 pub use plugin_data::PluginData;
 pub use resource_registry::ResourceRegistry;
 pub use wrapper::DynamicPlugin;

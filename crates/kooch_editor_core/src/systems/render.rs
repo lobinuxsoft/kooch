@@ -170,6 +170,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let mut ui_panels = resources.remove::<crate::ui_panel::UiPanels>();
     if let Some(panels) = ui_panels.as_mut() {
         panels.prepare(&taken.gpu, &mut taken.overlay.renderer);
+        panels.handlers = resources.remove::<kooch_core::dynamic::EditorHandlers>();
     }
     let toolbar = toolbar_info(
         resources,
@@ -418,6 +419,9 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     taken.render_views(resources, project_loaded, &requests);
     if let Some(mut panels) = ui_panels {
         panels.render(&taken.gpu);
+        if let Some(handlers) = panels.handlers.take() {
+            resources.insert(handlers);
+        }
         resources.insert(panels);
     }
     if let Some(mut builder) = ui_builder {

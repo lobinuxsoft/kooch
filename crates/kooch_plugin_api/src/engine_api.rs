@@ -46,6 +46,12 @@ pub trait Engine {
         false
     }
 
+    /// Declares a function a project panel's `on:click` runs in the editor. A host with no editor
+    /// ignores it.
+    fn add_editor_action(&mut self, name: &str, handler: crate::editor_call::EditorHandler) {
+        let _ = (name, handler);
+    }
+
     /// Writes a line to the engine's log.
     fn log(&self, message: &str);
 
