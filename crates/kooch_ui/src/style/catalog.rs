@@ -69,6 +69,16 @@ pub const CATEGORIES: [StyleCategory; 10] = [
                 Keyword(&["visible", "hidden", "scroll"]),
                 "hidden cuts its children at its edge; scroll also lets the wheel move them",
             ),
+            prop(
+                "grid-template-columns",
+                Text,
+                "With display: grid, its columns: repeat(4, 1fr), 120px 1fr",
+            ),
+            prop(
+                "grid-template-rows",
+                Text,
+                "With display: grid, its rows; unset, rows grow with the children",
+            ),
         ],
     },
     StyleCategory {

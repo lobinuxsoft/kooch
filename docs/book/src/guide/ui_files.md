@@ -108,6 +108,34 @@ styled by the document's sheet, not by one of its own, and saving the template r
 document that uses it. Names inside an instance stay as written, so two instances both have a
 `label`; reach one through the instance's own name.
 
+### From code
+
+A menu whose items are not known until the game runs — an inventory, a level list — is filled from
+code. `ui_instance` instances markup under a node of a built document, with the same `use` and
+`set` a file writes, `src` relative to the document's file:
+
+```rust
+let Some(list) = resources.get::<UiTrees>()
+    .and_then(|trees| trees.get(document)?.query("items")) else { return };
+for (index, item) in items.iter().enumerate() {
+    let markup = format!(
+        r#"<use src="menu_button.kxml" data-index="{index}" on:click="items.pick">
+             <set node="label" text="{}"/>
+           </use>"#,
+        item.name,
+    );
+    ui_instance(resources, document, list, &markup)?;
+}
+```
+
+Each instance clicks with its own action, or all share one and the handler reads which:
+`tree.attribute(event.node, "data-index")`. `UiTree::remove(node)` takes an item out with
+everything under it. It builds the tree again, so a `UiNode` kept from before is stale; what the
+game wrote (texts, values, scroll) stays.
+
+Instances are the game's, not the file's: saving the `.kxml` builds the document again without
+them, so a system that fills a menu fills it again when its items are missing.
+
 ### Events and bindings
 
 `on:<event>="action"` names an action, it does not point at a function: the file stays data, the
@@ -255,6 +283,7 @@ base sheet under every document's own gives all of them a look, which the docume
 | `flex-wrap` | `nowrap`, `wrap` |
 | `flex-grow`, `flex-shrink` | number |
 | `flex-basis` | length, `auto` |
+| `grid-template-columns`, `grid-template-rows` | tracks: length, `auto`, `1fr`, `repeat(4, 1fr)`, `minmax(80px, 1fr)` |
 | `align-items`, `align-self`, `align-content` | `flex-start`, `flex-end`, `center`, `stretch`, `baseline` |
 | `justify-content` | `flex-start`, `flex-end`, `center`, `space-between`, `space-around`, `space-evenly` |
 | `gap` | length, one or two. A `%` is of the element's own size, as in CSS: one with an `auto` size is laid out with no gap, which then overflows it |

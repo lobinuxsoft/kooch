@@ -32,6 +32,8 @@ pub enum Declaration {
     Display(Display),
     /// Both axes: a `scroll` container clips its children and takes the wheel (#1775).
     Overflow(Overflow),
+    /// `grid-template-columns` (`Width`) or `-rows` (`Height`): `repeat(4, 1fr)`, `120px 1fr`…
+    GridTemplate(Axis, Vec<taffy::GridTemplateComponent<String>>),
     Position(Position),
     Inset(Edge, LengthPercentageAuto),
     Size(Axis, Dimension),
@@ -84,6 +86,8 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Vec<Declaration>, String> 
     let parsed: Result<Vec<Declaration>, String> = match name {
         "display" => one(D::Display(layout(text)?)),
         "overflow" => one(D::Overflow(layout(text)?)),
+        "grid-template-columns" => one(D::GridTemplate(Axis::Width, tracks(text)?)),
+        "grid-template-rows" => one(D::GridTemplate(Axis::Height, tracks(text)?)),
         "position" => one(D::Position(layout(text)?)),
         "top" | "right" | "bottom" | "left" => one(D::Inset(edge(name)?, layout(text)?)),
         "width" => one(D::Size(Axis::Width, layout(text)?)),
@@ -278,6 +282,11 @@ fn image(text: &str) -> Result<Option<ImageRef>, String> {
 }
 
 /// A quoted name, or bare words joined as CSS does.
+/// Each space-separated track, a `repeat()` being one.
+fn tracks(text: &str) -> Result<Vec<taffy::GridTemplateComponent<String>>, String> {
+    components(text).iter().map(|part| layout(part)).collect()
+}
+
 fn family(text: &str) -> Result<Box<str>, String> {
     if let Ok(name) = quoted(text) {
         return Ok(name);
