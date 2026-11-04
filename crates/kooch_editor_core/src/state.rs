@@ -51,6 +51,8 @@ pub(crate) enum EditorTab {
     Systems,
     /// A `.kxml` on a canvas of its own (#280).
     UiBuilder,
+    /// A project's own panel: a `.kxml` under its `assets/editor/` (#1791).
+    Project(kooch_core::Guid),
 }
 
 /// The `.shader` open in the Shader Graph panel, as its graph.
@@ -138,6 +140,8 @@ impl EditorTab {
             Self::Build => format!("{} Build", crate::icons::PACKAGE),
             Self::Profiler => format!("{} Profiler", crate::icons::CHART_BAR),
             Self::Performance => format!("{} Performance", crate::icons::FADERS),
+            // The tab viewer titles it with its file's name; this is what a window shows without one.
+            Self::Project(_) => format!("{} Panel", crate::icons::SLIDERS),
         }
     }
 }

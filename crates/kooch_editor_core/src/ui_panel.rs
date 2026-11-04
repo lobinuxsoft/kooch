@@ -2,6 +2,9 @@
 //! into a texture egui shows, and driven by egui's pointer. Menus, drag payloads and text fields
 //! stay egui, placed over the node a gesture reports.
 
+use kooch_core::Guid;
+use kooch_core::asset_database::AssetDatabase;
+use kooch_core::asset_loader::AssetServer;
 use kooch_core::gpu::GpuContext;
 use kooch_core::resource::Resources;
 use kooch_ecs::UiDrawList;
@@ -10,12 +13,17 @@ use kooch_ui::style::{STATE_ACTIVE, STATE_HOVER};
 use kooch_ui::taffy::{AvailableSpace, Size};
 use kooch_ui::{GlyphAtlas, UiFonts, UiNode, UiTree};
 
+use crate::state::{EditorOverlay, EditorTab};
 use crate::viewport::ViewportTarget;
 
 /// Every editor panel drawn by `kooch_ui`. Taken out of `Resources` for the frame, like the views.
 #[derive(Default)]
 pub(crate) struct UiPanels {
     pub asset_browser: UiPanel,
+    /// The project's panels open in the dock or a window, by their `.kxml` (#1791).
+    pub project: Vec<(Guid, UiPanel)>,
+    /// Every panel the project offers, for the Window menu: each `.kxml` under `assets/editor/`.
+    pub offered: Vec<(Guid, String)>,
     /// The editor's icon font is in the shared `UiFonts`.
     icons: bool,
 }
@@ -26,8 +34,23 @@ static PHOSPHOR: &[u8] = include_bytes!("../assets/fonts/Phosphor.ttf");
 pub(crate) const ICON_FAMILY: &str = "Phosphor-Bold";
 
 impl UiPanels {
-    fn each(&mut self) -> [&mut UiPanel; 1] {
-        [&mut self.asset_browser]
+    fn each(&mut self) -> impl Iterator<Item = &mut UiPanel> {
+        std::iter::once(&mut self.asset_browser)
+            .chain(self.project.iter_mut().map(|(_, panel)| panel))
+    }
+
+    pub(crate) fn project_mut(&mut self, guid: Guid) -> Option<&mut UiPanel> {
+        self.project
+            .iter_mut()
+            .find(|(own, _)| *own == guid)
+            .map(|(_, panel)| panel)
+    }
+
+    pub(crate) fn name_of(&self, guid: Guid) -> Option<&str> {
+        self.offered
+            .iter()
+            .find(|(own, _)| *own == guid)
+            .map(|(_, name)| name.as_str())
     }
 
     pub(crate) fn prepare(&mut self, gpu: &GpuContext, renderer: &mut egui_wgpu::Renderer) {
@@ -48,6 +71,7 @@ pub(crate) fn ui_panels_system(resources: &mut Resources) {
     let Some(mut panels) = resources.remove::<UiPanels>() else {
         return;
     };
+    project_panels(resources, &mut panels);
     if let Some(fonts) = resources.get_mut::<UiFonts>() {
         if !std::mem::replace(&mut panels.icons, true) {
             fonts.register(PHOSPHOR);
@@ -59,8 +83,91 @@ pub(crate) fn ui_panels_system(resources: &mut Resources) {
     resources.insert(panels);
 }
 
+/// Builds the open project panels from their files, and keeps them in step when saved. A tab whose
+/// file is gone from the open project is closed.
+fn project_panels(resources: &mut Resources, panels: &mut UiPanels) {
+    let Some(root) = resources
+        .get::<crate::project_state::ProjectState>()
+        .and_then(|state| state.active_project.as_ref())
+        .map(|project| project.root_path.clone())
+    else {
+        return;
+    };
+    let open: Vec<Guid> = resources
+        .get::<EditorOverlay>()
+        .map(|overlay| {
+            let docked = overlay.dock_state.iter_all_tabs().map(|(_, tab)| *tab);
+            let windows = overlay.windows.detached.iter().map(|window| window.tab);
+            docked
+                .chain(windows)
+                .filter_map(|tab| match tab {
+                    EditorTab::Project(guid) => Some(guid),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut server = resources.remove::<AssetServer>();
+    let mut gone = Vec::new();
+    if let Some(database) = resources.get::<AssetDatabase>() {
+        panels.offered = offered(database, &root);
+        panels.project.retain(|(guid, _)| open.contains(guid));
+        for guid in open {
+            let Some(path) = database.entry(guid).map(|entry| entry.path.clone()) else {
+                gone.push(guid);
+                continue;
+            };
+            if panels.project_mut(guid).is_none() {
+                panels.project.push((guid, UiPanel::default()));
+            }
+            let Some(panel) = panels.project_mut(guid) else {
+                continue;
+            };
+            let style = database.guid_for(&path.with_extension("kcss"));
+            let refreshed =
+                kooch_ui::refresh_tree(database, server.as_mut(), &mut panel.tree, guid, style);
+            if refreshed == kooch_ui::Refreshed::Rebuilt {
+                panel.forget_pointer();
+            }
+        }
+    }
+    if let Some(server) = server {
+        resources.insert(server);
+    }
+    if !gone.is_empty()
+        && let Some(overlay) = resources.get_mut::<EditorOverlay>()
+    {
+        let closed =
+            |tab: &EditorTab| matches!(tab, EditorTab::Project(guid) if gone.contains(guid));
+        overlay.dock_state.retain_tabs(|tab| !closed(tab));
+        overlay
+            .windows
+            .detached
+            .retain(|window| !closed(&window.tab));
+    }
+}
+
+/// Each `.kxml` under the project's `assets/editor/`, by name: Unity's `Editor` folder.
+fn offered(database: &AssetDatabase, root: &std::path::Path) -> Vec<(Guid, String)> {
+    let absolute = root.join("assets").join("editor");
+    let relative = std::path::Path::new("assets").join("editor");
+    let mut offered: Vec<(Guid, String)> = database
+        .path_iter()
+        .filter(|(path, _)| path.starts_with(&absolute) || path.starts_with(&relative))
+        .filter(|(path, _)| path.extension().is_some_and(|ext| ext == "kxml"))
+        .map(|(path, guid)| {
+            let name = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned());
+            (guid, name.unwrap_or_default())
+        })
+        .collect();
+    offered.sort_by(|a, b| a.1.cmp(&b.1));
+    offered
+}
+
 /// What the pointer did to a panel's document this frame, as the nodes it did it on: the nearest
-/// one with an `on:click`, or the node itself.
+/// one with an `on:click` or a control, or the node itself.
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct UiGestures {
     pub hovered: Option<UiNode>,
@@ -116,8 +223,17 @@ impl UiPanel {
     /// A new document: what the pointer held was the old one's.
     pub(crate) fn set_tree(&mut self, tree: UiTree) {
         self.tree = Some(tree);
+        self.forget_pointer();
+    }
+
+    fn forget_pointer(&mut self) {
         self.hovered = None;
         self.pressed = None;
+    }
+
+    /// The node held under the pointer: a binding leaves it to the hand while it drags.
+    pub(crate) fn pressed(&self) -> Option<UiNode> {
+        self.pressed
     }
 
     fn update(&mut self, fonts: &mut UiFonts) {
@@ -258,7 +374,18 @@ impl UiPanel {
         self.hovered = over;
         self.pressed = pressed;
         gestures.hovered = over;
+        // A held slider follows the pointer; a toggle flips on its click.
+        if let (Some(node), Some(pos)) = (pressed, response.interact_pointer_pos())
+            && tree.slide_to(node, local(pos).x)
+        {
+            ui.ctx().request_repaint();
+        }
         gestures.clicked = over.filter(|_| response.clicked());
+        if let Some(node) = gestures.clicked
+            && tree.flip(node)
+        {
+            ui.ctx().request_repaint();
+        }
         gestures.double_clicked = over.filter(|_| response.double_clicked());
         gestures.secondary = over.filter(|_| response.secondary_clicked());
         if response.drag_started() {
@@ -269,12 +396,13 @@ impl UiPanel {
     }
 }
 
-/// The node a gesture at `point` lands on: the nearest with an `on:click`, else the one hit.
+/// The node a gesture at `point` lands on: the nearest with an `on:click` or a control, else the
+/// one hit.
 fn target(tree: &UiTree, point: glam::Vec2) -> Option<UiNode> {
     let hit = tree.pick(point)?;
     let mut current = Some(hit);
     while let Some(node) = current {
-        if tree.click(node).is_some() {
+        if tree.interactive(node) {
             return Some(node);
         }
         current = tree.parent(node);

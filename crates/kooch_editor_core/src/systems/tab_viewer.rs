@@ -187,11 +187,25 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
 
     /// egui_dock 0.20's default; kept so the dock's stored per-tab state keeps its ids.
     fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
-        egui::Id::new(self.title(tab).text())
+        match tab {
+            // By file, not by title: a renamed panel keeps its place.
+            EditorTab::Project(guid) => egui::Id::new(("project_panel", *guid)),
+            _ => egui::Id::new(self.title(tab).text()),
+        }
     }
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-        tab.to_string().into()
+        let name = match tab {
+            EditorTab::Project(guid) => self
+                .ui_panels
+                .as_deref()
+                .and_then(|panels| panels.name_of(*guid)),
+            _ => None,
+        };
+        match name {
+            Some(name) => format!("{} {name}", crate::icons::SLIDERS).into(),
+            None => tab.to_string().into(),
+        }
     }
 
     /// Lights the focused panel's own border, rather than drawing a line inside its contents.
@@ -417,6 +431,15 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             EditorTab::Systems => {
                 crate::panels::systems::draw_systems_content(ui, self.systems, self.actions)
             }
+            EditorTab::Project(guid) => crate::panels::project_panel::draw(
+                ui,
+                self.ui_panels
+                    .as_deref_mut()
+                    .and_then(|panels| panels.project_mut(*guid)),
+                self.entities,
+                self.selected,
+                self.actions,
+            ),
             EditorTab::Profiler => crate::panels::profiler::draw_profiler_content(
                 ui,
                 self.asset_catalog,

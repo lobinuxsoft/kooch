@@ -27,6 +27,18 @@ pub(crate) struct Binding {
     pub field: Box<str>,
 }
 
+/// A `bind:value="Type.field"` control, as [`UiTree::take_bindings`] hands it out.
+#[derive(Debug, Clone)]
+pub struct UiBinding {
+    pub node: UiNode,
+    /// `Type` as written: a short or a full name.
+    pub component: Box<str>,
+    pub field: Box<str>,
+    pub value: f32,
+    /// A gesture changed it: the field takes `value`, rather than the control the field's.
+    pub touched: bool,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Control {
     pub node: UiNode,
@@ -139,7 +151,7 @@ impl UiTree {
     }
 
     /// Flips a toggle; anything else, a slider included, is left as is. Whether it changed.
-    pub(crate) fn flip(&mut self, node: UiNode) -> bool {
+    pub fn flip(&mut self, node: UiNode) -> bool {
         match self.control(node) {
             Some(control) if control.kind == ControlKind::Toggle => {
                 self.change(node, 1.0 - control.value, true)
@@ -161,8 +173,8 @@ impl UiTree {
     }
 
     /// Puts a slider's thumb under `x`, in canvas units. Whether it changed.
-    pub(crate) fn slide_to(&mut self, node: UiNode, x: f32) -> bool {
-        let Some(control) = self.control(node) else {
+    pub fn slide_to(&mut self, node: UiNode, x: f32) -> bool {
+        let Some(control) = self.control(node).filter(|c| c.kind == ControlKind::Slider) else {
             return false;
         };
         let (Some(rect), thumb) = (
@@ -204,6 +216,25 @@ impl UiTree {
         let control = control.clone();
         self.show(&control);
         true
+    }
+
+    /// Each bound control as it stands, and whether a gesture changed it since the last call: what a
+    /// host settles against the field, the game's `bind_values` or an editor panel's selection.
+    pub fn take_bindings(&mut self) -> Vec<UiBinding> {
+        let mut bound = Vec::new();
+        for control in &mut self.controls {
+            if let Some(binding) = &control.bind {
+                bound.push(UiBinding {
+                    node: control.node,
+                    component: binding.component.clone(),
+                    field: binding.field.clone(),
+                    value: control.value,
+                    touched: control.touched,
+                });
+            }
+            control.touched = false;
+        }
+        bound
     }
 
     /// Every control's value on its parts and `:checked`; the restyle resets both.

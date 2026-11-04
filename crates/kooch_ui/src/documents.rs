@@ -115,6 +115,50 @@ pub fn build_documents(resources: &mut Resources) {
     }
 }
 
+/// One tree kept in step with its files outside the ECS: an editor panel's (#1791). Built when
+/// missing or when its markup or a template changed, restyled in place when only the sheet did.
+pub fn refresh_tree(
+    database: &AssetDatabase,
+    mut server: Option<&mut AssetServer>,
+    tree: &mut Option<UiTree>,
+    source: Guid,
+    style: Option<Guid>,
+) -> Refreshed {
+    let sheet = sheet_stamp(database, style);
+    let current = tree.as_mut().filter(|tree| {
+        tree.origin
+            .as_ref()
+            .is_some_and(|origin| origin.source == source && origin.style == style)
+    });
+    if let Some(current) = current {
+        let origin = current.origin.as_ref().expect("filtered on its origin");
+        if origin.markup == stamp(database, source, None, &origin.templates) {
+            if origin.sheet == sheet {
+                return Refreshed::Kept;
+            }
+            match read_sheet(database, server.as_deref_mut(), style) {
+                Ok(read) => current.set_sheet(read),
+                Err(error) => tracing::warn!("UI style not reloaded: {error}"),
+            }
+            if let Some(origin) = current.origin.as_mut() {
+                origin.sheet = sheet;
+            }
+            return Refreshed::Restyled;
+        }
+    }
+    *tree = Some(build(database, server, source, style));
+    Refreshed::Rebuilt
+}
+
+/// What [`refresh_tree`] did. A rebuilt tree numbers its nodes anew: a `UiNode` held from before
+/// is stale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refreshed {
+    Kept,
+    Restyled,
+    Rebuilt,
+}
+
 /// A file that fails still gets a tree, empty, stamped: it is read again when it changes, not
 /// every frame.
 fn build(

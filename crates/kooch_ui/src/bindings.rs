@@ -4,20 +4,10 @@
 use std::any::TypeId;
 
 use kooch_core::resource::Resources;
+use kooch_ecs::ReflectValue;
 use kooch_ecs::component::ComponentRegistry;
-use kooch_ecs::{Entity, ReflectValue};
 
 use crate::UiTrees;
-use crate::controls::Binding;
-
-/// One binding to settle this frame.
-struct Bound {
-    document: Entity,
-    node: crate::UiNode,
-    binding: Binding,
-    value: f32,
-    touched: bool,
-}
 
 /// After the pointer and focus: a gesture this frame writes the field, otherwise the field moves
 /// the control. In `PreUpdate`, so gameplay reads what the player just set.
@@ -25,18 +15,7 @@ pub fn bind_values(resources: &mut Resources) {
     let mut bound = Vec::new();
     if let Some(trees) = resources.get_mut::<UiTrees>() {
         trees.for_each_entity_mut(|document, tree| {
-            for control in &mut tree.controls {
-                if let Some(binding) = &control.bind {
-                    bound.push(Bound {
-                        document,
-                        node: control.node,
-                        binding: binding.clone(),
-                        value: control.value,
-                        touched: control.touched,
-                    });
-                }
-                control.touched = false;
-            }
+            bound.extend(tree.take_bindings().into_iter().map(|b| (document, b)));
         });
     }
     if bound.is_empty() {
@@ -46,38 +25,30 @@ pub fn bind_values(resources: &mut Resources) {
     let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
         return;
     };
-    for bound in bound {
-        let Some(type_id) = component_id(registry, &bound.binding.component) else {
+    for (document, bound) in bound {
+        let Some(type_id) = component_id(registry, &bound.component) else {
             kooch_core::warn_once!(
                 "`bind:value` names `{}`, which is no reflected component",
-                bound.binding.component
+                bound.component
             );
             continue;
         };
         let Some(field) = registry
-            .reflect_get_fields(&type_id, bound.document)
-            .and_then(|fields| {
-                fields
-                    .into_iter()
-                    .find(|(name, _)| *name == *bound.binding.field)
-            })
+            .reflect_get_fields(&type_id, document)
+            .and_then(|fields| fields.into_iter().find(|(name, _)| *name == *bound.field))
             .map(|(_, value)| value)
         else {
             continue;
         };
         if bound.touched {
-            if let Some(value) = written(&field, bound.value)
-                && let Err(error) = registry.reflect_set_field(
-                    &type_id,
-                    bound.document,
-                    &bound.binding.field,
-                    value,
-                )
+            if let Some(value) = field_written(&field, bound.value)
+                && let Err(error) =
+                    registry.reflect_set_field(&type_id, document, &bound.field, value)
             {
                 kooch_core::warn_once!("`bind:value` could not write: {error:?}");
             }
-        } else if let Some(value) = number(&field) {
-            reads.push((bound.document, bound.node, value));
+        } else if let Some(value) = field_number(&field) {
+            reads.push((document, bound.node, value));
         }
     }
     let Some(trees) = resources.get_mut::<UiTrees>() else {
@@ -100,7 +71,7 @@ fn component_id(registry: &ComponentRegistry, name: &str) -> Option<TypeId> {
 }
 
 /// A field a control can show.
-fn number(value: &ReflectValue) -> Option<f32> {
+pub fn field_number(value: &ReflectValue) -> Option<f32> {
     Some(match *value {
         ReflectValue::F32(v) => v,
         ReflectValue::F64(v) => v as f32,
@@ -116,7 +87,7 @@ fn number(value: &ReflectValue) -> Option<f32> {
 }
 
 /// `value` in the field's own type.
-fn written(field: &ReflectValue, value: f32) -> Option<ReflectValue> {
+pub fn field_written(field: &ReflectValue, value: f32) -> Option<ReflectValue> {
     let whole = value.round();
     Some(match field {
         ReflectValue::F32(_) => ReflectValue::F32(value),
