@@ -25,6 +25,8 @@ struct SourceFile {
     module: String,
     components: Vec<String>,
     systems: Vec<DetectedSystem>,
+    /// Functions under `src/tools/` a panel's `on:click` can name.
+    actions: Vec<String>,
 }
 
 /// A system the scan found, and the binding its `#[system(...)]` asked for.
@@ -289,6 +291,20 @@ pub(crate) fn migrate_to_library(project_root: &Path, crate_name: &str) {
     }
 }
 
+/// Where a project's editor-only code lives, relative to `src/`: `assets/editor/`'s twin.
+const TOOLS: &str = "tools/";
+
+/// Each `pub fn` taking the `&mut EditorCall` of an editor action.
+fn detect_actions(content: &str) -> Vec<String> {
+    content
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("pub fn ").zip(Some(line)))
+        .filter(|(_, line)| line.contains("&mut EditorCall"))
+        .map(|(rest, _)| ident_prefix(rest))
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
 /// Recursively collects source files under `dir` that declare a component
 /// or system. `root` is the `src/` directory (for relative paths).
 fn scan(root: &Path, dir: &Path, out: &mut Vec<SourceFile>) {
@@ -313,21 +329,29 @@ fn scan(root: &Path, dir: &Path, out: &mut Vec<SourceFile>) {
         let Ok(content) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let (components, systems) = detect(&content);
-        if components.is_empty() && systems.is_empty() {
-            continue;
-        }
         let rel = path
             .strip_prefix(root)
             .unwrap_or(&path)
             .to_string_lossy()
             .replace('\\', "/");
+        // A game does not compile `tools/`, so nothing it registers may come from there.
+        let (components, systems, actions) = match rel.starts_with(TOOLS) {
+            true => (Vec::new(), Vec::new(), detect_actions(&content)),
+            false => {
+                let (components, systems) = detect(&content);
+                (components, systems, Vec::new())
+            }
+        };
+        if components.is_empty() && systems.is_empty() && actions.is_empty() {
+            continue;
+        }
         let module = render::module_path(&rel);
         out.push(SourceFile {
             rel,
             module,
             components,
             systems,
+            actions,
         });
     }
 }

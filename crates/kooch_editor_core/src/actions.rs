@@ -335,6 +335,11 @@ pub(crate) enum EditorAction {
         files: Vec<PathBuf>,
         dest: PathBuf,
     },
+    /// Write a text file at `path` under the project's `assets/`: a project's editor action.
+    WriteAsset {
+        path: String,
+        text: String,
+    },
     /// Create an empty folder `<parent>/<name>`.
     CreateFolder {
         parent: PathBuf,

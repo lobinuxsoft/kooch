@@ -21,6 +21,7 @@ use crate::systems::LastScannedProject;
 /// handled `action`, `false` otherwise (so the caller can keep matching).
 pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) -> bool {
     match action {
+        EditorAction::WriteAsset { path, text } => write_text(resources, path, text),
         EditorAction::CreateFolder { parent, name } => create_folder(parent, name),
         EditorAction::CreateMaterial {
             folder,
@@ -262,6 +263,36 @@ fn prune_db_under(resources: &mut Resources, dir: &Path) {
 
 /// Forces `scan_project_assets_system` to re-run the full project scan +
 /// eager import next frame by clearing its "already scanned" marker.
+/// `path` under `assets`, or `None` when it would land outside it.
+fn inside_assets(assets: &Path, path: &str) -> Option<PathBuf> {
+    let relative = Path::new(path);
+    let plain = relative
+        .components()
+        .all(|part| matches!(part, std::path::Component::Normal(_)));
+    (plain && !path.is_empty()).then(|| assets.join(relative))
+}
+
+fn write_text(resources: &mut Resources, path: &str, text: &str) {
+    let root = resources
+        .get::<crate::project_state::ProjectState>()
+        .and_then(|state| state.active_project.as_ref())
+        .map(|project| project.root_path.join("assets"));
+    let Some(target) = root.and_then(|assets| inside_assets(&assets, path)) else {
+        tracing::error!(path, "an editor action wrote outside the project's assets");
+        return;
+    };
+    let written = target
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| std::fs::write(&target, text));
+    if let Err(error) = written {
+        tracing::error!(path = %target.display(), %error, "failed to write the asset");
+        return;
+    }
+    force_rescan(resources);
+    crate::actions::handlers::asset_saved(resources, &target);
+}
+
 pub(super) fn force_rescan(resources: &mut Resources) {
     if let Some(last) = resources.get_mut::<LastScannedProject>() {
         last.root = None;

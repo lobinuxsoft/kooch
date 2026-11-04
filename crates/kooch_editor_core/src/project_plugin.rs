@@ -162,6 +162,8 @@ pub fn unload_project_plugins(resources: &mut Resources) {
         }
         resources.insert(types);
     }
+    // Before the library goes: these point into it.
+    resources.remove::<kooch_core::dynamic::EditorHandlers>();
     resources.remove::<ProjectPlugins>();
 }
 

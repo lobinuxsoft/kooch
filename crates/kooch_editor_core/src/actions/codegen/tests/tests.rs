@@ -14,6 +14,7 @@ fn source(rel: &str, components: &[&str], systems: &[&str]) -> SourceFile {
                 ..Default::default()
             })
             .collect(),
+        actions: Vec::new(),
     }
 }
 
@@ -538,6 +539,7 @@ fn the_plugin_api_is_behind_the_editor_feature() {
         rel: "player.rs".to_owned(),
         module: "player".to_owned(),
         components: vec!["Player".to_owned()],
+        actions: Vec::new(),
         systems: Vec::new(),
     }];
 
@@ -564,6 +566,7 @@ fn the_game_half_is_not_gated() {
         rel: "player.rs".to_owned(),
         module: "player".to_owned(),
         components: vec!["Player".to_owned()],
+        actions: Vec::new(),
         systems: Vec::new(),
     }];
 
@@ -597,4 +600,16 @@ fn the_generated_plugin_names_its_source() {
         generated.contains("SystemSource::Project"),
         "the plugin declared a source that is not the project's:\n{generated}",
     );
+}
+
+/// A game has no `EditorCall` to name: `tools/` compiles only with the editor.
+#[test]
+fn tools_compile_only_with_the_editor() {
+    let mut tool = source("tools/ball.rs", &[], &[]);
+    tool.actions = vec!["reset".to_owned()];
+
+    let generated = render_registrations(&[tool]);
+
+    assert!(generated.contains("#[cfg(feature = \"editor\")]\n#[path = \"tools\"]"));
+    assert!(generated.contains("engine.add_editor_action(\"reset\", tools::ball::reset);"));
 }

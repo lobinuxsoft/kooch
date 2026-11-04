@@ -431,15 +431,20 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
             EditorTab::Systems => {
                 crate::panels::systems::draw_systems_content(ui, self.systems, self.actions)
             }
-            EditorTab::Project(guid) => crate::panels::project_panel::draw(
-                ui,
-                self.ui_panels
+            EditorTab::Project(guid) => {
+                let (panel, handlers) = self
+                    .ui_panels
                     .as_deref_mut()
-                    .and_then(|panels| panels.project_mut(*guid)),
-                self.entities,
-                self.selected,
-                self.actions,
-            ),
+                    .map_or((None, None), |panels| panels.project_shown(*guid));
+                crate::panels::project_panel::draw(
+                    ui,
+                    panel,
+                    handlers,
+                    self.entities,
+                    self.selected,
+                    self.actions,
+                )
+            }
             EditorTab::Profiler => crate::panels::profiler::draw_profiler_content(
                 ui,
                 self.asset_catalog,

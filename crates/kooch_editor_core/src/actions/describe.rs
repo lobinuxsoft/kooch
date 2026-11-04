@@ -121,6 +121,7 @@ impl EditorAction {
             | Self::OpenInIde { .. }
             // The manifest is a file beside the project, not the world.
             | Self::SetMainScene { .. }
+            | Self::WriteAsset { .. }
             | Self::CreateFile { .. } => false,
         }
     }
@@ -226,6 +227,7 @@ impl EditorAction {
             // while it runs is the whole point of having the switch, so
             // the Play guard must not block it.
             | Self::SetSystemEnabled { .. }
+            | Self::WriteAsset { .. }
             | Self::CreateFile { .. } => false,
         }
     }
