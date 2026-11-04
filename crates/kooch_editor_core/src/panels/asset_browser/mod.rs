@@ -94,11 +94,14 @@ pub(crate) fn draw_asset_browser_content(
     let mut rename: Option<RenameState> = ui.ctx().data(|d| d.get_temp(rename_id));
     let mut pending: Option<PendingCreate> = ui.ctx().data(|d| d.get_temp(pending_id));
 
-    if focused {
+    let confirm_id = egui::Id::new("asset_browser_confirm_delete");
+    // The prompt owns the keyboard: its Enter confirms, and must not also open the cursor's file.
+    let confirming = ui.data(|d| d.get_temp::<Vec<PathBuf>>(confirm_id).is_some());
+    if focused && !confirming {
         handle_keyboard(ui, nav, actions);
     }
-    let confirm_id = egui::Id::new("asset_browser_confirm_delete");
     if focused
+        && !confirming
         && !ui.memory(|m| m.focused().is_some())
         && ui.input(|i| i.key_pressed(egui::Key::Delete))
     {
@@ -314,6 +317,11 @@ fn handle_keyboard(ui: &egui::Ui, nav: &mut tree::AssetNav, actions: &mut Vec<Ed
         )
     });
 
+    let shift = ui.input(|i| i.modifiers.shift);
+    let moved = up || down || home || end;
+    if moved && shift {
+        nav.hold_anchor();
+    }
     if up {
         nav.step(-1);
     }
@@ -331,6 +339,9 @@ fn handle_keyboard(ui: &egui::Ui, nav: &mut tree::AssetNav, actions: &mut Vec<Ed
     }
     if end {
         nav.to_edge(true);
+    }
+    if moved {
+        nav.select_to_cursor(shift);
     }
 
     // Enter used to *commit* the cursor — make it the create target, or send it to the Inspector.

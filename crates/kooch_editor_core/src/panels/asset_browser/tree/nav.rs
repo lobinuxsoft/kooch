@@ -19,6 +19,8 @@ pub(crate) struct AssetNav {
     pub(crate) cursor: Option<PathBuf>,
     /// Every selected row, the cursor's included: Ctrl and Shift add to it (#1783).
     pub(crate) selection: Vec<PathBuf>,
+    /// Where a Shift range starts: the last row clicked or moved to without Shift.
+    anchor: Option<PathBuf>,
     /// Rows drawn last frame, in order.
     pub(crate) rows: Vec<AssetRow>,
     /// A folder the keyboard asked to open or close, applied by the
@@ -108,33 +110,54 @@ impl AssetNav {
     }
 
     /// A click on `path`: alone, toggled into the selection with Ctrl, or the visible range from
-    /// the cursor with Shift, which stays where it was.
+    /// the anchor with Shift.
     pub(crate) fn click(&mut self, path: PathBuf, toggle: bool, range: bool) {
-        let anchor = self.index();
-        let target = self.rows.iter().position(|row| row.path == path);
-        match (toggle, range, anchor, target) {
-            (_, true, Some(from), Some(to)) => {
+        if range {
+            self.hold_anchor();
+            self.cursor = Some(path);
+            self.select_to_cursor(true);
+            return;
+        }
+        if !toggle {
+            self.selection = vec![path.clone()];
+        } else if let Some(at) = self.selection.iter().position(|own| *own == path) {
+            self.selection.remove(at);
+            if self.cursor.as_ref() == Some(&path) {
+                self.cursor = self.selection.last().cloned();
+            }
+            self.anchor = self.cursor.clone();
+            return;
+        } else {
+            self.selection.push(path.clone());
+        }
+        self.anchor = Some(path.clone());
+        self.cursor = Some(path);
+    }
+
+    /// Before a Shift move: the range starts at the cursor when nothing anchored it yet.
+    pub(crate) fn hold_anchor(&mut self) {
+        if self.anchor.is_none() {
+            self.anchor = self.cursor.clone();
+        }
+    }
+
+    /// After a move: the range from the anchor with Shift, the cursor alone without.
+    pub(crate) fn select_to_cursor(&mut self, range: bool) {
+        let Some(cursor) = self.cursor.clone() else {
+            return;
+        };
+        let at = |path: &PathBuf| self.rows.iter().position(|row| &row.path == path);
+        match (range, self.anchor.as_ref().and_then(at), at(&cursor)) {
+            (true, Some(from), Some(to)) => {
                 let (low, high) = (from.min(to), from.max(to));
                 self.selection = self.rows[low..=high]
                     .iter()
                     .map(|row| row.path.clone())
                     .collect();
             }
-            (true, _, _, _) => match self.selection.iter().position(|own| *own == path) {
-                Some(at) => {
-                    self.selection.remove(at);
-                    if self.cursor.as_ref() == Some(&path) {
-                        self.cursor = self.selection.last().cloned();
-                    }
-                }
-                None => {
-                    self.selection.push(path.clone());
-                    self.cursor = Some(path);
-                }
-            },
             _ => {
-                self.selection = vec![path.clone()];
-                self.cursor = Some(path);
+                self.selection = vec![cursor.clone()];
+                self.anchor = Some(cursor);
             }
         }
     }
@@ -144,6 +167,7 @@ impl AssetNav {
         match &self.cursor {
             Some(cursor) if !self.selection.contains(cursor) => {
                 self.selection = vec![cursor.clone()];
+                self.anchor = Some(cursor.clone());
             }
             None => self.selection.clear(),
             _ => {}
