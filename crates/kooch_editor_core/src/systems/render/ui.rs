@@ -223,6 +223,9 @@ pub(super) fn run_editor_ui(
                     clipboard_has_entities: toolbar.clipboard_has_entities,
                     document: toolbar.document.as_ref(),
                 },
+                ui_panels
+                    .as_deref()
+                    .map_or(&[][..], |panels| panels.offered.as_slice()),
             );
 
             crate::menu_bar::draw_settings_window(

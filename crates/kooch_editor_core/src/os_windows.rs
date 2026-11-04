@@ -68,9 +68,13 @@ pub(crate) fn viewport_of(tab: EditorTab) -> egui::ViewportId {
     egui::ViewportId::from_hash_of(("kooch_panel_window", tab))
 }
 
-/// The key a tab's window is requested under.
+/// The key a tab's window is requested under. Lives for the session only, so a hash will do: a
+/// project panel carries its file's `Guid` and has no number of its own.
 fn key_of(tab: EditorTab) -> u64 {
-    tab as u64
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    tab.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// The OS title. Named after the panel alone, so a window rule (KWin, for one) can pin it.

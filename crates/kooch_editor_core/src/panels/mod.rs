@@ -10,6 +10,7 @@ pub(crate) mod input_map;
 pub(crate) mod inspector;
 pub(crate) mod performance;
 pub(crate) mod profiler;
+pub(crate) mod project_panel;
 pub(crate) mod shader_graph;
 pub(crate) mod systems;
 pub(crate) mod ui_builder;

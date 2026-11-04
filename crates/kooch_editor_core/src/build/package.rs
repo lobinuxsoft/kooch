@@ -237,6 +237,9 @@ fn guard(dir: &Path, project_root: &Path) -> Result<(), PackageError> {
     }
 }
 
+/// Where a project keeps what only its editor reads.
+const EDITOR_ONLY: &str = "assets/editor/";
+
 /// Every asset that travels, as `(name in the pack, file on disk)`.
 fn collect_assets(
     project_root: &Path,
@@ -271,7 +274,8 @@ fn collect_assets(
 
     let mut project = Vec::new();
     walk(&project_root.join("assets"), "assets", &mut project);
-    project.retain(|(name, _)| travels(name, known));
+    // The project's editor panels (#1791) are the editor's, as Unity's `Editor` folder is.
+    project.retain(|(name, _)| travels(name, known) && !name.starts_with(EDITOR_ONLY));
 
     // The project is the author and wins. Refusing the build instead
     // would mean a name nobody chose — the engine's — could stop a game
@@ -347,7 +351,7 @@ fn reachable_guids(
     let mut project_files = Vec::new();
     walk(&project_root.join("assets"), "assets", &mut project_files);
     for (name, path) in project_files {
-        if !travels(&name, known) {
+        if !travels(&name, known) || name.starts_with(EDITOR_ONLY) {
             continue;
         }
         if let Some(text) = read_if_text(&path) {

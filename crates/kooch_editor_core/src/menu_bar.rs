@@ -81,6 +81,7 @@ pub(crate) fn draw_menu_bar(
     redo_desc: Option<&str>,
     _ide_command: Option<&str>,
     edit: EditMenu<'_>,
+    project_panels: &[(kooch_core::Guid, String)],
 ) {
     // 🔴 The chords are read after the dock draws, in `run_editor_ui`, not here.
 
@@ -155,6 +156,26 @@ pub(crate) fn draw_menu_bar(
                         }
                         ui.close();
                     }
+                }
+                if !project_panels.is_empty() {
+                    ui.separator();
+                    ui.menu_button("Project panels", |ui| {
+                        for (guid, name) in project_panels {
+                            let tab = EditorTab::Project(*guid);
+                            let detached = windows.detached.iter().any(|d| d.tab == tab);
+                            let is_open = detached || dock_has_tab(dock_state, &tab);
+                            if ui.selectable_label(is_open, name).clicked() {
+                                if detached {
+                                    crate::os_windows::close(windows, tab);
+                                } else if is_open {
+                                    dock_state.retain_tabs(|t| *t != tab);
+                                } else {
+                                    dock_state.add_window(vec![tab]);
+                                }
+                                ui.close();
+                            }
+                        }
+                    });
                 }
             });
             // A button, not a menu with a form in it. An egui menu closes on any click it does not
