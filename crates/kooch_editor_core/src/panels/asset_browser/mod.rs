@@ -97,6 +97,17 @@ pub(crate) fn draw_asset_browser_content(
     if focused {
         handle_keyboard(ui, nav, actions);
     }
+    let confirm_id = egui::Id::new("asset_browser_confirm_delete");
+    if focused
+        && !ui.memory(|m| m.focused().is_some())
+        && ui.input(|i| i.key_pressed(egui::Key::Delete))
+    {
+        let doomed = deletable(&nav.selection, project_root);
+        if !doomed.is_empty() {
+            ui.data_mut(|d| d.insert_temp(confirm_id, doomed));
+        }
+    }
+    confirm_delete(ui, confirm_id, actions);
 
     if let Some(panel) = ui_panel {
         let mut roots: Vec<(&str, &Path, bool)> = Vec::new();
@@ -158,6 +169,70 @@ pub(crate) fn draw_asset_browser_content(
             }
         }
     });
+}
+
+/// What Delete removes of the selection: project paths only, never a root, and nothing a selected
+/// folder already takes with it.
+fn deletable(selection: &[PathBuf], project_root: Option<&Path>) -> Vec<PathBuf> {
+    let Some(root) = project_root else {
+        return Vec::new();
+    };
+    let inside: Vec<&PathBuf> = selection
+        .iter()
+        .filter(|path| path.starts_with(root) && path.as_path() != root)
+        .filter(|path| !path.ends_with("assets") || path.parent() != Some(root))
+        .collect();
+    inside
+        .iter()
+        .filter(|path| {
+            !inside
+                .iter()
+                .any(|other| other != *path && path.starts_with(other.as_path()))
+        })
+        .map(|path| (*path).clone())
+        .collect()
+}
+
+/// Deleting is permanent, so a key never does it alone: the prompt names what goes.
+fn confirm_delete(ui: &egui::Ui, id: egui::Id, actions: &mut Vec<EditorAction>) {
+    let Some(doomed) = ui.data(|d| d.get_temp::<Vec<PathBuf>>(id)) else {
+        return;
+    };
+    let mut answer = None;
+    let modal = egui::Modal::new(id.with("modal")).show(ui.ctx(), |ui| {
+        ui.heading(format!("Delete {} item(s)?", doomed.len()));
+        for path in doomed.iter().take(8) {
+            let name = path.file_name().unwrap_or(path.as_os_str());
+            ui.label(format!("{} {}", icons::TRASH, name.to_string_lossy()));
+        }
+        if doomed.len() > 8 {
+            ui.weak(format!("…and {} more", doomed.len() - 8));
+        }
+        ui.weak("This cannot be undone.");
+        ui.horizontal(|ui| {
+            if ui.button("Delete").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                answer = Some(true);
+            }
+            if ui.button("Cancel").clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    if modal.should_close() && answer.is_none() {
+        answer = Some(false);
+    }
+    let Some(confirmed) = answer else {
+        return;
+    };
+    ui.data_mut(|d| d.remove::<Vec<PathBuf>>(id));
+    if confirmed {
+        for path in doomed {
+            actions.push(match path.is_dir() {
+                true => EditorAction::DeleteFolder { path },
+                false => EditorAction::DeleteAsset { path },
+            });
+        }
+    }
 }
 
 /// Resolves the drop destination: the selected folder if it lives inside

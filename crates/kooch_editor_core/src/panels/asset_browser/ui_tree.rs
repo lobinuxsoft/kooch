@@ -30,8 +30,8 @@ struct Built {
     open: Arc<HashSet<usize>>,
     /// Each row's nodes, found once: a name lookup walks the whole tree.
     nodes: Arc<Vec<Nodes>>,
-    /// The row drawn selected.
-    selected: Option<usize>,
+    /// The rows drawn selected.
+    selected: Arc<HashSet<usize>>,
     /// The disk as last walked, and when.
     disk: (u64, f64),
 }
@@ -143,7 +143,11 @@ pub(super) fn draw(
                 let open = !built.open.contains(&index);
                 built = toggled(panel, built, index, open);
             }
-            false => nav.cursor = Some(built.rows[index].path.clone()),
+            false => {
+                let modifiers = ui.input(|input| input.modifiers);
+                let path = built.rows[index].path.clone();
+                nav.click(path, modifiers.command, modifiers.shift);
+            }
         }
     }
     if let Some((false, index)) = double_clicked {
@@ -179,25 +183,40 @@ pub(super) fn draw(
     ui.data_mut(|data| data.insert_temp(id, built));
 }
 
-/// The selected row's class follows the cursor, and the keyboard scrolls it into view.
-fn select(panel: &mut UiPanel, built: &mut Built, nav: &AssetNav) {
-    let selected = nav
-        .cursor
-        .as_ref()
-        .and_then(|cursor| built.rows.iter().position(|row| &row.path == cursor));
+/// The selected rows' class follows the selection, and the keyboard scrolls the cursor into view.
+fn select(panel: &mut UiPanel, built: &mut Built, nav: &mut AssetNav) {
+    nav.follow_cursor();
+    let selected: HashSet<usize> = nav
+        .selection
+        .iter()
+        .filter_map(|path| built.rows.iter().position(|row| &row.path == path))
+        .collect();
     let Some(tree) = panel.tree.as_mut() else {
         return;
     };
-    if selected != built.selected {
-        for (index, on) in [(built.selected, false), (selected, true)] {
-            if let Some(node) = index.and_then(|index| built.nodes.get(index)?.row) {
+    if selected != *built.selected {
+        let changed = built
+            .selected
+            .difference(&selected)
+            .map(|&index| (index, false))
+            .chain(
+                selected
+                    .difference(&built.selected)
+                    .map(|&index| (index, true)),
+            );
+        for (index, on) in changed {
+            if let Some(node) = built.nodes.get(index).and_then(|nodes| nodes.row) {
                 tree.set_class(node, "selected", on);
             }
         }
-        built.selected = selected;
+        built.selected = Arc::new(selected);
     }
+    let cursor = nav
+        .cursor
+        .as_ref()
+        .and_then(|cursor| built.rows.iter().position(|row| &row.path == cursor));
     if nav.scroll_to_cursor
-        && let Some(node) = selected.and_then(|index| built.nodes.get(index)?.row)
+        && let Some(node) = cursor.and_then(|index| built.nodes.get(index)?.row)
     {
         tree.reveal(node);
     }
@@ -246,7 +265,7 @@ fn rebuilt(
         rows: Arc::new(rows),
         open: Arc::new(open),
         nodes: Arc::new(nodes),
-        selected: None,
+        selected: Default::default(),
         disk,
     }
 }

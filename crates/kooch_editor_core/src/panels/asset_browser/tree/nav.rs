@@ -17,6 +17,8 @@ pub(crate) struct AssetRow {
 pub(crate) struct AssetNav {
     /// Where the cursor is, by path.
     pub(crate) cursor: Option<PathBuf>,
+    /// Every selected row, the cursor's included: Ctrl and Shift add to it (#1783).
+    pub(crate) selection: Vec<PathBuf>,
     /// Rows drawn last frame, in order.
     pub(crate) rows: Vec<AssetRow>,
     /// A folder the keyboard asked to open or close, applied by the
@@ -103,6 +105,49 @@ impl AssetNav {
         };
         self.cursor = Some(row.path.clone());
         self.scroll_to_cursor = true;
+    }
+
+    /// A click on `path`: alone, toggled into the selection with Ctrl, or the visible range from
+    /// the cursor with Shift, which stays where it was.
+    pub(crate) fn click(&mut self, path: PathBuf, toggle: bool, range: bool) {
+        let anchor = self.index();
+        let target = self.rows.iter().position(|row| row.path == path);
+        match (toggle, range, anchor, target) {
+            (_, true, Some(from), Some(to)) => {
+                let (low, high) = (from.min(to), from.max(to));
+                self.selection = self.rows[low..=high]
+                    .iter()
+                    .map(|row| row.path.clone())
+                    .collect();
+            }
+            (true, _, _, _) => match self.selection.iter().position(|own| *own == path) {
+                Some(at) => {
+                    self.selection.remove(at);
+                    if self.cursor.as_ref() == Some(&path) {
+                        self.cursor = self.selection.last().cloned();
+                    }
+                }
+                None => {
+                    self.selection.push(path.clone());
+                    self.cursor = Some(path);
+                }
+            },
+            _ => {
+                self.selection = vec![path.clone()];
+                self.cursor = Some(path);
+            }
+        }
+    }
+
+    /// A cursor moved by anything but a click selects only itself.
+    pub(crate) fn follow_cursor(&mut self) {
+        match &self.cursor {
+            Some(cursor) if !self.selection.contains(cursor) => {
+                self.selection = vec![cursor.clone()];
+            }
+            None => self.selection.clear(),
+            _ => {}
+        }
     }
 
     /// The row the cursor has just landed on, reported once.
