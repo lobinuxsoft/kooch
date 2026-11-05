@@ -136,7 +136,7 @@ pub(super) fn asset_filter_for(
     } else if n.contains("scene") {
         Some(("Scene", &["scene"]))
     } else if n.contains("shader") {
-        Some(("Shader", &["wgsl"]))
+        Some(("Shader", &kooch_render::material::SHADER_EXTENSIONS))
     } else if n.contains("material") {
         Some(("Material", &[kooch_render::material::MATERIAL_EXTENSION]))
     } else if n.ends_with("_path") || n.ends_with("_file") {

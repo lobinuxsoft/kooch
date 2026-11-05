@@ -60,7 +60,7 @@ pub(crate) fn draw_shader_graph_content(
     let mut actions = Vec::new();
     let (Some(graph), Some(annotations)) = (view.graph, view.annotations) else {
         ui.weak("No shader graph open.");
-        ui.label("Create one in the Asset Browser: New Shader Graph, or open a generated .shader.");
+        ui.label("Create one in the Asset Browser: New Shader Graph, or open a .shgraph.");
         return actions;
     };
     draw_preview(ui, view.preview);
@@ -73,7 +73,7 @@ pub(crate) fn draw_shader_graph_content(
         }
         if ui
             .button("Save")
-            .on_hover_text("Generate the .shader from this graph and write it")
+            .on_hover_text("Generate the .shgraph from this graph and write it")
             .clicked()
         {
             actions.push(ShaderGraphAction::Save);

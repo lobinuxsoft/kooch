@@ -297,7 +297,7 @@ base sheet under every document's own gives all of them a look, which the docume
 | `background-image` | `url("button.png")` relative to the file writing it (the `.kcss`, or the `.kxml` for an inline `style`), PNG or JPEG; `none`. An engine image is written as if it sat in the project's `assets/`, where a build puts it: `url("../textures/prototype/dark/dark_texture_01.png")` from `assets/ui/` |
 | `-kooch-slice` | length, one to four: image texels kept unstretched at each edge |
 | `-kooch-tint` | colour that multiplies the image |
-| `-kooch-material` | a path to a `.shader` with `kind: ui`, relative to the file writing it, as `background-image` |
+| `-kooch-material` | a path to a shader with `kind: ui`, relative to the file writing it, as `background-image` |
 | `-kooch-param-<name>` | a value for what the material declares: one to four numbers, or a colour. The name in lower case |
 
 **Images.** A `background-image` draws over the `background-color`, stretched to the node's box,
@@ -318,7 +318,7 @@ reads the image with `sample_image`. Text and children draw on top as usual. The
 two recipes, written from `assets/ui/` as if they sat in the project:
 
 ```css
-.health { -kooch-material: "../shaders/ui/ring.shader"; -kooch-param-thickness: 0.2;
+.health { -kooch-material: "../shaders/ui/ring.wgsl"; -kooch-param-thickness: 0.2;
           background-color: #e0483a; border-color: #2a2a2a; }
 ```
 
@@ -332,8 +332,8 @@ A parameter follows a field with `bind:param.<name>`, or takes a value from code
 tree.set_param(node, "fill", 0.6);
 ```
 
-A value set by code or a binding wins over the style until the document is rebuilt. `ring.shader`
-fills an arc, `curved_bar.shader` bends a bar; copy either to start your own. A project's
+A value set by code or a binding wins over the style until the document is rebuilt. `ring.wgsl`
+fills an arc, `curved_bar.wgsl` bends a bar; copy either to start your own. A project's
 [editor panel](../editor/panels.md) draws a material as a plain box: panels only redraw on change,
 so `time` would stand still there.
 

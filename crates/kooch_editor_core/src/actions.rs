@@ -430,7 +430,7 @@ pub(crate) enum EditorAction {
     OpenInputMap {
         path: std::path::PathBuf,
     },
-    /// Read a generated `.shader` back into the Shader Graph panel (#1159).
+    /// Read a graph's file back into the Shader Graph panel (#1159).
     OpenShaderGraph {
         path: std::path::PathBuf,
     },
@@ -438,7 +438,7 @@ pub(crate) enum EditorAction {
     OpenUiBuilder {
         path: std::path::PathBuf,
     },
-    /// Generate the `.shader` from the open graph and write it.
+    /// Generate the `.shgraph` from the open graph and write it.
     SaveShaderGraph,
     /// The dock has brought the Shader Graph panel forward; stop asking.
     ShaderGraphFocused,

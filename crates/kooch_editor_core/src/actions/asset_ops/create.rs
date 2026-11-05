@@ -54,7 +54,7 @@ pub(super) fn create_file(resources: &mut Resources, folder: &Path, name: &str, 
                 folder,
                 OsStr::new(&format!(
                     "{name}.{}",
-                    kooch_render::material::SHADER_EXTENSION
+                    kooch_render::material::GRAPH_EXTENSION
                 )),
             );
             let graph = crate::shader_graph::starter();

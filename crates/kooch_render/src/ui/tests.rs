@@ -14,8 +14,8 @@ fn the_ui_shader_validates() {
 #[test]
 fn the_recipes_validate() {
     for source in [
-        include_str!("../../../../assets/shaders/ui/ring.shader"),
-        include_str!("../../../../assets/shaders/ui/curved_bar.shader"),
+        include_str!("../../../../assets/shaders/ui/ring.wgsl"),
+        include_str!("../../../../assets/shaders/ui/curved_bar.wgsl"),
     ] {
         let shader = crate::material::Shader::parse(source).unwrap();
         super::validate_ui(&shader).unwrap();

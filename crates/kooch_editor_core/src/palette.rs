@@ -109,7 +109,7 @@ pub(crate) fn of_extension(name: &str) -> Option<Family> {
         "scene" => Family::Scene,
         "prefab" => Family::Prefab,
         "material" => Family::Material,
-        "shader" | "wgsl" => Family::Shader,
+        "shader" | "wgsl" | "shgraph" | "subgraph" => Family::Shader,
         "png" | "jpg" | "jpeg" | "ktx2" | "dds" | "hdr" | "exr" | "tga" | "bmp" => Family::Texture,
         "wav" | "ogg" | "mp3" | "flac" => Family::Audio,
         "inputaction" | "inputmap" => Family::Input,

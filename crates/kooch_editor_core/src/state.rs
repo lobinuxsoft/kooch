@@ -37,7 +37,7 @@ pub(crate) enum EditorTab {
     Components,
     AssetBrowser,
     InputMap,
-    /// The shader graph, which owns the `.shader` it generates (#1159).
+    /// The shader graph, which owns the file it generates (#1159).
     ShaderGraph,
     Console,
     /// Making a shipped game out of the project (#758).
@@ -55,7 +55,7 @@ pub(crate) enum EditorTab {
     Project(kooch_core::Guid),
 }
 
-/// The `.shader` open in the Shader Graph panel, as its graph.
+/// The `.shgraph` open in the Shader Graph panel, as its graph.
 ///
 /// 🔴 The graph, not the file: the panel edits it and the file is generated from it on save. Cloned
 /// into the dock each frame, like the input map — `egui-snarl` edits the graph while it draws it.

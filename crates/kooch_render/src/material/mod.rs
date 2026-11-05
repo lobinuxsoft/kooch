@@ -7,7 +7,7 @@ pub mod shader;
 mod texture_pool;
 mod values;
 
-/// The engine's surface, and what a new `.shader` starts as.
+/// The engine's surface, and what a new shader starts as.
 pub use crate::meshlet::{DEFAULT_SURFACE_SHADER, NEW_SURFACE_SHADER};
 pub use asset::{MATERIAL_EXTENSION, Material, MaterialLoader, MaterialParseError};
 pub use callisto::Callisto;
@@ -16,8 +16,9 @@ pub use pipeline::{
     MaterialPipeline, SurfaceSource, TextureReimports,
 };
 pub use shader::{
-    MAX_PARAM_SCALARS, MAX_PARAM_TEXTURES, ParamKind, SHADER_EXTENSION, SHADER_TYPE_NAME, Shader,
-    ShaderKind, ShaderLoader, ShaderParam, TextureDefault, masks,
+    GRAPH_EXTENSION, MAX_PARAM_SCALARS, MAX_PARAM_TEXTURES, ParamKind, SHADER_EXTENSION,
+    SHADER_EXTENSIONS, SHADER_TYPE_NAME, Shader, ShaderKind, ShaderLoader, ShaderParam,
+    TextureDefault, masks,
 };
 pub use texture_pool::MaterialTexturePool;
 pub use values::{PackedParams, ParamValue, ParamValues, TextureRef, retain_declared};

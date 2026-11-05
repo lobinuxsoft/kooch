@@ -3,7 +3,7 @@
 use super::*;
 
 /// Reads an `.inputmap` and hands it to the panel.
-/// Reads a generated `.shader` back into the Shader Graph panel (#1159).
+/// Reads a graph's file back into the Shader Graph panel (#1159).
 pub(super) fn open_shader_graph(resources: &mut Resources, path: &std::path::Path) {
     let Ok(source) = std::fs::read_to_string(path) else {
         tracing::error!(file = %path.display(), "could not read the shader");
@@ -27,7 +27,7 @@ pub(super) fn open_shader_graph(resources: &mut Resources, path: &std::path::Pat
     });
 }
 
-/// Generates the `.shader` from the open graph and writes it, so the render picks it up.
+/// Generates the `.shgraph` from the open graph and writes it, so the render picks it up.
 pub(super) fn save_shader_graph(resources: &mut Resources) {
     let Some(open) = resources.get::<crate::state::OpenShaderGraph>() else {
         return;

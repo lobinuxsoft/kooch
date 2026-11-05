@@ -359,10 +359,13 @@ pub(super) fn offers_main_scene(path: &Path, writable: bool) -> bool {
     writable && is_scene(path)
 }
 
-/// Whether this file is a `.shader`.
+/// Whether this file loads as a shader.
 pub(super) fn is_shader(path: &Path) -> bool {
-    path.extension()
-        .is_some_and(|ext| ext == kooch_render::material::SHADER_EXTENSION)
+    path.extension().is_some_and(|ext| {
+        kooch_render::material::SHADER_EXTENSIONS
+            .iter()
+            .any(|e| ext == *e)
+    })
 }
 
 /// Whether this file is a scene rather than a prefab.
@@ -382,11 +385,8 @@ pub(in crate::panels) fn open_action(path: &Path) -> EditorAction {
         .is_some_and(|e| e.eq_ignore_ascii_case(kooch_input::actions::INPUT_ACTION_EXTENSION));
     // 🔴 A scene opens the scene. It used to go to the IDE as text, which is a true answer to
     // "what is this file" and never the one anybody double-clicking a level was asking.
-    let is_shader = path
-        .extension()
-        .is_some_and(|e| e == kooch_render::material::SHADER_EXTENSION);
-    if is_shader {
-        // A generated shader opens in the graph; a hand-written one says so in the Console.
+    if is_shader(path) {
+        // A generated shader opens in the graph; a hand-written one goes to the IDE.
         EditorAction::OpenShaderGraph {
             path: path.to_path_buf(),
         }

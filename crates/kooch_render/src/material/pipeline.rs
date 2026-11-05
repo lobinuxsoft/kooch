@@ -81,7 +81,7 @@ pub struct MaterialPipeline {
     /// Per-slot textures in group-4 order, parallel to the GPU pool slots: the PBR maps, or a custom
     /// shader's declared textures. The render builds each material's bind group from it.
     slot_textures: Vec<[TextureRef; MAX_PARAM_TEXTURES as usize]>,
-    /// Per-slot `.shader`, parallel to `slot_textures`. `None` is the default surface.
+    /// Per-slot shader, parallel to `slot_textures`. `None` is the default surface.
     slot_shaders: Vec<Option<Guid>>,
     /// Per slot, a hash of what it was last registered with. The geometry trim (#452) cuts against
     /// values, so it has to know when they move.
