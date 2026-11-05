@@ -6,7 +6,7 @@ use std::fmt::Write;
 
 use egui_snarl::{InPinId, OutPinId};
 
-use super::{Graph, Node, embed};
+use super::{Graph, Node, OUTPUT_KINDS, embed};
 
 mod emit;
 mod helpers;
@@ -20,6 +20,9 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         .node_ids()
         .find_map(|(id, node)| Some((id, node.output_kind()?.to_owned())))
         .ok_or("the graph has no Output node")?;
+    if !OUTPUT_KINDS.contains(&kind.as_str()) {
+        return Err(format!("a graph cannot generate a `{kind}` shader yet"));
+    }
     // An unlit transparent is both: the unlit body, blended by its alpha (#452).
     let unlit = kind == "unlit" || kind == "transparent_unlit";
     let post = kind == "post_process";

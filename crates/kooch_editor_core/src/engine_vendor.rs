@@ -61,7 +61,7 @@ const COPY: [&str; 6] = [
 ];
 
 /// Engine assets a *game* needs at runtime.
-pub(crate) const COPY_ASSETS: [&str; 4] = ["fonts", "materials", "meshes", "textures"];
+pub(crate) const COPY_ASSETS: [&str; 5] = ["fonts", "materials", "meshes", "shaders", "textures"];
 
 #[derive(Debug)]
 pub enum VendorError {

@@ -257,6 +257,16 @@ impl Category {
     }
 }
 
+/// The kinds a graph generates. Not `ShaderKind::NAMES`: a kind the codegen has no body for would
+/// write a shader its pass refuses.
+pub(crate) const OUTPUT_KINDS: [&str; 5] = [
+    "surface",
+    "unlit",
+    "post_process",
+    "transparent",
+    "transparent_unlit",
+];
+
 /// Every node the menu offers, one per kind, in menu order.
 pub(crate) fn palette() -> Vec<Node> {
     vec![
