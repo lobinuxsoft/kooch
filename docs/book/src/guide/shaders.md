@@ -232,6 +232,12 @@ reads the node's `background-image`, white when it has none. Parameters are numb
 a `ui` shader has no texture slots. One that does not compile logs why, and its node draws as a
 plain box.
 
+A graph writes this kind too: set the Output's kind to `ui`. The **UI** menu has what a node gives,
+**UI Image**, **UI Color**, **UI Border Color** and **UI Size**, plus **Parallax** and **Image
+Normal**, which read the image's brightness as a height field: brighter is nearer. A node that has
+nothing to read in that kind, such as **World Normal** in a `ui` graph or **UI Image** in a surface,
+stops the graph with a message that names it. The preview draws a UI graph on a white dome.
+
 ## Parameters
 
 A shader's parameters are plain WGSL, the closest WGSL gets to an HLSL `cbuffer` and `Texture2D`:

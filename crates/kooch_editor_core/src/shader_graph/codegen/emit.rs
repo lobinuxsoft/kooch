@@ -28,6 +28,8 @@ pub(super) struct Body<'a> {
     pub(super) post: bool,
 }
 
+const THIS_PIXEL: &str = "vec4<f32>(input.uv, 0.0, 0.0)";
+
 impl Body<'_> {
     /// The expression feeding `input` of `node`, emitting whatever it depends on first. An
     /// unconnected input reads as zero: half a graph still renders.
@@ -92,6 +94,34 @@ impl Body<'_> {
                     false => format!("vec4<f32>(0.0) * {uv}.x"),
                 }
             }
+            Node::UiImage => {
+                let uv = self.input_or(id, 0, THIS_PIXEL)?;
+                format!("sample_image(input, {uv}.xy)")
+            }
+            Node::UiColor => "input.color".to_owned(),
+            Node::UiBorderColor => "input.border_color".to_owned(),
+            Node::UiSize => "vec4<f32>(input.size, 0.0, 0.0)".to_owned(),
+            Node::Parallax => {
+                let uv = self.input_or(id, 0, THIS_PIXEL)?;
+                let (view, depth, focus) =
+                    (argument(self, 1)?, argument(self, 2)?, argument(self, 3)?);
+                format!(
+                    "vec4<f32>(graph_parallax(input, {uv}.xy, {view}.xy * {depth}.x, {focus}.x), \
+                     0.0, 0.0)"
+                )
+            }
+            Node::ImageNormal => {
+                let uv = self.input_or(id, 0, THIS_PIXEL)?;
+                let strength = argument(self, 1)?;
+                format!("vec4<f32>(graph_image_normal(input, {uv}.xy, {strength}.x), 0.0)")
+            }
+            Node::RoundedBox => {
+                let (point, extent, radius) =
+                    (argument(self, 0)?, argument(self, 1)?, argument(self, 2)?);
+                format!("vec4<f32>(graph_rounded_box({point}.xy, {extent}.xy, {radius}.x))")
+            }
+            Node::Exp => format!("exp({})", argument(self, 0)?),
+            Node::Rainbow => format!("graph_rainbow({}.x)", argument(self, 0)?),
             Node::WorldPosition => "vec4<f32>(input.world_position, 1.0)".to_owned(),
             Node::WorldNormal => "vec4<f32>(normalize(input.world_normal), 0.0)".to_owned(),
             Node::ViewDirection => {

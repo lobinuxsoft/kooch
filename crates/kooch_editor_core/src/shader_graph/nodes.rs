@@ -201,6 +201,26 @@ pub(crate) enum Node {
     Polygon,
     /// A checkerboard.
     Checker,
+    /// `e` to the power of the value: a falloff `smoothstep` cannot shape.
+    Exp,
+    /// A hue wheel, one turn per unit of phase.
+    Rainbow,
+    /// Signed distance to a box with rounded corners: negative inside.
+    RoundedBox,
+
+    // -- UI -------------------------------------------------------------
+    /// The node's `background-image`, read at a uv (#1805).
+    UiImage,
+    /// The node's `background-color`.
+    UiColor,
+    /// The node's `border-color`.
+    UiBorderColor,
+    /// The node's size, in physical pixels.
+    UiSize,
+    /// A uv moved along a view through the image's brightness as a height field.
+    Parallax,
+    /// The slope of the image's brightness, as a normal.
+    ImageNormal,
 
     // -- Output ---------------------------------------------------------
     /// A surface output from before the node had a kind; `migrated` turns it into a
@@ -225,12 +245,14 @@ pub(crate) enum Category {
     Effect,
     Shape,
     Noise,
+    /// What a `ui` shader reads of its node.
+    Ui,
     Output,
 }
 
 impl Category {
     /// In menu order.
-    pub(crate) const ALL: [Self; 9] = [
+    pub(crate) const ALL: [Self; 10] = [
         Self::Input,
         Self::Constant,
         Self::Math,
@@ -239,6 +261,7 @@ impl Category {
         Self::Effect,
         Self::Shape,
         Self::Noise,
+        Self::Ui,
         Self::Output,
     ];
 
@@ -252,6 +275,7 @@ impl Category {
             Self::Effect => "Effects",
             Self::Shape => "Shapes",
             Self::Noise => "Noise",
+            Self::Ui => "UI",
             Self::Output => "Output",
         }
     }
@@ -259,12 +283,13 @@ impl Category {
 
 /// The kinds a graph generates. Not `ShaderKind::NAMES`: a kind the codegen has no body for would
 /// write a shader its pass refuses.
-pub(crate) const OUTPUT_KINDS: [&str; 5] = [
+pub(crate) const OUTPUT_KINDS: [&str; 6] = [
     "surface",
     "unlit",
     "post_process",
     "transparent",
     "transparent_unlit",
+    "ui",
 ];
 
 /// Every node the menu offers, one per kind, in menu order.
@@ -389,6 +414,15 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::Ring,
         Node::Polygon,
         Node::Checker,
+        Node::RoundedBox,
+        Node::UiImage,
+        Node::UiColor,
+        Node::UiBorderColor,
+        Node::UiSize,
+        Node::Parallax,
+        Node::ImageNormal,
+        Node::Exp,
+        Node::Rainbow,
         Node::surface_output(),
     ]
 }
