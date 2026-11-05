@@ -59,6 +59,16 @@ impl Node {
             }
             Self::ImageNormal => "A normal from the image's brightness. UI shaders only.",
             Self::RoundedBox => "Distance to a rounded box: negative inside.",
+            Self::UiPoint => {
+                "A point from the node's centre, in units of its height. UI shaders only."
+            }
+            Self::BlinnPhong => "Diffuse and specular of one light.",
+            Self::SdfFill => "A distance as a mask with a soft edge: 1 inside.",
+            Self::SdfStroke => "A distance as a line along its edge.",
+            Self::Sway => "Two waves at different speeds, for things that drift or tilt.",
+            Self::LightBand => "A soft stripe of light across a point.",
+            Self::MulAdd => "value × scale + offset.",
+            Self::Luminance => "How bright a colour reads, as one number.",
             Self::Exp => "e to the power of the value.",
             Self::Rainbow => "A hue wheel: one turn per unit of phase.",
             Self::SceneColor => "The frame the camera produced. Post-process shaders only.",
@@ -311,6 +321,46 @@ impl Node {
                 (Two, "Half the box's width and height."),
                 (One, "The corners' radius."),
             ],
+            Self::UiPoint => &[(Two, "The coordinate. Unwired: this pixel.")],
+            Self::BlinnPhong => &[
+                (Three, "The surface's normal."),
+                (Three, "Towards the light."),
+                (Three, "Towards the eye."),
+                (One, "How tight the highlight is. Around 32."),
+            ],
+            Self::SdfFill => &[
+                (One, "The signed distance: negative inside."),
+                (
+                    One,
+                    "How wide the edge fades. UI Point's pixel is one pixel.",
+                ),
+            ],
+            Self::SdfStroke => &[
+                (One, "The signed distance: negative inside."),
+                (One, "Moves the line: negative goes inside."),
+                (One, "Half the line's thickness."),
+                (One, "How wide its edges fade."),
+            ],
+            Self::Sway => &[
+                (One, "Waves per second, in radians."),
+                (One, "How far it goes."),
+                (One, "The second wave's speed, against the first."),
+            ],
+            Self::LightBand => &[
+                (Two, "Where to read it. Unwired: this pixel."),
+                (Two, "Across which way the stripe runs."),
+                (
+                    One,
+                    "Where it sits along the direction: wire a wave in to sweep it.",
+                ),
+                (One, "How wide it is."),
+            ],
+            Self::MulAdd => &[
+                (Any, "The value."),
+                (Any, "What it is multiplied by."),
+                (Any, "What is added after."),
+            ],
+            Self::Luminance => &[(Three, "The colour.")],
             Self::Exp => &[(Any, "The power.")],
             Self::Rainbow => &[(One, "Where on the wheel.")],
             Self::ShaderOutput { kind } if kind == "ui" => &[
@@ -367,6 +417,11 @@ impl Node {
             (Self::Time, Pick::Channel(1)) => (One, "The sine of the time: -1..1, once per 2π s."),
             (Self::Time, Pick::Channel(2)) => (One, "The cosine of the time."),
             (Self::Time, _) => (One, "A tenth of the time: slow motion."),
+            (Self::BlinnPhong, Pick::Channel(0)) => (One, "How much light the surface takes."),
+            (Self::BlinnPhong, _) => (One, "The highlight."),
+            (Self::UiPoint, Pick::FieldXy("point")) => (Two, "The point, from the node's centre."),
+            (Self::UiPoint, Pick::FieldXy(_)) => (Two, "Width over height, and 1."),
+            (Self::UiPoint, _) => (One, "One pixel, in the point's units."),
             (_, Pick::Field("f1")) => (One, "Distance to the nearest point."),
             (_, Pick::Field("f2")) => (One, "Distance to the second nearest point."),
             (_, Pick::Field("edge")) => (One, "Distance to the nearest cell border."),
@@ -390,6 +445,11 @@ impl Node {
                 (Four, "The colour.")
             }
             Self::RoundedBox => (One, "The distance."),
+            Self::SdfFill | Self::SdfStroke | Self::LightBand => {
+                (One, "A mask: 1 on it, 0 away from it.")
+            }
+            Self::Luminance => (One, "The brightness."),
+            Self::Sway => (Two, "The two waves."),
             Self::WorldPosition | Self::WorldNormal | Self::ViewDirection => (Three, self.about()),
             Self::Float { .. } | Self::Int { .. } | Self::ConstFloat(_) | Self::ConstInt(_) => {
                 (One, "The number.")

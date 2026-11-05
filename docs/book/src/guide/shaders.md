@@ -237,6 +237,19 @@ A graph writes this kind too: set the Output's kind to `ui`. The **UI** menu has
 Normal**, which read the image's brightness as a height field: brighter is nearer. A node that has
 nothing to read in that kind, such as **World Normal** in a `ui` graph or **UI Image** in a surface,
 stops the graph with a message that names it. The preview draws a UI graph on a white dome.
+**UI Point** gives a uv as a point from the node's centre, in units of its height, so a shape stays
+round on a wide node; its `aspect` and `pixel` outputs scale a size and an edge to match.
+
+An input with no wire edits its own value beside its name, so a number needs no node of its own. A
+wire overrides it, and pulling the wire brings the number back. A pin that takes anything edits one
+number; its small button opens all four channels. A pin that means something else while unwired,
+such as a `uv` reading this pixel, has no field.
+
+Some nodes hold what shaders keep rebuilding by hand. **SDF Fill** and **SDF Stroke** turn a signed
+distance such as **Rounded Box** into a soft mask or a line along its edge. **Blinn-Phong** gives
+the diffuse and specular of one light, for a shader that lights itself. **Sway** is two waves that
+take long to repeat, **Light Band** a soft stripe to sweep across a surface, **Mul Add** is
+`value × scale + offset`, and **Luminance** how bright a colour reads.
 
 ## Parameters
 

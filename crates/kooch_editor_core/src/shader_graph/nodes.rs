@@ -119,6 +119,8 @@ pub(crate) enum Node {
     Remap,
     /// `mix(a, b, t.x)`.
     Mix,
+    /// `value * scale + offset`.
+    MulAdd,
 
     // -- Vector ---------------------------------------------------------
     /// `dot(a.xyz, b.xyz)`, in every component.
@@ -160,6 +162,14 @@ pub(crate) enum Node {
     Spherize,
     /// Towards grey, by amount.
     Desaturate,
+    /// How bright a colour reads, as one number.
+    Luminance,
+    /// Diffuse and specular of one light, for a shader that lights itself.
+    BlinnPhong,
+    /// Two waves in `xy` at different speeds: a sway that takes long to repeat.
+    Sway,
+    /// A soft stripe across a point, 1 on its line and fading out either side.
+    LightBand,
     /// Two colours combined the way an image editor does.
     Blend {
         /// `multiply`, `screen`, `overlay`, `lighten` or `darken`.
@@ -207,6 +217,10 @@ pub(crate) enum Node {
     Rainbow,
     /// Signed distance to a box with rounded corners: negative inside.
     RoundedBox,
+    /// A signed distance as a mask with a soft edge: 1 inside.
+    SdfFill,
+    /// A signed distance as a line along its edge, moved by `offset`.
+    SdfStroke,
 
     // -- UI -------------------------------------------------------------
     /// The node's `background-image`, read at a uv (#1805).
@@ -221,6 +235,8 @@ pub(crate) enum Node {
     Parallax,
     /// The slope of the image's brightness, as a normal.
     ImageNormal,
+    /// A uv as a point from the node's centre, in units of its height so a circle stays round.
+    UiPoint,
 
     // -- Output ---------------------------------------------------------
     /// A surface output from before the node had a kind; `migrated` turns it into a
@@ -369,6 +385,7 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::Saturate,
         Node::Remap,
         Node::Mix,
+        Node::MulAdd,
         Node::Dot,
         Node::Cross,
         Node::Normalize,
@@ -390,6 +407,10 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::RadialShear,
         Node::Spherize,
         Node::Desaturate,
+        Node::Luminance,
+        Node::BlinnPhong,
+        Node::Sway,
+        Node::LightBand,
         Node::Blend {
             mode: "multiply".to_owned(),
         },
@@ -415,12 +436,15 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::Polygon,
         Node::Checker,
         Node::RoundedBox,
+        Node::SdfFill,
+        Node::SdfStroke,
         Node::UiImage,
         Node::UiColor,
         Node::UiBorderColor,
         Node::UiSize,
         Node::Parallax,
         Node::ImageNormal,
+        Node::UiPoint,
         Node::Exp,
         Node::Rainbow,
         Node::surface_output(),

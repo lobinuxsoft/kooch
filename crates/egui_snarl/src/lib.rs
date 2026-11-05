@@ -229,6 +229,23 @@ impl<T> Snarl<T> {
         }
     }
 
+    /// The same graph with every node's value run through `change`: ids, positions and wires stay.
+    #[must_use]
+    pub fn map<U>(self, mut change: impl FnMut(T) -> U) -> Snarl<U> {
+        Snarl {
+            nodes: self
+                .nodes
+                .into_iter()
+                .map(|(id, node)| {
+                    let Node { value, pos, open } = node;
+                    let value = change(value);
+                    (id, Node { value, pos, open })
+                })
+                .collect(),
+            wires: self.wires,
+        }
+    }
+
     /// Adds a node to the Snarl.
     /// Returns the index of the node.
     ///

@@ -16,8 +16,8 @@ fn an_empty_graph_has_no_bounds() {
 #[test]
 fn the_bounds_hold_every_node() {
     let mut graph = Graph::new();
-    graph.insert_node(Pos2::new(-200.0, 0.0), Node::Uv);
-    graph.insert_node(Pos2::new(600.0, 300.0), Node::surface_output());
+    graph.insert_node(Pos2::new(-200.0, 0.0), Node::Uv.into());
+    graph.insert_node(Pos2::new(600.0, 300.0), Node::surface_output().into());
 
     let bounds = bounds(&graph).expect("bounds");
 

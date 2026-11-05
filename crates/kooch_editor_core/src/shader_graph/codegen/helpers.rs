@@ -11,7 +11,7 @@ pub(super) fn helpers(graph: &Graph) -> String {
     // Old noises read as the nodes they became, so they pull in the same helpers.
     let nodes: Vec<(NodeId, Node)> = graph
         .node_ids()
-        .map(|(id, node)| (id, node.clone().migrated()))
+        .map(|(id, cell)| (id, cell.node.clone().migrated()))
         .collect();
     let uses = |wanted: &dyn Fn(&Node) -> bool| nodes.iter().any(|(_, node)| wanted(node));
     // A fractal noise samples in 3D only when its phase is wired.
@@ -64,6 +64,12 @@ pub(super) fn helpers(graph: &Graph) -> String {
     push(uses(&|n| matches!(n, Node::Checker)), CHECKER_HELPER);
     push(uses(&|n| matches!(n, Node::RoundedBox)), ROUNDED_BOX_HELPER);
     push(uses(&|n| matches!(n, Node::Rainbow)), RAINBOW_HELPER);
+    push(uses(&|n| matches!(n, Node::UiPoint)), UI_POINT_HELPER);
+    push(uses(&|n| matches!(n, Node::BlinnPhong)), BLINN_PHONG_HELPER);
+    push(
+        uses(&|n| matches!(n, Node::SdfFill | Node::SdfStroke)),
+        SDF_FILL_HELPER,
+    );
     push(
         uses(&|n| matches!(n, Node::Parallax | Node::ImageNormal)),
         HEIGHT_HELPER,
@@ -119,6 +125,9 @@ const CHECKER_HELPER: &str = include_str!("helpers/checker.wgsl");
 const ROUNDED_BOX_HELPER: &str = include_str!("helpers/rounded_box.wgsl");
 
 const RAINBOW_HELPER: &str = include_str!("helpers/rainbow.wgsl");
+const UI_POINT_HELPER: &str = include_str!("helpers/ui_point.wgsl");
+const BLINN_PHONG_HELPER: &str = include_str!("helpers/blinn_phong.wgsl");
+const SDF_FILL_HELPER: &str = include_str!("helpers/sdf_fill.wgsl");
 
 /// The image's brightness: what Parallax and Image Normal read as height.
 const HEIGHT_HELPER: &str = include_str!("helpers/height.wgsl");

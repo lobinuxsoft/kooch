@@ -17,13 +17,13 @@ fn wired(node: Node, outputs: &[usize]) -> String {
     let mut graph = Graph::new();
     let inputs = node.inputs().len();
     let skewed = matches!(&node, Node::FractalNoise { basis, .. } if basis == "simplex");
-    let added = graph.insert_node(Pos2::ZERO, node);
-    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
+    let added = graph.insert_node(Pos2::ZERO, node.into());
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output().into());
     for input in 0..inputs {
         if skewed && input == NOISE_TILING {
             continue;
         }
-        let constant = graph.insert_node(Pos2::ZERO, Node::ConstFloat(0.5 + input as f32));
+        let constant = graph.insert_node(Pos2::ZERO, Node::ConstFloat(0.5 + input as f32).into());
         wire(&mut graph, constant, 0, added, input);
     }
     for (input, &pin) in outputs.iter().enumerate() {
@@ -98,9 +98,10 @@ fn unwired_noise_controls_cost_nothing() {
         Node::FractalNoise {
             basis: "gradient".to_owned(),
             fractal: "ridged".to_owned(),
-        },
+        }
+        .into(),
     );
-    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output().into());
     wire(&mut graph, noise, 0, output, 0);
     let bare = generate(&graph).unwrap();
     let voronoi = wired(
@@ -145,10 +146,11 @@ fn a_tiled_simplex_is_refused() {
         Node::FractalNoise {
             basis: "simplex".to_owned(),
             fractal: "fbm".to_owned(),
-        },
+        }
+        .into(),
     );
-    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
-    let tiling = graph.insert_node(Pos2::ZERO, Node::ConstFloat(4.0));
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output().into());
+    let tiling = graph.insert_node(Pos2::ZERO, Node::ConstFloat(4.0).into());
     wire(&mut graph, noise, 0, output, 0);
     wire(&mut graph, tiling, 0, noise, NOISE_TILING);
     let why = generate(&graph).expect_err("a tiled simplex generated");
@@ -163,10 +165,11 @@ fn a_tiled_noise_wraps() {
         Pos2::ZERO,
         Node::VoronoiNoise {
             metric: "euclidean".to_owned(),
-        },
+        }
+        .into(),
     );
-    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
-    let tiling = graph.insert_node(Pos2::ZERO, Node::ConstFloat(4.0));
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output().into());
+    let tiling = graph.insert_node(Pos2::ZERO, Node::ConstFloat(4.0).into());
     wire(&mut graph, noise, 0, output, 0);
     let bare = generate(&graph).unwrap();
     wire(&mut graph, tiling, 0, noise, VORONOI_TILING);

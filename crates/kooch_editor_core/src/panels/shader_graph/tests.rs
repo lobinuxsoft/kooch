@@ -65,7 +65,7 @@ fn pin_names_sit_beside_their_pins() {
     ];
     let mut graph = Graph::new();
     for (row, node) in nodes.iter().enumerate() {
-        graph.insert_node(Pos2::new(0.0, 260.0 * row as f32), node.clone());
+        graph.insert_node(Pos2::new(0.0, 260.0 * row as f32), node.clone().into());
     }
     let outputs: Vec<String> = nodes
         .iter()
@@ -178,7 +178,7 @@ fn a_resting_pointer_explains_pins() {
     use egui_snarl::ui::SnarlWidget;
 
     let mut graph = Graph::new();
-    graph.insert_node(Pos2::new(40.0, 40.0), Node::Panner);
+    graph.insert_node(Pos2::new(40.0, 40.0), Node::Panner.into());
     let ctx = egui::Context::default();
     let mut run = |time: f64, events: Vec<egui::Event>| {
         ctx.run_ui(
@@ -275,8 +275,8 @@ impl Harness {
     fn new() -> Self {
         use crate::shader_graph::Node;
         let mut graph = Graph::new();
-        let member = graph.insert_node(Pos2::new(60.0, 80.0), Node::Floor);
-        let neighbour = graph.insert_node(Pos2::new(90.0, 150.0), Node::Fract);
+        let member = graph.insert_node(Pos2::new(60.0, 80.0), Node::Floor.into());
+        let neighbour = graph.insert_node(Pos2::new(90.0, 150.0), Node::Fract.into());
         let mut annotations = crate::shader_graph::annotations::Annotations::default();
         annotations.group(&[member.0]);
         let mut harness = Self {

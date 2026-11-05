@@ -31,8 +31,8 @@ fn annotations_round_trip() {
 #[test]
 fn a_group_moves_its_members_only() {
     let mut graph = Graph::new();
-    let member = graph.insert_node(Pos2::new(50.0, 50.0), Node::Floor);
-    let neighbour = graph.insert_node(Pos2::new(60.0, 60.0), Node::Fract);
+    let member = graph.insert_node(Pos2::new(50.0, 50.0), Node::Floor.into());
+    let neighbour = graph.insert_node(Pos2::new(60.0, 60.0), Node::Fract.into());
     let mut annotations = Annotations::default();
     annotations.group(&[member.0]);
     move_group(&annotations, &mut graph, 0, Vec2::new(10.0, 20.0));
@@ -50,8 +50,8 @@ fn a_group_moves_its_members_only() {
 #[test]
 fn a_group_fits_its_members() {
     let mut graph = Graph::new();
-    let a = graph.insert_node(Pos2::new(0.0, 0.0), Node::Floor);
-    let b = graph.insert_node(Pos2::new(300.0, 100.0), Node::Fract);
+    let a = graph.insert_node(Pos2::new(0.0, 0.0), Node::Floor.into());
+    let b = graph.insert_node(Pos2::new(300.0, 100.0), Node::Fract.into());
     let mut annotations = Annotations::default();
     annotations.group(&[a.0, b.0]);
     let rects = HashMap::from([
@@ -83,8 +83,8 @@ fn a_node_is_in_one_group() {
 #[test]
 fn removed_nodes_are_pruned() {
     let mut graph = Graph::new();
-    let a = graph.insert_node(Pos2::ZERO, Node::Floor);
-    let b = graph.insert_node(Pos2::ZERO, Node::Fract);
+    let a = graph.insert_node(Pos2::ZERO, Node::Floor.into());
+    let b = graph.insert_node(Pos2::ZERO, Node::Fract.into());
     let mut annotations = Annotations::default();
     annotations.group(&[a.0, b.0]);
     graph.remove_node(b);

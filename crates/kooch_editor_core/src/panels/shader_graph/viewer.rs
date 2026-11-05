@@ -4,13 +4,13 @@ use egui::emath::TSTransform;
 use egui_snarl::ui::SnarlViewer;
 use egui_snarl::{InPin, NodeId, OutPin, Snarl};
 
-use super::editors::{FIELD, choice, components, name_field, number_editor};
+use super::editors::{FIELD, choice, components, name_field, number_editor, pin_field};
 use super::framed;
 use super::pin::{NamedPin, Side, label, reserve};
 use crate::panels::inspector::AssetCatalogEntry;
 use crate::shader_graph::{
-    BLEND_MODES, Category, NOISE_BASES, NOISE_FRACTALS, Node, OUTPUT_KINDS, TEXTURE_FALLBACKS,
-    VORONOI_METRICS, Width, palette,
+    BLEND_MODES, Category, GraphNode, NOISE_BASES, NOISE_FRACTALS, Node, OUTPUT_KINDS,
+    TEXTURE_FALLBACKS, VORONOI_METRICS, Width, palette,
 };
 
 /// How the nodes draw and connect.
@@ -33,10 +33,10 @@ pub(super) struct Viewer<'a> {
     pub(super) ungroup: Option<NodeId>,
 }
 
-impl SnarlViewer<Node> for Viewer<'_> {
+impl SnarlViewer<GraphNode> for Viewer<'_> {
     /// The one hook that runs between the pan/zoom handling and the transform being stored, which
     /// is the only place a view can be corrected from outside the widget.
-    fn current_transform(&mut self, to_global: &mut TSTransform, _snarl: &mut Snarl<Node>) {
+    fn current_transform(&mut self, to_global: &mut TSTransform, _snarl: &mut Snarl<GraphNode>) {
         to_global.translation += self.drift;
         if let Some(at) = self.look_at {
             // That point of the graph, under the middle of the panel.
@@ -49,7 +49,7 @@ impl SnarlViewer<Node> for Viewer<'_> {
         self.transform = *to_global;
     }
 
-    fn title(&mut self, node: &Node) -> String {
+    fn title(&mut self, node: &GraphNode) -> String {
         node.title()
     }
 
@@ -60,7 +60,7 @@ impl SnarlViewer<Node> for Viewer<'_> {
         node: NodeId,
         _inputs: &[InPin],
         _outputs: &[OutPin],
-        snarl: &Snarl<Node>,
+        snarl: &Snarl<GraphNode>,
     ) -> egui::Frame {
         match snarl.get_node(node) {
             Some(node) => default.fill(tint(node.category())),
@@ -68,7 +68,7 @@ impl SnarlViewer<Node> for Viewer<'_> {
         }
     }
 
-    fn has_on_hover_popup(&mut self, _node: &Node) -> bool {
+    fn has_on_hover_popup(&mut self, _node: &GraphNode) -> bool {
         true
     }
 
@@ -78,18 +78,18 @@ impl SnarlViewer<Node> for Viewer<'_> {
         _inputs: &[InPin],
         _outputs: &[OutPin],
         ui: &mut egui::Ui,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut Snarl<GraphNode>,
     ) {
         if let Some(node) = snarl.get_node(node) {
             ui.label(node.about());
         }
     }
 
-    fn inputs(&mut self, node: &Node) -> usize {
+    fn inputs(&mut self, node: &GraphNode) -> usize {
         node.inputs().len()
     }
 
-    fn outputs(&mut self, node: &Node) -> usize {
+    fn outputs(&mut self, node: &GraphNode) -> usize {
         node.outputs().len()
     }
 
@@ -97,7 +97,7 @@ impl SnarlViewer<Node> for Viewer<'_> {
         &mut self,
         pin: &InPin,
         ui: &mut egui::Ui,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut Snarl<GraphNode>,
     ) -> impl egui_snarl::ui::SnarlPin + 'static {
         let (name, (width, about)) = snarl
             .get_node(pin.id.node)
@@ -108,6 +108,11 @@ impl SnarlViewer<Node> for Viewer<'_> {
             .unwrap_or(("in", (Width::Any, "")));
         let label = label(name, width);
         reserve(ui, &label);
+        if pin.remotes.is_empty()
+            && let Some(cell) = snarl.get_node_mut(pin.id.node)
+        {
+            pin_field(ui, cell, pin.id, width);
+        }
         NamedPin {
             label,
             side: Side::Input,
@@ -121,7 +126,7 @@ impl SnarlViewer<Node> for Viewer<'_> {
         &mut self,
         pin: &OutPin,
         ui: &mut egui::Ui,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut Snarl<GraphNode>,
     ) -> impl egui_snarl::ui::SnarlPin + 'static {
         let output = pin.id.output;
         let (name, (width, about)) = snarl
@@ -141,7 +146,7 @@ impl SnarlViewer<Node> for Viewer<'_> {
 
     // 🔴 Fields go under the pins, not beside the first output: beside it, that pin's name had to sit
     // under the fields, level with nothing.
-    fn has_footer(&mut self, node: &Node) -> bool {
+    fn has_footer(&mut self, node: &GraphNode) -> bool {
         has_fields(node)
     }
 
@@ -151,7 +156,7 @@ impl SnarlViewer<Node> for Viewer<'_> {
         inputs: &[InPin],
         _outputs: &[OutPin],
         ui: &mut egui::Ui,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut Snarl<GraphNode>,
     ) {
         // A value node carries its own value, so the node itself is where it is edited.
         let catalog = self.catalog;
@@ -163,7 +168,7 @@ impl SnarlViewer<Node> for Viewer<'_> {
         let column = egui::vec2(FIELD + 16.0, 0.0);
         let top_down = egui::Layout::top_down(egui::Align::Min);
         ui.allocate_ui_with_layout(column, top_down, |ui| {
-            match node {
+            match &mut node.node {
                 Node::Float {
                     name,
                     default,
@@ -240,8 +245,11 @@ impl SnarlViewer<Node> for Viewer<'_> {
                 _ => {}
             }
         });
-        // A kind with fewer pins drops the wires into the ones it no longer has.
+        // A kind with fewer pins drops the wires and values of the ones it no longer has.
         let count = snarl.get_node(id).map_or(0, |n| n.inputs().len());
+        if let Some(node) = snarl.get_node_mut(id) {
+            node.pins.retain(|&input, _| input < count);
+        }
         for pin in inputs.iter().filter(|pin| pin.id.input >= count) {
             for &remote in &pin.remotes {
                 snarl.disconnect(remote, pin.id);
@@ -250,19 +258,24 @@ impl SnarlViewer<Node> for Viewer<'_> {
     }
 
     /// One wire per input: a second one replaces the first, which is what every graph tool does.
-    fn connect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<Node>) {
+    fn connect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<GraphNode>) {
         for &remote in &to.remotes {
             snarl.disconnect(remote, to.id);
         }
         snarl.connect(from.id, to.id);
     }
 
-    fn has_graph_menu(&mut self, _pos: egui::Pos2, _snarl: &mut Snarl<Node>) -> bool {
+    fn has_graph_menu(&mut self, _pos: egui::Pos2, _snarl: &mut Snarl<GraphNode>) -> bool {
         true
     }
 
     /// Grouped, because a flat list of forty nodes is a list nobody reads.
-    fn show_graph_menu(&mut self, pos: egui::Pos2, ui: &mut egui::Ui, snarl: &mut Snarl<Node>) {
+    fn show_graph_menu(
+        &mut self,
+        pos: egui::Pos2,
+        ui: &mut egui::Ui,
+        snarl: &mut Snarl<GraphNode>,
+    ) {
         if ui.button("Add note").clicked() {
             self.new_note = Some(pos);
             ui.close();
@@ -280,7 +293,7 @@ impl SnarlViewer<Node> for Viewer<'_> {
                         .on_hover_text(node.about())
                         .clicked()
                     {
-                        snarl.insert_node(pos, node);
+                        snarl.insert_node(pos, node.into());
                         ui.close();
                     }
                 }
@@ -288,7 +301,7 @@ impl SnarlViewer<Node> for Viewer<'_> {
         }
     }
 
-    fn has_node_menu(&mut self, _node: &Node) -> bool {
+    fn has_node_menu(&mut self, _node: &GraphNode) -> bool {
         true
     }
 
@@ -298,7 +311,7 @@ impl SnarlViewer<Node> for Viewer<'_> {
         _inputs: &[InPin],
         _outputs: &[OutPin],
         ui: &mut egui::Ui,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut Snarl<GraphNode>,
     ) {
         if ui.button("Remove from group").clicked() {
             self.ungroup = Some(node);

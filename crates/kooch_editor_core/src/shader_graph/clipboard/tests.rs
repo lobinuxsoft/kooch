@@ -12,10 +12,10 @@ fn float(name: &str) -> Node {
 /// one into the output, and not the output itself.
 fn chain() -> (Graph, Vec<NodeId>) {
     let mut graph = Graph::new();
-    let a = graph.insert_node(Pos2::new(10.0, 20.0), float("levels"));
-    let b = graph.insert_node(Pos2::new(200.0, 20.0), Node::Floor);
-    let c = graph.insert_node(Pos2::new(400.0, 40.0), Node::Fract);
-    let out = graph.insert_node(Pos2::new(600.0, 0.0), Node::surface_output());
+    let a = graph.insert_node(Pos2::new(10.0, 20.0), float("levels").into());
+    let b = graph.insert_node(Pos2::new(200.0, 20.0), Node::Floor.into());
+    let c = graph.insert_node(Pos2::new(400.0, 40.0), Node::Fract.into());
+    let out = graph.insert_node(Pos2::new(600.0, 0.0), Node::surface_output().into());
     let wire = |graph: &mut Graph, from: NodeId, to: NodeId| {
         graph.connect(
             OutPinId {
@@ -57,7 +57,7 @@ fn a_paste_lands_wired() {
         .count();
     assert_eq!(wires, 2);
     assert!(matches!(
-        graph.get_node(placed[0]),
+        graph.get_node(placed[0]).map(|cell| &cell.node),
         Some(Node::Float { name, .. }) if name == "levels_2"
     ));
 }

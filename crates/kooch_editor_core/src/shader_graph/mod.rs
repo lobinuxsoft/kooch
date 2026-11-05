@@ -12,6 +12,7 @@ mod arrange;
 pub(crate) mod clipboard;
 mod codegen;
 mod nodes;
+mod pins;
 mod step;
 
 pub(crate) use arrange::{NODE_SIZE, arrange};
@@ -21,19 +22,20 @@ pub(crate) use nodes::{
     NOISE_PHASE, NOISE_TILING, Node, OUTPUT_KINDS, TEXTURE_FALLBACKS, VORONOI_BORDER,
     VORONOI_METRICS, VORONOI_TILING, WHITE_TILING, Width, palette,
 };
+pub(crate) use pins::GraphNode;
 pub(crate) use step::{GraphStep, change};
 
 /// What the block comment holding a graph starts with.
 const MARKER: &str = "/*KOOCH_GRAPH;";
 
 /// A graph and where its nodes sit, as the panel holds it.
-pub(crate) type Graph = Snarl<Node>;
+pub(crate) type Graph = Snarl<GraphNode>;
 
 /// Nodes **and where they sit**, for telling whether the panel changed anything.
 ///
 /// 🔴 Dragging a node is an edit the file has to keep: comparing only the values let a whole
 /// re-layout be lost on close without a word about it (#1167).
-pub(crate) fn snapshot(graph: &Graph) -> Vec<(egui::Pos2, Node)> {
+pub(crate) fn snapshot(graph: &Graph) -> Vec<(egui::Pos2, GraphNode)> {
     graph
         .nodes_pos_ids()
         .map(|(_, pos, node)| (pos, node.clone()))
@@ -44,12 +46,16 @@ pub(crate) fn snapshot(graph: &Graph) -> Vec<(egui::Pos2, Node)> {
 pub(crate) fn extract(source: &str) -> Option<Graph> {
     let start = source.find(MARKER)? + MARKER.len();
     let end = start + source[start..].find("*/")?;
-    match ron::from_str::<Graph>(&source[start..end]) {
+    let data = &source[start..end];
+    // Graphs written before pins held values carry bare nodes (#1809).
+    let read = ron::from_str::<Graph>(data)
+        .or_else(|_| ron::from_str::<Snarl<Node>>(data).map(|old| old.map(GraphNode::from)));
+    match read {
         Ok(mut graph) => {
             // Graphs written before parameters were typed carry `Param`; they open as the typed
             // nodes they mean, and the next save writes those (#1170).
-            for node in graph.nodes_mut() {
-                *node = std::mem::replace(node, Node::Uv).migrated();
+            for cell in graph.nodes_mut() {
+                cell.node = std::mem::replace(&mut cell.node, Node::Uv).migrated();
             }
             Some(graph)
         }
@@ -84,21 +90,23 @@ pub(crate) fn starter() -> Graph {
     use egui_snarl::{InPinId, OutPinId};
 
     let mut graph = Graph::new();
-    let uv = graph.insert_node(Pos2::new(40.0, 40.0), Node::Uv);
+    let uv = graph.insert_node(Pos2::new(40.0, 40.0), Node::Uv.into());
     let albedo = graph.insert_node(
         Pos2::new(220.0, 40.0),
         Node::Texture {
             name: "albedo".to_owned(),
             fallback: "white".to_owned(),
             preview: None,
-        },
+        }
+        .into(),
     );
     let tint = graph.insert_node(
         Pos2::new(220.0, 200.0),
         Node::Color {
             name: "base_color".to_owned(),
             default: [1.0; 4],
-        },
+        }
+        .into(),
     );
     let roughness = graph.insert_node(
         Pos2::new(220.0, 320.0),
@@ -106,10 +114,11 @@ pub(crate) fn starter() -> Graph {
             name: "roughness".to_owned(),
             default: 0.5,
             range: Some([0.0, 1.0]),
-        },
+        }
+        .into(),
     );
-    let tinted = graph.insert_node(Pos2::new(430.0, 100.0), Node::Multiply);
-    let output = graph.insert_node(Pos2::new(640.0, 140.0), Node::surface_output());
+    let tinted = graph.insert_node(Pos2::new(430.0, 100.0), Node::Multiply.into());
+    let output = graph.insert_node(Pos2::new(640.0, 140.0), Node::surface_output().into());
     let mut wire = |from, to, input| {
         graph.connect(
             OutPinId {

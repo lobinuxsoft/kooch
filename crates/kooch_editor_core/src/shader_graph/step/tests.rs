@@ -6,8 +6,8 @@ use crate::shader_graph::Node;
 
 fn pair() -> (Graph, NodeId, NodeId) {
     let mut graph = Graph::new();
-    let a = graph.insert_node(Pos2::ZERO, Node::ConstFloat(1.0));
-    let b = graph.insert_node(Pos2::new(200.0, 0.0), Node::Fract);
+    let a = graph.insert_node(Pos2::ZERO, Node::ConstFloat(1.0).into());
+    let b = graph.insert_node(Pos2::new(200.0, 0.0), Node::Fract.into());
     (graph, a, b)
 }
 
@@ -21,7 +21,7 @@ fn nothing_changed_is_none() {
 fn structure_is_classified() {
     let (before, a, b) = pair();
     let mut after = before.clone();
-    after.insert_node(Pos2::ZERO, Node::Uv);
+    after.insert_node(Pos2::ZERO, Node::Uv.into());
     assert_eq!(change(&before, &after), Some(GraphStep::AddNodes));
 
     let mut after = before.clone();
@@ -47,7 +47,7 @@ fn continuous_edits_merge() {
     assert_eq!(change(&before, &after), Some(GraphStep::Move));
 
     let mut after = before.clone();
-    *after.get_node_mut(a).unwrap() = Node::ConstFloat(2.0);
+    *after.get_node_mut(a).unwrap() = Node::ConstFloat(2.0).into();
     assert_eq!(change(&before, &after), Some(GraphStep::Edit(a)));
 
     let path = std::path::Path::new("/p/a.shader");
