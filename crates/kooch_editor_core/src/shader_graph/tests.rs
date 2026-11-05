@@ -1,6 +1,6 @@
 use egui::Pos2;
 use egui_snarl::{InPinId, OutPinId};
-use kooch_render::material::{Shader, ShaderKind};
+use kooch_render::material::Shader;
 
 use super::*;
 
@@ -168,7 +168,7 @@ fn a_cycle_is_refused() {
 /// the canvas, and the one a user sees first.
 #[test]
 fn every_node_compiles() {
-    for kind in ShaderKind::NAMES {
+    for kind in OUTPUT_KINDS {
         for node in palette() {
             if node.output_kind().is_some() {
                 continue;

@@ -4,15 +4,13 @@ use egui::emath::TSTransform;
 use egui_snarl::ui::SnarlViewer;
 use egui_snarl::{InPin, NodeId, OutPin, Snarl};
 
-use kooch_render::material::ShaderKind;
-
 use super::editors::{FIELD, choice, components, name_field, number_editor};
 use super::framed;
 use super::pin::{NamedPin, Side, label, reserve};
 use crate::panels::inspector::AssetCatalogEntry;
 use crate::shader_graph::{
-    BLEND_MODES, Category, NOISE_BASES, NOISE_FRACTALS, Node, TEXTURE_FALLBACKS, VORONOI_METRICS,
-    Width, palette,
+    BLEND_MODES, Category, NOISE_BASES, NOISE_FRACTALS, Node, OUTPUT_KINDS, TEXTURE_FALLBACKS,
+    VORONOI_METRICS, Width, palette,
 };
 
 /// How the nodes draw and connect.
@@ -238,7 +236,7 @@ impl SnarlViewer<Node> for Viewer<'_> {
                     choice(ui, "fractal", fractal, &NOISE_FRACTALS);
                 }
                 Node::VoronoiNoise { metric } => choice(ui, "metric", metric, &VORONOI_METRICS),
-                Node::ShaderOutput { kind } => choice(ui, "kind", kind, &ShaderKind::NAMES),
+                Node::ShaderOutput { kind } => choice(ui, "kind", kind, &OUTPUT_KINDS),
                 _ => {}
             }
         });
