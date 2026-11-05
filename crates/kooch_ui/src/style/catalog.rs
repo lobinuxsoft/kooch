@@ -247,7 +247,7 @@ pub const CATEGORIES: [StyleCategory; 10] = [
                 Text,
                 "Texels kept unstretched: top right bottom left",
             ),
-            prop("-kooch-material", Shader, "\"path.shader\" with kind: ui"),
+            prop("-kooch-material", Shader, "\"path.wgsl\" with kind: ui"),
         ],
     },
     StyleCategory {

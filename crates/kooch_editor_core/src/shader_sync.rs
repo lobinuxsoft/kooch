@@ -1,4 +1,4 @@
-//! Hot reload for `.shader` files, which are written by an IDE rather than by the editor (#1157).
+//! Hot reload for shader files, which are written by an IDE rather than by the editor (#1157).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -64,7 +64,7 @@ pub fn sync_shaders_system(resources: &mut Resources) {
     }
 }
 
-/// What `.shader` files need from wgsl-analyzer, at the top level of `.vscode/settings.json`. It
+/// What shader files need from wgsl-analyzer, at the top level of `.vscode/settings.json`. It
 /// cannot see what the engine composes around a surface, so what hinges on it is off: type errors,
 /// naga's unresolved names and `[error]` type hints. Its own syntax errors stay.
 const ANALYZER_SETTINGS: [&str; 3] = [
@@ -74,8 +74,13 @@ const ANALYZER_SETTINGS: [&str; 3] = [
 ];
 
 /// Kóoch's own extensions, read by VS Code as the language they are written in (#1158, #1697).
-const ASSOCIATIONS: [(&str, &str); 3] =
-    [("*.shader", "wgsl"), ("*.kxml", "xml"), ("*.kcss", "css")];
+const ASSOCIATIONS: [(&str, &str); 5] = [
+    ("*.shader", "wgsl"),
+    ("*.shgraph", "wgsl"),
+    ("*.subgraph", "wgsl"),
+    ("*.kxml", "xml"),
+    ("*.kcss", "css"),
+];
 
 /// Adds what Kóoch's files need to the project's `.vscode/settings.json`, creating it if absent.
 /// Keys the author already set keep their values, and the rest of the file keeps its formatting.

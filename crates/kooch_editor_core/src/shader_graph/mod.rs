@@ -1,4 +1,4 @@
-//! The shader graph (#1159): what the nodes are, and how a graph is carried inside the `.shader`
+//! The shader graph (#1159): what the nodes are, and how a graph is carried inside the `.shgraph`
 //! it generates.
 //!
 //! 🔴 The graph is the source of truth and the WGSL beside it is output. It rides in a block comment

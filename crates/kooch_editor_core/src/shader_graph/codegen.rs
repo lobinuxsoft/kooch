@@ -1,4 +1,4 @@
-//! Graph → `.shader`: the parameters it declares, one `let` per node, and the graph itself in the
+//! Graph → `.shgraph`: the parameters it declares, one `let` per node, and the graph itself in the
 //! block comment that rides above them (#1159).
 
 use std::collections::{HashMap, HashSet};
@@ -14,7 +14,7 @@ mod helpers;
 use emit::Body;
 use helpers::helpers;
 
-/// The whole `.shader` a graph generates: header, parameters, body and the graph itself.
+/// The whole `.shgraph` a graph generates: header, parameters, body and the graph itself.
 pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     let (output, kind) = graph
         .node_ids()

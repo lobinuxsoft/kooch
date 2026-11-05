@@ -60,7 +60,7 @@ pub enum Declaration {
     BorderRadius(f32),
     FontFamily(Box<str>),
     FontSize(f32),
-    /// A `.shader` path with `kind: ui` (#1690), relative to its `.kcss`.
+    /// A shader's path with `kind: ui` (#1690), relative to its `.kcss`.
     Material(ImageRef),
     /// `-kooch-param-<name>`: a value for what the material declares, lower case as CSS reads it.
     Param(Box<str>, [f32; 4]),

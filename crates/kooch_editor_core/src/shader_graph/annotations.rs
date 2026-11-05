@@ -1,7 +1,7 @@
 //! Groups and notes on the canvas (#1211): how a graph is organised for the person reading it.
 //! Nothing here reaches the WGSL.
 //!
-//! 🔴 Carried in a block of their own at the end of the `.shader`, not inside `KOOCH_GRAPH`: a file
+//! 🔴 Carried in a block of their own at the end of the file, not inside `KOOCH_GRAPH`: a file
 //! written before these existed still opens, and a graph without any writes the same file as
 //! before.
 
@@ -166,7 +166,7 @@ pub(crate) fn embed(source: String, annotations: &Annotations) -> Result<String,
     Ok(format!("{}\n{MARKER}{ron}*/\n", source.trim_end()))
 }
 
-/// The annotations a `.shader` carries; none for a file without the block or with a broken one.
+/// The annotations a graph's file carries; none for a file without the block or with a broken one.
 pub(crate) fn extract(source: &str) -> Annotations {
     let Some(start) = source.find(MARKER).map(|at| at + MARKER.len()) else {
         return Annotations::default();

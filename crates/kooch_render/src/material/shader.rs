@@ -22,8 +22,14 @@ mod params;
 
 pub use params::{MAX_PARAM_SCALARS, MAX_PARAM_TEXTURES, ParamKind, ShaderParam, TextureDefault};
 
-/// What a shader file is called.
-pub const SHADER_EXTENSION: &str = "shader";
+/// A shader written by hand: its language's own extension.
+pub const SHADER_EXTENSION: &str = "wgsl";
+
+/// A shader the graph writes: plain WGSL too, with the graph in a comment.
+pub const GRAPH_EXTENSION: &str = "shgraph";
+
+/// Every file that loads as a shader. `shader` is what both were called before #1811.
+pub const SHADER_EXTENSIONS: [&str; 3] = [SHADER_EXTENSION, GRAPH_EXTENSION, "shader"];
 
 /// Static type name [`AssetEntry`](kooch_core::asset_database::AssetEntry)s carry for a shader.
 pub const SHADER_TYPE_NAME: &str = "kooch_render::material::shader::Shader";
@@ -214,13 +220,13 @@ impl Shader {
     }
 }
 
-/// `AssetLoader<Shader>` for `*.shader` files.
+/// `AssetLoader<Shader>` for every extension in [`SHADER_EXTENSIONS`].
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ShaderLoader;
 
 impl AssetLoader<Shader> for ShaderLoader {
     fn extensions(&self) -> &[&'static str] {
-        &[SHADER_EXTENSION]
+        &SHADER_EXTENSIONS
     }
 
     fn load(&self, bytes: &[u8], _ctx: &mut LoadContext<'_>) -> AssetResult<Shader> {

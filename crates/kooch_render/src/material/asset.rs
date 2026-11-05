@@ -42,7 +42,7 @@ pub struct Material {
     /// texture, which is the point.
     #[serde(default)]
     pub uv_offset: [f32; 2],
-    /// The `.shader` this material shades with. `None` → the engine's PBR surface.
+    /// The shader this material shades with. `None` → the engine's PBR surface.
     #[serde(default)]
     pub shader: Option<Guid>,
     /// Values for `shader`'s declared parameters, by name (#1158). Absent ones use the default.

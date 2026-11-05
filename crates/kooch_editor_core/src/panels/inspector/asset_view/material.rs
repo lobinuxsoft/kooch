@@ -22,7 +22,7 @@ pub(super) fn draw_material_editor(
 
     ui.horizontal(|ui| {
         ui.label("Shader").on_hover_text(
-            "The .shader this material shades with. (None) is the engine's PBR surface",
+            "The shader this material shades with. (None) is the engine's PBR surface",
         );
         let picked = ui
             .push_id("shader", |ui| {

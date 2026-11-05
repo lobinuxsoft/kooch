@@ -1,13 +1,13 @@
 # Shaders
 
-A material's look comes from a **surface shader**: a `.shader` file with one WGSL function. Every
+A material's look comes from a **surface shader**: a `.wgsl` file with one WGSL function. Every
 material without one uses the engine's PBR surface, so nothing changes until you pick a shader.
 
 ## Making one
 
 - **Asset Browser → right-click a folder under `assets/` → New Shader.** The file starts as a copy
   of the engine's PBR surface, ready to edit.
-- **Right-click the `.shader` → Create Material.** A material beside it, already shading with it.
+- **Right-click the shader → Create Material.** A material beside it, already shading with it.
 - **Any material → Inspector → Shader.** Switch a material to another shader, or back to `(None)`,
   the engine's PBR surface.
 
@@ -300,11 +300,11 @@ Values are stored on the material by name. Switching a material to another shade
 both declare and drops the rest; undo brings them back. New Shader starts from a PBR surface written
 against its own parameters.
 
-### Editing `.shader` files in an IDE
+### Editing shader files in an IDE
 
-No IDE can check a `.shader` completely: it reads one file and cannot see what the engine composes
+No IDE can check a shader completely: it reads one file and cannot see what the engine composes
 around a surface, so `SurfaceInput`, `surface_params` and everything built on them look undefined.
-The fix in every IDE is the same — read `.shader` as WGSL, and turn off the diagnostics that hinge
+The fix in every IDE is the same — read `.shgraph` as WGSL, and turn off the diagnostics that hinge
 on the missing part. The editor's Console is the authority on whether a shader compiles.
 
 #### VS Code
@@ -316,7 +316,7 @@ in by hand:
 
 ```json
 {
-  "files.associations": { "*.shader": "wgsl" },
+  "files.associations": { "*.shgraph": "wgsl", "*.subgraph": "wgsl" },
   "wgsl-analyzer.diagnostics.typeErrors": false,
   "wgsl-analyzer.diagnostics.nagaParsingErrors": false,
   "wgsl-analyzer.inlayHints.typeHints": false
@@ -336,13 +336,14 @@ wgsl-analyzer settings through the IDE's language-server configuration:
 ## The shader graph
 
 🔴 **A project's shaders are authored as nodes.** The graph writes the WGSL, so nobody has to learn a
-shading language to make a material. Hand-written `.shader` files keep working — the engine's own
+shading language to make a material. Hand-written `.wgsl` files keep working — the engine's own
 surface is one — and **New Shader (WGSL)** is still there for what a graph cannot reach yet.
 
-**Asset Browser → right-click a folder → New Shader Graph** writes a `.shader` whose graph is already
+**Asset Browser → right-click a folder → New Shader Graph** writes a `.shgraph` whose graph is already
 a material: an albedo texture tinted by a colour, with a roughness of its own. Double-clicking a
-`.shader` opens it in the **Shader Graph** panel; one written by hand has no graph to draw, so it
-opens in the IDE instead.
+`.shgraph` opens it in the **Shader Graph** panel; a `.wgsl` has no graph to draw, so it opens in the
+IDE instead. Inside, a `.shgraph` is plain WGSL with the graph in a comment, so what ships is the
+same code either way. Files named `.shader` from older projects keep loading and opening as before.
 
 **The graph owns the file.** It rides in a block comment at the top — the way Shader Forge carries
 `/*SF_DATA;…*/` — and everything below it is generated: parameters, defaults, textures and the
@@ -479,7 +480,7 @@ The column on the right shows the shader **on a shape**, turning, updated as the
   beside it. Each column follows the pins its nodes feed — what goes into base colour above what
   goes into roughness — which is what keeps the wires from crossing. It is the shape of Godot's
   `arrange_nodes` without its inner-shift pass, which earns its keep on graphs far larger than a shader's.
-- Dragging a node marks the file unsaved: where the nodes sit is part of what the `.shader` carries,
+- Dragging a node marks the file unsaved: where the nodes sit is part of what the `.shgraph` carries,
   so **Save** is what keeps a layout.
 
 ### Editing
@@ -516,7 +517,7 @@ The **?** button in the toolbar lists every binding.
 - **Notes:** right-click the background, then **Add note**. Drag a note to move it, and right-click
   it to edit its text or delete it.
 
-Groups and notes are saved in a block of their own at the end of the `.shader`, and codegen never
+Groups and notes are saved in a block of their own at the end of the `.shgraph`, and codegen never
 reads them. A graph without any writes exactly the file it wrote before.
 
 The graph widget is an in-tree fork of egui-snarl (`crates/egui_snarl`). The published crate
