@@ -257,6 +257,9 @@ pub(super) fn spawn_ide(ide: &super::ide::IdeCommand, root: &Path, file: &Path) 
     let program = &ide.program;
     let mut command = std::process::Command::new(program);
     command.args(&ide.args).arg(root);
+    if let Some(display) = crate::bootstrap::host_wayland() {
+        command.env("WAYLAND_DISPLAY", display);
+    }
     // `-g` means "go to this file". Skipped for a directory, which is
     // not somewhere to go, and for editors that do not know the flag —
     // they would treat it as a filename and create a file called `-g`.

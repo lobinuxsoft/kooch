@@ -172,6 +172,14 @@ fn auto_open_project(resources: &mut Resources, path: &std::path::Path) {
     );
 }
 
+/// The session's `WAYLAND_DISPLAY`, cleared from this process below.
+static HOST_WAYLAND: std::sync::OnceLock<std::ffi::OsString> = std::sync::OnceLock::new();
+
+/// What a program that is not ours needs back: Electron aborts on a Wayland session without it.
+pub(crate) fn host_wayland() -> Option<&'static std::ffi::OsStr> {
+    HOST_WAYLAND.get().map(std::ffi::OsString::as_os_str)
+}
+
 /// Forces winit onto XWayland on Linux by clearing `WAYLAND_DISPLAY` before the event loop is
 /// built.
 fn force_x11_backend_if_needed() {
@@ -181,7 +189,8 @@ fn force_x11_backend_if_needed() {
     if std::env::var_os("KOOCH_FORCE_WAYLAND").is_some() {
         return;
     }
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+    if let Some(display) = std::env::var_os("WAYLAND_DISPLAY") {
+        let _ = HOST_WAYLAND.set(display);
         // SAFETY: called at the very top of the editor entry point,
         // before any threads are spawned (tracing included) and before
         // the winit event loop reads the env — nothing can race it.
