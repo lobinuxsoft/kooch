@@ -7,9 +7,10 @@
 //! ```wgsl
 //! // kind: surface
 //! struct SurfaceParams {
-//!     tint: vec4<f32>,   // @color @default(1, 0.5, 0.2, 1)
-//!     strength: f32,     // @range(0, 4) @default(1)
+//!     tint: vec4<f32>,   // @color
+//!     strength: f32,     // @range(0, 4)
 //! }
+//! const SURFACE_DEFAULTS = SurfaceParams(vec4(1.0, 0.5, 0.2, 1.0), 1.0);
 //! var detail: texture_2d<f32>;   // @default(white)
 //! ```
 

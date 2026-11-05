@@ -214,8 +214,10 @@ straight alpha; the engine clips it, cuts the rounded corners and blends it.
 ```wgsl
 // kind: ui
 struct SurfaceParams {
-    speed: f32,  // @range(0, 8) @default(2)
+    speed: f32,  // @range(0, 8)
 }
+
+const SURFACE_DEFAULTS = SurfaceParams(2.0);
 
 fn ui(input: UiInput) -> vec4<f32> {
     let p = surface_params(input.material_id);
