@@ -5,12 +5,12 @@ use std::collections::{BTreeSet, HashMap};
 use egui::{Pos2, Vec2};
 use egui_snarl::{InPinId, NodeId, OutPinId};
 
-use super::{Graph, Node};
+use super::{Graph, GraphNode, Node};
 
 /// Nodes and the wires between them, positioned relative to their top-left corner.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Clip {
-    nodes: Vec<(Vec2, Node)>,
+    nodes: Vec<(Vec2, GraphNode)>,
     /// `(from node, output, to node, input)`, the nodes as indices into `nodes`.
     wires: Vec<(usize, usize, usize, usize)>,
 }
@@ -18,7 +18,7 @@ pub(crate) struct Clip {
 /// The selected nodes and the wires running between two of them. The output node stays: a graph
 /// has one. `None` when nothing copyable is selected.
 pub(crate) fn copy(graph: &Graph, selected: &[NodeId]) -> Option<Clip> {
-    let picked: Vec<(NodeId, Pos2, Node)> = selected
+    let picked: Vec<(NodeId, Pos2, GraphNode)> = selected
         .iter()
         .filter_map(|&id| {
             let info = graph.get_node_info(id)?;
@@ -66,7 +66,7 @@ pub(crate) fn paste(graph: &mut Graph, clip: &Clip, at: Pos2) -> Vec<NodeId> {
         .iter()
         .map(|(offset, node)| {
             let mut node = node.clone();
-            if let Some(name) = name_mut(&mut node) {
+            if let Some(name) = name_mut(&mut node.node) {
                 *name = free_name(name, &taken);
                 taken.insert(name.clone());
             }

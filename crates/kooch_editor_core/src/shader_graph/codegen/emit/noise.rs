@@ -1,7 +1,7 @@
 //! The noises' emission: which samples a fractal noise takes and which Voronoi pass runs depend on
 //! what is wired, so an unused output costs nothing (#1159).
 
-use egui_snarl::{InPinId, NodeId};
+use egui_snarl::NodeId;
 
 use super::Body;
 use crate::shader_graph::{
@@ -14,10 +14,6 @@ const GREEN_OFFSET: &str = "vec2<f32>(19.1, 7.3)";
 const BLUE_OFFSET: &str = "vec2<f32>(-5.7, 31.4)";
 
 impl Body<'_> {
-    fn wired_in(&self, node: NodeId, input: usize) -> bool {
-        self.wires.contains_key(&InPinId { node, input })
-    }
-
     fn wired_out(&self, node: NodeId, output: usize) -> bool {
         self.wires
             .values()

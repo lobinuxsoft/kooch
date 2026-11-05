@@ -60,12 +60,26 @@ impl Body<'_> {
                     .graph
                     .get_node(from.node)
                     .ok_or("a wire points at a node that is gone")?
+                    .node
                     .clone()
                     .migrated();
                 Ok(node.output_of(&value, from.output))
             }
-            None => Ok(fallback.to_owned()),
+            None => Ok(self
+                .graph
+                .get_node(node)
+                .and_then(|cell| cell.pins.get(&input))
+                .map_or_else(|| fallback.to_owned(), |value| vec4_literal(*value))),
         }
+    }
+
+    /// Whether something feeds `input`: a wire, or a value typed on the pin.
+    pub(super) fn wired_in(&self, node: NodeId, input: usize) -> bool {
+        self.wires.contains_key(&InPinId { node, input })
+            || self
+                .graph
+                .get_node(node)
+                .is_some_and(|cell| cell.pins.contains_key(&input))
     }
 
     /// The variable holding `id`'s value.
@@ -80,6 +94,7 @@ impl Body<'_> {
             .graph
             .get_node(id)
             .ok_or("a wire points at a node that is gone")?
+            .node
             .clone()
             .migrated();
         let argument = |body: &mut Self, input: usize| body.input(id, input);
@@ -119,6 +134,62 @@ impl Body<'_> {
                 let (point, extent, radius) =
                     (argument(self, 0)?, argument(self, 1)?, argument(self, 2)?);
                 format!("vec4<f32>(graph_rounded_box({point}.xy, {extent}.xy, {radius}.x))")
+            }
+            Node::UiPoint => {
+                let uv = self.input_or(id, 0, THIS_PIXEL)?;
+                format!("graph_ui_point({uv}.xy, input.size)")
+            }
+            Node::BlinnPhong => {
+                let toward_camera = "vec4<f32>(0.0, 0.0, 1.0, 0.0)";
+                let normal = self.input_or(id, 0, toward_camera)?;
+                let light = self.input_or(id, 1, toward_camera)?;
+                let view = self.input_or(id, 2, toward_camera)?;
+                let shininess = self.input_or(id, 3, "vec4<f32>(32.0)")?;
+                format!(
+                    "vec4<f32>(graph_blinn_phong({normal}.xyz, {light}.xyz, {view}.xyz, \
+                     {shininess}.x), 0.0, 0.0)"
+                )
+            }
+            Node::SdfFill => {
+                let distance = argument(self, 0)?;
+                let softness = self.input_or(id, 1, "vec4<f32>(0.01)")?;
+                format!("vec4<f32>(graph_sdf_fill({distance}.x, {softness}.x))")
+            }
+            Node::SdfStroke => {
+                let (distance, offset) = (argument(self, 0)?, argument(self, 1)?);
+                let width = self.input_or(id, 2, "vec4<f32>(0.01)")?;
+                let softness = self.input_or(id, 3, "vec4<f32>(0.005)")?;
+                format!(
+                    "vec4<f32>(graph_sdf_fill(abs({distance}.x - {offset}.x) - {width}.x, \
+                     {softness}.x))"
+                )
+            }
+            Node::Sway => {
+                let speed = self.input_or(id, 0, "vec4<f32>(1.0)")?;
+                let amount = self.input_or(id, 1, "vec4<f32>(1.0)")?;
+                let ratio = self.input_or(id, 2, "vec4<f32>(0.73)")?;
+                let clock = self.local(&format!("input.time * {speed}.x"));
+                format!("vec4<f32>(sin({clock}), cos({clock} * {ratio}.x), 0.0, 0.0) * {amount}.x")
+            }
+            Node::LightBand => {
+                let point = self.input_or(id, 0, THIS_PIXEL)?;
+                let direction = self.input_or(id, 1, "vec4<f32>(0.8, 0.6, 0.0, 0.0)")?;
+                let offset = argument(self, 2)?;
+                let width = self.input_or(id, 3, "vec4<f32>(0.15)")?;
+                let band = self.local(&format!(
+                    "(dot({point}.xy, {direction}.xy) - {offset}.x) / max({width}.x, 0.00001)"
+                ));
+                format!("vec4<f32>(exp(-{band} * {band}))")
+            }
+            Node::MulAdd => {
+                let value = argument(self, 0)?;
+                let scale = self.input_or(id, 1, "vec4<f32>(1.0)")?;
+                let offset = argument(self, 2)?;
+                format!("{value} * {scale} + {offset}")
+            }
+            Node::Luminance => {
+                let colour = argument(self, 0)?;
+                format!("vec4<f32>(dot({colour}.rgb, vec3<f32>(0.2126, 0.7152, 0.0722)))")
             }
             Node::Exp => format!("exp({})", argument(self, 0)?),
             Node::Rainbow => format!("graph_rainbow({}.x)", argument(self, 0)?),

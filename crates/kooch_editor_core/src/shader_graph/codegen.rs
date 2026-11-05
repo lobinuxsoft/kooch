@@ -71,12 +71,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     // nothing.
     let clip = (!post && !ui)
         .then_some(fallbacks.len() - 1)
-        .filter(|&input| {
-            body.wires.contains_key(&InPinId {
-                node: output,
-                input,
-            })
-        });
+        .filter(|&input| body.wired_in(output, input));
     let outputs: Vec<String> = fallbacks
         .iter()
         .enumerate()
@@ -172,13 +167,13 @@ fn declarations(graph: &Graph) -> String {
         out.push_str(");\n\n");
     }
     for (_, node) in graph.node_ids() {
-        if let Node::Texture { name, fallback, .. } = node {
+        if let Node::Texture { name, fallback, .. } = &node.node {
             let _ = writeln!(out, "var {name}: texture_2d<f32>;  // @default({fallback})");
         }
     }
     if graph
         .node_ids()
-        .any(|(_, n)| matches!(n, Node::Texture { .. }))
+        .any(|(_, n)| matches!(n.node, Node::Texture { .. }))
     {
         out.push('\n');
     }

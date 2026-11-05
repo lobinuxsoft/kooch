@@ -32,26 +32,28 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
 /// A transparent surface whose alpha is a Voronoi over the uv, tiled `cells` times or not at all.
 fn noise_shader(cells: Option<f32>) -> String {
     let mut graph = Graph::new();
-    let uv = graph.insert_node(Pos2::ZERO, Node::Uv);
+    let uv = graph.insert_node(Pos2::ZERO, Node::Uv.into());
     let noise = graph.insert_node(
         Pos2::ZERO,
         Node::VoronoiNoise {
             metric: "euclidean".to_owned(),
-        },
+        }
+        .into(),
     );
     let output = graph.insert_node(
         Pos2::ZERO,
         Node::ShaderOutput {
             kind: "transparent".to_owned(),
-        },
+        }
+        .into(),
     );
-    let scale = graph.insert_node(Pos2::ZERO, Node::ConstFloat(4.0));
+    let scale = graph.insert_node(Pos2::ZERO, Node::ConstFloat(4.0).into());
     wire(&mut graph, uv, 0, noise, 0);
     wire(&mut graph, scale, 0, noise, 1);
     // The transparent output's alpha, which the bake hands back as it is.
     wire(&mut graph, noise, 0, output, 5);
     if let Some(cells) = cells {
-        let tiling = graph.insert_node(Pos2::ZERO, Node::ConstFloat(cells));
+        let tiling = graph.insert_node(Pos2::ZERO, Node::ConstFloat(cells).into());
         wire(&mut graph, tiling, 0, noise, VORONOI_TILING);
     }
     generate(&graph).expect("the graph generates")
@@ -61,21 +63,23 @@ fn noise_shader(cells: Option<f32>) -> String {
 /// on that axis and the radius is left open.
 fn polar_shader(cells: Option<f32>) -> String {
     let mut graph = Graph::new();
-    let uv = graph.insert_node(Pos2::ZERO, Node::Uv);
-    let polar = graph.insert_node(Pos2::ZERO, Node::PolarCoordinates);
+    let uv = graph.insert_node(Pos2::ZERO, Node::Uv.into());
+    let polar = graph.insert_node(Pos2::ZERO, Node::PolarCoordinates.into());
     let noise = graph.insert_node(
         Pos2::ZERO,
         Node::VoronoiNoise {
             metric: "euclidean".to_owned(),
-        },
+        }
+        .into(),
     );
     let output = graph.insert_node(
         Pos2::ZERO,
         Node::ShaderOutput {
             kind: "transparent".to_owned(),
-        },
+        }
+        .into(),
     );
-    let scale = graph.insert_node(Pos2::ZERO, Node::ConstFloat(4.0));
+    let scale = graph.insert_node(Pos2::ZERO, Node::ConstFloat(4.0).into());
     wire(&mut graph, uv, 0, polar, 0);
     wire(&mut graph, polar, 0, noise, 0);
     wire(&mut graph, scale, 0, noise, 1);
@@ -86,7 +90,8 @@ fn polar_shader(cells: Option<f32>) -> String {
             Node::ConstVector {
                 width: 2,
                 value: [0.0, cells, 0.0, 0.0],
-            },
+            }
+            .into(),
         );
         wire(&mut graph, tiling, 0, noise, VORONOI_TILING);
     }

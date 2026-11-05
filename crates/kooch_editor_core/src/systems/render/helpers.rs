@@ -264,7 +264,7 @@ pub(super) fn preview_images(resources: &Resources) -> Vec<(String, kooch_core::
         .map(|open| {
             open.graph
                 .nodes()
-                .filter_map(|node| match node {
+                .filter_map(|cell| match &cell.node {
                     crate::shader_graph::Node::Texture {
                         name,
                         preview: Some(guid),

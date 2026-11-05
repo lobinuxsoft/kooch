@@ -39,15 +39,16 @@ fn an_old_file_extracts_typed() {
             width: 4,
             color: true,
             default: [1.0; 4],
-        },
+        }
+        .into(),
     );
-    graph.insert_node(Pos2::ZERO, Node::surface_output());
+    graph.insert_node(Pos2::ZERO, Node::surface_output().into());
     let source = generate(&graph).unwrap();
 
     let read = extract(&source).expect("the graph");
 
-    assert!(read.nodes().any(|n| matches!(n, Node::Color { .. })));
-    assert!(!read.nodes().any(|n| matches!(n, Node::Param { .. })));
+    assert!(read.nodes().any(|n| matches!(n.node, Node::Color { .. })));
+    assert!(!read.nodes().any(|n| matches!(n.node, Node::Param { .. })));
 }
 
 /// Each typed node reaches the engine as the kind the Inspector draws: a slider, a stepped slider, a
@@ -79,7 +80,7 @@ fn typed_params_keep_their_editors() {
         },
         Node::Output,
     ] {
-        graph.insert_node(Pos2::ZERO, node);
+        graph.insert_node(Pos2::ZERO, node.into());
     }
 
     let shader = Shader::parse(&generate(&graph).unwrap()).unwrap();
@@ -109,7 +110,7 @@ fn a_texture_without_preview_opens() {
 
     assert!(
         read.nodes()
-            .any(|n| matches!(n, Node::Texture { preview: None, .. }))
+            .any(|n| matches!(n.node, Node::Texture { preview: None, .. }))
     );
 }
 
@@ -131,8 +132,8 @@ fn an_old_constant_opens_typed() {
 fn a_scalar_fills_every_channel() {
     let emitted = |node: Node| {
         let mut graph = Graph::new();
-        let scalar = graph.insert_node(Pos2::ZERO, node);
-        let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
+        let scalar = graph.insert_node(Pos2::ZERO, node.into());
+        let output = graph.insert_node(Pos2::ZERO, Node::surface_output().into());
         graph.connect(
             OutPinId {
                 node: scalar,
@@ -159,8 +160,8 @@ fn a_scalar_fills_every_channel() {
 fn a_constant_writes_its_type() {
     let emitted = |node: Node| {
         let mut graph = Graph::new();
-        let constant = graph.insert_node(Pos2::ZERO, node);
-        let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
+        let constant = graph.insert_node(Pos2::ZERO, node.into());
+        let output = graph.insert_node(Pos2::ZERO, Node::surface_output().into());
         graph.connect(
             OutPinId {
                 node: constant,

@@ -71,6 +71,15 @@ const VORONOI: &[(&str, Pick)] = &[
 ];
 /// A fractal noise packs its value in `x` and, when the colour pin is wired, a colour in `yzw`.
 const FRACTAL: &[(&str, Pick)] = &[("value", Pick::Channel(0)), ("color", Pick::Yzw)];
+const LIT: &[(&str, Pick)] = &[
+    ("diffuse", Pick::Channel(0)),
+    ("specular", Pick::Channel(1)),
+];
+const UI_POINT: &[(&str, Pick)] = &[
+    ("point", Pick::FieldXy("point")),
+    ("aspect", Pick::FieldXy("aspect")),
+    ("pixel", Pick::Field("pixel")),
+];
 const SPLIT: &[(&str, Pick)] = &[
     ("x", Pick::Channel(0)),
     ("y", Pick::Channel(1)),
@@ -90,6 +99,14 @@ impl Node {
             Self::UiSize => "UI Size".to_owned(),
             Self::Parallax => "Parallax".to_owned(),
             Self::ImageNormal => "Image Normal".to_owned(),
+            Self::UiPoint => "UI Point".to_owned(),
+            Self::BlinnPhong => "Blinn-Phong".to_owned(),
+            Self::SdfFill => "SDF Fill".to_owned(),
+            Self::SdfStroke => "SDF Stroke".to_owned(),
+            Self::Sway => "Sway".to_owned(),
+            Self::LightBand => "Light Band".to_owned(),
+            Self::MulAdd => "Mul Add".to_owned(),
+            Self::Luminance => "Luminance".to_owned(),
             Self::Exp => "Exp".to_owned(),
             Self::Rainbow => "Rainbow".to_owned(),
             Self::SceneColor => "Scene Color".to_owned(),
@@ -247,6 +264,14 @@ impl Node {
             Self::Parallax => &["uv", "view", "depth", "focus"],
             Self::ImageNormal => &["uv", "strength"],
             Self::RoundedBox => &["point", "extent", "radius"],
+            Self::UiPoint => &["uv"],
+            Self::BlinnPhong => &["normal", "light", "view", "shininess"],
+            Self::SdfFill => &["distance", "softness"],
+            Self::SdfStroke => &["distance", "offset", "width", "softness"],
+            Self::Sway => &["speed", "amount", "ratio"],
+            Self::LightBand => &["point", "direction", "offset", "width"],
+            Self::MulAdd => &["value", "scale", "offset"],
+            Self::Luminance => &["colour"],
             Self::Exp => &["value"],
             Self::Rainbow => &["phase"],
             Self::WhiteNoise => &["uv", "scale", "tiling"],
@@ -331,6 +356,9 @@ impl Node {
             | Self::RadialShear
             | Self::Spherize => UV,
             Self::PolarCoordinates => POLAR,
+            Self::BlinnPhong => LIT,
+            Self::UiPoint => UI_POINT,
+            Self::Sway => XY,
             Self::Vector { width, .. } | Self::ConstVector { width, .. } => match width {
                 2 => XY,
                 3 => XYZ,
@@ -405,7 +433,8 @@ impl Node {
             | Self::Exp
             | Self::Saturate
             | Self::Remap
-            | Self::Mix => Category::Math,
+            | Self::Mix
+            | Self::MulAdd => Category::Math,
             Self::Dot
             | Self::Cross
             | Self::Normalize
@@ -426,13 +455,18 @@ impl Node {
             | Self::UnpackNormal
             | Self::Desaturate
             | Self::Blend { .. }
+            | Self::Luminance
+            | Self::BlinnPhong
+            | Self::Sway
+            | Self::LightBand
             | Self::Rainbow => Category::Effect,
             Self::UiImage
             | Self::UiColor
             | Self::UiBorderColor
             | Self::UiSize
             | Self::Parallax
-            | Self::ImageNormal => Category::Ui,
+            | Self::ImageNormal
+            | Self::UiPoint => Category::Ui,
             Self::FractalNoise { .. }
             | Self::VoronoiNoise { .. }
             | Self::Noise
@@ -445,7 +479,9 @@ impl Node {
             | Self::Ring
             | Self::Polygon
             | Self::Checker
-            | Self::RoundedBox => Category::Shape,
+            | Self::RoundedBox
+            | Self::SdfFill
+            | Self::SdfStroke => Category::Shape,
             Self::Output | Self::ShaderOutput { .. } => Category::Output,
         }
     }
@@ -458,7 +494,8 @@ impl Node {
             | Self::UiBorderColor
             | Self::UiSize
             | Self::Parallax
-            | Self::ImageNormal => kind == "ui",
+            | Self::ImageNormal
+            | Self::UiPoint => kind == "ui",
             Self::WorldPosition
             | Self::WorldNormal
             | Self::ViewDirection

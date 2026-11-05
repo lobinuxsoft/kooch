@@ -11,24 +11,26 @@ mod uv;
 /// A tint parameter times an albedo texture sampled at the mesh's uv, into base colour.
 fn tinted_texture() -> Graph {
     let mut graph = Graph::new();
-    let uv = graph.insert_node(Pos2::ZERO, Node::Uv);
+    let uv = graph.insert_node(Pos2::ZERO, Node::Uv.into());
     let albedo = graph.insert_node(
         Pos2::ZERO,
         Node::Texture {
             name: "albedo".to_owned(),
             fallback: "white".to_owned(),
             preview: None,
-        },
+        }
+        .into(),
     );
     let tint = graph.insert_node(
         Pos2::ZERO,
         Node::Color {
             name: "tint".to_owned(),
             default: [1.0, 0.5, 0.25, 1.0],
-        },
+        }
+        .into(),
     );
-    let multiply = graph.insert_node(Pos2::ZERO, Node::Multiply);
-    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
+    let multiply = graph.insert_node(Pos2::ZERO, Node::Multiply.into());
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output().into());
     let wire = |graph: &mut Graph, from, to, input| {
         graph.connect(
             OutPinId {
@@ -70,9 +72,10 @@ fn a_narrow_color_param_parses() {
             width: 3,
             color: true,
             default: [1.0, 0.5, 0.25, 0.0],
-        },
+        }
+        .into(),
     );
-    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output().into());
     graph.connect(
         OutPinId {
             node: emissive,
@@ -99,8 +102,8 @@ fn the_graph_survives_its_own_file() {
     let source = generate(&graph).unwrap();
     assert!(is_generated(&source));
     let read = extract(&source).expect("the block holds a graph");
-    let before: Vec<&Node> = graph.nodes().collect();
-    let after: Vec<&Node> = read.nodes().collect();
+    let before: Vec<_> = graph.nodes().collect();
+    let after: Vec<_> = read.nodes().collect();
     assert_eq!(after, before);
 }
 
@@ -117,7 +120,7 @@ fn a_handwritten_shader_carries_no_graph() {
 #[test]
 fn an_empty_output_still_compiles() {
     let mut graph = Graph::new();
-    graph.insert_node(Pos2::ZERO, Node::surface_output());
+    graph.insert_node(Pos2::ZERO, Node::surface_output().into());
     let source = generate(&graph).unwrap();
     let shader = Shader::parse(&source).unwrap();
     assert!(shader.params.is_empty());
@@ -127,7 +130,7 @@ fn an_empty_output_still_compiles() {
 #[test]
 fn a_graph_without_an_output_is_refused() {
     let mut graph = Graph::new();
-    graph.insert_node(Pos2::ZERO, Node::Uv);
+    graph.insert_node(Pos2::ZERO, Node::Uv.into());
     assert!(generate(&graph).is_err());
 }
 
@@ -135,8 +138,8 @@ fn a_graph_without_an_output_is_refused() {
 #[test]
 fn a_cycle_is_refused() {
     let mut graph = Graph::new();
-    let add = graph.insert_node(Pos2::ZERO, Node::Add);
-    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
+    let add = graph.insert_node(Pos2::ZERO, Node::Add.into());
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output().into());
     graph.connect(
         OutPinId {
             node: add,
@@ -175,12 +178,13 @@ fn every_node_compiles() {
             }
             let name = format!("{} into {kind}", node.title());
             let mut graph = Graph::new();
-            let added = graph.insert_node(Pos2::ZERO, node);
+            let added = graph.insert_node(Pos2::ZERO, node.into());
             let output = graph.insert_node(
                 Pos2::ZERO,
                 Node::ShaderOutput {
                     kind: kind.to_owned(),
-                },
+                }
+                .into(),
             );
             graph.connect(
                 OutPinId {
@@ -235,7 +239,7 @@ fn the_starter_graph_is_a_material() {
 #[test]
 fn every_noise_in_one_graph_compiles() {
     let mut graph = Graph::new();
-    let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output().into());
     let noises = [
         Node::Noise,
         Node::GradientNoise,
@@ -244,7 +248,7 @@ fn every_noise_in_one_graph_compiles() {
         Node::Voronoi,
     ];
     for (input, noise) in noises.into_iter().enumerate() {
-        let added = graph.insert_node(Pos2::ZERO, noise);
+        let added = graph.insert_node(Pos2::ZERO, noise.into());
         graph.connect(
             OutPinId {
                 node: added,
@@ -280,8 +284,8 @@ fn every_output_is_its_own_value() {
     ] {
         let name = node.title();
         let mut graph = Graph::new();
-        let source_node = graph.insert_node(Pos2::ZERO, node);
-        let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
+        let source_node = graph.insert_node(Pos2::ZERO, node.into());
+        let output = graph.insert_node(Pos2::ZERO, Node::surface_output().into());
         // Four outputs into four of the output's five inputs: base colour, normal, metallic, roughness.
         for pin in 0..4 {
             graph.connect(
@@ -333,8 +337,8 @@ fn every_pin_compiles() {
         for pin in 1..node.outputs().len() {
             let name = format!("{} → {}", node.title(), node.outputs()[pin].0);
             let mut graph = Graph::new();
-            let added = graph.insert_node(Pos2::ZERO, node.clone());
-            let output = graph.insert_node(Pos2::ZERO, Node::surface_output());
+            let added = graph.insert_node(Pos2::ZERO, node.clone().into());
+            let output = graph.insert_node(Pos2::ZERO, Node::surface_output().into());
             graph.connect(
                 OutPinId {
                     node: added,
@@ -387,12 +391,13 @@ fn a_legacy_output_is_a_surface() {
 fn scene_color_reads_only_in_post() {
     let graph_with = |kind: &str| {
         let mut graph = Graph::new();
-        let scene = graph.insert_node(Pos2::ZERO, Node::SceneColor);
+        let scene = graph.insert_node(Pos2::ZERO, Node::SceneColor.into());
         let output = graph.insert_node(
             Pos2::ZERO,
             Node::ShaderOutput {
                 kind: kind.to_owned(),
-            },
+            }
+            .into(),
         );
         graph.connect(
             OutPinId {
@@ -421,7 +426,8 @@ fn transparent_writes_alpha() {
         egui::pos2(0.0, 0.0),
         Node::ShaderOutput {
             kind: "transparent".to_owned(),
-        },
+        }
+        .into(),
     );
     let source = generate(&graph).unwrap();
     assert!(source.contains("out.alpha = vec4<f32>(1.0).x;"), "{source}");
@@ -434,12 +440,13 @@ fn transparent_writes_alpha() {
 fn a_wired_clip_masks() {
     for kind in ["surface", "unlit", "transparent", "transparent_unlit"] {
         let mut graph = Graph::new();
-        let uv = graph.insert_node(Pos2::ZERO, Node::Uv);
+        let uv = graph.insert_node(Pos2::ZERO, Node::Uv.into());
         let output = graph.insert_node(
             Pos2::ZERO,
             Node::ShaderOutput {
                 kind: kind.to_owned(),
-            },
+            }
+            .into(),
         );
         assert!(!Shader::parse(&generate(&graph).unwrap()).unwrap().masked());
         let clip = Node::ShaderOutput {
@@ -467,3 +474,40 @@ fn a_wired_clip_masks() {
 }
 
 mod typed_params;
+
+/// A graph saved before pins held values carries bare nodes, and has to keep opening (#1809).
+#[test]
+fn a_bare_node_graph_opens() {
+    let mut old = egui_snarl::Snarl::<Node>::new();
+    old.insert_node(Pos2::ZERO, Node::Multiply);
+    let ron = ron::ser::to_string(&old).unwrap();
+
+    let read = extract(&format!("{MARKER}{ron}*/")).expect("an old graph still opens");
+
+    assert!(read.nodes().any(|cell| cell.node == Node::Multiply));
+}
+
+/// The value is written while the pin is free, the wire wins once it is not, and both survive the
+/// round trip through the file.
+#[test]
+fn a_wire_overrides_a_pin_value() {
+    let mut graph = Graph::new();
+    let scaled = graph.insert_node(Pos2::ZERO, Node::Abs.into());
+    let output = graph.insert_node(Pos2::ZERO, Node::surface_output().into());
+    let wire = |node, output, input, graph: &mut Graph, into| {
+        graph.connect(OutPinId { node, output }, InPinId { node: into, input });
+    };
+    wire(scaled, 0, 0, &mut graph, output);
+    graph.get_node_mut(scaled).unwrap().set_pin(0, [0.25; 4]);
+
+    let source = generate(&graph).unwrap();
+    assert!(source.contains("abs(vec4<f32>(0.25, 0.25, 0.25, 0.25))"));
+    assert_eq!(
+        extract(&source).unwrap().get_node(scaled),
+        graph.get_node(scaled)
+    );
+
+    let uv = graph.insert_node(Pos2::ZERO, Node::Uv.into());
+    wire(uv, 0, 0, &mut graph, scaled);
+    assert!(!generate(&graph).unwrap().contains("0.25"));
+}
