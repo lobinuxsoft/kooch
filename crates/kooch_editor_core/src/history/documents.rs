@@ -217,6 +217,10 @@ fn capture_asset(resources: &mut Resources, guid: Guid) -> Option<DocumentState>
     let type_name = resources
         .get::<kooch_core::asset_database::AssetDatabase>()
         .and_then(|db| db.entry(guid)?.type_name.clone())?;
+    if crate::data_assets::is_data(resources, &type_name) {
+        let fields = crate::data_assets::fields_of(resources, guid)?;
+        return Some(DocumentState::AssetFields(fields));
+    }
     let registration = kooch_ecs::reflect::reflected_asset(&type_name)?;
     Some(DocumentState::AssetFields((registration.read)(
         resources, guid,
@@ -271,6 +275,21 @@ fn restore(resources: &mut Resources, document: &Document, state: DocumentState)
             let type_name = resources
                 .get::<kooch_core::asset_database::AssetDatabase>()
                 .and_then(|db| db.entry(*guid)?.type_name.clone());
+            if type_name
+                .as_deref()
+                .is_some_and(|name| crate::data_assets::is_data(resources, name))
+            {
+                for (field, value) in fields {
+                    crate::data_assets::write(resources, *guid, &field, value);
+                }
+                let path = resources
+                    .get::<kooch_core::asset_database::AssetDatabase>()
+                    .and_then(|db| Some(db.entry(*guid)?.path.clone()));
+                if let Some(path) = path {
+                    crate::data_assets::persist(resources, &path);
+                }
+                return;
+            }
             let Some(registration) =
                 type_name.and_then(|name| kooch_ecs::reflect::reflected_asset(&name))
             else {

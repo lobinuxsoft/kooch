@@ -2,6 +2,7 @@
 
 mod accessor;
 pub mod asset_registry;
+pub mod data_asset;
 mod entity_ref;
 mod error;
 mod field;
@@ -12,6 +13,9 @@ mod value;
 
 pub(crate) use accessor::{ReflectAccessor, TypedReflectAccessor};
 pub use asset_registry::{ReflectedAssetRegistration, reflected_asset, reflected_asset_types};
+pub use data_asset::{
+    DataAsset, DataFields, data_asset, data_fields, data_text, install_data_asset,
+};
 pub use entity_ref::EntityRef;
 pub use error::ReflectError;
 pub use field::{

@@ -112,6 +112,11 @@ pub(in crate::panels) fn create_edit(
                 name,
                 shader: None,
             },
+            CreateKind::Data(index) => EditorAction::CreateDataAsset {
+                folder: parent,
+                name,
+                index,
+            },
             CreateKind::File(kind) => EditorAction::CreateFile {
                 folder: parent,
                 name,
@@ -129,6 +134,7 @@ pub(super) fn create_hint(kind: CreateKind) -> &'static str {
     match kind {
         CreateKind::Folder => "Folder name…",
         CreateKind::Material => "Material name…",
+        CreateKind::Data(_) => "Asset name…",
         CreateKind::File(NewFileKind::RustComponent) => "Component name (e.g. Health)…",
         CreateKind::File(NewFileKind::RustSystem) => "System name (e.g. Movement)…",
         CreateKind::File(NewFileKind::Scene) => "Scene name…",

@@ -16,6 +16,7 @@ pub(in crate::panels) fn folder_menu(
     rename: &mut Option<RenameState>,
     pending: &mut Option<PendingCreate>,
     has_settings: bool,
+    data_types: &[String],
     role: FolderRole,
 ) {
     // Offered on folders too, and on read-only ones: opening the crate that owns a folder is how
@@ -163,6 +164,16 @@ pub(in crate::panels) fn folder_menu(
     ) {
         start(CreateKind::File(NewFileKind::Layers));
         ui.close();
+    }
+    for (index, name) in data_types.iter().enumerate() {
+        if entry(
+            ui,
+            format!("{} New {name}", icons::SLIDERS),
+            FolderRole::Assets,
+        ) {
+            start(CreateKind::Data(index));
+            ui.close();
+        }
     }
     // The synthetic root node has an empty name; it is not itself
     // renamable / deletable (that would target the crate root).

@@ -22,6 +22,11 @@ use crate::systems::LastScannedProject;
 pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) -> bool {
     match action {
         EditorAction::WriteAsset { path, text } => write_text(resources, path, text),
+        EditorAction::CreateDataAsset {
+            folder,
+            name,
+            index,
+        } => create_data_asset(resources, folder, name, *index),
         EditorAction::CreateFolder { parent, name } => create_folder(parent, name),
         EditorAction::CreateMaterial {
             folder,
@@ -263,6 +268,24 @@ fn prune_db_under(resources: &mut Resources, dir: &Path) {
 
 /// Forces `scan_project_assets_system` to re-run the full project scan +
 /// eager import next frame by clearing its "already scanned" marker.
+fn create_data_asset(resources: &mut Resources, folder: &Path, name: &str, index: usize) {
+    let types = resources.get::<kooch_core::dynamic::DataAssetTypes>();
+    let Some(schema) = types.and_then(|types| types.all().get(index)).cloned() else {
+        tracing::error!(index, "no such data asset type in the project");
+        return;
+    };
+    let file = unique_target(folder, OsStr::new(&format!("{name}.{}", schema.extension)));
+    if let Err(error) = std::fs::write(&file, &schema.defaults) {
+        tracing::error!(file = %file.display(), %error, "failed to write the data asset");
+        return;
+    }
+    // Now, not at the rescan: `asset_created` announces the guid.
+    if let Err(error) = kooch_core::asset_meta::read_or_create_typed(&file, &schema.type_name) {
+        tracing::error!(file = %file.display(), %error, "failed to write the asset's .meta");
+    }
+    asset_created(resources, &file, "data asset");
+}
+
 /// `path` under `assets`, or `None` when it would land outside it.
 fn inside_assets(assets: &Path, path: &str) -> Option<PathBuf> {
     let relative = Path::new(path);

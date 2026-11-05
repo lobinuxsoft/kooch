@@ -4,6 +4,17 @@
 /// A project function a panel's `on:click` runs in the editor.
 pub type EditorHandler = fn(&mut EditorCall);
 
+/// A project's data asset type, described for an editor that cannot name it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DataAssetSchema {
+    /// Fully qualified type name, what the file's `.meta` records.
+    pub type_name: String,
+    /// File extension, without the dot.
+    pub extension: String,
+    /// A fresh file's text: its fields, their kinds and the type's defaults.
+    pub defaults: String,
+}
+
 /// One selected entity and its numeric fields, keyed `Type.field`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SelectedEntity {

@@ -340,6 +340,12 @@ pub(crate) enum EditorAction {
         path: String,
         text: String,
     },
+    /// Create `<folder>/<name>` of the project's `index`th data asset type, at its defaults.
+    CreateDataAsset {
+        folder: PathBuf,
+        name: String,
+        index: usize,
+    },
     /// Create an empty folder `<parent>/<name>`.
     CreateFolder {
         parent: PathBuf,

@@ -128,6 +128,14 @@ pub fn load_project_plugin(
             let mut host = EngineHost::running(resources);
             plugin.build(&mut host);
             plugins.loaded.push(path);
+            // Its data files only have a type from here on, and a scan may have passed them over.
+            if resources
+                .get::<kooch_core::dynamic::DataAssetTypes>()
+                .is_some()
+                && let Some(last) = resources.get_mut::<crate::systems::LastScannedProject>()
+            {
+                last.root = None;
+            }
         }
         // Not fatal either way. The project still opens; it just shows
         // none of its own components until a build produces a library
@@ -164,6 +172,7 @@ pub fn unload_project_plugins(resources: &mut Resources) {
     }
     // Before the library goes: these point into it.
     resources.remove::<kooch_core::dynamic::EditorHandlers>();
+    resources.remove::<kooch_core::dynamic::DataAssetTypes>();
     resources.remove::<ProjectPlugins>();
 }
 

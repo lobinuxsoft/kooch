@@ -28,6 +28,7 @@ pub(crate) fn draw_asset_browser_content(
     project_root: Option<&Path>,
     main_scene: Option<&Path>,
     ui_panel: Option<&mut crate::ui_panel::UiPanel>,
+    data_types: &[String],
     actions: &mut Vec<EditorAction>,
 ) {
     // Full panel area, captured before content so drop detection can
@@ -127,6 +128,7 @@ pub(crate) fn draw_asset_browser_content(
             main_scene,
             project_root,
             has_settings: has_render_settings(catalog, project_root),
+            data_types,
         };
         let edits = ui_tree::Edits {
             rename: &mut rename,

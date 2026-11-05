@@ -10,7 +10,7 @@ use super::error::AssetDatabaseError;
 use super::report::ScanReport;
 
 /// `(extension, asset type name)` for every loader the app registered.
-pub(super) type KnownExtensions<'a> = &'a [(&'static str, &'static str)];
+pub(super) type KnownExtensions<'a> = &'a [(&'a str, &'a str)];
 
 pub(super) fn scan_recursive(
     dir: &Path,
@@ -93,7 +93,7 @@ pub(super) fn scan_recursive(
 }
 
 /// The asset type a registered loader claims for this file's extension.
-fn known_type_for(path: &Path, known: KnownExtensions<'_>) -> Option<&'static str> {
+fn known_type_for<'a>(path: &Path, known: KnownExtensions<'a>) -> Option<&'a str> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     known
         .iter()

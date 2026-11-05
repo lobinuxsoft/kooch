@@ -171,6 +171,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     if let Some(panels) = ui_panels.as_mut() {
         panels.prepare(&taken.gpu, &mut taken.overlay.renderer);
         panels.handlers = resources.remove::<kooch_core::dynamic::EditorHandlers>();
+        panels.sync_data_types(resources.get::<kooch_core::dynamic::DataAssetTypes>());
     }
     let toolbar = toolbar_info(
         resources,

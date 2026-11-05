@@ -3,7 +3,7 @@
 
 /// Current plugin API version; increment on any breaking change to [`Engine`](crate::Engine),
 /// [`KoochPlugin`](crate::KoochPlugin) or the schema types.
-pub const API_VERSION: u32 = 6;
+pub const API_VERSION: u32 = 7;
 
 /// The engine's version, shared through `version.workspace = true`. 🔴 Separate from
 /// [`API_VERSION`]: field layouts change with no signature change, and vendored engines drift

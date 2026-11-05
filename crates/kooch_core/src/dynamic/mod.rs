@@ -31,7 +31,7 @@ pub mod resource_registry;
 pub mod wrapper;
 
 pub use bridges::{ComponentBridge, EntityBridge};
-pub use editor_handlers::EditorHandlers;
+pub use editor_handlers::{DataAssetTypes, EditorHandlers};
 pub use host::EngineHost;
 pub use loader::{PluginLoadError, PluginLoader};
 // Re-exported because `PluginLoadError::Incompatible` carries one, so a
@@ -39,7 +39,7 @@ pub use loader::{PluginLoadError, PluginLoader};
 // load" already depends on the type.
 pub use kooch_plugin_api::types::pack_entity;
 pub use kooch_plugin_api::version::Incompatibility;
-pub use kooch_plugin_api::{EditorCall, EditorRequest, SelectedEntity};
+pub use kooch_plugin_api::{DataAssetSchema, EditorCall, EditorRequest, SelectedEntity};
 pub use plugin_data::PluginData;
 pub use resource_registry::ResourceRegistry;
 pub use wrapper::DynamicPlugin;

@@ -27,6 +27,8 @@ struct SourceFile {
     systems: Vec<DetectedSystem>,
     /// Functions under `src/tools/` a panel's `on:click` can name.
     actions: Vec<String>,
+    /// Types the project keeps in its own files.
+    assets: Vec<String>,
 }
 
 /// A system the scan found, and the binding its `#[system(...)]` asked for.
@@ -305,6 +307,16 @@ fn detect_actions(content: &str) -> Vec<String> {
         .collect()
 }
 
+/// Each type with an `impl DataAsset for`.
+fn detect_assets(content: &str) -> Vec<String> {
+    content
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("impl DataAsset for "))
+        .map(ident_prefix)
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
 /// Recursively collects source files under `dir` that declare a component
 /// or system. `root` is the `src/` directory (for relative paths).
 fn scan(root: &Path, dir: &Path, out: &mut Vec<SourceFile>) {
@@ -342,7 +354,11 @@ fn scan(root: &Path, dir: &Path, out: &mut Vec<SourceFile>) {
                 (components, systems, Vec::new())
             }
         };
-        if components.is_empty() && systems.is_empty() && actions.is_empty() {
+        let assets = match rel.starts_with(TOOLS) {
+            true => Vec::new(),
+            false => detect_assets(&content),
+        };
+        if components.is_empty() && systems.is_empty() && actions.is_empty() && assets.is_empty() {
             continue;
         }
         let module = render::module_path(&rel);
@@ -352,6 +368,7 @@ fn scan(root: &Path, dir: &Path, out: &mut Vec<SourceFile>) {
             components,
             systems,
             actions,
+            assets,
         });
     }
 }

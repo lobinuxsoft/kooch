@@ -52,6 +52,11 @@ pub trait Engine {
         let _ = (name, handler);
     }
 
+    /// Declares a data asset type the editor creates and edits. A host with no editor ignores it.
+    fn register_data_asset(&mut self, schema: crate::editor_call::DataAssetSchema) {
+        let _ = schema;
+    }
+
     /// Writes a line to the engine's log.
     fn log(&self, message: &str);
 

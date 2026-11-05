@@ -471,21 +471,26 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
                 self.selected_asset,
                 self.actions,
             ),
-            EditorTab::AssetBrowser => draw_asset_browser_content(
-                ui,
-                focused,
-                self.asset_nav,
-                self.asset_catalog,
-                self.selected_asset,
-                self.current_folder,
-                self.engine_assets_root,
-                self.project_assets_root,
-                self.main_scene,
-                self.ui_panels
-                    .as_deref_mut()
-                    .map(|panels| &mut panels.asset_browser),
-                self.actions,
-            ),
+            EditorTab::AssetBrowser => {
+                let (panel, data_types) = match self.ui_panels.as_deref_mut() {
+                    Some(panels) => (Some(&mut panels.asset_browser), &panels.data_types[..]),
+                    None => (None, &[][..]),
+                };
+                draw_asset_browser_content(
+                    ui,
+                    focused,
+                    self.asset_nav,
+                    self.asset_catalog,
+                    self.selected_asset,
+                    self.current_folder,
+                    self.engine_assets_root,
+                    self.project_assets_root,
+                    self.main_scene,
+                    panel,
+                    data_types,
+                    self.actions,
+                )
+            }
         }
     }
 

@@ -34,9 +34,11 @@ pub(crate) fn gather_asset_detail(guid: Guid, resources: &mut Resources) -> Opti
         // Anything without a bespoke view: if the type registered itself as reflected, the
         // Inspector edits it with the same grid components use. Before #744 every type landed on
         // the label below, and a new asset type cost three edits in this crate.
-        other => gather_reflected(other, guid, resources).or(Some(AssetDetail::Unknown {
-            type_name: other.to_owned(),
-        })),
+        other => gather_reflected(other, guid, resources)
+            .or_else(|| gather_data(other, guid, resources))
+            .or(Some(AssetDetail::Unknown {
+                type_name: other.to_owned(),
+            })),
     }
 }
 
@@ -58,6 +60,18 @@ fn gather_reflected(type_name: &str, guid: Guid, resources: &mut Resources) -> O
         type_name: type_name.to_owned(),
         fields,
         field_metas: Some((registration.field_metas)()),
+    })
+}
+
+/// Reads a file of a type the project declared.
+fn gather_data(type_name: &str, guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
+    if !crate::data_assets::is_data(resources, type_name) {
+        return None;
+    }
+    Some(AssetDetail::Reflected {
+        type_name: type_name.to_owned(),
+        fields: crate::data_assets::fields_of(resources, guid)?,
+        field_metas: None,
     })
 }
 

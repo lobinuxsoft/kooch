@@ -93,6 +93,16 @@ where
     engine.register_component(schema)
 }
 
+/// Describes a project's data asset type to the engine.
+pub fn declare_data_asset<T: crate::reflect::DataAsset>(engine: &mut dyn kooch_plugin_api::Engine) {
+    let fields = crate::reflect::data_fields(&T::default());
+    engine.register_data_asset(kooch_plugin_api::DataAssetSchema {
+        type_name: std::any::type_name::<T>().to_owned(),
+        extension: T::EXTENSION.to_owned(),
+        defaults: crate::reflect::data_text(&fields),
+    });
+}
+
 /// Converts a plugin's schema into a registrable type.
 pub(crate) fn to_dynamic_type(schema: &ComponentSchema, source: &str) -> DynamicType {
     DynamicType {

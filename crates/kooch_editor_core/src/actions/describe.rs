@@ -122,6 +122,7 @@ impl EditorAction {
             // The manifest is a file beside the project, not the world.
             | Self::SetMainScene { .. }
             | Self::WriteAsset { .. }
+            | Self::CreateDataAsset { .. }
             | Self::CreateFile { .. } => false,
         }
     }
@@ -228,6 +229,7 @@ impl EditorAction {
             // the Play guard must not block it.
             | Self::SetSystemEnabled { .. }
             | Self::WriteAsset { .. }
+            | Self::CreateDataAsset { .. }
             | Self::CreateFile { .. } => false,
         }
     }
