@@ -2,10 +2,12 @@
 // A bar bent along an arc, filling left to right. `background-color` is the fill,
 // `border-color` the track behind it.
 struct SurfaceParams {
-    fill: f32,       // @range(0, 1) @default(0.75)
-    bend: f32,       // @range(0, 1) @default(0.35)
-    thickness: f32,  // @range(0, 1) @default(0.4)
+    fill: f32,       // @range(0, 1)
+    bend: f32,       // @range(0, 1)
+    thickness: f32,  // @range(0, 1)
 }
+
+const SURFACE_DEFAULTS = SurfaceParams(0.75, 0.35, 0.4);
 
 fn ui(input: UiInput) -> vec4<f32> {
     let p = surface_params(input.material_id);

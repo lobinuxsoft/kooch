@@ -2,9 +2,11 @@
 // An arc that fills clockwise from the top: a circular health bar or cooldown.
 // `background-color` is the fill, `border-color` the track behind it.
 struct SurfaceParams {
-    fill: f32,       // @range(0, 1) @default(0.75)
-    thickness: f32,  // @range(0, 0.5) @default(0.14)
+    fill: f32,       // @range(0, 1)
+    thickness: f32,  // @range(0, 0.5)
 }
+
+const SURFACE_DEFAULTS = SurfaceParams(0.75, 0.14);
 
 fn ui(input: UiInput) -> vec4<f32> {
     let p = surface_params(input.material_id);
