@@ -4,9 +4,11 @@
 use std::hash::{Hash, Hasher};
 
 use glam::Vec2;
+use kooch_core::Guid;
 use taffy::{AvailableSpace, NodeId, Size, Style, TaffyTree};
 
 use crate::atlas::{GlyphAtlas, GlyphKey, subpixel};
+use crate::materials::{NodeParam, ParamBind};
 use crate::text::{Text, UiFonts, measure};
 use scroll::UNCLIPPED;
 
@@ -83,7 +85,9 @@ pub struct UiTree {
     pub(crate) autofocus: Option<UiNode>,
     /// Drawn last frame: what tells a document that just appeared from one already up.
     pub(crate) shown: bool,
-    material: Vec<u32>,
+    pub(crate) material: Vec<Option<Guid>>,
+    pub(crate) params: Vec<Vec<NodeParam>>,
+    pub(crate) param_binds: Vec<ParamBind>,
     rect: Vec<UiRect>,
     /// How far a container's children are moved up and left by scrolling, in canvas units.
     scroll: Vec<Vec2>,
@@ -114,8 +118,6 @@ unsafe impl Sync for UiTree {}
 
 impl UiTree {
     pub const ROOT: UiNode = UiNode(0);
-    /// The default UI material, until a style names one.
-    pub const NO_MATERIAL: u32 = u32::MAX;
 
     pub fn new(root: Style) -> Self {
         let mut tree = Self {
@@ -133,6 +135,8 @@ impl UiTree {
             autofocus: None,
             shown: false,
             material: Vec::new(),
+            params: Vec::new(),
+            param_binds: Vec::new(),
             rect: Vec::new(),
             scroll: Vec::new(),
             clip: Vec::new(),
@@ -478,16 +482,6 @@ impl UiTree {
             })
     }
 
-    pub fn set_material(&mut self, node: UiNode, material: u32) {
-        if let Some(own) = self.material.get_mut(node.0 as usize) {
-            *own = material;
-        }
-    }
-
-    pub fn material(&self, node: UiNode) -> Option<u32> {
-        self.material.get(node.0 as usize).copied()
-    }
-
     pub fn len(&self) -> usize {
         self.taffy.len()
     }
@@ -502,7 +496,8 @@ impl UiTree {
         self.parent.push(parent);
         self.name.push(None);
         self.click.push(None);
-        self.material.push(Self::NO_MATERIAL);
+        self.material.push(None);
+        self.params.push(Vec::new());
         self.rect.push(UiRect::default());
         self.scroll.push(Vec2::ZERO);
         self.clip.push(UNCLIPPED);

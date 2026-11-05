@@ -278,7 +278,16 @@ impl UiPanel {
             return;
         }
         let physical = glam::UVec2::new(width, height);
-        kooch_ui::draw_tree(tree, &mut self.atlas, ppp, physical, &mut self.list);
+        // No shaders: a panel redraws only when it changes, so `time` would not run.
+        let shaders = kooch_ui::UiShaders::default();
+        kooch_ui::draw_tree(
+            tree,
+            &mut self.atlas,
+            &shaders,
+            ppp,
+            physical,
+            &mut self.list,
+        );
         self.drawn = Some((width, height));
         self.fresh = true;
     }

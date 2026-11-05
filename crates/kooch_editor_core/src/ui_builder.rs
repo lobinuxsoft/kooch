@@ -6,6 +6,7 @@ mod ghosts;
 mod known;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use kooch_core::Guid;
@@ -15,10 +16,11 @@ use kooch_core::gpu::GpuContext;
 use kooch_core::resource::Resources;
 use kooch_ecs::UiDrawList;
 use kooch_ecs::query::Query;
+use kooch_render::material::{ParamKind, Shader, ShaderParam};
 use kooch_render::ui::UiPass;
 use kooch_ui::markup::Markup;
 use kooch_ui::taffy::{AvailableSpace, Size};
-use kooch_ui::{CANVAS_HEIGHT, GlyphAtlas, UiDocument, UiFonts, UiTree};
+use kooch_ui::{CANVAS_HEIGHT, GlyphAtlas, UiDocument, UiFonts, UiShaders, UiTree};
 
 use crate::viewport::ViewportTarget;
 
@@ -59,6 +61,10 @@ pub(crate) struct UiBuilder {
     /// The file's and its sheet's mtimes when last read: a change on disk rebuilds.
     read_at: (SystemTime, SystemTime),
     pub selected: Option<u32>,
+    /// What the canvas's materials read; the game's `load_shaders` never sees this tree.
+    pub shaders: UiShaders,
+    /// The last material the Inspector asked about, parsed once rather than per frame.
+    pub material_params: Option<(Arc<str>, Vec<ShaderParam>)>,
     /// A named node of the selected `<use>`'s template: the Inspector edits its `<set>`.
     pub inner: Option<String>,
     /// Each `<use>` and its template's elements.
@@ -115,6 +121,30 @@ impl UiBuilder {
             }
         }
         self.texture = self.target.as_ref().map(ViewportTarget::texture_id);
+    }
+
+    /// What the material of the element at `origin` declares, textures aside.
+    pub(crate) fn params_of(&mut self, origin: u32) -> &[ShaderParam] {
+        let source = self
+            .tree
+            .as_ref()
+            .and_then(|tree| tree.material(tree.node_of(origin)?))
+            .and_then(|guid| self.shaders.source(guid));
+        let Some(source) = source else {
+            return &[];
+        };
+        if self.material_params.as_ref().map(|(own, _)| own) != Some(source) {
+            let params = Shader::parse(source)
+                .map(|shader| shader.params)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|param| param.kind != ParamKind::Texture)
+                .collect();
+            self.material_params = Some((source.clone(), params));
+        }
+        self.material_params
+            .as_ref()
+            .map_or(&[], |(_, params)| params.as_slice())
     }
 
     /// Over transparent black: the panel's checkerboard shows through.
@@ -180,6 +210,7 @@ impl UiBuilder {
             // The canvas draws with its own atlas, which the game's `load_images` never fills.
             if let Some(tree) = self.tree.as_ref() {
                 kooch_ui::load_tree_images(tree, database, server.as_mut(), &mut self.atlas);
+                kooch_ui::load_tree_shaders(tree, database, server.as_mut(), &mut self.shaders);
             }
         }
         if let Some(server) = server {
@@ -213,7 +244,14 @@ impl UiBuilder {
         let scale = size.1.max(1) as f32 / CANVAS_HEIGHT;
         tree.rasterize(scale, fonts, &mut self.atlas);
         let physical = glam::UVec2::new(size.0, size.1);
-        kooch_ui::draw_tree(tree, &mut self.atlas, scale, physical, &mut self.list);
+        kooch_ui::draw_tree(
+            tree,
+            &mut self.atlas,
+            &self.shaders,
+            scale,
+            physical,
+            &mut self.list,
+        );
         self.drawn = Some(size);
     }
 }
@@ -274,6 +312,8 @@ pub(crate) fn open(resources: &mut Resources, path: &Path) {
         edited: true,
         read_at: (SystemTime::UNIX_EPOCH, SystemTime::UNIX_EPOCH),
         selected: None,
+        shaders: UiShaders::default(),
+        material_params: None,
         inner: None,
         ghosts: Vec::new(),
         error: None,

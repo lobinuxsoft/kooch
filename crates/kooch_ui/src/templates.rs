@@ -7,7 +7,7 @@ use kooch_core::Guid;
 
 use crate::documents::normalise;
 use crate::source::{Element, ElementKind, NO_PARENT, UiSource};
-use crate::style::{Declaration, UiStyleSheet};
+use crate::style::{Declaration, ImageRef, UiStyleSheet};
 
 /// The asset at a path, for an inline `background-image`.
 pub(crate) type ImageOf<'a> = &'a dyn Fn(&Path) -> Option<Guid>;
@@ -105,26 +105,31 @@ fn splice(
     Ok(())
 }
 
-/// The inline `background-image`'s asset, its `url()` relative to `at`, the file writing it.
+/// The inline `background-image`'s and `-kooch-material`'s assets, relative to `at`, the file
+/// writing them.
 fn inline_image(element: &mut Element, at: &Path, image_of: ImageOf) {
-    let url = attribute(element, "style").and_then(|style| {
-        UiStyleSheet::parse_inline(style)
-            .into_iter()
-            .rev()
-            .find_map(|declaration| match declaration {
-                Declaration::BackgroundImage(image) => Some(image.map(|image| image.url)),
-                _ => None,
-            })
-            .flatten()
-    });
-    element.image = url.and_then(|url| {
-        let path = normalise(&at.parent().unwrap_or(Path::new("")).join(&*url));
+    let declarations = attribute(element, "style")
+        .map(UiStyleSheet::parse_inline)
+        .unwrap_or_default();
+    let written = |pick: fn(&Declaration) -> Option<Option<&ImageRef>>| {
+        let url = declarations.iter().rev().find_map(pick).flatten()?;
+        let path = normalise(&at.parent().unwrap_or(Path::new("")).join(&*url.url));
         let guid = image_of(&path);
         if guid.is_none() {
-            tracing::warn!("{}: image `{url}` is not a known asset", at.display());
+            tracing::warn!("{}: `{}` is not a known asset", at.display(), url.url);
         }
         guid
+    };
+    let image = written(|declaration| match declaration {
+        Declaration::BackgroundImage(image) => Some(image.as_ref()),
+        _ => None,
     });
+    let material = written(|declaration| match declaration {
+        Declaration::Material(material) => Some(Some(material)),
+        _ => None,
+    });
+    element.image = image;
+    element.material = material;
 }
 
 fn set(element: &mut Element, key: &str, value: &str) {

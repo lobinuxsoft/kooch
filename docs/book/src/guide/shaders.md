@@ -56,6 +56,7 @@ The `// kind:` line picks what the file defines. With no line, it is a `surface`
 |---|---|---|
 | `surface` | `fn surface(input: SurfaceInput) -> SurfaceOutput` | Inti lights it: lights, shadows, contact march |
 | `unlit` | `fn unlit(input: SurfaceInput) -> UnlitOutput` | Shows `color` as it is, under any light and in shadow |
+| `ui` | `fn ui(input: UiInput) -> vec4<f32>` | A UI node's fill: see [UI](#ui). |
 | `post_process` | `fn post_process(input: SurfaceInput) -> vec4<f32>` | One full-screen draw over the finished frame; reads it with `sample_scene(uv)` |
 | `transparent` | `fn surface(input: SurfaceInput) -> SurfaceOutput`, setting `alpha` | Lit like a `surface`, then blended over the opaque scene, far to near |
 
@@ -204,6 +205,30 @@ checker. The **UV** node is the screen uv here.
 `color` is in the same display units as `emissive`: `1.0` is full brightness at any exposure. `alpha`
 is carried into `SurfaceOutput.alpha`; opaque passes ignore it. An unlit shader assumes no sun,
 which is what a planet's distant impostor or an atmosphere card needs.
+
+### UI
+
+A `ui` shader fills a UI node, named by [`-kooch-material`](ui_files.md#properties). It returns
+straight alpha; the engine clips it, cuts the rounded corners and blends it.
+
+```wgsl
+// kind: ui
+struct SurfaceParams {
+    speed: f32,  // @range(0, 8) @default(2)
+}
+
+fn ui(input: UiInput) -> vec4<f32> {
+    let p = surface_params(input.material_id);
+    let pulse = 0.5 + 0.5 * sin(input.time * p.speed);
+    return input.color * sample_image(input, input.uv) * pulse;
+}
+```
+
+`UiInput` carries `uv` (0..1 across the node), `size` (physical pixels), `color`
+(`background-color`), `border_color`, `time` (seconds) and `material_id`. `sample_image(input, uv)`
+reads the node's `background-image`, white when it has none. Parameters are numbers and colours:
+a `ui` shader has no texture slots. One that does not compile logs why, and its node draws as a
+plain box.
 
 ## Parameters
 

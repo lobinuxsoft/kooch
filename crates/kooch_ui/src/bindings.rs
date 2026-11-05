@@ -61,6 +61,48 @@ pub fn bind_values(resources: &mut Resources) {
     }
 }
 
+/// `bind:param.<name>`: the field moves the parameter, never the other way. Costs a tree with no
+/// such binding nothing.
+pub fn bind_params(resources: &mut Resources) {
+    let mut bound = Vec::new();
+    if let Some(trees) = resources.get_mut::<UiTrees>() {
+        trees.for_each_entity_mut(|document, tree| {
+            bound.extend(tree.param_binds().iter().cloned().map(|b| (document, b)));
+        });
+    }
+    if bound.is_empty() {
+        return;
+    }
+    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
+        return;
+    };
+    let mut reads = Vec::with_capacity(bound.len());
+    for (document, bind) in bound {
+        let Some(type_id) = component_id(registry, &bind.component) else {
+            kooch_core::warn_once!(
+                "`bind:param` names `{}`, which is no reflected component",
+                bind.component
+            );
+            continue;
+        };
+        let value = registry
+            .reflect_get_fields(&type_id, document)
+            .and_then(|fields| fields.into_iter().find(|(name, _)| *name == *bind.field))
+            .and_then(|(_, value)| field_number(&value));
+        if let Some(value) = value {
+            reads.push((document, bind.node, bind.param, value));
+        }
+    }
+    let Some(trees) = resources.get_mut::<UiTrees>() else {
+        return;
+    };
+    for (document, node, param, value) in reads {
+        if let Some(tree) = trees.get_mut(document) {
+            tree.set_param(node, &param, value);
+        }
+    }
+}
+
 /// A reflected component by its name as written: `Hud` or its full path.
 fn component_id(registry: &ComponentRegistry, name: &str) -> Option<TypeId> {
     registry

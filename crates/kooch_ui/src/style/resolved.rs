@@ -13,7 +13,10 @@ pub struct ResolvedStyle {
     pub paint: Paint,
     pub font_family: Option<Box<str>>,
     pub font_size: Option<f32>,
-    pub material: Option<Box<str>>,
+    /// The `kind: ui` shader; `None` when unset or a path no asset answers.
+    pub material: Option<kooch_core::Guid>,
+    /// `-kooch-param-*`, each name once.
+    pub params: Vec<(Box<str>, [f32; 4])>,
     /// The resolved asset; `None` when unset, `none`, or a url no asset answers.
     pub image: Option<kooch_core::Guid>,
     pub slice: [f32; 4],
@@ -61,7 +64,13 @@ impl ResolvedStyle {
             Declaration::BorderRadius(radius) => self.paint.radius = *radius,
             Declaration::FontFamily(family) => self.font_family = Some(family.clone()),
             Declaration::FontSize(size) => self.font_size = Some(*size),
-            Declaration::Material(path) => self.material = Some(path.clone()),
+            Declaration::Material(material) => self.material = material.guid,
+            Declaration::Param(name, value) => {
+                match self.params.iter_mut().find(|(own, _)| own == name) {
+                    Some((_, own)) => *own = *value,
+                    None => self.params.push((name.clone(), *value)),
+                }
+            }
             Declaration::BackgroundImage(image) => {
                 self.image = image.as_ref().and_then(|image| image.guid);
             }

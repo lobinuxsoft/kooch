@@ -67,6 +67,8 @@ pub struct Element {
     /// The inline `style`'s `background-image`, resolved against the file that writes it when the
     /// document is read: the cascade has no files to resolve a `url()` with.
     pub image: Option<kooch_core::Guid>,
+    /// The inline `style`'s `-kooch-material`, resolved the same way.
+    pub material: Option<kooch_core::Guid>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -149,6 +151,7 @@ fn push(
         overrides: Vec::new(),
         origin: out.len() as u32,
         image: None,
+        material: None,
     };
     for attribute in node.attributes() {
         let local = attribute.name();
