@@ -3,7 +3,9 @@
 
 struct Screen {
     size: vec2<f32>,
-    _pad: vec2<f32>,
+    // Seconds since the pass was made: only a `kind: ui` shader reads it.
+    time: f32,
+    _pad: f32,
 }
 
 @group(0) @binding(0) var<uniform> screen: Screen;
@@ -36,7 +38,10 @@ struct Varyings {
     // Atlas texel under this fragment.
     @location(5) uv: vec2<f32>,
     @location(6) clip: vec4<f32>,
-    @location(7) @interpolate(flat) flags: u32,
+    // The quad's material index and flags.
+    @location(7) @interpolate(flat) material_flags: vec2<u32>,
+    // The image's atlas texels, `min` and `size`.
+    @location(8) @interpolate(flat) atlas_rect: vec4<u32>,
 }
 
 @vertex
@@ -54,7 +59,8 @@ fn vs_ui(@builtin(vertex_index) vertex: u32, quad: Instance) -> Varyings {
     out.radius_border = quad.radius_border;
     out.uv = vec2<f32>(quad.uv_min) + corner * vec2<f32>(quad.uv_size);
     out.clip = quad.clip;
-    out.flags = quad.material_flags.y;
+    out.material_flags = quad.material_flags;
+    out.atlas_rect = vec4<u32>(quad.uv_min, quad.uv_size);
     return out;
 }
 
@@ -68,15 +74,16 @@ fn sd_rounded_box(point: vec2<f32>, half: vec2<f32>, radius: f32) -> f32 {
 @fragment
 fn fs_ui(in: Varyings) -> @location(0) vec4<f32> {
     let p = in.position.xy;
+    let flags = in.material_flags.y;
     if p.x < in.clip.x || p.y < in.clip.y || p.x >= in.clip.z || p.y >= in.clip.w {
         discard;
     }
-    if (in.flags & QUAD_IMAGE) != 0u {
+    if (flags & QUAD_IMAGE) != 0u {
         let side = vec2<f32>(textureDimensions(atlas));
         let texel = textureSampleLevel(atlas, images, in.uv / side, 0.0) * in.color;
         return vec4<f32>(texel.rgb * texel.a, texel.a);
     }
-    if (in.flags & QUAD_GLYPH) != 0u {
+    if (flags & QUAD_GLYPH) != 0u {
         let coverage = textureLoad(atlas, vec2<i32>(floor(in.uv)), 0).r;
         let alpha = in.color.a * coverage;
         return vec4<f32>(in.color.rgb * alpha, alpha);

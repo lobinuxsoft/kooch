@@ -60,8 +60,10 @@ pub enum Declaration {
     BorderRadius(f32),
     FontFamily(Box<str>),
     FontSize(f32),
-    /// A `.shader` path with `kind: ui` (#1690).
-    Material(Box<str>),
+    /// A `.shader` path with `kind: ui` (#1690), relative to its `.kcss`.
+    Material(ImageRef),
+    /// `-kooch-param-<name>`: a value for what the material declares, lower case as CSS reads it.
+    Param(Box<str>, [f32; 4]),
     /// `none` clears one a less specific rule set: a state can drop its image.
     BackgroundImage(Option<ImageRef>),
     /// Image texels kept unstretched at each edge, top-right-bottom-left (#1708).
@@ -76,6 +78,9 @@ pub struct ImageRef {
     pub url: Box<str>,
     pub guid: Option<kooch_core::Guid>,
 }
+
+/// What a shader parameter's property starts with.
+pub const PARAM_PREFIX: &str = "-kooch-param-";
 
 const EDGES: [Edge; 4] = [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left];
 
@@ -139,13 +144,33 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Vec<Declaration>, String> 
         "border-radius" => one(D::BorderRadius(px(text)?)),
         "font-family" => one(D::FontFamily(family(text)?)),
         "font-size" => one(D::FontSize(px(text)?)),
-        "-kooch-material" => one(D::Material(quoted(text)?)),
+        "-kooch-material" => one(D::Material(ImageRef {
+            url: quoted(text)?,
+            guid: None,
+        })),
+        _ if name.starts_with(PARAM_PREFIX) => {
+            one(D::Param(name[PARAM_PREFIX.len()..].into(), param(text)?))
+        }
         "background-image" => one(D::BackgroundImage(image(text)?)),
         "-kooch-slice" => one(D::Slice(slice(text)?)),
         "-kooch-tint" => one(D::Tint(color(text)?)),
         _ => return Err(format!("`{name}` is not a .kcss property")),
     };
     parsed.map_err(|message| format!("{name}: {message}"))
+}
+
+/// One to four numbers, or a colour.
+fn param(text: &str) -> Result<[f32; 4], String> {
+    let parts = components(text);
+    let numbers: Result<Vec<f32>, _> = parts.iter().map(|part| part.parse::<f32>()).collect();
+    match numbers {
+        Ok(numbers) if (1..=4).contains(&numbers.len()) => {
+            let mut value = [0.0; 4];
+            value[..numbers.len()].copy_from_slice(&numbers);
+            Ok(value)
+        }
+        _ => color(text),
+    }
 }
 
 fn edge(side: &str) -> Result<Edge, String> {

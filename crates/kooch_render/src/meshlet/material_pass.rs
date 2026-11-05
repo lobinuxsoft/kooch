@@ -184,14 +184,19 @@ pub fn compose_post_shader(params: &str, post: &str) -> String {
 
 /// Checks a post-process shader before a pipeline is built from it. Line numbers are the file's own.
 pub fn validate_post(params: &str, post: &str) -> Result<(), String> {
+    validate_body(|body| compose_post_shader(params, body), post)
+}
+
+/// Validates what `compose` makes of `body`, with line numbers into `body`.
+pub(crate) fn validate_body(compose: impl Fn(&str) -> String, body: &str) -> Result<(), String> {
     // How many lines sit ahead of the body, measured rather than counted: a message has to point
     // into the file the author has, and the frame is composed after the body.
     const MARK: &str = "//__body__";
-    let before = compose_post_shader(params, MARK)
+    let before = compose(MARK)
         .lines()
         .position(|line| line == MARK)
         .unwrap_or(0);
-    let composed = compose_post_shader(params, post);
+    let composed = compose(body);
     let at = |line: usize| format!("line {}: ", line.saturating_sub(before));
     let module = naga::front::wgsl::parse_str(&composed).map_err(|e| {
         let line = e.location(&composed).map(|l| l.line_number as usize);

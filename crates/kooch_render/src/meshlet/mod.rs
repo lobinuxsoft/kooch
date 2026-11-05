@@ -57,6 +57,7 @@ pub use masked::{
     MASKED_BINS, MaskedBins, MaskedDraw, MaskedFrame, MaskedRaster, MaskedTarget,
     compose_masked_shader,
 };
+pub(crate) use material_pass::validate_body;
 pub use material_pass::{
     DEFAULT_SURFACE_SHADER, MATERIAL_COMPUTE_FRAME, MATERIAL_DEPTH_FORMAT, MATERIAL_FORWARD_FRAME,
     MATERIAL_FRAGMENT_FRAME, MATERIAL_PASS_CONTACT_DEPTH_BINDING,

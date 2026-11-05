@@ -51,6 +51,9 @@ pub fn resolve(
             if element.image.is_some() {
                 style.image = element.image;
             }
+            if element.material.is_some() {
+                style.material = element.material;
+            }
         }
         resolved.push(style);
     }

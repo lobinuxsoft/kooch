@@ -3,8 +3,9 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use kooch_core::Guid;
 use kooch_core::resource::Resources;
-use kooch_ecs::{AtlasUpload, UiDrawList, UiQuad};
+use kooch_ecs::{AtlasUpload, UiDrawList, UiMaterial, UiParam, UiQuad, UiShader};
 use serde::{Deserialize, Serialize};
 
 /// A [`UiDrawList`] on the wire. Bytes as base64: a quad is 96 bytes, and as JSON numbers it
@@ -13,6 +14,14 @@ use serde::{Deserialize, Serialize};
 pub struct UiFrame {
     /// `UiQuad`s, back to front.
     pub quads: String,
+    /// `quad`, `shader`, first param, param count.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub materials: Vec<[u32; 4]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<(String, [f32; 4])>,
+    /// Only when they changed: a bar that moves every frame sends its value, not its shader.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shaders: Option<Vec<(Guid, String)>>,
     pub atlas_side: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upload: Option<UiUpload>,
@@ -25,9 +34,14 @@ pub struct UiUpload {
     pub texels: String,
 }
 
-/// The quads last sent, so a UI that did not change costs nothing on the wire.
+/// What was last sent, so a UI that did not change costs nothing on the wire.
 #[derive(Default)]
-struct SentUi(Vec<UiQuad>);
+struct SentUi {
+    quads: Vec<UiQuad>,
+    materials: Vec<UiMaterial>,
+    params: Vec<UiParam>,
+    shaders: Vec<UiShader>,
+}
 
 /// This frame's UI when it changed since the last reply. Takes the atlas upload: the editor keeps
 /// what it was sent, so each texel crosses once.
@@ -35,12 +49,37 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
     let mut sent = resources.remove::<SentUi>().unwrap_or_default();
     let frame = resources.get_mut::<UiDrawList>().and_then(|list| {
         let upload = list.atlas_upload.take();
-        if upload.is_none() && sent.0 == list.quads {
+        let shaders = (sent.shaders != list.shaders).then(|| {
+            list.shaders
+                .iter()
+                .map(|shader| (shader.guid, shader.source.to_string()))
+                .collect()
+        });
+        if upload.is_none()
+            && shaders.is_none()
+            && sent.quads == list.quads
+            && sent.materials == list.materials
+            && sent.params == list.params
+        {
             return None;
         }
-        sent.0.clone_from(&list.quads);
+        sent.quads.clone_from(&list.quads);
+        sent.materials.clone_from(&list.materials);
+        sent.params.clone_from(&list.params);
+        sent.shaders.clone_from(&list.shaders);
         Some(UiFrame {
             quads: STANDARD.encode(bytemuck::cast_slice::<UiQuad, u8>(&list.quads)),
+            materials: list
+                .materials
+                .iter()
+                .map(|m| [m.quad, m.shader, m.params[0], m.params[1]])
+                .collect(),
+            params: list
+                .params
+                .iter()
+                .map(|param| (param.name.to_string(), param.value))
+                .collect(),
+            shaders,
             atlas_side: list.atlas_side,
             upload: upload.map(|upload| UiUpload {
                 rect: upload.rect,
@@ -57,6 +96,9 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
 #[derive(Default)]
 pub struct UiReceiver {
     quads: Vec<UiQuad>,
+    materials: Vec<UiMaterial>,
+    params: Vec<UiParam>,
+    shaders: Vec<UiShader>,
     side: u32,
     atlas: Vec<u8>,
     dirty: Option<[u32; 4]>,
@@ -70,6 +112,32 @@ impl UiReceiver {
             return;
         };
         self.quads = quads;
+        self.materials = frame
+            .materials
+            .iter()
+            .map(|&[quad, shader, first, count]| UiMaterial {
+                quad,
+                shader,
+                params: [first, count],
+            })
+            .collect();
+        self.params = frame
+            .params
+            .into_iter()
+            .map(|(name, value)| UiParam {
+                name: name.into(),
+                value,
+            })
+            .collect();
+        if let Some(shaders) = frame.shaders {
+            self.shaders = shaders
+                .into_iter()
+                .map(|(guid, source)| UiShader {
+                    guid,
+                    source: source.into(),
+                })
+                .collect();
+        }
         self.fresh = true;
         if frame.atlas_side != self.side {
             self.side = frame.atlas_side;
@@ -97,6 +165,9 @@ impl UiReceiver {
         .filter(|rect| rect[2] <= self.side && rect[3] <= self.side);
         Some(UiDrawList {
             quads: self.quads.clone(),
+            materials: self.materials.clone(),
+            params: self.params.clone(),
+            shaders: self.shaders.clone(),
             atlas_side: self.side,
             atlas_upload: rect.map(|rect| AtlasUpload {
                 rect,

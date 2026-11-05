@@ -86,4 +86,6 @@ pub use sky_renderer::SkyRenderer;
 pub use spot_light::SpotLight;
 pub use streamed::StreamedComponents;
 pub use transform::Transform;
-pub use ui_draw::{AtlasUpload, QUAD_GLYPH, QUAD_IMAGE, UiDrawList, UiQuad};
+pub use ui_draw::{
+    AtlasUpload, QUAD_GLYPH, QUAD_IMAGE, UiDrawList, UiMaterial, UiParam, UiQuad, UiShader,
+};

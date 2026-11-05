@@ -75,7 +75,7 @@ fn setup(tree: &mut UiTree, node: UiNode, element: &Element, font_size: f32) {
             "tabindex" if &**value == "-1" => tree.unfocusable.push(node),
             "autofocus" => tree.autofocus = Some(node),
             "disabled" if &**value != "false" => tree.set_disabled(node, true),
-            _ => {}
+            _ => tree.bind_param(node, key, value),
         }
     }
     tree.controls
@@ -145,6 +145,8 @@ pub(crate) fn apply(tree: &mut UiTree, node: UiNode, style: &ResolvedStyle) {
         tint: style.tint.unwrap_or([1.0; 4]),
     });
     tree.set_image(node, image);
+    tree.set_material(node, style.material);
+    tree.style_params(node, &style.params);
 }
 
 /// Each slider's fill, thumb and rest: the parts `with_parts` appended under it, in that order.

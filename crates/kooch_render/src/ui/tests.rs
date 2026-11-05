@@ -9,3 +9,15 @@ fn the_ui_shader_validates() {
     .validate(&module)
     .unwrap();
 }
+
+/// The recipes the engine ships, composed as the pass composes them.
+#[test]
+fn the_recipes_validate() {
+    for source in [
+        include_str!("../../../../assets/shaders/ui/ring.shader"),
+        include_str!("../../../../assets/shaders/ui/curved_bar.shader"),
+    ] {
+        let shader = crate::material::Shader::parse(source).unwrap();
+        super::validate_ui(&shader).unwrap();
+    }
+}

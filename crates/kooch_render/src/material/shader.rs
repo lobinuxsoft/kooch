@@ -45,16 +45,19 @@ pub enum ShaderKind {
     /// The same, with no light on it: defines `fn unlit(SurfaceInput) -> UnlitOutput` and blends
     /// what it returns. Fire, energy, a sprite that carries its own brightness (#452).
     TransparentUnlit,
+    /// A UI node's fill: defines `fn ui(UiInput) -> vec4<f32>`, straight alpha (#1690).
+    Ui,
 }
 
 impl ShaderKind {
     /// What a `// kind:` line names, in the order errors list them.
-    pub const NAMES: [&'static str; 5] = [
+    pub const NAMES: [&'static str; 6] = [
         "surface",
         "unlit",
         "post_process",
         "transparent",
         "transparent_unlit",
+        "ui",
     ];
 
     fn parse(name: &str) -> Option<Self> {
@@ -64,6 +67,7 @@ impl ShaderKind {
             "post_process" => Some(Self::PostProcess),
             "transparent" => Some(Self::Transparent),
             "transparent_unlit" => Some(Self::TransparentUnlit),
+            "ui" => Some(Self::Ui),
             _ => None,
         }
     }
@@ -84,6 +88,8 @@ impl ShaderKind {
     /// `surface` they call.
     fn glue(self) -> &'static str {
         match self {
+            // The UI's frame reads none of this.
+            Self::Ui => "",
             // A post-process has a frame of its own, so it needs no glue at all.
             Self::Surface | Self::PostProcess => {
                 "const SURFACE_UNLIT: bool = false;\nconst SURFACE_TRANSPARENT: bool = false;\n"
@@ -162,6 +168,17 @@ impl Shader {
         }
         let read = params::read(source)
             .map_err(|(line, message)| ShaderParseError::Param { line, message })?;
+        if kind == ShaderKind::Ui
+            && let Some(texture) = read.params.iter().find(|p| p.kind == ParamKind::Texture)
+        {
+            return Err(ShaderParseError::Param {
+                line: 0,
+                message: format!(
+                    "`{}`: a ui shader has no texture slots, `sample_image` reads the node's image",
+                    texture.name
+                ),
+            });
+        }
         Ok(Self {
             kind,
             source: read.source,

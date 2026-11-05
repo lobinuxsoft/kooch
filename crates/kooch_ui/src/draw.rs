@@ -3,10 +3,13 @@
 use glam::Vec2;
 use kooch_core::resource::Resources;
 use kooch_ecs::query::Query;
-use kooch_ecs::{AtlasUpload, Entity, QUAD_GLYPH, QUAD_IMAGE, UiDrawList, UiQuad, ViewSize};
+use kooch_ecs::{
+    AtlasUpload, Entity, QUAD_GLYPH, QUAD_IMAGE, UiDrawList, UiMaterial, UiParam, UiQuad, UiShader,
+    ViewSize,
+};
 
 use crate::layout::CANVAS_HEIGHT;
-use crate::{GlyphAtlas, MODE_OVERLAY, UiDocument, UiImage, UiNode, UiTree, UiTrees};
+use crate::{GlyphAtlas, MODE_OVERLAY, UiDocument, UiImage, UiNode, UiShaders, UiTree, UiTrees};
 
 /// Every Overlay document, in spawn order; within one, a node's panel, image and text, parents
 /// first. World documents draw in phase 5.
@@ -21,12 +24,15 @@ pub fn draw_documents(resources: &mut Resources) {
         }
     });
     let mut list = resources.remove::<UiDrawList>().unwrap_or_default();
-    list.quads.clear();
-    if let (Some(trees), Some(atlas)) = (resources.get::<UiTrees>(), resources.get::<GlyphAtlas>())
-    {
+    clear(&mut list);
+    if let (Some(trees), Some(atlas), Some(shaders)) = (
+        resources.get::<UiTrees>(),
+        resources.get::<GlyphAtlas>(),
+        resources.get::<UiShaders>(),
+    ) {
         for entity in overlays {
             if let Some(tree) = trees.get(entity) {
-                push_tree(tree, atlas, scale, screen, &mut list.quads);
+                push_tree(tree, atlas, shaders, scale, screen, &mut list);
             }
         }
     }
@@ -41,14 +47,22 @@ pub fn draw_documents(resources: &mut Resources) {
 pub fn draw_tree(
     tree: &UiTree,
     atlas: &mut GlyphAtlas,
+    shaders: &UiShaders,
     scale: f32,
     physical: glam::UVec2,
     list: &mut UiDrawList,
 ) {
     let screen = [0.0, 0.0, physical.x as f32, physical.y as f32];
-    list.quads.clear();
-    push_tree(tree, atlas, scale, screen, &mut list.quads);
+    clear(list);
+    push_tree(tree, atlas, shaders, scale, screen, list);
     upload(atlas, list);
+}
+
+fn clear(list: &mut UiDrawList) {
+    list.quads.clear();
+    list.materials.clear();
+    list.params.clear();
+    list.shaders.clear();
 }
 
 fn upload(atlas: &mut GlyphAtlas, list: &mut UiDrawList) {
@@ -70,9 +84,10 @@ fn upload(atlas: &mut GlyphAtlas, list: &mut UiDrawList) {
 fn push_tree(
     tree: &UiTree,
     atlas: &GlyphAtlas,
+    shaders: &UiShaders,
     scale: f32,
     screen: [f32; 4],
-    out: &mut Vec<UiQuad>,
+    list: &mut UiDrawList,
 ) {
     let glyphs = tree.glyphs();
     let mut next = 0;
@@ -99,11 +114,41 @@ fn push_tree(
             (cut[2] * scale).min(screen[2]),
             (cut[3] * scale).min(screen[3]),
         ];
-        if paint.background[3] > 0.0 || (border > 0.0 && paint.border[3] > 0.0) {
+        let shaded = tree.material(node).and_then(|guid| {
+            let source = shaders.source(guid)?;
+            Some(UiShader {
+                guid,
+                source: source.clone(),
+            })
+        });
+        let image = tree
+            .image(node)
+            .and_then(|image| Some((image, atlas.image(image.guid)?.rect)));
+        let plain = shaded.is_none();
+        if let Some(shader) = shaded {
+            // One quad over the whole rect: its uv has to span the node, so a slice does not apply.
+            let min = (rect.min * scale).round();
+            let max = ((rect.min + rect.size) * scale).round();
+            let [u0, v0, u1, v1] = image.map_or([0; 4], |(_, rect)| rect);
+            let quad = UiQuad {
+                min: min.into(),
+                size: (max - min).into(),
+                clip,
+                color: paint.background,
+                border_color: paint.border,
+                radius: paint.radius * scale,
+                border: (border * scale).round(),
+                uv_min: [u0, v0],
+                uv_size: [u1 - u0, v1 - v0],
+                flags: if image.is_some() { QUAD_IMAGE } else { 0 },
+                ..UiQuad::default()
+            };
+            push_material(tree, node, shader, quad, list);
+        } else if paint.background[3] > 0.0 || (border > 0.0 && paint.border[3] > 0.0) {
             // Rounded to whole physical pixels here: the layout is in canvas units on purpose.
             let min = (rect.min * scale).round();
             let max = ((rect.min + rect.size) * scale).round();
-            out.push(UiQuad {
+            list.quads.push(UiQuad {
                 min: min.into(),
                 size: (max - min).into(),
                 clip,
@@ -114,16 +159,14 @@ fn push_tree(
                 ..UiQuad::default()
             });
         }
-        if let Some(image) = tree.image(node)
-            && let Some(packed) = atlas.image(image.guid)
-        {
+        if let Some((image, packed)) = image.filter(|_| plain) {
             let min = (rect.min * scale).round();
             let max = ((rect.min + rect.size) * scale).round();
-            push_image(image, packed.rect, min, max, scale, clip, out);
+            push_image(image, packed, min, max, scale, clip, &mut list.quads);
         }
         while next < glyphs.len() && glyphs[next].node == index {
             let glyph = glyphs[next];
-            out.push(UiQuad {
+            list.quads.push(UiQuad {
                 min: glyph.min,
                 size: glyph.size,
                 clip,
@@ -135,8 +178,39 @@ fn push_tree(
             });
             next += 1;
         }
-        push_thumb(tree, node, rect, paint.text, scale, clip, out);
+        push_thumb(tree, node, rect, paint.text, scale, clip, &mut list.quads);
     }
+}
+
+/// `quad` as drawn by `shader`, with the node's values.
+fn push_material(
+    tree: &UiTree,
+    node: UiNode,
+    shader: UiShader,
+    mut quad: UiQuad,
+    list: &mut UiDrawList,
+) {
+    let index = list
+        .shaders
+        .iter()
+        .position(|own| own.guid == shader.guid)
+        .unwrap_or_else(|| {
+            list.shaders.push(shader);
+            list.shaders.len() - 1
+        });
+    let first = list.params.len() as u32;
+    list.params
+        .extend(tree.params[node.0 as usize].iter().map(|param| UiParam {
+            name: param.name.clone(),
+            value: param.value,
+        }));
+    quad.material = list.materials.len() as u32;
+    list.materials.push(UiMaterial {
+        quad: list.quads.len() as u32,
+        shader: index as u32,
+        params: [first, list.params.len() as u32 - first],
+    });
+    list.quads.push(quad);
 }
 
 /// Thumb width in canvas units, drawn over the content's edge: taffy reserves no gutter.

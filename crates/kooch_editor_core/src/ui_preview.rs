@@ -25,6 +25,7 @@ pub(crate) fn start_preview_system(resources: &mut Resources) {
     resources.insert(kooch_ui::UiTrees::default());
     resources.insert(kooch_ui::UiFonts::default());
     resources.insert(kooch_ui::GlyphAtlas::default());
+    resources.insert(kooch_ui::UiShaders::default());
 }
 
 /// Stopped, the documents are the editor's to build and lay out; in Play the host's frame stands.
@@ -36,6 +37,7 @@ pub(crate) fn preview_ui_system(resources: &mut Resources) {
     kooch_ui::load_fonts(resources);
     kooch_ui::build_documents(resources);
     kooch_ui::load_images(resources);
+    kooch_ui::load_shaders(resources);
     kooch_ui::layout_documents(resources);
     kooch_ui::draw_documents(resources);
 }

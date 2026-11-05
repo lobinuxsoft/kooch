@@ -1,7 +1,10 @@
 //! The inline style as Unity's Builder shows it: a foldout per category, a typed field per
 //! property. A set property is bold and ↺ unsets it; a value its field cannot show stays text.
 
-use kooch_ui::style::{CATEGORIES, InlineStyle, PropertyKind, PropertySpec, parse_color};
+use kooch_render::material::{ParamKind, ShaderParam};
+use kooch_ui::style::{
+    CATEGORIES, InlineStyle, PARAM_PREFIX, PropertyKind, PropertySpec, parse_color,
+};
 
 use std::path::Path;
 
@@ -75,8 +78,70 @@ pub(super) fn draw(
                 });
             });
     }
+    let params = builder.params_of(origin);
+    if !params.is_empty() {
+        egui::CollapsingHeader::new("Material")
+            .id_salt("ui_builder_material")
+            .default_open(true)
+            .show(ui, |ui| {
+                super::inspector::fields_grid(ui, "ui_builder_material_grid", STYLE_LABELS)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for param in params {
+                            changed |= param_row(ui, &mut style, param);
+                        }
+                    });
+            });
+    }
     if changed {
         builder.set_attribute(origin, "style", &style.write());
+    }
+}
+
+/// A row per declared parameter, written as `-kooch-param-<name>`; unset, the shader's default.
+fn param_row(ui: &mut egui::Ui, style: &mut InlineStyle, param: &ShaderParam) -> bool {
+    let property = format!("{PARAM_PREFIX}{}", param.name.to_ascii_lowercase());
+    let value = style.get(&property);
+    super::inspector::label(ui, &param.name, "", value.is_some());
+    let mut edited = param_field(ui, param, value.as_deref()).map(Some);
+    if value.is_none() {
+        ui.label("");
+    } else if ui
+        .small_button("↺")
+        .on_hover_text("Remove it: the sheet decides")
+        .clicked()
+    {
+        edited = Some(None);
+    }
+    ui.end_row();
+    let Some(value) = edited else {
+        return false;
+    };
+    style.set(&property, value.as_deref());
+    true
+}
+
+fn param_field(ui: &mut egui::Ui, param: &ShaderParam, value: Option<&str>) -> Option<String> {
+    match param.kind {
+        ParamKind::Float | ParamKind::Int => {
+            let mut number = value
+                .and_then(|value| value.trim().parse().ok())
+                .unwrap_or(param.default[0]);
+            let response = match param.range {
+                Some([min, max]) => ui.add(egui::Slider::new(&mut number, min..=max)),
+                None => ui.add(egui::DragValue::new(&mut number).speed(0.01)),
+            };
+            response.changed().then(|| decimal(number))
+        }
+        ParamKind::Color => {
+            let rgba = value.and_then(parse_color).unwrap_or(param.default);
+            let mut bytes = rgba.map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8);
+            ui.color_edit_button_srgba_unmultiplied(&mut bytes)
+                .changed()
+                .then(|| hex(bytes))
+        }
+        // Space-separated, as the `.kcss` writes them.
+        _ => text(ui, value),
     }
 }
 
