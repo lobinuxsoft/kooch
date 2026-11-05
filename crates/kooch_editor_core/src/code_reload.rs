@@ -64,11 +64,13 @@ pub fn reload_code_system(resources: &mut Resources) {
     let Some(reload) = resources.get_mut::<CodeReload>() else {
         return;
     };
-    // 🔴 A first sighting is recorded and acted on, never. The library that was loaded when the
-    // project opened is the one on disk, and swapping it for itself on the first frame would be
-    // work with a report attached.
     let known = reload.stamp.replace(taken);
-    if known.is_none_or(|last| last == taken) {
+    // 🔴 A first sighting is the library the project opened with, unless nothing loaded: then it
+    // is the build that a project with no library was waiting for (#1799).
+    let loaded = resources
+        .get::<crate::project_plugin::ProjectPlugins>()
+        .is_some_and(|plugins| !plugins.is_empty());
+    if known == Some(taken) || (known.is_none() && loaded) {
         return;
     }
 

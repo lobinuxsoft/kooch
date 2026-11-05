@@ -141,7 +141,9 @@ pub fn load_project_plugin(
         // none of its own components until a build produces a library
         // this engine will load.
         Err(kooch_core::dynamic::PluginLoadError::Incompatible {
-            reason: kooch_core::dynamic::Incompatibility::EngineVersion { .. },
+            reason:
+                kooch_core::dynamic::Incompatibility::EngineVersion { .. }
+                | kooch_core::dynamic::Incompatibility::ApiVersion { .. },
             ..
         }) => {
             // 🔴 Expected, and self-correcting.
