@@ -40,10 +40,16 @@ pub fn scan_project_assets_system(resources: &mut Resources) {
             // Run the database scan first so eager-import can see every existing sidecar and skip
             // ones it does not need to re-create. What this binary can load, so a `.rendersettings`
             // or any other hand-written asset registers on the first scan.
-            let known = resources
+            let declared = crate::data_assets::extensions(resources);
+            let mut known: Vec<(&str, &str)> = resources
                 .get::<kooch_core::asset_loader::AssetServer>()
                 .map(|server| server.known_extensions())
                 .unwrap_or_default();
+            known.extend(
+                declared
+                    .iter()
+                    .map(|(ext, name)| (ext.as_str(), name.as_str())),
+            );
             let scanned = match resources.get_mut::<AssetDatabase>() {
                 Some(db) => match db.scan_directory_adopting(&assets_root, &known) {
                     Ok(report) => Some(report),

@@ -7,6 +7,7 @@
 - [Getting Started](./guide/getting-started.md)
 - [The Editor](./editor/overview.md)
   - [Editor panels](./editor/panels.md)
+  - [Data assets](./editor/data_assets.md)
 - [Textures](./guide/textures.md)
 - [Shaders](./guide/shaders.md)
 - [Colliders](./guide/colliders.md)

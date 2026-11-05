@@ -51,6 +51,8 @@ pub(crate) enum CreateKind {
     Folder,
     Material,
     File(NewFileKind),
+    /// The project's data asset type at this index.
+    Data(usize),
 }
 
 /// What a folder holds, as far as anything that reads the project is concerned.

@@ -74,6 +74,7 @@ pub use point_light::PointLight;
 pub use post_process::{PostEffect, PostProcess};
 pub use post_process_volume::PostProcessVolume;
 pub use query::{AccessTracker, Query, QueryFilter, With, Without, WorldQuery};
+pub use reflect::{DataAsset, data_asset};
 pub use reflect::{FieldKind, FieldMeta, InspectorVisibility, Reflect, ReflectError, ReflectValue};
 pub use scene::{
     ComponentDescription, EntityDescription, SceneDocument, SceneError, sync_scene_to_ecs,

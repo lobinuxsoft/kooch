@@ -50,7 +50,7 @@ pub mod types;
 pub mod version;
 
 pub use component::{ComponentSchema, FieldKind, FieldSchema, RegisterError};
-pub use editor_call::{EditorCall, EditorHandler, EditorRequest, SelectedEntity};
+pub use editor_call::{DataAssetSchema, EditorCall, EditorHandler, EditorRequest, SelectedEntity};
 pub use engine_api::{Engine, PluginSystem};
 pub use plugin::{CREATE_SYMBOL, CreatePluginFn, KoochPlugin, STAMP_SYMBOL};
 pub use types::Stage;

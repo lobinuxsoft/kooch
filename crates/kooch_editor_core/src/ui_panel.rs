@@ -5,7 +5,7 @@
 use kooch_core::Guid;
 use kooch_core::asset_database::AssetDatabase;
 use kooch_core::asset_loader::AssetServer;
-use kooch_core::dynamic::EditorHandlers;
+use kooch_core::dynamic::{DataAssetTypes, EditorHandlers};
 use kooch_core::gpu::GpuContext;
 use kooch_core::resource::Resources;
 use kooch_ecs::UiDrawList;
@@ -20,6 +20,8 @@ use crate::viewport::ViewportTarget;
 /// Every editor panel drawn by `kooch_ui`. Taken out of `Resources` for the frame, like the views.
 #[derive(Default)]
 pub(crate) struct UiPanels {
+    /// The project's data asset types by short name, for the Asset Browser's menu.
+    pub data_types: Vec<String>,
     /// Out of `Resources` for the frame, like the panels: what a click runs.
     pub handlers: Option<EditorHandlers>,
     pub asset_browser: UiPanel,
@@ -63,6 +65,17 @@ impl UiPanels {
             .iter()
             .find(|(own, _)| *own == guid)
             .map(|(_, name)| name.as_str())
+    }
+
+    /// Keeps `data_types` in step with what the project declared; allocates only when it moved.
+    pub(crate) fn sync_data_types(&mut self, types: Option<&DataAssetTypes>) {
+        let declared = types.map(DataAssetTypes::all).unwrap_or_default();
+        let names = declared
+            .iter()
+            .map(|schema| schema.type_name.rsplit("::").next().unwrap_or_default());
+        if !self.data_types.iter().map(String::as_str).eq(names.clone()) {
+            self.data_types = names.map(str::to_owned).collect();
+        }
     }
 
     pub(crate) fn prepare(&mut self, gpu: &GpuContext, renderer: &mut egui_wgpu::Renderer) {

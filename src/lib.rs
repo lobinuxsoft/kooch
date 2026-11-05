@@ -118,6 +118,8 @@ pub mod prelude {
         EntityAllocator, GlobalTransform, MeshRenderer, Name, OrthographicCamera, Parent,
         PerspectiveCamera, Reflect, SceneManager, Transform,
     };
+    // A project's own data files, read by a system and edited in the Inspector.
+    pub use kooch_ecs::{DataAsset, data_asset};
     // Where a system binds into the frame, said at the system. Inert:
     // the editor's codegen reads it, the compiler passes the function
     // through untouched.

@@ -75,5 +75,5 @@ An action reads the editor's copy of the selection and asks for changes; the edi
 when it returns, so `number` does not see a `set_number` from the same call. A panic in an action
 is logged and the editor keeps going.
 
-A file only joins the Asset Browser with an extension the engine knows. Your own asset types are
-#1796.
+A file only joins the Asset Browser with an extension the engine knows, or one your
+[data assets](./data_assets.md) declare.

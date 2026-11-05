@@ -213,6 +213,19 @@ pub(super) fn handle_edit_asset_field(
         return;
     };
 
+    if crate::data_assets::is_data(resources, &type_name) {
+        crate::history::documents::record(
+            resources,
+            &crate::history::Document::Asset(guid),
+            &format!("Set {field}"),
+            Some(crate::history::MergeKey::of((guid, field))),
+        );
+        if crate::data_assets::write(resources, guid, field, value) && commit {
+            crate::data_assets::persist(resources, &path);
+        }
+        return;
+    }
+
     let Some(registration) = kooch_ecs::reflect::reflected_asset(&type_name) else {
         // The Inspector only offers these widgets for a registered type,
         // so reaching here means the registry and the panel disagree —

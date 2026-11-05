@@ -77,6 +77,8 @@ pub(super) struct Inputs<'a> {
     pub main_scene: Option<&'a Path>,
     pub project_root: Option<&'a Path>,
     pub has_settings: bool,
+    /// The project's data asset types, by short name.
+    pub data_types: &'a [String],
 }
 
 /// The inline edits the menus start, kept across frames by the panel.

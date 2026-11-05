@@ -79,6 +79,7 @@ impl Overlay<'_> {
                 edits.rename,
                 edits.pending,
                 inputs.has_settings,
+                inputs.data_types,
                 FolderRole::of(&row.path, inputs.project_root),
             ),
             false => leaf_menu(

@@ -104,7 +104,7 @@ impl AssetDatabase {
     pub fn scan_directory_adopting(
         &mut self,
         root: &Path,
-        known: &[(&'static str, &'static str)],
+        known: &[(&str, &str)],
     ) -> Result<ScanReport, AssetDatabaseError> {
         let mut report = ScanReport::default();
         scan_recursive(root, self, &mut report, known)?;

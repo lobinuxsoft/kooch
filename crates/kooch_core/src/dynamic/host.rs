@@ -1,9 +1,9 @@
 //! The engine's side of the plugin API.
 
-use kooch_plugin_api::EditorHandler;
 use kooch_plugin_api::component::{ComponentSchema, RegisterError};
 use kooch_plugin_api::engine_api::{Engine, PluginSystem};
 use kooch_plugin_api::types::{Order as PluginOrder, Stage as PluginStage};
+use kooch_plugin_api::{DataAssetSchema, EditorHandler};
 
 use crate::resource::Resources;
 use crate::schedule::{Order, Schedule};
@@ -12,7 +12,7 @@ use crate::stage::Stage;
 mod pass;
 
 use super::bridges::{ComponentBridge, EntityBridge};
-use super::editor_handlers::EditorHandlers;
+use super::editor_handlers::{DataAssetTypes, EditorHandlers};
 use super::plugin_data::PluginData;
 
 /// Translates a plugin's stage into the engine's.
@@ -164,6 +164,15 @@ impl Engine for EngineHost<'_> {
         }
         if let Some(handlers) = self.resources.get_mut::<EditorHandlers>() {
             handlers.add(name, handler);
+        }
+    }
+
+    fn register_data_asset(&mut self, schema: DataAssetSchema) {
+        if self.resources.get::<DataAssetTypes>().is_none() {
+            self.resources.insert(DataAssetTypes::default());
+        }
+        if let Some(types) = self.resources.get_mut::<DataAssetTypes>() {
+            types.add(schema);
         }
     }
 

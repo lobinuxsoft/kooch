@@ -23,6 +23,7 @@ pub mod build;
 pub(crate) mod cargo_args;
 pub(crate) mod clipboard;
 pub(crate) mod commands;
+pub(crate) mod data_assets;
 pub(crate) mod drag_drop;
 pub mod editor_camera;
 pub mod engine_vendor;

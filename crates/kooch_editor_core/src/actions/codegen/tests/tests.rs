@@ -15,6 +15,7 @@ fn source(rel: &str, components: &[&str], systems: &[&str]) -> SourceFile {
             })
             .collect(),
         actions: Vec::new(),
+        assets: Vec::new(),
     }
 }
 
@@ -540,6 +541,7 @@ fn the_plugin_api_is_behind_the_editor_feature() {
         module: "player".to_owned(),
         components: vec!["Player".to_owned()],
         actions: Vec::new(),
+        assets: Vec::new(),
         systems: Vec::new(),
     }];
 
@@ -567,6 +569,7 @@ fn the_game_half_is_not_gated() {
         module: "player".to_owned(),
         components: vec!["Player".to_owned()],
         actions: Vec::new(),
+        assets: Vec::new(),
         systems: Vec::new(),
     }];
 
@@ -612,4 +615,17 @@ fn tools_compile_only_with_the_editor() {
 
     assert!(generated.contains("#[cfg(feature = \"editor\")]\n#[path = \"tools\"]"));
     assert!(generated.contains("engine.add_editor_action(\"reset\", tools::ball::reset);"));
+}
+
+/// The game installs the loader and the editor gets the schema: one without the other is a file
+/// the game cannot read, or a type the editor cannot offer.
+#[test]
+fn a_data_asset_reaches_both_sides() {
+    let mut file = source("components/ball.rs", &[], &[]);
+    file.assets = vec!["BallConfig".to_owned()];
+
+    let generated = render_registrations(&[file]);
+
+    assert!(generated.contains("install_data_asset::<components::ball::BallConfig>(resources);"));
+    assert!(generated.contains("declare_data_asset::<components::ball::BallConfig>(engine);"));
 }
