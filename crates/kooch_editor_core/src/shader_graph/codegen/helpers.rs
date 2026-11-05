@@ -62,6 +62,17 @@ pub(super) fn helpers(graph: &Graph) -> String {
     push(uses(&|n| matches!(n, Node::Ring)), RING_HELPER);
     push(uses(&|n| matches!(n, Node::Polygon)), POLYGON_HELPER);
     push(uses(&|n| matches!(n, Node::Checker)), CHECKER_HELPER);
+    push(uses(&|n| matches!(n, Node::RoundedBox)), ROUNDED_BOX_HELPER);
+    push(uses(&|n| matches!(n, Node::Rainbow)), RAINBOW_HELPER);
+    push(
+        uses(&|n| matches!(n, Node::Parallax | Node::ImageNormal)),
+        HEIGHT_HELPER,
+    );
+    push(uses(&|n| matches!(n, Node::Parallax)), PARALLAX_HELPER);
+    push(
+        uses(&|n| matches!(n, Node::ImageNormal)),
+        IMAGE_NORMAL_HELPER,
+    );
     out
 }
 
@@ -104,3 +115,14 @@ const RING_HELPER: &str = include_str!("helpers/ring.wgsl");
 const POLYGON_HELPER: &str = include_str!("helpers/polygon.wgsl");
 
 const CHECKER_HELPER: &str = include_str!("helpers/checker.wgsl");
+
+const ROUNDED_BOX_HELPER: &str = include_str!("helpers/rounded_box.wgsl");
+
+const RAINBOW_HELPER: &str = include_str!("helpers/rainbow.wgsl");
+
+/// The image's brightness: what Parallax and Image Normal read as height.
+const HEIGHT_HELPER: &str = include_str!("helpers/height.wgsl");
+
+const PARALLAX_HELPER: &str = include_str!("helpers/parallax.wgsl");
+
+const IMAGE_NORMAL_HELPER: &str = include_str!("helpers/image_normal.wgsl");

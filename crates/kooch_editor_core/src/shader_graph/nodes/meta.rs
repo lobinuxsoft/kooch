@@ -83,6 +83,15 @@ impl Node {
     pub(crate) fn title(&self) -> String {
         match self {
             Self::Uv => "UV".to_owned(),
+            Self::RoundedBox => "Rounded Box".to_owned(),
+            Self::UiImage => "UI Image".to_owned(),
+            Self::UiColor => "UI Color".to_owned(),
+            Self::UiBorderColor => "UI Border Color".to_owned(),
+            Self::UiSize => "UI Size".to_owned(),
+            Self::Parallax => "Parallax".to_owned(),
+            Self::ImageNormal => "Image Normal".to_owned(),
+            Self::Exp => "Exp".to_owned(),
+            Self::Rainbow => "Rainbow".to_owned(),
             Self::SceneColor => "Scene Color".to_owned(),
             Self::WorldPosition => "World Position".to_owned(),
             Self::WorldNormal => "World Normal".to_owned(),
@@ -170,6 +179,9 @@ impl Node {
     pub(crate) fn inputs(&self) -> &'static [&'static str] {
         match self {
             Self::Uv
+            | Self::UiColor
+            | Self::UiBorderColor
+            | Self::UiSize
             | Self::WorldPosition
             | Self::WorldNormal
             | Self::ViewDirection
@@ -231,7 +243,12 @@ impl Node {
                     "tiling",
                 ]
             }
-            Self::SceneColor => &["uv"],
+            Self::SceneColor | Self::UiImage => &["uv"],
+            Self::Parallax => &["uv", "view", "depth", "focus"],
+            Self::ImageNormal => &["uv", "strength"],
+            Self::RoundedBox => &["point", "extent", "radius"],
+            Self::Exp => &["value"],
+            Self::Rainbow => &["phase"],
             Self::WhiteNoise => &["uv", "scale", "tiling"],
             Self::VoronoiNoise { .. } | Self::Voronoi => {
                 &["uv", "scale", "randomness", "phase", "smoothness", "tiling"]
@@ -241,7 +258,9 @@ impl Node {
             Self::Ring => &["uv", "radius", "thickness"],
             Self::Polygon => &["uv", "sides", "radius"],
             Self::Checker => &["uv", "tiles"],
-            Self::ShaderOutput { kind } if kind == "post_process" => &["color", "alpha"],
+            Self::ShaderOutput { kind } if kind == "post_process" || kind == "ui" => {
+                &["color", "alpha"]
+            }
             Self::ShaderOutput { kind } if kind == "unlit" || kind == "transparent_unlit" => {
                 &["color", "alpha", "alpha clip"]
             }
@@ -289,15 +308,22 @@ impl Node {
         match self {
             Self::Output | Self::ShaderOutput { .. } => &[],
             Self::SceneColor
+            | Self::UiImage
+            | Self::UiColor
+            | Self::UiBorderColor
             | Self::Texture { .. }
             | Self::Color { .. }
             | Self::ConstColor(_)
             | Self::Blend { .. }
             | Self::Desaturate => RGBA,
-            Self::WorldPosition | Self::WorldNormal | Self::ViewDirection | Self::UnpackNormal => {
-                XYZ
-            }
+            Self::WorldPosition
+            | Self::WorldNormal
+            | Self::ViewDirection
+            | Self::UnpackNormal
+            | Self::ImageNormal => XYZ,
             Self::Uv
+            | Self::UiSize
+            | Self::Parallax
             | Self::Panner
             | Self::Rotator
             | Self::Tiling
@@ -376,6 +402,7 @@ impl Node {
             | Self::Step
             | Self::Smoothstep
             | Self::Power
+            | Self::Exp
             | Self::Saturate
             | Self::Remap
             | Self::Mix => Category::Math,
@@ -395,9 +422,17 @@ impl Node {
             | Self::Twirl
             | Self::RadialShear
             | Self::Spherize => Category::Uv,
-            Self::Fresnel | Self::UnpackNormal | Self::Desaturate | Self::Blend { .. } => {
-                Category::Effect
-            }
+            Self::Fresnel
+            | Self::UnpackNormal
+            | Self::Desaturate
+            | Self::Blend { .. }
+            | Self::Rainbow => Category::Effect,
+            Self::UiImage
+            | Self::UiColor
+            | Self::UiBorderColor
+            | Self::UiSize
+            | Self::Parallax
+            | Self::ImageNormal => Category::Ui,
             Self::FractalNoise { .. }
             | Self::VoronoiNoise { .. }
             | Self::Noise
@@ -405,10 +440,33 @@ impl Node {
             | Self::SimplexNoise
             | Self::WhiteNoise
             | Self::Voronoi => Category::Noise,
-            Self::Circle | Self::Rectangle | Self::Ring | Self::Polygon | Self::Checker => {
-                Category::Shape
-            }
+            Self::Circle
+            | Self::Rectangle
+            | Self::Ring
+            | Self::Polygon
+            | Self::Checker
+            | Self::RoundedBox => Category::Shape,
             Self::Output | Self::ShaderOutput { .. } => Category::Output,
+        }
+    }
+
+    /// Whether a shader of `kind` has what it reads: a UI node has no world, a mesh no UI node.
+    pub(crate) fn fits(&self, kind: &str) -> bool {
+        match self {
+            Self::UiImage
+            | Self::UiColor
+            | Self::UiBorderColor
+            | Self::UiSize
+            | Self::Parallax
+            | Self::ImageNormal => kind == "ui",
+            Self::WorldPosition
+            | Self::WorldNormal
+            | Self::ViewDirection
+            | Self::Fresnel
+            | Self::UnpackNormal
+            | Self::Texture { .. }
+            | Self::SceneColor => kind != "ui",
+            _ => true,
         }
     }
 

@@ -49,7 +49,18 @@ impl Node {
     /// One line on what the node does.
     pub(crate) fn about(&self) -> &'static str {
         match self {
-            Self::Uv => "The mesh's texture coordinate.",
+            Self::Uv => "The mesh's texture coordinate; across the node in a UI shader.",
+            Self::UiImage => "The node's background-image. UI shaders only.",
+            Self::UiColor => "The node's background-color. UI shaders only.",
+            Self::UiBorderColor => "The node's border-color. UI shaders only.",
+            Self::UiSize => "The node's size, in pixels. UI shaders only.",
+            Self::Parallax => {
+                "Depth from the image's brightness: brighter is nearer. UI shaders only."
+            }
+            Self::ImageNormal => "A normal from the image's brightness. UI shaders only.",
+            Self::RoundedBox => "Distance to a rounded box: negative inside.",
+            Self::Exp => "e to the power of the value.",
+            Self::Rainbow => "A hue wheel: one turn per unit of phase.",
             Self::SceneColor => "The frame the camera produced. Post-process shaders only.",
             Self::WorldPosition => "The shaded point, in world space.",
             Self::WorldNormal => "The surface's normal, in world space.",
@@ -281,6 +292,31 @@ impl Node {
             ],
             Self::Checker => &[UV_ZERO, (Two, "How many squares: x across, y down.")],
             Self::SceneColor => &[(Two, "Where to read the frame. Unwired: this pixel.")],
+            Self::UiImage => &[(Two, "Where to read the image. Unwired: this pixel.")],
+            Self::Parallax => &[
+                (Two, "Where to start. Unwired: this pixel."),
+                (Two, "Which way the eye leans, -1..1."),
+                (One, "How deep the relief is, in uv. Around 0.05."),
+                (
+                    One,
+                    "The height that stays put: 0 the darkest, 1 the brightest.",
+                ),
+            ],
+            Self::ImageNormal => &[
+                (Two, "Where to read the slope. Unwired: this pixel."),
+                (One, "How steep it reads. Around 8."),
+            ],
+            Self::RoundedBox => &[
+                (Two, "The point, from the box's centre."),
+                (Two, "Half the box's width and height."),
+                (One, "The corners' radius."),
+            ],
+            Self::Exp => &[(Any, "The power.")],
+            Self::Rainbow => &[(One, "Where on the wheel.")],
+            Self::ShaderOutput { kind } if kind == "ui" => &[
+                (Three, "The colour. Unwired: the node's background-color."),
+                (One, "Opacity. Unwired: 1."),
+            ],
             Self::ShaderOutput { kind } if kind == "unlit" || kind == "transparent_unlit" => &[
                 (Three, "The final colour. No light or shadow changes it."),
                 (One, "Opacity, tested against alpha clip. Unwired: 1."),
@@ -347,7 +383,13 @@ impl Node {
 
     fn whole_doc(&self) -> (Width, &'static str) {
         match self {
-            Self::Uv => (Two, "The uv."),
+            Self::Uv | Self::Parallax => (Two, "The uv."),
+            Self::UiSize => (Two, "Width and height, in pixels."),
+            Self::ImageNormal => (Three, self.about()),
+            Self::UiImage | Self::UiColor | Self::UiBorderColor | Self::Rainbow => {
+                (Four, "The colour.")
+            }
+            Self::RoundedBox => (One, "The distance."),
             Self::WorldPosition | Self::WorldNormal | Self::ViewDirection => (Three, self.about()),
             Self::Float { .. } | Self::Int { .. } | Self::ConstFloat(_) | Self::ConstInt(_) => {
                 (One, "The number.")

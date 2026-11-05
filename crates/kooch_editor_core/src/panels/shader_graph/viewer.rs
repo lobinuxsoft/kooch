@@ -347,6 +347,7 @@ fn tint(category: Category) -> egui::Color32 {
         Category::Effect => [0x6B, 0x3A, 0x6B],
         Category::Shape => [0x7A, 0x4A, 0x2A],
         Category::Noise => [0x5A, 0x4A, 0x7A],
+        Category::Ui => [0x2E, 0x6B, 0x4F],
         Category::Output => [0x8C, 0x2F, 0x2F],
     };
     egui::Color32::from_rgb(r, g, b)

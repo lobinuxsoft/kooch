@@ -170,7 +170,7 @@ fn a_cycle_is_refused() {
 fn every_node_compiles() {
     for kind in OUTPUT_KINDS {
         for node in palette() {
-            if node.output_kind().is_some() {
+            if node.output_kind().is_some() || !node.fits(kind) {
                 continue;
             }
             let name = format!("{} into {kind}", node.title());
@@ -201,6 +201,11 @@ fn every_node_compiles() {
                 source.lines().next(),
                 Some(format!("// kind: {kind}").as_str())
             );
+            if kind == "ui" {
+                kooch_render::ui::validate_ui(&shader)
+                    .unwrap_or_else(|why| panic!("{name} does not compile: {why}"));
+                continue;
+            }
             // A post-process has a frame of its own, and no preview yet (#1201).
             if kind == "post_process" {
                 kooch_render::meshlet::validate_post(&shader.params_wgsl(), &shader.source)

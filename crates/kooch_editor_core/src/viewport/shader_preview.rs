@@ -19,6 +19,7 @@ use kooch_render::meshlet::compose_preview_shader;
 use crate::viewport::target::ViewportTarget;
 
 mod mesh;
+mod ui_preview;
 
 use mesh::{PreviewMesh, PreviewVertex, default_primitive, upload};
 
@@ -93,6 +94,8 @@ pub(crate) struct ShaderPreview {
     /// A post-process shows over a test image instead of on a primitive (#1201). Built the first
     /// time one is previewed.
     post: Option<kooch_render::post_process::PostPreview>,
+    /// A `kind: ui` shader shows on a node instead (#1805). Built the first time one is previewed.
+    ui: Option<ui_preview::UiPreview>,
 }
 
 impl ShaderPreview {
@@ -214,6 +217,7 @@ impl ShaderPreview {
             refusal: None,
             angle: 0.0,
             post: None,
+            ui: None,
         }
     }
 
@@ -291,6 +295,14 @@ impl ShaderPreview {
         self.angle = (self.angle + dt / TURN_SECONDS).fract();
         if source.contains("fn post_process(") {
             self.render_post(gpu, params_wgsl, source, params, images);
+            return;
+        }
+        if source.contains("fn ui(") {
+            let ui = self
+                .ui
+                .get_or_insert_with(|| ui_preview::UiPreview::new(gpu));
+            self.refusal = ui.render(gpu, self.target.view(), self.target.size(), source);
+            self.pipeline = None;
             return;
         }
         if !self.ensure_pipeline(device, params_wgsl, source) {
