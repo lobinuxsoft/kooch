@@ -10,6 +10,14 @@ fn lib_line(distance: f32, width: f32, softness: f32) -> f32 {
     return clamp(0.5 - (abs(distance) - width) / max(softness, 0.00001), 0.0, 1.0);
 }
 
+/// How filled a bar is at `along`, 0 to 1, with an edge `softness` wide: all of it at 1, none at 0.
+fn lib_fill(along: f32, fill: f32, softness: f32) -> f32 {
+    let soft = max(softness, 0.00001);
+    // Past both ends by one edge, or a cap sitting at exactly 1 stops half way.
+    let reach = fill * (1.0 + soft * 2.0) - soft;
+    return clamp((reach - along) / soft + 0.5, 0.0, 1.0);
+}
+
 /// Two lines around a rounded box, `gap` apart: a card's frame, a button's border.
 fn lib_double_frame(
     uv: vec2<f32>,

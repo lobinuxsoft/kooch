@@ -1,4 +1,5 @@
 // kind: ui
+// use: engine:shapes
 // An arc that fills clockwise from the top: a circular health bar or cooldown.
 // `background-color` is the fill, `border-color` the track behind it.
 struct SurfaceParams {
@@ -15,7 +16,7 @@ fn ui(input: UiInput) -> vec4<f32> {
     let ring = abs(length(point) - (1.0 - p.thickness)) - p.thickness;
     let coverage = clamp(0.5 - ring / pixel, 0.0, 1.0);
     let turn = fract(atan2(point.x, -point.y) / 6.2831853 + 1.0);
-    let filled = clamp((p.fill - turn) * 6.2831853 / pixel + 0.5, 0.0, 1.0);
+    let filled = lib_fill(turn, p.fill, pixel / 6.2831853);
     let color = mix(input.border_color, input.color, filled);
     return vec4<f32>(color.rgb, color.a * coverage);
 }

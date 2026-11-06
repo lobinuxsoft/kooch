@@ -24,7 +24,7 @@ fn ui(input: UiInput) -> vec4<f32> {
     let size = input.size;
     let curve = lib_bezier(input.uv * size, p.start * size, p.control * size, p.end * size);
     let coverage = clamp(0.5 - (curve.distance - p.thickness * 0.5 * size.y), 0.0, 1.0);
-    let filled = clamp((p.fill - curve.along) * max(size.x, size.y) + 0.5, 0.0, 1.0);
+    let filled = lib_fill(curve.along, p.fill, 1.0 / max(size.x, size.y));
     let color = mix(input.border_color, input.color, filled);
     return vec4<f32>(color.rgb, color.a * coverage);
 }

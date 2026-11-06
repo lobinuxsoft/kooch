@@ -392,7 +392,7 @@ Every other Argument holds its value for all the rounds. The loop's cost is its 
 subgraph's, so read it against the panel's GPU time; on a handheld a march wants a `stop`.
 
 **Right-click → Functions** lists functions written in WGSL. The engine brings a library, `stripes`,
-`iridescence`, `sheen`, `double_frame`, `inner_shadow` and `bezier`, which a shader reaches with
+`iridescence`, `sheen`, `double_frame`, `inner_shadow`, `bezier` and `fill`, which a shader reaches with
 `// use: engine:patterns` or `// use: engine:shapes` and which lives in the editor, not in your
 project. Any function of yours in a `.wgsl` joins the menu once it has a `///` comment; one without
 it stays the file's own helper. Its pins come from the signature: `f32` and `vec2` to `vec4` narrow

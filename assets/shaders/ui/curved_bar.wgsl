@@ -1,4 +1,5 @@
 // kind: ui
+// use: engine:shapes
 // A bar bent along an arc, filling left to right. `background-color` is the fill,
 // `border-color` the track behind it.
 struct SurfaceParams {
@@ -16,7 +17,7 @@ fn ui(input: UiInput) -> vec4<f32> {
     let pixel = 1.0 / input.size.y;
     let band = abs(input.uv.y - centre) - p.thickness * 0.5;
     let coverage = clamp(0.5 - band / pixel, 0.0, 1.0);
-    let filled = clamp((p.fill - input.uv.x) * input.size.x + 0.5, 0.0, 1.0);
+    let filled = lib_fill(input.uv.x, p.fill, 1.0 / input.size.x);
     let color = mix(input.border_color, input.color, filled);
     return vec4<f32>(color.rgb, color.a * coverage);
 }

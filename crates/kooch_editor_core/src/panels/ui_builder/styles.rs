@@ -147,9 +147,41 @@ fn param_field(ui: &mut egui::Ui, param: &ShaderParam, value: Option<&str>) -> O
                 .changed()
                 .then(|| hex(bytes))
         }
-        // Space-separated, as the `.kcss` writes them.
-        _ => text(ui, value),
+        ParamKind::Vec2 => vector::<2>(ui, param, value),
+        ParamKind::Vec3 => vector::<3>(ui, param, value),
+        ParamKind::Vec4 => vector::<4>(ui, param, value),
+        // A texture never reaches a UI material.
+        ParamKind::Texture => text(ui, value),
     }
+}
+
+/// A drag per component, written space-separated as the `.kcss` does; unset, the shader's default.
+fn vector<const N: usize>(
+    ui: &mut egui::Ui,
+    param: &ShaderParam,
+    value: Option<&str>,
+) -> Option<String> {
+    let mut numbers: [f32; N] = std::array::from_fn(|i| param.default[i]);
+    let written = value.unwrap_or_default().split_whitespace();
+    for (number, part) in numbers.iter_mut().zip(written) {
+        *number = part.parse().unwrap_or(*number);
+    }
+    let range = if param.point {
+        0.0..=1.0
+    } else {
+        f32::MIN..=f32::MAX
+    };
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        for (number, axis) in numbers.iter_mut().zip(["X", "Y", "Z", "W"]) {
+            ui.label(axis);
+            let drag = egui::DragValue::new(number)
+                .speed(0.005)
+                .range(range.clone());
+            changed |= ui.add(drag).changed();
+        }
+    });
+    changed.then(|| numbers.map(decimal).join(" "))
 }
 
 /// Room the property names and ↺ take: `border-bottom-width` is the longest.
