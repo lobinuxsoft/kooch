@@ -1,5 +1,6 @@
 //! One `let` per node, in dependency order: what each node is as a WGSL expression (#1159).
 
+mod looped;
 mod noise;
 mod uv;
 
@@ -451,6 +452,13 @@ impl Body<'_> {
                 }
                 format!("{function}({})", values.join(", "))
             }
+            Node::Loop {
+                function,
+                inputs,
+                outputs,
+                reads,
+                ..
+            } => self.looped(id, function, inputs, outputs, reads.is_some())?,
             Node::Output | Node::ShaderOutput { .. } | Node::Result { .. } => {
                 return Err("an output node feeds nothing".to_owned());
             }

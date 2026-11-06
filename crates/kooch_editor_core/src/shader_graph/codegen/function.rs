@@ -7,7 +7,7 @@ use egui_snarl::{InPinId, NodeId, OutPinId};
 
 use super::emit::Body;
 use super::helpers::helpers;
-use super::{finish, use_lines};
+use super::{finish, textures, use_lines};
 use crate::shader_graph::subgraph::ident;
 use crate::shader_graph::{Graph, Node, embed};
 
@@ -83,7 +83,8 @@ pub(crate) fn generate_function(graph: &Graph, function: &str) -> Result<String,
         .chain(arguments.iter().map(|name| format!("in_{name}: vec4<f32>")))
         .collect();
 
-    let mut code = helpers(graph);
+    let mut code = textures(graph);
+    code.push_str(&helpers(graph));
     let _ = writeln!(code, "struct {function}_out {{");
     for (_, name) in &results {
         let _ = writeln!(code, "    out_{name}: vec4<f32>,");

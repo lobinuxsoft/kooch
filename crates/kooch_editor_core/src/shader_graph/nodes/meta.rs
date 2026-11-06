@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use super::super::subgraph::{ident, loop_inputs, loop_outputs};
 use super::{Category, Node};
 
 /// What an output pin reads of its node's value.
@@ -96,6 +97,7 @@ impl Node {
             Self::Argument { name } => format!("In: {name}"),
             Self::Result { name } => format!("Out: {name}"),
             Self::Subgraph { function, .. } => function.trim_start_matches("sg_").to_owned(),
+            Self::Loop { function, .. } => format!("Loop: {}", function.trim_start_matches("sg_")),
             Self::Uv => "UV".to_owned(),
             Self::RoundedBox => "Rounded Box".to_owned(),
             Self::UiImage => "UI Image".to_owned(),
@@ -201,6 +203,7 @@ impl Node {
     pub(crate) fn inputs(&self) -> Cow<'_, [&str]> {
         match self {
             Self::Subgraph { inputs, .. } => inputs.iter().map(String::as_str).collect(),
+            Self::Loop { inputs, .. } => loop_inputs(inputs).collect(),
             _ => Cow::Borrowed(self.fixed_inputs()),
         }
     }
@@ -208,7 +211,7 @@ impl Node {
     /// The same, for a node whose pins are not read from a file.
     fn fixed_inputs(&self) -> &'static [&'static str] {
         match self {
-            Self::Argument { .. } | Self::Subgraph { .. } => &[],
+            Self::Argument { .. } | Self::Subgraph { .. } | Self::Loop { .. } => &[],
             Self::Result { .. } => &["value"],
             Self::Uv
             | Self::UiColor
@@ -346,10 +349,10 @@ impl Node {
     /// then one pin per channel, as a colour or a vector is taken apart in Unity and Unreal.
     pub(crate) fn outputs(&self) -> Cow<'_, [(&str, Pick)]> {
         match self {
-            Self::Subgraph { outputs, .. } => outputs
-                .iter()
-                .map(|name| (name.as_str(), Pick::Whole))
-                .collect(),
+            Self::Subgraph { outputs, .. } => {
+                outputs.iter().map(|n| (n.as_str(), Pick::Whole)).collect()
+            }
+            Self::Loop { outputs, .. } => loop_outputs(outputs).map(|n| (n, Pick::Whole)).collect(),
             _ => Cow::Borrowed(self.fixed_outputs()),
         }
     }
@@ -406,9 +409,9 @@ impl Node {
 
     /// What output pin `index` reads of the node's value, held in `value`.
     pub(crate) fn output_of(&self, value: &str, index: usize) -> String {
-        if let Self::Subgraph { outputs, .. } = self {
-            let name = outputs.get(index).map_or("", String::as_str);
-            return format!("{value}.out_{}", super::super::subgraph::ident(name));
+        if matches!(self, Self::Subgraph { .. } | Self::Loop { .. }) {
+            let name = self.outputs().get(index).map_or("", |output| output.0);
+            return format!("{value}.out_{}", ident(name));
         }
         match self.outputs().get(index).map(|&(_, pick)| pick) {
             None | Some(Pick::Whole) => value.to_owned(),
@@ -428,9 +431,10 @@ impl Node {
     /// Which submenu adds it.
     pub(crate) fn category(&self) -> Category {
         match self {
-            Self::Argument { .. } | Self::Result { .. } | Self::Subgraph { .. } => {
-                Category::Subgraph
-            }
+            Self::Argument { .. }
+            | Self::Result { .. }
+            | Self::Subgraph { .. }
+            | Self::Loop { .. } => Category::Subgraph,
             Self::Uv
             | Self::WorldPosition
             | Self::WorldNormal
@@ -522,15 +526,16 @@ impl Node {
 
     /// Whether a shader of `kind` has what it reads: a UI node has no world, a mesh no UI node.
     pub(crate) fn fits(&self, kind: &str) -> bool {
-        // A function has no material behind it, so nothing a material edits reaches it.
+        // A function has no values of its own to edit. A texture is a module's, so it joins the
+        // material of whichever shader uses the file.
         if kind == "subgraph" {
             return self.output_kind().is_none()
                 && self.declared().is_none()
-                && !matches!(self, Self::Texture { .. } | Self::SceneColor);
+                && !matches!(self, Self::SceneColor);
         }
         match self {
             Self::Argument { .. } | Self::Result { .. } => false,
-            Self::Subgraph { reads, .. } => reads
+            Self::Subgraph { reads, .. } | Self::Loop { reads, .. } => reads
                 .as_deref()
                 .is_none_or(|reads| (reads == "ui") == (kind == "ui")),
             Self::UiImage

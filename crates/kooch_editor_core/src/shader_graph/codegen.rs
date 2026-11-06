@@ -29,7 +29,7 @@ fn use_lines(graph: &Graph) -> String {
     let paths: std::collections::BTreeSet<&str> = graph
         .node_ids()
         .filter_map(|(_, node)| match &node.node {
-            Node::Subgraph { path, .. } => Some(path.as_str()),
+            Node::Subgraph { path, .. } | Node::Loop { path, .. } => Some(path.as_str()),
             _ => None,
         })
         .collect();
@@ -192,15 +192,19 @@ fn declarations(graph: &Graph) -> String {
         }
         out.push_str(");\n\n");
     }
+    out.push_str(&textures(graph));
+    out
+}
+
+/// A declaration per Texture node, in the order they were added.
+fn textures(graph: &Graph) -> String {
+    let mut out = String::new();
     for (_, node) in graph.node_ids() {
         if let Node::Texture { name, fallback, .. } = &node.node {
             let _ = writeln!(out, "var {name}: texture_2d<f32>;  // @default({fallback})");
         }
     }
-    if graph
-        .node_ids()
-        .any(|(_, n)| matches!(n.node, Node::Texture { .. }))
-    {
+    if !out.is_empty() {
         out.push('\n');
     }
     out

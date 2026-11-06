@@ -354,28 +354,33 @@ impl Viewer<'_> {
             return;
         }
         files.sort_by(|a, b| a.display_name.cmp(&b.display_name));
-        ui.menu_button("Subgraphs", |ui| {
-            for entry in files {
-                if !ui.button(&entry.display_name).clicked() {
-                    continue;
-                }
-                let folder = open.parent().unwrap_or(std::path::Path::new(""));
-                let path = relative(folder, &entry.path);
-                let node = std::fs::read_to_string(&entry.path)
-                    .ok()
-                    .and_then(|source| call_node(&entry.path, &source, path));
-                match node {
-                    Some(node) => {
-                        snarl.insert_node(pos, node.into());
+        for (label, looped) in [("Subgraphs", false), ("Loop over", true)] {
+            ui.menu_button(label, |ui| {
+                for entry in &files {
+                    if !ui.button(&entry.display_name).clicked() {
+                        continue;
                     }
-                    None => tracing::error!(
-                        file = %entry.path.display(),
-                        "this subgraph could not be read",
-                    ),
+                    let folder = open.parent().unwrap_or(std::path::Path::new(""));
+                    let path = relative(folder, &entry.path);
+                    let node = std::fs::read_to_string(&entry.path)
+                        .ok()
+                        .and_then(|source| call_node(&entry.path, &source, path));
+                    match node {
+                        Some(node) if looped => {
+                            snarl.insert_node(pos, node.looped().into());
+                        }
+                        Some(node) => {
+                            snarl.insert_node(pos, node.into());
+                        }
+                        None => tracing::error!(
+                            file = %entry.path.display(),
+                            "this subgraph could not be read",
+                        ),
+                    }
+                    ui.close();
                 }
-                ui.close();
-            }
-        });
+            });
+        }
     }
 }
 

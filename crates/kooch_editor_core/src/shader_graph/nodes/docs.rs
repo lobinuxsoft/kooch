@@ -56,6 +56,11 @@ impl Node {
             Self::Subgraph { .. } => {
                 "Calls a .subgraph file. Saving that file changes this shader."
             }
+            Self::Loop { .. } => {
+                "Calls a .subgraph up to `rounds` times, 256 at most. A Result named like an Argument \
+                 carries into the next round, an `index` Argument reads the round, and a `stop` \
+                 Result above 0.5 ends it."
+            }
             Self::Uv => "The mesh's texture coordinate; across the node in a UI shader.",
             Self::UiImage => "The node's background-image. UI shaders only.",
             Self::UiColor => "The node's background-color. UI shaders only.",
