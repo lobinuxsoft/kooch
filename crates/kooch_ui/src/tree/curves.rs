@@ -1,61 +1,128 @@
-//! Curves (#1827): a node's descendants lay out straight and bend when drawn, so nothing but the
-//! draw and the pointer ever knows. The line is resampled by length here, once, for both.
+//! Curves (#1827, #1832): a node's descendants lay out straight and bend when drawn, so nothing but
+//! the draw and the pointer ever knows. The path is `kooch_ecs`'s spline, flat, and is resampled by
+//! length here, once, for both.
 
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 use kooch_ecs::CURVE_POINTS;
+use kooch_ecs::spline::{Knot, arc, eval};
 
 use crate::{UiNode, UiTree};
 
-/// Steps a curve is measured in; the line's points land between them.
-const STEPS: usize = 256;
+/// Most points a path takes: a typo must not become a table nothing can walk.
+const MAX_POINTS: usize = 64;
+/// Fewest points a closed path keeps: two would be a line walked twice.
+const CLOSED_MIN: usize = 3;
+/// Samples per stretch between two points, for what draws the path.
+const SAMPLES: usize = 16;
 
 /// `CURVE_POINTS` points evenly spaced along a curve.
 pub(crate) type UiLine = [Vec2; CURVE_POINTS];
 
-fn at([start, control, end]: [Vec2; 3], t: f32) -> Vec2 {
-    start.lerp(control, t).lerp(control.lerp(end, t), t)
+/// A curve through its points, as fractions of a node. Written `x y x y ...`, then `closed`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UiPath {
+    pub points: Vec<[f32; 2]>,
+    pub closed: bool,
 }
 
-/// Evenly spaced by length, not by `t`: a lopsided curve would stretch what is on it.
-fn resampled(curve: [Vec2; 3]) -> UiLine {
-    let mut lengths = [0.0; STEPS + 1];
-    let mut last = curve[0];
-    for step in 1..=STEPS {
-        let point = at(curve, step as f32 / STEPS as f32);
-        lengths[step] = lengths[step - 1] + last.distance(point);
-        last = point;
-    }
-    let total = lengths[STEPS];
-    let mut step = 0;
-    std::array::from_fn(|index| {
-        let want = total * index as f32 / (CURVE_POINTS - 1) as f32;
-        while step + 1 < STEPS && lengths[step + 1] < want {
-            step += 1;
+impl UiPath {
+    /// `none` is no path.
+    pub fn parse(text: &str) -> Result<Option<Self>, String> {
+        let text = text.trim();
+        if text == "none" {
+            return Ok(None);
         }
-        let span = lengths[step + 1] - lengths[step];
-        let part = if span > 0.0 {
-            (want - lengths[step]) / span
-        } else {
-            0.0
+        let (numbers, closed) = match text.strip_suffix("closed") {
+            Some(numbers) => (numbers, true),
+            None => (text, false),
         };
-        at(curve, (step as f32 + part) / STEPS as f32)
-    })
+        let numbers: Result<Vec<f32>, _> = numbers.split_whitespace().map(str::parse).collect();
+        let refused = || format!("`{text}` is not at least two points, or none");
+        let numbers = numbers.map_err(|_| refused())?;
+        if numbers.len() % 2 != 0 || numbers.iter().any(|number| !number.is_finite()) {
+            return Err(refused());
+        }
+        let points: Vec<[f32; 2]> = numbers.chunks_exact(2).map(|n| [n[0], n[1]]).collect();
+        let fewest = if closed { CLOSED_MIN } else { 2 };
+        if !(fewest..=MAX_POINTS).contains(&points.len()) {
+            return Err(refused());
+        }
+        Ok(Some(Self { points, closed }))
+    }
+
+    /// As the `.kcss` writes it.
+    pub fn written(&self) -> String {
+        let numbers = self.points.iter().flatten().map(|n| format!("{n:.3}"));
+        let mut words: Vec<String> = numbers.collect();
+        if self.closed {
+            words.push("closed".to_owned());
+        }
+        words.join(" ")
+    }
+
+    /// Whether a point can go and leave a path.
+    pub fn removable(&self) -> bool {
+        self.points.len() > if self.closed { CLOSED_MIN } else { 2 }
+    }
+
+    /// Whether a point can join it.
+    pub fn growable(&self) -> bool {
+        self.points.len() < MAX_POINTS
+    }
+
+    /// Points along the path, each with the stretch it is on: what an editor draws and clicks.
+    pub fn sampled(&self) -> Vec<(usize, [f32; 2])> {
+        let knots = self.knots(Vec2::ZERO, Vec2::ONE);
+        let steps = eval::segments(&knots, self.closed) * SAMPLES;
+        (0..=steps)
+            .map(|step| {
+                let point = eval::at(&knots, self.closed, step as f32 / steps.max(1) as f32);
+                (step / SAMPLES, [point.x, point.y])
+            })
+            .collect()
+    }
+
+    fn knots(&self, min: Vec2, size: Vec2) -> Vec<Knot> {
+        let at = |point: &[f32; 2]| (min + Vec2::from(*point) * size).extend(0.0);
+        self.points
+            .iter()
+            .map(|point| Knot::at(at(point)))
+            .collect()
+    }
+
+    /// Evenly spaced by length, not by `t`: a lopsided curve would stretch what is on it.
+    fn line(&self, min: Vec2, size: Vec2) -> UiLine {
+        let knots = self.knots(min, size);
+        let table = arc::walked(&knots, self.closed);
+        let total = table.last().copied().unwrap_or(0.0);
+        std::array::from_fn(|index| {
+            let wanted = total * index as f32 / (CURVE_POINTS - 1) as f32;
+            let point: Vec3 = eval::at(&knots, self.closed, arc::parameter_in(&table, wanted));
+            point.truncate()
+        })
+    }
 }
 
 impl UiTree {
-    /// Bends what is inside `node` along three points across it; `None` leaves it straight.
-    pub fn set_curve(&mut self, node: UiNode, curve: Option<[[f32; 2]; 3]>) {
+    /// Bends what is inside `node` along a path across it; `None` leaves it straight.
+    pub fn set_curve(&mut self, node: UiNode, curve: Option<UiPath>) {
         if let Some(slot) = self.curve.get_mut(node.0 as usize) {
-            *slot = curve.map(|points| points.map(Vec2::from));
+            *slot = curve;
         }
+    }
+
+    /// Whether `node`'s path joins its ends.
+    pub(crate) fn curve_closed(&self, node: UiNode) -> bool {
+        let curve = self.curve.get(node.0 as usize);
+        curve.is_some_and(|curve| curve.as_ref().is_some_and(|path| path.closed))
     }
 
     /// `node`'s curve in canvas units.
     pub(crate) fn line(&self, node: UiNode) -> Option<UiLine> {
         let index = node.0 as usize;
         let rect = self.rect.get(index)?;
-        let curve = (*self.curve.get(index)?)?;
-        Some(resampled(curve.map(|point| rect.min + point * rect.size)))
+        let path = self.curve.get(index)?.as_ref()?;
+        Some(path.line(rect.min, rect.size))
     }
 
     /// The nearest node above `node` with a curve.

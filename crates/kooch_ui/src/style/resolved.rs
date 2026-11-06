@@ -22,7 +22,7 @@ pub struct ResolvedStyle {
     pub mask: Option<kooch_core::Guid>,
     pub mask_luminance: bool,
     pub fill_from: u32,
-    pub curve: Option<[[f32; 2]; 3]>,
+    pub curve: Option<crate::UiPath>,
     pub slice: [f32; 4],
     pub tint: Option<[f32; 4]>,
 }
@@ -86,7 +86,7 @@ impl ResolvedStyle {
             Declaration::Mask(mask) => self.mask = mask.as_ref().and_then(|mask| mask.guid),
             Declaration::MaskLuminance(on) => self.mask_luminance = *on,
             Declaration::FillFrom(from) => self.fill_from = *from,
-            Declaration::Curve(curve) => self.curve = *curve,
+            Declaration::Curve(curve) => self.curve.clone_from(curve),
             Declaration::Slice(slice) => self.slice = *slice,
             Declaration::Tint(rgba) => self.tint = Some(*rgba),
         }

@@ -11,7 +11,7 @@ pub const QUAD_GLYPH: u32 = 1;
 /// A quad samples an image from the atlas, filtered, tinted by `color` (#1708).
 pub const QUAD_IMAGE: u32 = 2;
 /// Evenly spaced points in a [`UiCurve`]; `ui.wgsl` holds the same number.
-pub const CURVE_POINTS: usize = 64;
+pub const CURVE_POINTS: usize = 128;
 
 /// One UI rectangle: a panel, or one glyph of a text.
 #[repr(C)]
@@ -73,8 +73,8 @@ pub struct UiCurve {
     pub width: f32,
     /// The straight height that lands on the line itself.
     pub middle: f32,
-    /// WGSL rounds the struct to 8 bytes.
-    pub pad: f32,
+    /// 1 when the line ends where it starts, and the bend carries through the seam.
+    pub closed: u32,
 }
 
 /// A rectangle of the atlas that changed, and its RGBA8 texels, row by row.

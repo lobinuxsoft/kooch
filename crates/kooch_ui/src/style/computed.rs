@@ -70,13 +70,10 @@ pub fn computed(style: &ResolvedStyle, property: &str) -> Option<String> {
             let amount = style.params.iter().find(|(name, _)| &**name == "fill");
             number(amount.map_or(1.0, |(_, value)| value[0]))
         }
-        "-kooch-curve" => match style.curve {
-            Some(curve) => {
-                let numbers: Vec<String> = curve.iter().flatten().map(|n| number(*n)).collect();
-                numbers.join(" ")
-            }
-            None => "none".to_owned(),
-        },
+        "-kooch-curve" => style
+            .curve
+            .as_ref()
+            .map_or_else(|| "none".to_owned(), crate::UiPath::written),
         "-kooch-slice" => {
             let [top, right, bottom, left] = style.slice.map(number);
             format!("{top}px {right}px {bottom}px {left}px")
