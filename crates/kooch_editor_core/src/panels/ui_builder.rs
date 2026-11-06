@@ -12,6 +12,7 @@ mod gizmo;
 mod hierarchy;
 mod inspector;
 mod library;
+mod shaders;
 mod styles;
 
 use crate::ui_builder::{RESOLUTIONS, UiBuilder};

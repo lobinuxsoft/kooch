@@ -3,7 +3,7 @@
 mod asset_picker;
 mod search_combo;
 
-pub(crate) use asset_picker::asset_picker;
+pub(crate) use asset_picker::{asset_picker, asset_picker_where};
 pub(crate) use search_combo::{search_combo, search_menu};
 
 /// Height of one list row, in points.
