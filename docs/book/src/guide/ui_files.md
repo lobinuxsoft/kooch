@@ -346,12 +346,13 @@ drag in the UI Builder; copy any of them to start your own. A project's
 [editor panel](../editor/panels.md) draws a material as a plain box: panels only redraw on change,
 so `time` would stand still there.
 
-`-kooch-curve: 0.1 0.5 0.5 0.1 0.9 0.5` gives a node three points, start, control and end, as
-fractions of its box, and everything inside it bends along them: images with their slices, text,
+`-kooch-curve: 0.1 0.5 0.5 0.1 0.9 0.5` gives a node a path through any number of points, as fractions
+of its box, and everything inside it bends along it: images with their slices, text,
 buttons and materials, with no shader of yours. The node itself stays straight. Its children lay out
 as usual, then across the node becomes along the curve and the distance from its middle the distance
 from the line, so a child centred and 40px tall is a band 40px thick. Clicks follow the bend, the
-UI Builder drags the points, and `none` clears it. A band thicker than the curve's radius folds over
+UI Builder drags the points, adds one with a double-click on the path and removes one with a
+right-click, and `none` clears it. A trailing `closed` joins the ends, so four points make a circle. A band thicker than the curve's radius folds over
 itself, a curve inside a curve replaces the outer one, and a clip or mask from above the node is read
 as if it were straight.
 

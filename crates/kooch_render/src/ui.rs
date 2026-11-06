@@ -43,7 +43,7 @@ const ATTRIBUTES: [wgpu::VertexAttribute; 11] = wgpu::vertex_attr_array![
 ];
 
 /// `UI_CURVE_STRIPS` in `ui.wgsl`, as vertices of a triangle strip.
-const CURVED_VERTICES: u32 = (32 + 1) * 2;
+const CURVED_VERTICES: u32 = (64 + 1) * 2;
 
 impl UiPass {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {

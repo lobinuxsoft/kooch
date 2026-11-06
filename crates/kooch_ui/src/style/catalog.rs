@@ -20,7 +20,7 @@ pub enum PropertyKind {
     Image,
     /// A quoted path to a `kind: ui` shader.
     Shader,
-    /// Three `x y` points across the node, or `none`.
+    /// `x y` points across the node, then `closed` if it joins, or `none`.
     Curve,
     /// 0 to 1.
     Ratio,
@@ -270,7 +270,7 @@ pub const CATEGORIES: [StyleCategory; 10] = [
             prop(
                 "-kooch-curve",
                 Curve,
-                "Start, control and end, 0 to 1: what is inside the node bends along them",
+                "Points the path goes through, 0 to 1: what is inside the node bends along it",
             ),
             prop("-kooch-tint", Color, "Multiplies the image"),
             prop(

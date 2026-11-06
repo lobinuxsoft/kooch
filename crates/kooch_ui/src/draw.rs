@@ -255,7 +255,7 @@ fn push_curve(tree: &UiTree, node: UiNode, scale: f32, curves: &mut Vec<UiCurve>
         left: rect.min.x * scale,
         width: rect.size.x * scale,
         middle: (rect.min.y + rect.size.y * 0.5) * scale,
-        pad: 0.0,
+        closed: tree.curve_closed(node).into(),
     });
     Some(curves.len() as u32)
 }

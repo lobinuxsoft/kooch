@@ -98,7 +98,7 @@ pub struct UiTree {
     paint: Vec<Paint>,
     pub(crate) image: Vec<Option<crate::images::UiImage>>,
     pub(crate) mask: Vec<masks::UiCut>,
-    pub(crate) curve: Vec<Option<[Vec2; 3]>>,
+    pub(crate) curve: Vec<Option<curves::UiPath>>,
     text: Vec<Option<Text>>,
     glyphs: Vec<GlyphQuad>,
     /// Physical pixels per canvas unit and atlas generation the glyphs were built for.

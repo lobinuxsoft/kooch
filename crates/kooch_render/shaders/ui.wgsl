@@ -32,20 +32,20 @@ struct UiMask {
 const UI_FILL_IMAGE: u32 = 6u;
 const UI_FILL_SOFT: f32 = 0.008;
 
-const UI_CURVE_POINTS: u32 = 64u;
+const UI_CURVE_POINTS: u32 = 128u;
 
 struct UiCurve {
-    points: array<vec2<f32>, 64>,
+    points: array<vec2<f32>, 128>,
     left: f32,
     width: f32,
     middle: f32,
-    pad: f32,
+    closed: u32,
 }
 
 @group(0) @binding(5) var<storage, read> ui_curves: array<UiCurve>;
 
 // Strips a curved quad is cut into. `UiPass` draws two vertices more than twice this.
-const UI_CURVE_STRIPS: u32 = 32u;
+const UI_CURVE_STRIPS: u32 = 64u;
 
 // Masks nested deeper than this stop cutting. It also ends a cycle in a list sent over the wire.
 const UI_MASK_DEPTH: u32 = 16u;
@@ -100,8 +100,12 @@ fn ui_bent(pixel: vec2<f32>, curve: u32) -> vec2<f32> {
     let here = ui_curves[at].points[index];
     let next = ui_curves[at].points[index + 1u];
     // From both neighbours, or each stretch would turn at once and leave a crease.
-    let before = next - ui_curves[at].points[max(index, 1u) - 1u];
-    let after = ui_curves[at].points[min(index + 2u, last)] - here;
+    let closed = ui_curves[at].closed != 0u;
+    // A closed line's first and last points are the same one: past it is the other end's neighbour.
+    let behind = select(max(index, 1u) - 1u, last - 1u, closed && index == 0u);
+    let ahead = select(min(index + 2u, last), 1u, closed && index + 2u > last);
+    let before = next - ui_curves[at].points[behind];
+    let after = ui_curves[at].points[ahead] - here;
     let tangent = mix(before, after, clamp(part, 0.0, 1.0));
     let unit = tangent / max(length(tangent), 0.00001);
     let away = pixel.y - ui_curves[at].middle;
