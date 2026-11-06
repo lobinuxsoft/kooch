@@ -100,14 +100,14 @@ pub fn pick_pointer(resources: &mut Resources) {
     }
     let mut changed = None;
     if down && let Some((document, node)) = pointer.pressed {
-        let x = overlays
+        let point = overlays
             .iter()
             .find(|(entity, _)| *entity == document)
             .and_then(|(_, input)| input.point)
-            .map(|point| point.x * to_canvas(resources));
-        if let (Some(x), Some(tree)) = (x, trees_mut(resources, document))
+            .map(|point| point * to_canvas(resources));
+        if let (Some(point), Some(tree)) = (point, trees_mut(resources, document))
             && tree.control_kind(node) == Some(ControlKind::Slider)
-            && tree.slide_to(node, x)
+            && tree.slide_to(node, tree.straight(node, point).x)
         {
             changed = Some((document, node));
         }

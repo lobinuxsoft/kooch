@@ -4,8 +4,8 @@ use glam::Vec2;
 use kooch_core::resource::Resources;
 use kooch_ecs::query::Query;
 use kooch_ecs::{
-    AtlasUpload, Entity, QUAD_GLYPH, QUAD_IMAGE, UiDrawList, UiMask, UiMaterial, UiParam, UiQuad,
-    UiShader, ViewSize,
+    AtlasUpload, Entity, QUAD_GLYPH, QUAD_IMAGE, UiCurve, UiDrawList, UiMask, UiMaterial, UiParam,
+    UiQuad, UiShader, ViewSize,
 };
 
 use crate::layout::CANVAS_HEIGHT;
@@ -61,6 +61,7 @@ pub fn draw_tree(
 fn clear(list: &mut UiDrawList) {
     list.quads.clear();
     list.masks.clear();
+    list.curves.clear();
     list.materials.clear();
     list.params.clear();
     list.shaders.clear();
@@ -94,11 +95,15 @@ fn push_tree(
     let mut next = 0;
     // What each node's children are cut by; a parent always comes before them.
     let mut inner = vec![0; tree.len()];
+    // The curve each node's children bend along, the same way.
+    let mut bent = vec![0; tree.len()];
     for index in 0..tree.len() as u32 {
         let node = UiNode(index);
         let around = tree.parent(node).map_or(0, |up| inner[up.0 as usize]);
         let (own, within) = push_masks(tree, node, atlas, scale, around, &mut list.masks);
         inner[index as usize] = within;
+        let curve = tree.parent(node).map_or(0, |up| bent[up.0 as usize]);
+        bent[index as usize] = push_curve(tree, node, scale, &mut list.curves).unwrap_or(curve);
         let first = list.quads.len();
         // Glyphs built for a node not drawn now are passed over, so `next` stays in step.
         while next < glyphs.len() && glyphs[next].node < index {
@@ -188,6 +193,7 @@ fn push_tree(
         push_thumb(tree, node, rect, paint.text, scale, clip, &mut list.quads);
         for quad in &mut list.quads[first..] {
             quad.mask = own;
+            quad.curve = curve;
         }
     }
 }
@@ -233,6 +239,20 @@ fn push_masks(
         ..UiMask::default()
     });
     (own, masks.len() as u32)
+}
+
+/// `node`'s curve in pixels, as an index plus one.
+fn push_curve(tree: &UiTree, node: UiNode, scale: f32, curves: &mut Vec<UiCurve>) -> Option<u32> {
+    let line = tree.line(node)?;
+    let rect = tree.rect(node)?;
+    curves.push(UiCurve {
+        points: line.map(|point| (point * scale).into()),
+        left: rect.min.x * scale,
+        width: rect.size.x * scale,
+        middle: (rect.min.y + rect.size.y * 0.5) * scale,
+        pad: 0.0,
+    });
+    Some(curves.len() as u32)
 }
 
 /// `quad` as drawn by `shader`, with the node's values.

@@ -2,7 +2,7 @@
 
 @fragment
 fn fs_material(in: Varyings) -> @location(0) vec4<f32> {
-    let p = in.position.xy;
+    let p = in.straight;
     if p.x < in.clip.x || p.y < in.clip.y || p.x >= in.clip.z || p.y >= in.clip.w {
         discard;
     }

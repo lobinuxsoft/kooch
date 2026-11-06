@@ -150,6 +150,7 @@ pub(crate) fn apply(tree: &mut UiTree, node: UiNode, style: &ResolvedStyle) {
         luminance: style.mask_luminance,
     });
     tree.set_mask(node, mask);
+    tree.set_curve(node, style.curve);
     tree.set_material(node, style.material);
     tree.style_params(node, &style.params);
 }

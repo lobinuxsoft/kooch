@@ -26,11 +26,28 @@ struct UiMask {
 
 @group(0) @binding(4) var<storage, read> ui_masks: array<UiMask>;
 
+const UI_CURVE_POINTS: u32 = 64u;
+
+struct UiCurve {
+    points: array<vec2<f32>, 64>,
+    left: f32,
+    width: f32,
+    middle: f32,
+    pad: f32,
+}
+
+@group(0) @binding(5) var<storage, read> ui_curves: array<UiCurve>;
+
+// Strips a curved quad is cut into. `UiPass` draws two vertices more than twice this.
+const UI_CURVE_STRIPS: u32 = 32u;
+
 // Masks nested deeper than this stop cutting. It also ends a cycle in a list sent over the wire.
 const UI_MASK_DEPTH: u32 = 16u;
 
 const QUAD_GLYPH: u32 = 1u;
 const QUAD_IMAGE: u32 = 2u;
+// Set here, not by the list: a glyph at an angle cannot be read texel by texel.
+const QUAD_CURVED: u32 = 4u;
 
 struct Instance {
     @location(0) min: vec2<f32>,
@@ -43,6 +60,7 @@ struct Instance {
     @location(7) uv_size: vec2<u32>,
     @location(8) material_flags: vec2<u32>,
     @location(9) mask: u32,
+    @location(10) curve: u32,
 }
 
 struct Varyings {
@@ -61,13 +79,44 @@ struct Varyings {
     // The image's atlas texels, `min` and `size`.
     @location(8) @interpolate(flat) atlas_rect: vec4<u32>,
     @location(9) @interpolate(flat) mask: u32,
+    // Where the layout put this fragment: clip and masks are tested here, so they bend too.
+    @location(10) straight: vec2<f32>,
+}
+
+// `pixel` of the layout on the line: across becomes along, past its ends it carries on straight.
+fn ui_bent(pixel: vec2<f32>, curve: u32) -> vec2<f32> {
+    // Through the buffer each time: an array copied to a value cannot take a runtime index.
+    let at = curve - 1u;
+    let last = UI_CURVE_POINTS - 1u;
+    let along = (pixel.x - ui_curves[at].left) / max(ui_curves[at].width, 1.0) * f32(last);
+    let index = u32(clamp(along, 0.0, f32(last - 1u)));
+    let part = along - f32(index);
+    let here = ui_curves[at].points[index];
+    let next = ui_curves[at].points[index + 1u];
+    // From both neighbours, or each stretch would turn at once and leave a crease.
+    let before = next - ui_curves[at].points[max(index, 1u) - 1u];
+    let after = ui_curves[at].points[min(index + 2u, last)] - here;
+    let tangent = mix(before, after, clamp(part, 0.0, 1.0));
+    let unit = tangent / max(length(tangent), 0.00001);
+    let away = pixel.y - ui_curves[at].middle;
+    return mix(here, next, part) + vec2<f32>(-unit.y, unit.x) * away;
 }
 
 @vertex
 fn vs_ui(@builtin(vertex_index) vertex: u32, quad: Instance) -> Varyings {
-    let corner = vec2<f32>(f32(vertex & 1u), f32(vertex >> 1u));
-    let pixel = quad.min + corner * quad.size;
+    var corner = vec2<f32>(f32(vertex & 1u), f32(vertex >> 1u));
+    if quad.curve != 0u {
+        corner = vec2<f32>(f32(vertex >> 1u) / f32(UI_CURVE_STRIPS), f32(vertex & 1u));
+    }
+    let straight = quad.min + corner * quad.size;
+    var pixel = straight;
     var out: Varyings;
+    out.material_flags = quad.material_flags;
+    if quad.curve != 0u {
+        pixel = ui_bent(straight, quad.curve);
+        out.material_flags.y |= QUAD_CURVED;
+    }
+    out.straight = straight;
     // y flipped: pixels descend, clip space climbs.
     let ndc = pixel / screen.size * 2.0 - 1.0;
     out.position = vec4<f32>(ndc.x, -ndc.y, 0.0, 1.0);
@@ -78,7 +127,6 @@ fn vs_ui(@builtin(vertex_index) vertex: u32, quad: Instance) -> Varyings {
     out.radius_border = quad.radius_border;
     out.uv = vec2<f32>(quad.uv_min) + corner * vec2<f32>(quad.uv_size);
     out.clip = quad.clip;
-    out.material_flags = quad.material_flags;
     out.atlas_rect = vec4<u32>(quad.uv_min, quad.uv_size);
     out.mask = quad.mask;
     return out;
@@ -119,7 +167,7 @@ fn ui_mask_coverage(p: vec2<f32>, first: u32) -> f32 {
 
 @fragment
 fn fs_ui(in: Varyings) -> @location(0) vec4<f32> {
-    let p = in.position.xy;
+    let p = in.straight;
     if p.x < in.clip.x || p.y < in.clip.y || p.x >= in.clip.z || p.y >= in.clip.w {
         discard;
     }
@@ -134,7 +182,14 @@ fn ui_quad_color(in: Varyings) -> vec4<f32> {
         return vec4<f32>(texel.rgb * texel.a, texel.a);
     }
     if (flags & QUAD_GLYPH) != 0u {
-        let coverage = textureLoad(atlas, vec2<i32>(floor(in.uv)), 0).r;
+        var coverage = textureLoad(atlas, vec2<i32>(floor(in.uv)), 0).r;
+        if (flags & QUAD_CURVED) != 0u {
+            // Half a texel in: the filter would read the next glyph.
+            let first = vec2<f32>(in.atlas_rect.xy);
+            let inside = clamp(in.uv, first + 0.5, first + vec2<f32>(in.atlas_rect.zw) - 0.5);
+            let side = vec2<f32>(textureDimensions(atlas));
+            coverage = textureSampleLevel(atlas, images, inside / side, 0.0).r;
+        }
         let alpha = in.color.a * coverage;
         return vec4<f32>(in.color.rgb * alpha, alpha);
     }

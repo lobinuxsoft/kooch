@@ -10,6 +10,8 @@ use kooch_core::Guid;
 pub const QUAD_GLYPH: u32 = 1;
 /// A quad samples an image from the atlas, filtered, tinted by `color` (#1708).
 pub const QUAD_IMAGE: u32 = 2;
+/// Evenly spaced points in a [`UiCurve`]; `ui.wgsl` holds the same number.
+pub const CURVE_POINTS: usize = 64;
 
 /// One UI rectangle: a panel, or one glyph of a text.
 #[repr(C)]
@@ -34,6 +36,8 @@ pub struct UiQuad {
     pub flags: u32,
     /// Index in [`UiDrawList::masks`] plus one; 0 is unmasked.
     pub mask: u32,
+    /// Index in [`UiDrawList::curves`] plus one; 0 is straight.
+    pub curve: u32,
 }
 
 /// A shape what is inside a node gets cut to (#1790), in physical pixels.
@@ -52,6 +56,21 @@ pub struct UiMask {
     pub luminance: u32,
     /// WGSL rounds the struct to 8 bytes.
     pub pad: u32,
+}
+
+/// A line the quads inside a node bend along (#1827), in physical pixels. Resampled by length, so
+/// the GPU does no curve maths and a longer curve changes nothing there.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
+pub struct UiCurve {
+    pub points: [[f32; 2]; CURVE_POINTS],
+    /// The straight span that maps onto the line: `left` to `left + width`.
+    pub left: f32,
+    pub width: f32,
+    /// The straight height that lands on the line itself.
+    pub middle: f32,
+    /// WGSL rounds the struct to 8 bytes.
+    pub pad: f32,
 }
 
 /// A rectangle of the atlas that changed, and its RGBA8 texels, row by row.
@@ -91,6 +110,7 @@ pub struct UiMaterial {
 pub struct UiDrawList {
     pub quads: Vec<UiQuad>,
     pub masks: Vec<UiMask>,
+    pub curves: Vec<UiCurve>,
     pub materials: Vec<UiMaterial>,
     pub params: Vec<UiParam>,
     pub shaders: Vec<UiShader>,

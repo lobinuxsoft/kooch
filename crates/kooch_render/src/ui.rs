@@ -1,7 +1,9 @@
 //! Drawing the UI over the finished frame (#96): instanced draws of [`UiQuad`]s, one per stretch
 //! of plain or same-shader quads, after the post-process, into the image that is presented.
 
-use kooch_ecs::{UiDrawList, UiMask, UiQuad};
+use std::ops::Range;
+
+use kooch_ecs::{UiCurve, UiDrawList, UiMask, UiQuad};
 
 use crate::material::MAX_PARAM_SCALARS;
 
@@ -24,6 +26,9 @@ pub struct UiPass {
     /// [`UiDrawList::masks`] on the GPU.
     masks: wgpu::Buffer,
     masks_capacity: u64,
+    /// [`UiDrawList::curves`] on the GPU.
+    curves: wgpu::Buffer,
+    curves_capacity: u64,
     started: std::time::Instant,
 }
 
@@ -32,10 +37,13 @@ mod materials;
 use materials::UiMaterials;
 pub use materials::validate_ui;
 
-const ATTRIBUTES: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array![
+const ATTRIBUTES: [wgpu::VertexAttribute; 11] = wgpu::vertex_attr_array![
     0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32x4, 4 => Float32x4,
-    5 => Float32x2, 6 => Uint32x2, 7 => Uint32x2, 8 => Uint32x2, 9 => Uint32,
+    5 => Float32x2, 6 => Uint32x2, 7 => Uint32x2, 8 => Uint32x2, 9 => Uint32, 10 => Uint32,
 ];
+
+/// `UI_CURVE_STRIPS` in `ui.wgsl`, as vertices of a triangle strip.
+const CURVED_VERTICES: u32 = (32 + 1) * 2;
 
 impl UiPass {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
@@ -93,6 +101,16 @@ impl UiPass {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -111,7 +129,15 @@ impl UiPass {
         let values = values_buffer(device, values_capacity);
         let masks_capacity = 16;
         let masks = masks_buffer(device, masks_capacity);
-        let (atlas, bind) = atlas_and_bind(device, &layout, &screen, &values, &masks, 1);
+        let curves_capacity = 4;
+        let curves = curves_buffer(device, curves_capacity);
+        let buffers = Buffers {
+            screen: &screen,
+            values: &values,
+            masks: &masks,
+            curves: &curves,
+        };
+        let (atlas, bind) = atlas_and_bind(device, &layout, buffers, 1);
         let capacity = 256;
         Self {
             pipeline,
@@ -129,6 +155,8 @@ impl UiPass {
             values_capacity,
             masks,
             masks_capacity,
+            curves,
+            curves_capacity,
             started: std::time::Instant::now(),
         }
     }
@@ -147,14 +175,8 @@ impl UiPass {
         clear: bool,
     ) {
         if list.atlas_side != self.atlas_side && list.atlas_side > 0 {
-            let (atlas, bind) = atlas_and_bind(
-                device,
-                &self.layout,
-                &self.screen,
-                &self.values,
-                &self.masks,
-                list.atlas_side,
-            );
+            let buffers = self.buffers();
+            let (atlas, bind) = atlas_and_bind(device, &self.layout, buffers, list.atlas_side);
             self.atlas = atlas;
             self.bind = bind;
             self.atlas_side = list.atlas_side;
@@ -194,6 +216,7 @@ impl UiPass {
             .prepare(device, &self.pipeline_layout, self.format, list);
         self.upload_values(device, queue);
         self.upload_masks(device, queue, &list.masks);
+        self.upload_curves(device, queue, &list.curves);
         let time = self.started.elapsed().as_secs_f32();
         queue.write_buffer(
             &self.screen,
@@ -235,15 +258,24 @@ impl UiPass {
             };
             if run.quads.start > drawn {
                 pass.set_pipeline(&self.pipeline);
-                pass.draw(0..4, drawn..run.quads.start);
+                draw_quads(&mut pass, &list.quads, drawn..run.quads.start);
             }
             pass.set_pipeline(material);
-            pass.draw(0..4, run.quads.clone());
+            draw_quads(&mut pass, &list.quads, run.quads.clone());
             drawn = run.quads.end;
         }
         if drawn < count as u32 {
             pass.set_pipeline(&self.pipeline);
-            pass.draw(0..4, drawn..count as u32);
+            draw_quads(&mut pass, &list.quads, drawn..count as u32);
+        }
+    }
+
+    fn buffers(&self) -> Buffers<'_> {
+        Buffers {
+            screen: &self.screen,
+            values: &self.values,
+            masks: &self.masks,
+            curves: &self.curves,
         }
     }
 
@@ -257,14 +289,7 @@ impl UiPass {
         if blocks > self.values_capacity {
             self.values_capacity = blocks.next_power_of_two();
             self.values = values_buffer(device, self.values_capacity);
-            self.bind = bind_group(
-                device,
-                &self.layout,
-                &self.screen,
-                &self.values,
-                &self.masks,
-                &self.atlas,
-            );
+            self.bind = bind_group(device, &self.layout, self.buffers(), &self.atlas);
         }
         queue.write_buffer(&self.values, 0, bytemuck::cast_slice(values));
     }
@@ -276,17 +301,45 @@ impl UiPass {
         if masks.len() as u64 > self.masks_capacity {
             self.masks_capacity = (masks.len() as u64).next_power_of_two();
             self.masks = masks_buffer(device, self.masks_capacity);
-            self.bind = bind_group(
-                device,
-                &self.layout,
-                &self.screen,
-                &self.values,
-                &self.masks,
-                &self.atlas,
-            );
+            self.bind = bind_group(device, &self.layout, self.buffers(), &self.atlas);
         }
         queue.write_buffer(&self.masks, 0, bytemuck::cast_slice(masks));
     }
+
+    fn upload_curves(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, curves: &[UiCurve]) {
+        if curves.is_empty() {
+            return;
+        }
+        if curves.len() as u64 > self.curves_capacity {
+            self.curves_capacity = (curves.len() as u64).next_power_of_two();
+            self.curves = curves_buffer(device, self.curves_capacity);
+            self.bind = bind_group(device, &self.layout, self.buffers(), &self.atlas);
+        }
+        queue.write_buffer(&self.curves, 0, bytemuck::cast_slice(curves));
+    }
+}
+
+/// `range`, a draw per stretch of straight or curved quads: only a curved one pays for its strips.
+fn draw_quads(pass: &mut wgpu::RenderPass<'_>, quads: &[UiQuad], range: Range<u32>) {
+    let mut at = range.start;
+    while at < range.end {
+        let curved = quads[at as usize].curve != 0;
+        let end = (at..range.end)
+            .find(|&next| (quads[next as usize].curve != 0) != curved)
+            .unwrap_or(range.end);
+        let vertices = if curved { CURVED_VERTICES } else { 4 };
+        pass.draw(0..vertices, at..end);
+        at = end;
+    }
+}
+
+/// What the bind group names besides the atlas.
+#[derive(Clone, Copy)]
+struct Buffers<'a> {
+    screen: &'a wgpu::Buffer,
+    values: &'a wgpu::Buffer,
+    masks: &'a wgpu::Buffer,
+    curves: &'a wgpu::Buffer,
 }
 
 /// The pipeline every UI draw shares but for its fragment entry.
@@ -385,12 +438,19 @@ fn masks_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
     })
 }
 
+fn curves_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("ui_curves"),
+        size: count * size_of::<UiCurve>() as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
 fn atlas_and_bind(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
-    screen: &wgpu::Buffer,
-    values: &wgpu::Buffer,
-    masks: &wgpu::Buffer,
+    buffers: Buffers<'_>,
     side: u32,
 ) -> (wgpu::Texture, wgpu::BindGroup) {
     let atlas = device.create_texture(&wgpu::TextureDescriptor {
@@ -408,16 +468,14 @@ fn atlas_and_bind(
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    let bind = bind_group(device, layout, screen, values, masks, &atlas);
+    let bind = bind_group(device, layout, buffers, &atlas);
     (atlas, bind)
 }
 
 fn bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
-    screen: &wgpu::Buffer,
-    values: &wgpu::Buffer,
-    masks: &wgpu::Buffer,
+    buffers: Buffers<'_>,
     atlas: &wgpu::Texture,
 ) -> wgpu::BindGroup {
     let view = atlas.create_view(&Default::default());
@@ -433,7 +491,7 @@ fn bind_group(
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: screen.as_entire_binding(),
+                resource: buffers.screen.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
@@ -445,11 +503,15 @@ fn bind_group(
             },
             wgpu::BindGroupEntry {
                 binding: 3,
-                resource: values.as_entire_binding(),
+                resource: buffers.values.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 4,
-                resource: masks.as_entire_binding(),
+                resource: buffers.masks.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: buffers.curves.as_entire_binding(),
             },
         ],
     })
