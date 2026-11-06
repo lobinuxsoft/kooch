@@ -5,6 +5,8 @@
 const LABEL: f32 = 175.0;
 /// The ↺ column.
 const RESET: f32 = 22.0;
+/// Kept clear at the pane's edge, where the scroll bar floats.
+const SCROLL_BAR: f32 = 10.0;
 /// Room a slider's number takes beside its track.
 const SLIDER_VALUE: f32 = 56.0;
 /// Room `X` and its gap take before an axis's drag.
@@ -14,9 +16,11 @@ const AXIS: f32 = 18.0;
 /// column is as wide as it was last frame, so a field that overflows it widens it every frame.
 pub(super) fn grid(ui: &egui::Ui, id: impl egui::AsIdSalt) -> egui::Grid {
     let gaps = ui.spacing().item_spacing.x * 2.0;
+    // From what is visible: `available_width` read past the pane, and the ↺ landed out of reach.
+    let room = ui.clip_rect().max.x - SCROLL_BAR - ui.cursor().min.x;
     egui::Grid::new(id)
         .num_columns(3)
-        .max_col_width((ui.available_width() - LABEL - RESET - gaps).max(80.0))
+        .max_col_width((room - LABEL - RESET - gaps).max(80.0))
 }
 
 /// Holds the label column's width whatever the name's length.
