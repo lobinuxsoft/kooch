@@ -12,6 +12,7 @@ mod gizmo;
 mod hierarchy;
 mod inspector;
 mod library;
+mod points;
 mod shaders;
 mod styles;
 
@@ -231,6 +232,7 @@ fn canvas(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEnt
             .filter(|o| *o != 0 && builder.inner.is_none())
         {
             gizmo::draw(ui, builder, origin, to_screen(rect), units, &response);
+            points::draw(ui, builder, origin, to_screen(rect));
         }
     }
     // A drop lands inside what holds children, after what does not.

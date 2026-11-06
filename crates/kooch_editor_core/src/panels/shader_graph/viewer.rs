@@ -188,9 +188,14 @@ impl SnarlViewer<GraphNode> for Viewer<'_> {
                     name,
                     width,
                     default,
+                    point,
                 } => {
                     name_field(ui, name);
                     components(ui, &mut default[..(*width).clamp(2, 4) as usize]);
+                    if *width == 2 {
+                        ui.checkbox(point, "Point")
+                            .on_hover_text("A position across the node, dragged in the UI Builder");
+                    }
                 }
                 Node::Color { name, default } => {
                     name_field(ui, name);

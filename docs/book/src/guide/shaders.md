@@ -289,6 +289,7 @@ editor shows the field:
 |---|---|---|
 | `@color` | `vec4<f32>` | a colour picker instead of four numbers |
 | `@range(lo, hi)` | `f32` | a slider |
+| `@point` | `vec2<f32>` | a position across a UI node, 0 to 1, with a handle to drag in the UI Builder |
 | `@int` | `f32` | whole steps — a stepped slider with `@range`, a stepped field without |
 | `@default(white \| black \| normal)` | a texture | what it samples while unassigned — WGSL gives a texture no starting value |
 
@@ -391,7 +392,7 @@ Every other Argument holds its value for all the rounds. The loop's cost is its 
 subgraph's, so read it against the panel's GPU time; on a handheld a march wants a `stop`.
 
 **Right-click → Functions** lists functions written in WGSL. The engine brings a library, `stripes`,
-`iridescence`, `sheen`, `double_frame` and `inner_shadow`, which a shader reaches with
+`iridescence`, `sheen`, `double_frame`, `inner_shadow` and `bezier`, which a shader reaches with
 `// use: engine:patterns` or `// use: engine:shapes` and which lives in the editor, not in your
 project. Any function of yours in a `.wgsl` joins the menu once it has a `///` comment; one without
 it stays the file's own helper. Its pins come from the signature: `f32` and `vec2` to `vec4` narrow

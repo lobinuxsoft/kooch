@@ -341,7 +341,8 @@ tree.set_param(node, "fill", 0.6);
 ```
 
 A value set by code or a binding wins over the style until the document is rebuilt. `ring.wgsl`
-fills an arc, `curved_bar.wgsl` bends a bar; copy either to start your own. A project's
+fills an arc, `curved_bar.wgsl` bends a bar and `bezier_bar.wgsl` runs along a curve whose points you
+drag in the UI Builder; copy any of them to start your own. A project's
 [editor panel](../editor/panels.md) draws a material as a plain box: panels only redraw on change,
 so `time` would stand still there.
 
