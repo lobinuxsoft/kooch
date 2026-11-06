@@ -1,6 +1,8 @@
 //! Handles for a material's `@point` parameters and a node's `-kooch-curve`: a curve is drawn by
 //! dragging, not by typing.
 
+use glam::Vec3;
+use kooch_ecs::spline::{Knot, TANGENT_CHOICES};
 use kooch_render::material::ShaderParam;
 use kooch_ui::UiPath;
 use kooch_ui::style::{InlineStyle, PARAM_PREFIX};
@@ -9,8 +11,17 @@ use crate::ui_builder::UiBuilder;
 
 const RADIUS: f32 = 5.0;
 const CURVE: &str = "-kooch-curve";
-/// What a node starts with: a gentle arch across it.
-const ARCH: [[f32; 2]; 3] = [[0.1, 0.5], [0.5, 0.1], [0.9, 0.5]];
+/// What a path can start from, generated once and edited from there.
+const SHAPES: [(&str, fn() -> UiPath); 4] = [
+    ("Line", UiPath::segment),
+    ("Arc", UiPath::arc),
+    ("Circle", UiPath::circle),
+    ("Square", UiPath::square),
+];
+/// A point's mode in the Inspector.
+const MODE: f32 = 72.0;
+/// A tangent's grip, smaller than a point's so the two read apart.
+const GRIP: f32 = 3.5;
 /// A point's number in the Inspector.
 const POINT_NAME: f32 = 24.0;
 /// Its remove button.
@@ -65,19 +76,30 @@ fn draw_curve(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, screen: e
         return;
     };
     let added = line(ui, origin, screen, &path);
+    let steered = grips(ui, origin, screen, &path);
     let names: Vec<String> = (1..=path.points.len())
         .map(|n| format!("Point {n}"))
         .collect();
-    let edit = handles(ui, origin, screen, &path.points, &names, path.removable());
-    match (edit, added) {
-        (Some(Edit::Moved(index, point)), _) => path.points[index] = point,
-        (Some(Edit::Removed(index)), _) => {
+    let places: Vec<[f32; 2]> = path.points.iter().map(flat).collect();
+    let edit = handles(ui, origin, screen, &places, &names, path.removable());
+    match (edit, steered, added) {
+        (Some(Edit::Moved(index, [x, y])), ..) => {
+            path.points[index].position = Vec3::new(x, y, 0.0);
+        }
+        (Some(Edit::Removed(index)), ..) => {
             path.points.remove(index);
         }
-        (None, Some((index, point))) => path.points.insert(index, point),
-        (None, None) => return,
+        (None, Some((index, arriving, to)), _) => path.steer(index, arriving, to),
+        (None, None, Some((index, [x, y]))) => {
+            path.points.insert(index, Knot::at(Vec3::new(x, y, 0.0)));
+        }
+        (None, None, None) => return,
     }
     write(builder, origin, CURVE, &path.written());
+}
+
+fn flat(knot: &Knot) -> [f32; 2] {
+    [knot.position.x, knot.position.y]
 }
 
 fn on_screen(screen: egui::Rect, [x, y]: [f32; 2]) -> egui::Pos2 {
@@ -86,8 +108,13 @@ fn on_screen(screen: egui::Rect, [x, y]: [f32; 2]) -> egui::Pos2 {
 
 /// Where `pointer` sits across the element, kept inside it.
 fn across(screen: egui::Rect, pointer: egui::Pos2) -> [f32; 2] {
+    outside(screen, pointer).map(|at| at.clamp(0.0, 1.0))
+}
+
+/// Where `pointer` sits across the element, past its edges too: a tangent may reach beyond the box.
+fn outside(screen: egui::Rect, pointer: egui::Pos2) -> [f32; 2] {
     let at = (pointer - screen.min) / screen.size();
-    [at.x.clamp(0.0, 1.0), at.y.clamp(0.0, 1.0)]
+    [at.x, at.y]
 }
 
 /// The path itself; a double-click on it gives the index a new point goes in, and the point.
@@ -119,6 +146,45 @@ fn line(
         }
     }
     added
+}
+
+/// A grip per tangent on a line from its point; the one being dragged, whether it is the arriving
+/// one, and where to.
+fn grips(
+    ui: &mut egui::Ui,
+    origin: u32,
+    screen: egui::Rect,
+    path: &UiPath,
+) -> Option<(usize, bool, [f32; 2])> {
+    let accent = ui.visuals().selection.stroke.color;
+    let painter = ui.painter().clone();
+    let mut dragged = None;
+    for (index, knot) in path.points.iter().enumerate() {
+        let from = on_screen(screen, flat(knot));
+        for (arriving, grip) in [true, false].into_iter().zip(path.grips(index)) {
+            let Some(grip) = grip else {
+                continue;
+            };
+            let pos = on_screen(screen, grip);
+            painter.line_segment(
+                [from, pos],
+                egui::Stroke::new(1.0, accent.gamma_multiply(0.6)),
+            );
+            painter.circle_filled(pos, GRIP, accent);
+            let square = egui::Rect::from_center_size(pos, egui::Vec2::splat(GRIP * 4.0));
+            let id = ui.id().with(("ui_builder_grip", origin, index, arriving));
+            let response = ui
+                .interact(square, id, egui::Sense::drag())
+                .on_hover_text("Drag to steer the curve through this point")
+                .on_hover_cursor(egui::CursorIcon::Grab);
+            if response.dragged_by(egui::PointerButton::Primary)
+                && let Some(pointer) = response.interact_pointer_pos()
+            {
+                dragged = Some((index, arriving, outside(screen, pointer)));
+            }
+        }
+    }
+    dragged
 }
 
 /// `points` as handles, each named; the one being dragged or, when `removable`, right-clicked.
@@ -172,31 +238,76 @@ fn write(builder: &mut UiBuilder, origin: u32, property: &str, value: &str) {
     builder.set_attribute(origin, "style", &style.write());
 }
 
-/// A row per point and what the path as a whole does, or a button to add it: `none` is the
+/// The shape picked from a list reading `label`, if one was.
+fn shape(ui: &mut egui::Ui, label: &str, hint: &str) -> Option<UiPath> {
+    let mut picked = None;
+    super::fields::wide(ui, |ui| {
+        egui::ComboBox::from_id_salt("ui_builder_curve_shape")
+            .selected_text(label)
+            .show_ui(ui, |ui| {
+                for (name, made) in SHAPES {
+                    if ui.selectable_label(false, name).clicked() {
+                        picked = Some(made());
+                    }
+                }
+            })
+            .response
+            .on_hover_text(hint);
+    });
+    picked
+}
+
+/// Its mode from a list; whether it changed.
+fn mode(ui: &mut egui::Ui, index: usize, path: &mut UiPath) -> bool {
+    let held = path.points[index].mode;
+    let name = TANGENT_CHOICES.iter().find(|c| c.value == i64::from(held));
+    let mut picked = None;
+    egui::ComboBox::from_id_salt(("ui_builder_curve_mode", index))
+        .selected_text(name.map_or("?", |choice| choice.label))
+        .width(MODE)
+        .show_ui(ui, |ui| {
+            for choice in TANGENT_CHOICES {
+                let on = choice.value == i64::from(held);
+                if ui.selectable_label(on, choice.label).clicked() {
+                    picked = u32::try_from(choice.value).ok();
+                }
+            }
+        })
+        .response
+        .on_hover_text("Auto follows its neighbours, Aligned keeps a smooth handle pair, Broken lets the two make a corner");
+    if let Some(picked) = picked.filter(|picked| *picked != held) {
+        path.set_mode(index, picked);
+        return true;
+    }
+    false
+}
+
+/// A row per point and what the path as a whole does, or a shape to start from: `none` is the
 /// engine's default.
 pub(super) fn field(ui: &mut egui::Ui, value: Option<&str>) -> Option<String> {
     let parsed = value.and_then(|value| UiPath::parse(value).ok().flatten());
     let Some(mut path) = parsed else {
-        let add = super::fields::fill(ui, egui::Button::new("Add curve"))
-            .on_hover_text("None: children stay straight");
-        let arch = UiPath {
-            points: ARCH.to_vec(),
-            closed: false,
-        };
-        return add.clicked().then(|| arch.written());
+        let hint = "None: children stay straight";
+        return shape(ui, "Add curve", hint).map(|path| path.written());
     };
     let mut changed = false;
     let mut removed = None;
+    let mut replaced = None;
     let removable = path.removable();
     ui.vertical(|ui| {
         let height = ui.spacing().interact_size.y;
-        for (index, point) in path.points.iter_mut().enumerate() {
+        for index in 0..path.points.len() {
             ui.horizontal(|ui| {
                 let name = egui::Label::new((index + 1).to_string());
                 ui.add_sized([POINT_NAME, height], name);
                 let gap = ui.spacing().item_spacing.x;
-                let width = ui.available_width() - REMOVE - gap * 2.0;
-                changed |= super::fields::axes(ui, point, width, 0.0..=1.0);
+                let width = ui.available_width() - MODE - REMOVE - gap * 4.0;
+                let mut place = flat(&path.points[index]);
+                if super::fields::axes(ui, &mut place, width, 0.0..=1.0) {
+                    path.points[index].position = Vec3::new(place[0], place[1], 0.0);
+                    changed = true;
+                }
+                changed |= mode(ui, index, &mut path);
                 let remove = egui::Button::new(crate::icons::X);
                 let response = ui
                     .add_enabled_ui(removable, |ui| ui.add_sized([REMOVE, height], remove))
@@ -221,13 +332,20 @@ pub(super) fn field(ui: &mut egui::Ui, value: Option<&str>) -> Option<String> {
                 .on_hover_text("Adds one after the last; dragging it places it")
                 .on_disabled_hover_text("A path takes no more points");
             if response.clicked()
-                && let Some(&[x, y]) = path.points.last()
+                && let Some(last) = path.points.last()
             {
-                path.points.push([(x + 0.1).min(1.0), y]);
+                let [x, y] = flat(last);
+                path.points
+                    .push(Knot::at(Vec3::new((x + 0.1).min(1.0), y, 0.0)));
                 changed = true;
             }
         });
+        let hint = "Replaces this path, points and handles, with the shape";
+        replaced = shape(ui, "Replace with shape", hint);
     });
+    if let Some(picked) = replaced {
+        return Some(picked.written());
+    }
     if let Some(index) = removed {
         path.points.remove(index);
         changed = true;

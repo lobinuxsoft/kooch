@@ -14,9 +14,7 @@ use kooch_ecs::GlobalTransform;
 use kooch_ecs::component::{ComponentNames, ComponentRegistry};
 use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::Reflect;
-use kooch_ecs::spline::{
-    Knot, RADIUS_MAX, RADIUS_MIN, Spline, TANGENT_ALIGNED, TANGENT_AUTO, TANGENT_BROKEN, eval,
-};
+use kooch_ecs::spline::{Knot, RADIUS_MAX, RADIUS_MIN, Spline, eval, ops};
 use kooch_gizmos_handles::{HandleSet, SnapSettings};
 
 use crate::actions::EditorAction;
@@ -39,9 +37,9 @@ pub(super) fn grip_size(resources: &Resources, at: Vec3) -> f32 {
 /// How far off the cursor ray a grip still counts as under it, as a fraction of its distance.
 const PICK_SLOPE: f32 = 0.02;
 
-/// A Hermite tangent spans its segment, so a handle is drawn at a third of it. Shared with the
-/// visualizer: a grip has to sit exactly where the line is drawn or it cannot be grabbed.
-pub(super) const HANDLE_SCALE: f32 = 1.0 / 3.0;
+/// Shared with the visualizer: a grip has to sit exactly where the line is drawn or it cannot be
+/// grabbed.
+pub(super) const HANDLE_SCALE: f32 = ops::HANDLE_SCALE;
 
 /// Which part of a knot a grip moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,11 +168,6 @@ pub(super) fn ring_frame(spline: &Spline, index: usize) -> Option<(Vec3, Vec3)> 
 }
 
 /// Where a grip moves the knot to, given the local position the cursor dragged it to.
-///
-/// 🔴 Dragging an `Auto` tangent promotes the knot to `Aligned`, as Blender and Unity both do:
-/// otherwise the handle springs back and the author concludes the editor is broken. `Aligned` moves
-/// the pair together — breaking the pair is a mode, chosen in the Inspector, not a side effect of a
-/// drag nobody asked to be destructive.
 pub(super) fn moved(knot: Knot, part: Part, to: Vec3) -> Knot {
     match part {
         Part::Knot => Knot {
@@ -189,38 +182,11 @@ pub(super) fn moved(knot: Knot, part: Part, to: Vec3) -> Knot {
             radius: (to - knot.position).length().clamp(RADIUS_MIN, RADIUS_MAX),
             ..knot
         },
-        Part::Leaving | Part::Arriving => {
-            let vector = (to - knot.position) / HANDLE_SCALE;
-            // A handle dragged onto its own knot has no direction left to report; keeping the old
-            // one is better than a zero tangent, which flattens the segment to a straight line.
-            if vector.length_squared() < 1.0e-12 {
-                return knot;
-            }
-            let mode = match knot.mode {
-                TANGENT_AUTO => TANGENT_ALIGNED,
-                held => held,
-            };
-            match (part, mode) {
-                // Broken is the only mode where the two are independent.
-                (Part::Arriving, TANGENT_BROKEN) => Knot {
-                    mode,
-                    arriving: vector,
-                    ..knot
-                },
-                // Arriving points back, so moving it along its own direction moves `leaving` the
-                // other way.
-                (Part::Arriving, _) => Knot {
-                    mode,
-                    leaving: -vector,
-                    ..knot
-                },
-                (_, _) => Knot {
-                    mode,
-                    leaving: vector,
-                    ..knot
-                },
-            }
-        }
+        Part::Leaving | Part::Arriving => ops::steered(
+            knot,
+            part == Part::Arriving,
+            (to - knot.position) / HANDLE_SCALE,
+        ),
     }
 }
 
