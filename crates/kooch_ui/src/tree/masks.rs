@@ -18,6 +18,13 @@ pub struct UiMaskImage {
     pub luminance: bool,
 }
 
+/// What cuts a node besides its box.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct UiCut {
+    pub(crate) image: Option<UiMaskImage>,
+    fill_from: u32,
+}
+
 /// A rounded box in canvas units.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct UiShape {
@@ -38,13 +45,26 @@ impl UiShape {
 impl UiTree {
     pub fn set_mask(&mut self, node: UiNode, mask: Option<UiMaskImage>) {
         if let Some(slot) = self.mask.get_mut(node.0 as usize) {
-            *slot = mask;
+            slot.image = mask;
         }
+    }
+
+    /// Where `node` starts showing, as an index in `-kooch-fill-from`'s words; 0 shows it whole.
+    pub fn set_fill_from(&mut self, node: UiNode, from: u32) {
+        if let Some(slot) = self.mask.get_mut(node.0 as usize) {
+            slot.fill_from = from;
+        }
+    }
+
+    pub fn fill_from(&self, node: UiNode) -> u32 {
+        self.mask
+            .get(node.0 as usize)
+            .map_or(0, |cut| cut.fill_from)
     }
 
     /// The image whose alpha cuts `node` and what is inside it.
     pub fn mask(&self, node: UiNode) -> Option<UiMaskImage> {
-        self.mask.get(node.0 as usize).copied().flatten()
+        self.mask.get(node.0 as usize)?.image
     }
 
     /// The rounded padding box `node` cuts its children to. A square one is the rectangular clip's

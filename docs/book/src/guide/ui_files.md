@@ -355,6 +355,13 @@ UI Builder drags the points, and `none` clears it. A band thicker than the curve
 itself, a curve inside a curve replaces the outer one, and a clip or mask from above the node is read
 as if it were straight.
 
+`-kooch-fill-from` turns any node into a bar: `left`, `right`, `top`, `bottom` or `clock` show it and
+what is inside it from that side, up to the param `fill`, so `-kooch-param-fill: 0.6` and
+`bind:param.fill="Health.ratio"` drive it as they drive a material. `image` follows `-kooch-mask`:
+the mask's alpha is the shape and its brightness the order, black first, so a grey ramp painted along
+any path fills along it. A sliced image keeps its slices and one inside a `-kooch-curve` fills along
+the curve. Put the empty bar and the frame in sibling nodes: the fill only cuts what it is on.
+
 A bare `0` is a length. Colours are sRGB: `hsl()`, `lab()` and the rest are a warning.
 
 Anything else is a warning naming the file and line, and the rule's other properties still apply.

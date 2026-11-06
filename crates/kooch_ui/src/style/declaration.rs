@@ -70,6 +70,8 @@ pub enum Declaration {
     Mask(Option<ImageRef>),
     /// Whether the mask cuts by brightness as well as alpha.
     MaskLuminance(bool),
+    /// An index in [`FILL_FROM`](super::catalog::FILL_FROM) (#1829).
+    FillFrom(u32),
     /// Start, control and end across the node, which what is inside it bends along (#1827).
     Curve(Option<[[f32; 2]; 3]>),
     /// Image texels kept unstretched at each edge, top-right-bottom-left (#1708).
@@ -163,6 +165,13 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Vec<Declaration>, String> 
             "alpha" => one(D::MaskLuminance(false)),
             "luminance" => one(D::MaskLuminance(true)),
             other => Err(format!("`{other}` is not alpha or luminance")),
+        },
+        "-kooch-fill-from" => match super::catalog::FILL_FROM
+            .iter()
+            .position(|w| *w == text.trim())
+        {
+            Some(index) => one(D::FillFrom(index as u32)),
+            None => Err(format!("`{text}` is not a place to fill from")),
         },
         "-kooch-curve" => one(D::Curve(curve(text)?)),
         "-kooch-slice" => one(D::Slice(slice(text)?)),

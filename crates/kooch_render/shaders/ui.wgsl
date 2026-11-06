@@ -21,10 +21,16 @@ struct UiMask {
     uv_min: vec2<u32>,
     uv_size: vec2<u32>,
     luminance: u32,
-    pad: u32,
+    fill_from: u32,
+    fill: f32,
+    pad: f32,
 }
 
 @group(0) @binding(4) var<storage, read> ui_masks: array<UiMask>;
+
+// `-kooch-fill-from: image`, and how wide its edge is in brightness: about two of 8 bits' steps.
+const UI_FILL_IMAGE: u32 = 6u;
+const UI_FILL_SOFT: f32 = 0.008;
 
 const UI_CURVE_POINTS: u32 = 64u;
 
@@ -139,6 +145,29 @@ fn sd_rounded_box(point: vec2<f32>, half: vec2<f32>, radius: f32) -> f32 {
     return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 
+// How filled a mask is at `along`: all of it at 1 and none at 0, as `lib_fill` in the library.
+fn ui_filled(along: f32, fill: f32, soft: f32) -> f32 {
+    let reach = fill * (1.0 + soft * 2.0) - soft;
+    return clamp((reach - along) / soft + 0.5, 0.0, 1.0);
+}
+
+// How far a fill from `start` has to go to reach `across`, 0 to 1 over the mask.
+fn ui_fill_along(start: u32, across: vec2<f32>, local: vec2<f32>) -> f32 {
+    if start == 1u {
+        return across.x;
+    }
+    if start == 2u {
+        return 1.0 - across.x;
+    }
+    if start == 3u {
+        return across.y;
+    }
+    if start == 4u {
+        return 1.0 - across.y;
+    }
+    return fract(atan2(local.x, -local.y) / 6.2831853 + 1.0);
+}
+
 // How much of pixel `p` the chain of masks from `first` lets through.
 fn ui_mask_coverage(p: vec2<f32>, first: u32) -> f32 {
     var coverage = 1.0;
@@ -148,6 +177,10 @@ fn ui_mask_coverage(p: vec2<f32>, first: u32) -> f32 {
         let half = mask.size * 0.5;
         let local = p - mask.min - half;
         coverage *= clamp(0.5 - sd_rounded_box(local, half, mask.radius), 0.0, 1.0);
+        if mask.fill_from != 0u && mask.fill_from != UI_FILL_IMAGE {
+            let along = ui_fill_along(mask.fill_from, (local + half) / mask.size, local);
+            coverage *= ui_filled(along, mask.fill, 1.0 / max(max(mask.size.x, mask.size.y), 1.0));
+        }
         if mask.uv_size.x != 0u {
             let span = vec2<f32>(mask.uv_size);
             // Half a texel in: the filter would read the atlas neighbour past the edge.
@@ -156,8 +189,11 @@ fn ui_mask_coverage(p: vec2<f32>, first: u32) -> f32 {
             let uv = (vec2<f32>(mask.uv_min) + texel) / side;
             let cut = textureSampleLevel(atlas, images, uv, 0.0);
             coverage *= cut.a;
-            if mask.luminance != 0u {
-                coverage *= dot(cut.rgb, vec3<f32>(0.2125, 0.7154, 0.0721));
+            let bright = dot(cut.rgb, vec3<f32>(0.2125, 0.7154, 0.0721));
+            if mask.fill_from == UI_FILL_IMAGE {
+                coverage *= ui_filled(bright, mask.fill, UI_FILL_SOFT);
+            } else if mask.luminance != 0u {
+                coverage *= bright;
             }
         }
         at = mask.parent;

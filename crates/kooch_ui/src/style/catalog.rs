@@ -22,6 +22,8 @@ pub enum PropertyKind {
     Shader,
     /// Three `x y` points across the node, or `none`.
     Curve,
+    /// 0 to 1.
+    Ratio,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +43,13 @@ const fn prop(name: &'static str, kind: PropertyKind, hint: &'static str) -> Pro
     PropertySpec { name, kind, hint }
 }
 
-use PropertyKind::{Color, Curve, Font, Image, Keyword, Length, Number, Px, Shader, Text};
+/// Where a fill starts; the index is what `UiMask::fill_from` carries and `ui.wgsl` reads.
+pub const FILL_FROM: &[&str] = &["none", "left", "right", "top", "bottom", "clock", "image"];
+
+/// The amount a `-kooch-fill-from` shows: a param, so `bind:param.fill` drives it as a material's.
+pub const FILL_AMOUNT: &str = "-kooch-param-fill";
+
+use PropertyKind::{Color, Curve, Font, Image, Keyword, Length, Number, Px, Ratio, Shader, Text};
 
 const AUTO: PropertyKind = Length { auto: true };
 const FIXED: PropertyKind = Length { auto: false };
@@ -253,6 +261,12 @@ pub const CATEGORIES: [StyleCategory; 10] = [
                 Keyword(&["alpha", "luminance"]),
                 "What of the mask cuts: alpha, or how bright it is as well",
             ),
+            prop(
+                "-kooch-fill-from",
+                Keyword(FILL_FROM),
+                "Where the node starts showing; image follows -kooch-mask's brightness, black first",
+            ),
+            prop(FILL_AMOUNT, Ratio, "How much -kooch-fill-from shows"),
             prop(
                 "-kooch-curve",
                 Curve,
