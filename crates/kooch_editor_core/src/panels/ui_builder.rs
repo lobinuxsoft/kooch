@@ -7,6 +7,7 @@ use crate::ui_builder::SHEET_TYPE;
 
 mod actions;
 mod classes;
+mod dock;
 mod drop;
 mod gizmo;
 mod hierarchy;
@@ -29,11 +30,6 @@ const FRAME_MARGIN: f32 = 20.0;
 const CHECKER: f32 = 16.0;
 /// Largest side the canvas renders at: past it a deep zoom magnifies instead of re-rendering.
 const MAX_SIDE: f32 = 4096.0;
-/// Shares of the panel the hierarchy and the Inspector take beside the canvas.
-const HIERARCHY_SHARE: f32 = 0.18;
-/// Share of the left column the hierarchy keeps above the Library.
-const TREE_SHARE: f32 = 0.6;
-const INSPECTOR_SHARE: f32 = 0.24;
 
 pub(crate) fn draw_ui_builder(
     ui: &mut egui::Ui,
@@ -48,26 +44,8 @@ pub(crate) fn draw_ui_builder(
     };
     toolbar(ui, builder, catalog);
     ui.separator();
-    let full = ui.available_rect_before_wrap();
-    let left = full.with_max_x(full.min.x + full.width() * HIERARCHY_SHARE);
-    let right = full.with_min_x(full.max.x - full.width() * INSPECTOR_SHARE);
-    let middle = full.with_min_x(left.max.x).with_max_x(right.min.x);
-    let tree = left.with_max_y(left.min.y + left.height() * TREE_SHARE);
-    ui.scope_builder(egui::UiBuilder::new().max_rect(tree.shrink(4.0)), |ui| {
-        hierarchy::draw(ui, builder, catalog);
-    });
-    ui.scope_builder(
-        egui::UiBuilder::new().max_rect(left.with_min_y(tree.max.y).shrink(4.0)),
-        |ui| library::draw(ui, builder, catalog),
-    );
-    ui.scope_builder(egui::UiBuilder::new().max_rect(middle), |ui| {
-        canvas(ui, builder, catalog);
-    });
+    dock::draw(ui, builder, catalog);
     drop::ghost(ui.ctx(), builder);
-    ui.scope_builder(egui::UiBuilder::new().max_rect(right.shrink(4.0)), |ui| {
-        inspector::draw(ui, builder, catalog);
-    });
-    ui.advance_cursor_after_rect(full);
 }
 
 fn toolbar(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEntry]) {

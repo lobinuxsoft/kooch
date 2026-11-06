@@ -18,8 +18,6 @@ enum Edit {
 }
 
 pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEntry]) {
-    ui.strong("Hierarchy");
-    ui.separator();
     let rename_id = ui.make_persistent_id("ui_builder_rename");
     let mut renaming: Option<(u32, String)> = ui.data(|data| data.get_temp(rename_id));
     let dragged = drop::current(ui.ctx());
