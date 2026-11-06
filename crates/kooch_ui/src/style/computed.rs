@@ -55,6 +55,10 @@ pub fn computed(style: &ResolvedStyle, property: &str) -> Option<String> {
         "color" => color(paint.text),
         "background-color" => color(paint.background),
         "border-color" => color(paint.border),
+        "-kooch-mask-mode" => match style.mask_luminance {
+            true => "luminance".to_owned(),
+            false => "alpha".to_owned(),
+        },
         "-kooch-tint" => color(style.tint.unwrap_or([1.0; 4])),
         "font-size" => format!("{}px", number(style.font_size.unwrap_or(DEFAULT_FONT_SIZE))),
         "font-family" => format!("\"{}\"", style.font_family.as_ref()?),

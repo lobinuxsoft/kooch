@@ -296,6 +296,7 @@ base sheet under every document's own gives all of them a look, which the docume
 | `font-size` | length |
 | `background-image` | `url("button.png")` relative to the file writing it (the `.kcss`, or the `.kxml` for an inline `style`), PNG or JPEG; `none`. An engine image is written as if it sat in the project's `assets/`, where a build puts it: `url("../textures/prototype/dark/dark_texture_01.png")` from `assets/ui/` |
 | `-kooch-mask` | `url("shape.png")`, as `background-image`; `none`. Its alpha cuts the node and its children |
+| `-kooch-mask-mode` | `alpha`, or `luminance`: black cuts too, for an image with no transparency |
 | `-kooch-slice` | length, one to four: image texels kept unstretched at each edge |
 | `-kooch-tint` | colour that multiplies the image |
 | `-kooch-material` | a path to a shader with `kind: ui`, relative to the file writing it, as `background-image` |

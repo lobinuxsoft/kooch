@@ -246,6 +246,11 @@ pub const CATEGORIES: [StyleCategory; 10] = [
                 Image,
                 "url(\"shape.png\"): its alpha cuts the node and its children; none clears it",
             ),
+            prop(
+                "-kooch-mask-mode",
+                Keyword(&["alpha", "luminance"]),
+                "What of the mask cuts: alpha, or how bright it is as well",
+            ),
             prop("-kooch-tint", Color, "Multiplies the image"),
             prop(
                 "-kooch-slice",

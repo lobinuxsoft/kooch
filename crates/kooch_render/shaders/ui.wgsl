@@ -20,6 +20,8 @@ struct UiMask {
     parent: u32,
     uv_min: vec2<u32>,
     uv_size: vec2<u32>,
+    luminance: u32,
+    pad: u32,
 }
 
 @group(0) @binding(4) var<storage, read> ui_masks: array<UiMask>;
@@ -104,7 +106,11 @@ fn ui_mask_coverage(p: vec2<f32>, first: u32) -> f32 {
             let texel = clamp((local + half) / mask.size * span, vec2<f32>(0.5), span - 0.5);
             let side = vec2<f32>(textureDimensions(atlas));
             let uv = (vec2<f32>(mask.uv_min) + texel) / side;
-            coverage *= textureSampleLevel(atlas, images, uv, 0.0).a;
+            let cut = textureSampleLevel(atlas, images, uv, 0.0);
+            coverage *= cut.a;
+            if mask.luminance != 0u {
+                coverage *= dot(cut.rgb, vec3<f32>(0.2125, 0.7154, 0.0721));
+            }
         }
         at = mask.parent;
     }

@@ -72,7 +72,7 @@ pub fn load_tree_images(
 /// Every image `tree` needs in the atlas: painted, or cutting by its alpha.
 fn shown(tree: &UiTree) -> impl Iterator<Item = Guid> + '_ {
     let images = tree.image.iter().flatten().map(|image| image.guid);
-    images.chain(tree.mask.iter().flatten().copied())
+    images.chain(tree.mask.iter().flatten().map(|mask| mask.guid))
 }
 
 fn pack(
