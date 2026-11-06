@@ -333,6 +333,28 @@ wgsl-analyzer settings through the IDE's language-server configuration:
   `file-types = ["wgsl", "shader"]`. Helix replaces the list rather than extending it, so the
   built-in `wgsl` has to be repeated.
 
+## Sharing functions between shaders
+
+WGSL has no `#include`, so a shader names the files it calls in its leading comments, beside
+`// kind:`:
+
+```wgsl
+// kind: unlit
+// use: lib/noise.wgsl
+
+fn unlit(input: SurfaceInput) -> UnlitOutput {
+    var out: UnlitOutput;
+    out.color = vec3<f32>(noise(input.uv * 8.0));
+    out.alpha = 1.0;
+    return out;
+}
+```
+
+The path is relative to the shader, and a used file can use others; a file reached twice lands once.
+A used file holds functions, not parameters or textures, since those belong to the shader that
+declares them. Saving it rebuilds every shader that reaches it, and a missing file is an error that
+names it. Moving a used file does not rewrite the lines naming it.
+
 ## The shader graph
 
 🔴 **A project's shaders are authored as nodes.** The graph writes the WGSL, so nobody has to learn a

@@ -17,6 +17,7 @@
 use std::fmt;
 
 use kooch_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
+use kooch_core::shader_uses::{flatten, used_files};
 
 mod params;
 
@@ -229,10 +230,13 @@ impl AssetLoader<Shader> for ShaderLoader {
         &SHADER_EXTENSIONS
     }
 
-    fn load(&self, bytes: &[u8], _ctx: &mut LoadContext<'_>) -> AssetResult<Shader> {
+    fn load(&self, bytes: &[u8], ctx: &mut LoadContext<'_>) -> AssetResult<Shader> {
         let text = std::str::from_utf8(bytes)
             .map_err(|e| AssetError::Loader(Box::new(ShaderParseError::Utf8(e))))?;
-        Shader::parse(text).map_err(|e| AssetError::Loader(Box::new(e)))
+        let path = ctx.path;
+        let used = used_files(path, text, &mut |file| ctx.read_file(file))
+            .map_err(|e| AssetError::Loader(Box::new(ShaderParseError::Use(e))))?;
+        Shader::parse(&flatten(text, &used)).map_err(|e| AssetError::Loader(Box::new(e)))
     }
 }
 
@@ -246,6 +250,8 @@ pub enum ShaderParseError {
         line: usize,
         message: String,
     },
+    /// A `// use:` line whose file cannot be read.
+    Use(String),
 }
 
 impl fmt::Display for ShaderParseError {
@@ -258,6 +264,7 @@ impl fmt::Display for ShaderParseError {
                 ShaderKind::NAMES.join(", ")
             ),
             Self::Param { line, message } => write!(f, "line {line}: {message}"),
+            Self::Use(message) => write!(f, "{message}"),
         }
     }
 }

@@ -6,6 +6,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use kooch_core::asset_database::AssetDatabase;
 use kooch_core::resource::Resources;
+use kooch_core::shader_uses::used_files;
 use kooch_render::material::SHADER_TYPE_NAME;
 
 /// The same cadence as `script_sync`: a `stat` per shader is nothing at this rate.
@@ -48,20 +49,37 @@ pub fn sync_shaders_system(resources: &mut Resources) {
         })
         .unwrap_or_default();
     // 🔴 A first sighting is recorded, never acted on: opening a project reloads nothing.
-    let changed: Vec<PathBuf> = paths
-        .into_iter()
+    let mut changed: Vec<PathBuf> = paths
+        .iter()
         .filter(|path| {
             std::fs::metadata(path)
                 .and_then(|m| m.modified())
-                .is_ok_and(|modified| sync.moved(path.clone(), modified))
+                .is_ok_and(|modified| sync.moved((*path).clone(), modified))
         })
+        .cloned()
         .collect();
     resources.insert(sync);
+
+    if !changed.is_empty() {
+        let users: Vec<PathBuf> = paths
+            .into_iter()
+            .filter(|path| !changed.contains(path) && uses_any(path, &changed))
+            .collect();
+        changed.extend(users);
+    }
 
     for path in changed {
         crate::actions::handlers::asset_saved(resources, &path);
         tracing::info!(path = %path.display(), "shader reloaded");
     }
+}
+
+/// Whether `path` reaches one of `files` through `// use:`, and so has to rebuild with them.
+fn uses_any(path: &Path, files: &[PathBuf]) -> bool {
+    std::fs::read_to_string(path)
+        .map_err(|e| e.to_string())
+        .and_then(|text| used_files(path, &text, &mut |file| std::fs::read(file)))
+        .is_ok_and(|used| used.iter().any(|(file, _)| files.contains(file)))
 }
 
 /// What shader files need from wgsl-analyzer, at the top level of `.vscode/settings.json`. It

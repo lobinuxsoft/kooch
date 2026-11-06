@@ -45,9 +45,14 @@ impl<'a> LoadContext<'a> {
     /// The bytes of `relative`, resolved against the asset's own directory.
     pub fn read_sibling(&mut self, relative: &str) -> AssetResult<Vec<u8>> {
         let path = self.path.parent().unwrap_or(Path::new("")).join(relative);
+        self.read_file(&path)
+    }
+
+    /// The bytes of a file the asset depends on, wherever it sits.
+    pub fn read_file(&mut self, path: &Path) -> AssetResult<Vec<u8>> {
         match self.reader.as_mut() {
-            Some(read) => read(&path),
-            None => Ok(std::fs::read(&path)?),
+            Some(read) => read(path),
+            None => Ok(std::fs::read(path)?),
         }
     }
 

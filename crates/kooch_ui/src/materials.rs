@@ -2,6 +2,7 @@
 //! This crate only carries them: the renderer reads the shader and packs the values by name.
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -9,6 +10,7 @@ use kooch_core::Guid;
 use kooch_core::asset_database::AssetDatabase;
 use kooch_core::asset_loader::AssetServer;
 use kooch_core::resource::Resources;
+use kooch_core::shader_uses::{flatten, used_files};
 
 use crate::documents::{path_of, read_bytes, stamp};
 use crate::{UiNode, UiTree, UiTrees};
@@ -33,13 +35,22 @@ pub struct ParamBind {
     pub field: Box<str>,
 }
 
-/// The text of every shader a tree draws with, and the mtime it was read at.
+/// A shader's text with what it uses appended, which is what travels to a remote editor.
+#[derive(Debug)]
+struct ReadShader {
+    /// The newest mtime of the file and of `used`.
+    modified: SystemTime,
+    used: Vec<PathBuf>,
+    source: Arc<str>,
+}
+
+/// Every shader a tree draws with.
 #[derive(Debug, Default)]
-pub struct UiShaders(HashMap<Guid, (SystemTime, Arc<str>)>);
+pub struct UiShaders(HashMap<Guid, ReadShader>);
 
 impl UiShaders {
     pub fn source(&self, guid: Guid) -> Option<&Arc<str>> {
-        self.0.get(&guid).map(|(_, source)| source)
+        self.0.get(&guid).map(|shader| &shader.source)
     }
 }
 
@@ -178,17 +189,30 @@ fn read_shaders(
     shaders: &mut UiShaders,
 ) {
     for guid in wanted {
-        let modified = stamp(database, guid, None, &[]);
-        if shaders.0.get(&guid).is_some_and(|(at, _)| *at == modified) {
+        if let Some(shader) = shaders.0.get(&guid)
+            && shader.modified == stamp(database, guid, None, &shader.used)
+        {
             continue;
         }
         let text = path_of(database, guid).and_then(|path| {
             let bytes = read_bytes(server.as_deref_mut(), &path)?;
-            String::from_utf8(bytes).map_err(|e| format!("{}: {e}", path.display()))
+            let text = String::from_utf8(bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+            let used = used_files(&path, &text, &mut |file| {
+                read_bytes(server.as_deref_mut(), file)
+            })?;
+            Ok((flatten(&text, &used), used))
         });
         match text {
-            Ok(text) => {
-                shaders.0.insert(guid, (modified, text.into()));
+            Ok((source, used)) => {
+                let used: Vec<PathBuf> = used.into_iter().map(|(file, _)| file).collect();
+                let modified = stamp(database, guid, None, &used);
+                let source = source.into();
+                let shader = ReadShader {
+                    modified,
+                    used,
+                    source,
+                };
+                shaders.0.insert(guid, shader);
             }
             Err(error) => kooch_core::warn_once!("UI shader not loaded: {error}"),
         }
