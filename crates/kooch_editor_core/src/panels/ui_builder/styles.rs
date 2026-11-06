@@ -288,6 +288,7 @@ fn field(
             picked
         }
         PropertyKind::Length { auto } => length(ui, origin, spec.name, value, auto),
+        PropertyKind::Curve => super::points::field(ui, value),
         PropertyKind::Number => {
             let Some(mut number) = value.map_or(Some(0.0), |value| value.trim().parse().ok())
             else {

@@ -20,6 +20,8 @@ pub enum PropertyKind {
     Image,
     /// A quoted path to a `kind: ui` shader.
     Shader,
+    /// Three `x y` points across the node, or `none`.
+    Curve,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +41,7 @@ const fn prop(name: &'static str, kind: PropertyKind, hint: &'static str) -> Pro
     PropertySpec { name, kind, hint }
 }
 
-use PropertyKind::{Color, Font, Image, Keyword, Length, Number, Px, Shader, Text};
+use PropertyKind::{Color, Curve, Font, Image, Keyword, Length, Number, Px, Shader, Text};
 
 const AUTO: PropertyKind = Length { auto: true };
 const FIXED: PropertyKind = Length { auto: false };
@@ -250,6 +252,11 @@ pub const CATEGORIES: [StyleCategory; 10] = [
                 "-kooch-mask-mode",
                 Keyword(&["alpha", "luminance"]),
                 "What of the mask cuts: alpha, or how bright it is as well",
+            ),
+            prop(
+                "-kooch-curve",
+                Curve,
+                "Start, control and end, 0 to 1: what is inside the node bends along them",
             ),
             prop("-kooch-tint", Color, "Multiplies the image"),
             prop(

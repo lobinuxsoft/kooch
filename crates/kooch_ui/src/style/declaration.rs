@@ -70,6 +70,8 @@ pub enum Declaration {
     Mask(Option<ImageRef>),
     /// Whether the mask cuts by brightness as well as alpha.
     MaskLuminance(bool),
+    /// Start, control and end across the node, which what is inside it bends along (#1827).
+    Curve(Option<[[f32; 2]; 3]>),
     /// Image texels kept unstretched at each edge, top-right-bottom-left (#1708).
     Slice([f32; 4]),
     /// Multiplies the image, sRGB straight alpha.
@@ -162,6 +164,7 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Vec<Declaration>, String> 
             "luminance" => one(D::MaskLuminance(true)),
             other => Err(format!("`{other}` is not alpha or luminance")),
         },
+        "-kooch-curve" => one(D::Curve(curve(text)?)),
         "-kooch-slice" => one(D::Slice(slice(text)?)),
         "-kooch-tint" => one(D::Tint(color(text)?)),
         _ => return Err(format!("`{name}` is not a .kcss property")),
@@ -277,6 +280,18 @@ fn quoted(text: &str) -> Result<Box<str>, String> {
     let parsed: Result<Box<str>, cssparser::ParseError<'_, ()>> =
         parser.parse_entirely(|parser| Ok(parser.expect_string()?.as_ref().into()));
     parsed.map_err(|_| format!("`{text}` is not a quoted string"))
+}
+
+/// `none`, or three `x y` points.
+fn curve(text: &str) -> Result<Option<[[f32; 2]; 3]>, String> {
+    if text.trim() == "none" {
+        return Ok(None);
+    }
+    let numbers: Result<Vec<f32>, _> = components(text).iter().map(|n| n.parse()).collect();
+    match numbers.as_deref() {
+        Ok(&[x0, y0, x1, y1, x2, y2]) => Ok(Some([[x0, y0], [x1, y1], [x2, y2]])),
+        _ => Err(format!("`{text}` is not three points or none")),
+    }
 }
 
 /// One to four `px` values, top-right-bottom-left as in CSS.

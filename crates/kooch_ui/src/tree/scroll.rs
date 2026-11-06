@@ -48,9 +48,11 @@ impl UiTree {
     /// Scrolls the innermost `overflow: scroll` node under `point` by `delta` canvas units, clamped
     /// to its content. Returns whether anything moved; the next [`layout`](Self::layout) places it.
     pub fn scroll_at(&mut self, point: Vec2, delta: Vec2) -> bool {
+        let mut bent = None;
         let Some(node) = (0..self.rect.len()).rev().find(|&i| {
             let rect = self.rect[i];
             let clip = self.clip[i];
+            let point = self.straight_again(UiNode(i as u32), point, &mut bent);
             let inside = point.cmpge(rect.min).all() && point.cmplt(rect.min + rect.size).all();
             let seen =
                 point.x >= clip[0] && point.y >= clip[1] && point.x < clip[2] && point.y < clip[3];

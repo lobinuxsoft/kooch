@@ -62,6 +62,13 @@ pub fn computed(style: &ResolvedStyle, property: &str) -> Option<String> {
         "-kooch-tint" => color(style.tint.unwrap_or([1.0; 4])),
         "font-size" => format!("{}px", number(style.font_size.unwrap_or(DEFAULT_FONT_SIZE))),
         "font-family" => format!("\"{}\"", style.font_family.as_ref()?),
+        "-kooch-curve" => match style.curve {
+            Some(curve) => {
+                let numbers: Vec<String> = curve.iter().flatten().map(|n| number(*n)).collect();
+                numbers.join(" ")
+            }
+            None => "none".to_owned(),
+        },
         "-kooch-slice" => {
             let [top, right, bottom, left] = style.slice.map(number);
             format!("{top}px {right}px {bottom}px {left}px")

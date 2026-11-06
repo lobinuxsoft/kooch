@@ -10,25 +10,18 @@ fn the_ui_shader_validates() {
     .unwrap();
 }
 
-/// A recipe that reaches the engine's library has to be flattened first, as the UI's loader does.
-#[test]
-fn the_bezier_bar_validates() {
-    use kooch_core::shader_uses::{flatten, used_files};
-    let source = include_str!("../../../../assets/shaders/ui/bezier_bar.wgsl");
-    let mut read = |_: &std::path::Path| Err::<Vec<u8>, String>("no file".to_owned());
-    let used = used_files(std::path::Path::new("a.wgsl"), source, &mut read).unwrap();
-    let shader = crate::material::Shader::parse(&flatten(source, &used)).unwrap();
-    super::validate_ui(&shader).unwrap();
-}
-
-/// The recipes the engine ships, composed as the pass composes them.
+/// The recipes the engine ships, flattened and composed as the UI's loader and the pass do.
 #[test]
 fn the_recipes_validate() {
+    use kooch_core::shader_uses::{flatten, used_files};
     for source in [
         include_str!("../../../../assets/shaders/ui/ring.wgsl"),
         include_str!("../../../../assets/shaders/ui/curved_bar.wgsl"),
+        include_str!("../../../../assets/shaders/ui/bezier_bar.wgsl"),
     ] {
-        let shader = crate::material::Shader::parse(source).unwrap();
+        let mut read = |_: &std::path::Path| Err::<Vec<u8>, String>("no file".to_owned());
+        let used = used_files(std::path::Path::new("a.wgsl"), source, &mut read).unwrap();
+        let shader = crate::material::Shader::parse(&flatten(source, &used)).unwrap();
         super::validate_ui(&shader).unwrap();
     }
 }

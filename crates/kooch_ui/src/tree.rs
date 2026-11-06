@@ -98,6 +98,7 @@ pub struct UiTree {
     paint: Vec<Paint>,
     pub(crate) image: Vec<Option<crate::images::UiImage>>,
     pub(crate) mask: Vec<Option<masks::UiMaskImage>>,
+    pub(crate) curve: Vec<Option<[Vec2; 3]>>,
     text: Vec<Option<Text>>,
     glyphs: Vec<GlyphQuad>,
     /// Physical pixels per canvas unit and atlas generation the glyphs were built for.
@@ -145,6 +146,7 @@ impl UiTree {
             paint: Vec::new(),
             image: Vec::new(),
             mask: Vec::new(),
+            curve: Vec::new(),
             text: Vec::new(),
             glyphs: Vec::new(),
             rastered: None,
@@ -470,12 +472,14 @@ impl UiTree {
 
     /// [`pick`](Self::pick) through image masks too, which need `atlas` to read.
     pub fn pick_masked(&self, point: Vec2, atlas: Option<&GlyphAtlas>) -> Option<UiNode> {
+        let mut bent = None;
         (0..self.rect.len())
             .rev()
             .map(|i| UiNode(i as u32))
             .find(|&node| {
                 let i = node.0 as usize;
                 let rect = self.rect[i];
+                let point = self.straight_again(node, point, &mut bent);
                 let inside = point.cmpge(rect.min).all() && point.cmplt(rect.min + rect.size).all();
                 let clip = self.clip[i];
                 let seen = point.x >= clip[0]
@@ -513,6 +517,7 @@ impl UiTree {
         self.paint.push(Paint::default());
         self.image.push(None);
         self.mask.push(None);
+        self.curve.push(None);
         self.text.push(None);
         self.culled.push(false);
         index
@@ -585,6 +590,7 @@ fn space_key(space: AvailableSpace) -> f32 {
 }
 
 mod instances;
+pub(crate) mod curves;
 pub(crate) mod masks;
 mod query;
 mod scroll;
