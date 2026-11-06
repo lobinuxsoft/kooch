@@ -144,5 +144,6 @@ pub(super) fn create_hint(kind: CreateKind) -> &'static str {
         CreateKind::File(NewFileKind::BuildPreset) => "Preset name (e.g. Windows release)…",
         CreateKind::File(NewFileKind::Shader) => "Shader name (e.g. Toon)…",
         CreateKind::File(NewFileKind::ShaderGraph) => "Graph name (e.g. Water)…",
+        CreateKind::File(NewFileKind::Subgraph) => "Subgraph name (e.g. Ripple)…",
     }
 }

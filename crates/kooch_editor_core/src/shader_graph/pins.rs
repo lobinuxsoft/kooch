@@ -67,6 +67,7 @@ impl Node {
         let name = *self.inputs().get(input)?;
         let splat = |value: f32| Some([value; 4]);
         match (self, name) {
+            (Self::Subgraph { .. }, _) => splat(0.0),
             (_, "uv" | "point" | "map") => None,
             (Self::ShaderOutput { .. } | Self::Output, "normal") => None,
             (Self::ShaderOutput { kind }, "color") if kind == "ui" => None,

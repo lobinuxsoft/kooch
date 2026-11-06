@@ -367,6 +367,20 @@ a material: an albedo texture tinted by a colour, with a roughness of its own. D
 IDE instead. Inside, a `.shgraph` is plain WGSL with the graph in a comment, so what ships is the
 same code either way. Files named `.shader` from older projects keep loading and opening as before.
 
+**Asset Browser → New Subgraph** writes a `.subgraph`: a graph that generates one function instead
+of a shader, so a piece of logic lives in one file. **Argument** nodes are its inputs and **Result**
+nodes its outputs, each named by you and each a `vec4<f32>`, like every wire. A subgraph has no
+material behind it, so parameters and textures stay in the shader: pass them in through an Argument.
+
+Inside any graph, **right-click → Subgraphs** lists the project's subgraphs. The node's pins are the
+file's, and it writes a `// use:` line, so saving the subgraph changes every shader calling it. New
+pins reach those shaders too: wires follow a pin by its name, and a removed pin drops its wire. A
+subgraph with UI nodes only fits a `ui` shader, one with mesh nodes only the others, and one that
+reads nothing but its Arguments fits all of them.
+
+The generated function can also be called by hand: `sg_<file>` takes `in_<name>` arguments and
+returns a struct with `out_<name>` fields.
+
 **The graph owns the file.** It rides in a block comment at the top — the way Shader Forge carries
 `/*SF_DATA;…*/` — and everything below it is generated: parameters, defaults, textures and the
 `surface` function. Saving the graph rewrites all of it, so edits made by hand there are lost.

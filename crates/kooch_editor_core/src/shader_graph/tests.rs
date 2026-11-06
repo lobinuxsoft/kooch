@@ -6,6 +6,7 @@ use super::*;
 
 mod noise;
 mod seam;
+mod subgraphs;
 mod uv;
 
 /// A tint parameter times an albedo texture sampled at the mesh's uv, into base colour.

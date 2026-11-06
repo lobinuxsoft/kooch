@@ -9,10 +9,35 @@ use egui_snarl::{InPinId, OutPinId};
 use super::{Graph, Node, OUTPUT_KINDS, embed};
 
 mod emit;
+mod function;
 mod helpers;
 
 use emit::Body;
+use function::generate_function;
 use helpers::helpers;
+
+/// What saving `graph` writes at `path`: a function in a `.subgraph`, a shader anywhere else.
+pub(crate) fn generate_file(graph: &Graph, path: &std::path::Path) -> Result<String, String> {
+    match super::subgraph::is_subgraph(path) {
+        true => generate_function(graph, &super::subgraph::function_of(path)),
+        false => generate(graph),
+    }
+}
+
+/// A `// use:` line per subgraph the graph calls, each file once.
+fn use_lines(graph: &Graph) -> String {
+    let paths: std::collections::BTreeSet<&str> = graph
+        .node_ids()
+        .filter_map(|(_, node)| match &node.node {
+            Node::Subgraph { path, .. } => Some(path.as_str()),
+            _ => None,
+        })
+        .collect();
+    paths
+        .iter()
+        .map(|path| format!("// use: {path}\n"))
+        .collect()
+}
 
 /// The whole `.shgraph` a graph generates: header, parameters, body and the graph itself.
 pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
@@ -80,6 +105,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
 
     let mut source = String::new();
     let _ = writeln!(source, "// kind: {kind}");
+    source.push_str(&use_lines(graph));
     let _ = writeln!(source, "{}", embed(graph)?);
     let _ = writeln!(
         source,

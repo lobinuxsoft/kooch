@@ -1,6 +1,7 @@
 //! The preview column: the graph's shader on a shape, beside the nodes (#1159).
 
 use super::PreviewView;
+use crate::shader_graph::subgraph::NO_SHAPE;
 
 /// The preview column: the shader on a shape, and which shape that is.
 pub(super) fn draw_preview(ui: &mut egui::Ui, preview: PreviewView<'_>) {
@@ -48,9 +49,15 @@ pub(super) fn draw_preview(ui: &mut egui::Ui, preview: PreviewView<'_>) {
             // 🔴 A graph is edited node by node, and most of those moments do not compile. The panel
             // says so instead of showing the last shader that did, which would be a lie about what
             // is on the canvas.
-            if let Some(why) = preview.refusal {
-                ui.colored_label(ui.visuals().error_fg_color, "This graph does not compile");
-                ui.label(egui::RichText::new(why).small());
+            match preview.refusal {
+                Some(NO_SHAPE) => {
+                    ui.weak(NO_SHAPE);
+                }
+                Some(why) => {
+                    ui.colored_label(ui.visuals().error_fg_color, "This graph does not compile");
+                    ui.label(egui::RichText::new(why).small());
+                }
+                None => {}
             }
         });
 

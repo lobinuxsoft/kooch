@@ -32,7 +32,7 @@ fn wired(node: Node, outputs: &[usize]) -> String {
     generate(&graph).unwrap()
 }
 
-fn compiles(source: &str, name: &str) {
+pub(super) fn compiles(source: &str, name: &str) {
     let shader = Shader::parse(source).unwrap_or_else(|why| panic!("{name} does not parse: {why}"));
     kooch_render::meshlet::validate_surface(&shader.params_wgsl(), &shader.source)
         .unwrap_or_else(|why| panic!("{name} does not compile: {why}"));

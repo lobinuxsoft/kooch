@@ -29,8 +29,16 @@ pub const SHADER_EXTENSION: &str = "wgsl";
 /// A shader the graph writes: plain WGSL too, with the graph in a comment.
 pub const GRAPH_EXTENSION: &str = "shgraph";
 
+/// A function the graph writes, for shaders to reach with `// use:` (#1807).
+pub const SUBGRAPH_EXTENSION: &str = "subgraph";
+
 /// Every file that loads as a shader. `shader` is what both were called before #1811.
-pub const SHADER_EXTENSIONS: [&str; 3] = [SHADER_EXTENSION, GRAPH_EXTENSION, "shader"];
+pub const SHADER_EXTENSIONS: [&str; 4] = [
+    SHADER_EXTENSION,
+    GRAPH_EXTENSION,
+    SUBGRAPH_EXTENSION,
+    "shader",
+];
 
 /// Static type name [`AssetEntry`](kooch_core::asset_database::AssetEntry)s carry for a shader.
 pub const SHADER_TYPE_NAME: &str = "kooch_render::material::shader::Shader";

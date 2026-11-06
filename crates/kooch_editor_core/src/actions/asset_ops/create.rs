@@ -64,6 +64,21 @@ pub(super) fn create_file(resources: &mut Resources, folder: &Path, name: &str, 
             }
             return;
         }
+        NewFileKind::Subgraph => {
+            let file = unique_target(
+                folder,
+                OsStr::new(&format!(
+                    "{name}.{}",
+                    kooch_render::material::SUBGRAPH_EXTENSION
+                )),
+            );
+            let graph = crate::shader_graph::subgraph::starter();
+            match crate::shader_graph::generate_file(&graph, &file) {
+                Ok(source) => write_asset(resources, &file, &source, "subgraph"),
+                Err(reason) => tracing::error!("a new subgraph does not generate: {reason}"),
+            }
+            return;
+        }
         NewFileKind::BuildPreset => {
             let file = unique_target(
                 folder,

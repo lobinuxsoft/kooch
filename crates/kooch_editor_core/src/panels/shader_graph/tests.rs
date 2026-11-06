@@ -97,6 +97,7 @@ fn pin_names_sit_beside_their_pins() {
                 let mut viewer = super::viewer::Viewer {
                     fit: None,
                     catalog: &[],
+                    path: None,
                     drift: Vec2::ZERO,
                     look_at: None,
                     panel: ui.max_rect(),
@@ -192,6 +193,7 @@ fn a_resting_pointer_explains_pins() {
                 let mut viewer = super::viewer::Viewer {
                     fit: None,
                     catalog: &[],
+                    path: None,
                     drift: Vec2::ZERO,
                     look_at: None,
                     panel: ui.max_rect(),
@@ -311,6 +313,7 @@ impl Harness {
                 let mut viewer = super::viewer::Viewer {
                     fit: None,
                     catalog: &[],
+                    path: None,
                     drift: Vec2::ZERO,
                     look_at: None,
                     panel: area,

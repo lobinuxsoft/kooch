@@ -18,6 +18,7 @@ pub(crate) fn asset_picker(
 ) -> Option<Option<Guid>> {
     let filtered: Vec<&AssetCatalogEntry> = catalog
         .iter()
+        .filter(|entry| !crate::shader_graph::subgraph::is_subgraph(&entry.path))
         .filter(|entry| entry.type_name == asset_type && Some(entry.guid) != skip)
         .collect();
     let current_entry = current.and_then(|guid| filtered.iter().find(|e| e.guid == guid).copied());

@@ -73,7 +73,7 @@ pub(crate) fn draw_shader_graph_content(
         }
         if ui
             .button("Save")
-            .on_hover_text("Generate the .shgraph from this graph and write it")
+            .on_hover_text("Generate the file from this graph and write it")
             .clicked()
         {
             actions.push(ShaderGraphAction::Save);
@@ -115,6 +115,7 @@ pub(crate) fn draw_shader_graph_content(
     let mut viewer = Viewer {
         fit,
         catalog: view.catalog,
+        path: view.path,
         drift: drift(ui, panel),
         look_at: taken_look(ui),
         panel,
