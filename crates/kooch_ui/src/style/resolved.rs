@@ -19,6 +19,7 @@ pub struct ResolvedStyle {
     pub params: Vec<(Box<str>, [f32; 4])>,
     /// The resolved asset; `None` when unset, `none`, or a url no asset answers.
     pub image: Option<kooch_core::Guid>,
+    pub mask: Option<kooch_core::Guid>,
     pub slice: [f32; 4],
     pub tint: Option<[f32; 4]>,
 }
@@ -74,6 +75,7 @@ impl ResolvedStyle {
             Declaration::BackgroundImage(image) => {
                 self.image = image.as_ref().and_then(|image| image.guid);
             }
+            Declaration::Mask(mask) => self.mask = mask.as_ref().and_then(|mask| mask.guid),
             Declaration::Slice(slice) => self.slice = *slice,
             Declaration::Tint(rgba) => self.tint = Some(*rgba),
         }

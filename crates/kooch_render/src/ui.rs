@@ -1,7 +1,7 @@
 //! Drawing the UI over the finished frame (#96): instanced draws of [`UiQuad`]s, one per stretch
 //! of plain or same-shader quads, after the post-process, into the image that is presented.
 
-use kooch_ecs::{UiDrawList, UiQuad};
+use kooch_ecs::{UiDrawList, UiMask, UiQuad};
 
 use crate::material::MAX_PARAM_SCALARS;
 
@@ -21,6 +21,9 @@ pub struct UiPass {
     /// [`UiMaterials::values`] on the GPU.
     values: wgpu::Buffer,
     values_capacity: u64,
+    /// [`UiDrawList::masks`] on the GPU.
+    masks: wgpu::Buffer,
+    masks_capacity: u64,
     started: std::time::Instant,
 }
 
@@ -29,9 +32,9 @@ mod materials;
 use materials::UiMaterials;
 pub use materials::validate_ui;
 
-const ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
+const ATTRIBUTES: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array![
     0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32x4, 4 => Float32x4,
-    5 => Float32x2, 6 => Uint32x2, 7 => Uint32x2, 8 => Uint32x2,
+    5 => Float32x2, 6 => Uint32x2, 7 => Uint32x2, 8 => Uint32x2, 9 => Uint32,
 ];
 
 impl UiPass {
@@ -80,6 +83,16 @@ impl UiPass {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -96,7 +109,9 @@ impl UiPass {
         });
         let values_capacity = 16;
         let values = values_buffer(device, values_capacity);
-        let (atlas, bind) = atlas_and_bind(device, &layout, &screen, &values, 1);
+        let masks_capacity = 16;
+        let masks = masks_buffer(device, masks_capacity);
+        let (atlas, bind) = atlas_and_bind(device, &layout, &screen, &values, &masks, 1);
         let capacity = 256;
         Self {
             pipeline,
@@ -112,6 +127,8 @@ impl UiPass {
             materials: UiMaterials::default(),
             values,
             values_capacity,
+            masks,
+            masks_capacity,
             started: std::time::Instant::now(),
         }
     }
@@ -135,6 +152,7 @@ impl UiPass {
                 &self.layout,
                 &self.screen,
                 &self.values,
+                &self.masks,
                 list.atlas_side,
             );
             self.atlas = atlas;
@@ -175,6 +193,7 @@ impl UiPass {
         self.materials
             .prepare(device, &self.pipeline_layout, self.format, list);
         self.upload_values(device, queue);
+        self.upload_masks(device, queue, &list.masks);
         let time = self.started.elapsed().as_secs_f32();
         queue.write_buffer(
             &self.screen,
@@ -243,10 +262,30 @@ impl UiPass {
                 &self.layout,
                 &self.screen,
                 &self.values,
+                &self.masks,
                 &self.atlas,
             );
         }
         queue.write_buffer(&self.values, 0, bytemuck::cast_slice(values));
+    }
+
+    fn upload_masks(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, masks: &[UiMask]) {
+        if masks.is_empty() {
+            return;
+        }
+        if masks.len() as u64 > self.masks_capacity {
+            self.masks_capacity = (masks.len() as u64).next_power_of_two();
+            self.masks = masks_buffer(device, self.masks_capacity);
+            self.bind = bind_group(
+                device,
+                &self.layout,
+                &self.screen,
+                &self.values,
+                &self.masks,
+                &self.atlas,
+            );
+        }
+        queue.write_buffer(&self.masks, 0, bytemuck::cast_slice(masks));
     }
 }
 
@@ -337,11 +376,21 @@ fn values_buffer(device: &wgpu::Device, blocks: u64) -> wgpu::Buffer {
     })
 }
 
+fn masks_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("ui_masks"),
+        size: count * size_of::<UiMask>() as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
 fn atlas_and_bind(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     screen: &wgpu::Buffer,
     values: &wgpu::Buffer,
+    masks: &wgpu::Buffer,
     side: u32,
 ) -> (wgpu::Texture, wgpu::BindGroup) {
     let atlas = device.create_texture(&wgpu::TextureDescriptor {
@@ -359,7 +408,7 @@ fn atlas_and_bind(
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    let bind = bind_group(device, layout, screen, values, &atlas);
+    let bind = bind_group(device, layout, screen, values, masks, &atlas);
     (atlas, bind)
 }
 
@@ -368,6 +417,7 @@ fn bind_group(
     layout: &wgpu::BindGroupLayout,
     screen: &wgpu::Buffer,
     values: &wgpu::Buffer,
+    masks: &wgpu::Buffer,
     atlas: &wgpu::Texture,
 ) -> wgpu::BindGroup {
     let view = atlas.create_view(&Default::default());
@@ -396,6 +446,10 @@ fn bind_group(
             wgpu::BindGroupEntry {
                 binding: 3,
                 resource: values.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: masks.as_entire_binding(),
             },
         ],
     })

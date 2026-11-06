@@ -79,8 +79,9 @@ impl UiStyleSheet {
             .iter_mut()
             .flat_map(|rule| &mut rule.declarations)
         {
-            if let Declaration::BackgroundImage(Some(asset)) | Declaration::Material(asset) =
-                declaration
+            if let Declaration::BackgroundImage(Some(asset))
+            | Declaration::Mask(Some(asset))
+            | Declaration::Material(asset) = declaration
             {
                 asset.guid = guid_of(&asset.url);
             }

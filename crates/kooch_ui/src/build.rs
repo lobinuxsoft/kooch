@@ -145,6 +145,7 @@ pub(crate) fn apply(tree: &mut UiTree, node: UiNode, style: &ResolvedStyle) {
         tint: style.tint.unwrap_or([1.0; 4]),
     });
     tree.set_image(node, image);
+    tree.set_mask(node, style.mask);
     tree.set_material(node, style.material);
     tree.style_params(node, &style.params);
 }

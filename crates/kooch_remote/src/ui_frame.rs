@@ -5,15 +5,18 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use kooch_core::Guid;
 use kooch_core::resource::Resources;
-use kooch_ecs::{AtlasUpload, UiDrawList, UiMaterial, UiParam, UiQuad, UiShader};
+use kooch_ecs::{AtlasUpload, UiDrawList, UiMask, UiMaterial, UiParam, UiQuad, UiShader};
 use serde::{Deserialize, Serialize};
 
-/// A [`UiDrawList`] on the wire. Bytes as base64: a quad is 96 bytes, and as JSON numbers it
+/// A [`UiDrawList`] on the wire. Bytes as base64: a quad is 100 bytes, and as JSON numbers it
 /// would be three times that, every frame the UI changes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UiFrame {
     /// `UiQuad`s, back to front.
     pub quads: String,
+    /// `UiMask`s, which the quads index.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub masks: String,
     /// `quad`, `shader`, first param, param count.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub materials: Vec<[u32; 4]>,
@@ -38,6 +41,7 @@ pub struct UiUpload {
 #[derive(Default)]
 struct SentUi {
     quads: Vec<UiQuad>,
+    masks: Vec<UiMask>,
     materials: Vec<UiMaterial>,
     params: Vec<UiParam>,
     shaders: Vec<UiShader>,
@@ -58,17 +62,20 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
         if upload.is_none()
             && shaders.is_none()
             && sent.quads == list.quads
+            && sent.masks == list.masks
             && sent.materials == list.materials
             && sent.params == list.params
         {
             return None;
         }
         sent.quads.clone_from(&list.quads);
+        sent.masks.clone_from(&list.masks);
         sent.materials.clone_from(&list.materials);
         sent.params.clone_from(&list.params);
         sent.shaders.clone_from(&list.shaders);
         Some(UiFrame {
             quads: STANDARD.encode(bytemuck::cast_slice::<UiQuad, u8>(&list.quads)),
+            masks: STANDARD.encode(bytemuck::cast_slice::<UiMask, u8>(&list.masks)),
             materials: list
                 .materials
                 .iter()
@@ -96,6 +103,7 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
 #[derive(Default)]
 pub struct UiReceiver {
     quads: Vec<UiQuad>,
+    masks: Vec<UiMask>,
     materials: Vec<UiMaterial>,
     params: Vec<UiParam>,
     shaders: Vec<UiShader>,
@@ -107,11 +115,12 @@ pub struct UiReceiver {
 
 impl UiReceiver {
     pub fn receive(&mut self, frame: UiFrame) {
-        let Some(quads) = decode_quads(&frame.quads) else {
+        let (Some(quads), Some(masks)) = (decoded(&frame.quads), decoded(&frame.masks)) else {
             tracing::warn!("the project sent UI quads this editor cannot read");
             return;
         };
         self.quads = quads;
+        self.masks = masks;
         self.materials = frame
             .materials
             .iter()
@@ -165,6 +174,7 @@ impl UiReceiver {
         .filter(|rect| rect[2] <= self.side && rect[3] <= self.side);
         Some(UiDrawList {
             quads: self.quads.clone(),
+            masks: self.masks.clone(),
             materials: self.materials.clone(),
             params: self.params.clone(),
             shaders: self.shaders.clone(),
@@ -200,9 +210,9 @@ impl UiReceiver {
     }
 }
 
-fn decode_quads(encoded: &str) -> Option<Vec<UiQuad>> {
+fn decoded<T: bytemuck::Pod>(encoded: &str) -> Option<Vec<T>> {
     let bytes = STANDARD.decode(encoded).ok()?;
-    if bytes.len() % size_of::<UiQuad>() != 0 {
+    if bytes.len() % size_of::<T>() != 0 {
         return None;
     }
     // Collected rather than cast: a decoded `Vec<u8>` carries no alignment for `f32`.

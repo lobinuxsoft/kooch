@@ -32,6 +32,22 @@ pub struct UiQuad {
     /// Its index in [`UiDrawList::materials`]; unread on a quad none claims.
     pub material: u32,
     pub flags: u32,
+    /// Index in [`UiDrawList::masks`] plus one; 0 is unmasked.
+    pub mask: u32,
+}
+
+/// A shape what is inside a node gets cut to (#1790), in physical pixels.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Pod, Zeroable)]
+pub struct UiMask {
+    pub min: [f32; 2],
+    pub size: [f32; 2],
+    pub radius: f32,
+    /// The mask around this one, as in [`UiQuad::mask`]: masks nest by walking up.
+    pub parent: u32,
+    /// The atlas texels whose alpha cuts too; a zero size is the shape alone.
+    pub uv_min: [u32; 2],
+    pub uv_size: [u32; 2],
 }
 
 /// A rectangle of the atlas that changed, and its RGBA8 texels, row by row.
@@ -70,6 +86,7 @@ pub struct UiMaterial {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct UiDrawList {
     pub quads: Vec<UiQuad>,
+    pub masks: Vec<UiMask>,
     pub materials: Vec<UiMaterial>,
     pub params: Vec<UiParam>,
     pub shaders: Vec<UiShader>,

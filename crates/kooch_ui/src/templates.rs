@@ -128,7 +128,12 @@ fn inline_image(element: &mut Element, at: &Path, image_of: ImageOf) {
         Declaration::Material(material) => Some(Some(material)),
         _ => None,
     });
+    let mask = written(|declaration| match declaration {
+        Declaration::Mask(mask) => Some(mask.as_ref()),
+        _ => None,
+    });
     element.image = image;
+    element.mask = mask;
     element.material = material;
 }
 

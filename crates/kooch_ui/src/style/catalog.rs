@@ -241,6 +241,11 @@ pub const CATEGORIES: [StyleCategory; 10] = [
                 Image,
                 "url(\"image.png\"), relative to the file writing it; none clears it",
             ),
+            prop(
+                "-kooch-mask",
+                Image,
+                "url(\"shape.png\"): its alpha cuts the node and its children; none clears it",
+            ),
             prop("-kooch-tint", Color, "Multiplies the image"),
             prop(
                 "-kooch-slice",
