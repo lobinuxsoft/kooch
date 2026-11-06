@@ -11,6 +11,8 @@ const CURVE: &str = "-kooch-curve";
 /// What a node starts with: a gentle arch across it.
 const ARCH: [[f32; 2]; 3] = [[0.1, 0.5], [0.5, 0.1], [0.9, 0.5]];
 const NAMES: [&str; 3] = ["start", "control", "end"];
+/// `control` and its gap.
+const POINT_NAME: f32 = 56.0;
 
 /// `screen` is the element's rect in points; a point at `[0, 0]` sits on its top left corner.
 pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, screen: egui::Rect) {
@@ -117,8 +119,7 @@ pub(super) fn field(ui: &mut egui::Ui, value: Option<&str>) -> Option<String> {
         .filter_map(|part| part.parse().ok())
         .collect();
     let &[x0, y0, x1, y1, x2, y2] = numbers.as_slice() else {
-        let add = ui
-            .button("Add curve")
+        let add = super::fields::fill(ui, egui::Button::new("Add curve"))
             .on_hover_text("None: children stay straight");
         return add.clicked().then(|| written(ARCH));
     };
@@ -127,12 +128,11 @@ pub(super) fn field(ui: &mut egui::Ui, value: Option<&str>) -> Option<String> {
     ui.vertical(|ui| {
         for (name, point) in NAMES.iter().zip(&mut curve) {
             ui.horizontal(|ui| {
-                ui.label(*name);
-                for (axis, number) in ["X", "Y"].iter().zip(point) {
-                    ui.label(*axis);
-                    let drag = egui::DragValue::new(number).speed(0.005).range(0.0..=1.0);
-                    changed |= ui.add(drag).changed();
-                }
+                let height = ui.spacing().interact_size.y;
+                ui.add_sized([POINT_NAME, height], egui::Label::new(*name));
+                let gap = ui.spacing().item_spacing.x;
+                let width = ui.available_width() - gap;
+                changed |= super::fields::axes(ui, point, width, 0.0..=1.0);
             });
         }
     });
