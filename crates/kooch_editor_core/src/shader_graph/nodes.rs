@@ -100,6 +100,9 @@ pub(crate) enum Node {
         name: String,
         width: u32,
         default: [f32; 4],
+        /// Two wide only: a position across a UI node, with a handle in the UI Builder.
+        #[serde(default)]
+        point: bool,
     },
     /// A colour the material edits with a picker.
     Color {
@@ -381,16 +384,19 @@ pub(crate) fn palette() -> Vec<Node> {
             name: "offset".to_owned(),
             width: 2,
             default: [0.0; 4],
+            point: false,
         },
         Node::Vector {
             name: "direction".to_owned(),
             width: 3,
             default: [0.0; 4],
+            point: false,
         },
         Node::Vector {
             name: "vector".to_owned(),
             width: 4,
             default: [0.0; 4],
+            point: false,
         },
         Node::Color {
             name: "tint".to_owned(),

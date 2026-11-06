@@ -1,7 +1,7 @@
 //! A surface's parameters, read from its own WGSL (#1158): the members of `struct SurfaceParams`,
 //! like an HLSL `cbuffer`, and each `var name: texture_2d<f32>;`, like a `Texture2D`. Starting
 //! values are WGSL too — `const SURFACE_DEFAULTS = SurfaceParams(...);`, evaluated by naga. A comment
-//! after a declaration may hint `@color` or `@range(lo, hi)` for the editor, and a texture's
+//! after a declaration may hint `@color`, `@point` or `@range(lo, hi)` for the editor, and a texture's
 //! `@default(white|black|normal)`; the shader compiles the same without them.
 
 use std::fmt::Write;
@@ -72,6 +72,8 @@ pub struct ShaderParam {
     pub texture: TextureDefault,
     /// Slider bounds for a float.
     pub range: Option<[f32; 2]>,
+    /// A `vec2<f32>` hinted `@point`: a position across the node, 0 to 1, with a handle to drag.
+    pub point: bool,
     /// First scalar in the material's block, or the texture slot for a texture.
     pub offset: u32,
 }
@@ -313,6 +315,10 @@ fn scalar(field: &str, hints: &str, before: &[ShaderParam]) -> Result<ShaderPara
         Some(_) => return Err(format!("`{name}`: @range needs f32")),
         None => None,
     };
+    let point = hint(hints, "@point").is_some();
+    if point && kind != ParamKind::Vec2 {
+        return Err(format!("`{name}`: @point needs vec2<f32>"));
+    }
     if hint(hints, "@default").is_some() {
         return Err(format!(
             "`{name}`: a starting value goes in `const SURFACE_DEFAULTS = SurfaceParams(...);`"
@@ -329,6 +335,7 @@ fn scalar(field: &str, hints: &str, before: &[ShaderParam]) -> Result<ShaderPara
         default,
         texture: TextureDefault::White,
         range,
+        point,
         offset,
     })
 }
@@ -365,6 +372,7 @@ fn texture(declaration: &str, hints: &str, before: &[ShaderParam]) -> Result<Sha
         default: [0.0; 4],
         texture,
         range: None,
+        point: false,
         offset,
     })
 }

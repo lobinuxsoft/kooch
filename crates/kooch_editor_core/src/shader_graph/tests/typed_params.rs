@@ -77,6 +77,7 @@ fn typed_params_keep_their_editors() {
             name: "offset".to_owned(),
             width: 2,
             default: [0.0; 4],
+            point: false,
         },
         Node::Output,
     ] {

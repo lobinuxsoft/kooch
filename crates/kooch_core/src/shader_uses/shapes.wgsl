@@ -36,3 +36,56 @@ fn lib_inner_shadow(
     let d = -lib_box(uv - centre, extent, radius);
     return mix(1.0 - darkness, 1.0, smoothstep(0.0, max(reach, 0.00001), d));
 }
+
+struct LibBezier {
+    distance: f32,
+    along: f32,
+}
+
+fn lib_bezier_at(d: vec2<f32>, b: vec2<f32>, c: vec2<f32>, t: f32) -> f32 {
+    let off = d + (c + b * t) * t;
+    return dot(off, off);
+}
+
+/// Distance to a curve from `start` to `end`, pulled toward `control`, and how far along it, 0 to 1.
+fn lib_bezier(
+    uv: vec2<f32>,
+    start: vec2<f32>, // @default(0.1, 0.8)
+    control: vec2<f32>, // @default(0.5, 0.1)
+    end: vec2<f32>, // @default(0.9, 0.8)
+) -> LibBezier {
+    let a = control - start;
+    let b = start - 2.0 * control + end;
+    let c = a * 2.0;
+    let d = start - uv;
+    // A straight curve has no cubic to solve, and dividing by `b` would blow it up.
+    if dot(b, b) < 0.0000001 {
+        let line = end - start;
+        let t = clamp(dot(uv - start, line) / max(dot(line, line), 0.0000001), 0.0, 1.0);
+        return LibBezier(length(uv - start - line * t), t);
+    }
+    // The closest point is a root of a cubic, in closed form after Inigo Quilez (Shadertoy MlKcDD).
+    let kk = 1.0 / dot(b, b);
+    let kx = kk * dot(a, b);
+    let ky = kk * (2.0 * dot(a, a) + dot(d, b)) / 3.0;
+    let kz = kk * dot(d, a);
+    let p = ky - kx * kx;
+    let q = kx * (2.0 * kx * kx - 3.0 * ky) + kz;
+    let h = q * q + 4.0 * p * p * p;
+    if h >= 0.0 {
+        let root = sqrt(h);
+        let x = (vec2<f32>(root, -root) - q) / 2.0;
+        let cube = sign(x) * pow(abs(x), vec2<f32>(1.0 / 3.0));
+        let t = clamp(cube.x + cube.y - kx, 0.0, 1.0);
+        return LibBezier(sqrt(lib_bezier_at(d, b, c, t)), t);
+    }
+    let z = sqrt(-p);
+    let v = acos(clamp(q / (p * z * 2.0), -1.0, 1.0)) / 3.0;
+    let m = cos(v);
+    let n = sin(v) * 1.732050808;
+    let t1 = clamp((m + m) * z - kx, 0.0, 1.0);
+    let t2 = clamp((-n - m) * z - kx, 0.0, 1.0);
+    let d1 = lib_bezier_at(d, b, c, t1);
+    let d2 = lib_bezier_at(d, b, c, t2);
+    return LibBezier(sqrt(min(d1, d2)), select(t2, t1, d1 < d2));
+}

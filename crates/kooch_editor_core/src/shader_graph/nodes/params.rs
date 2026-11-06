@@ -48,7 +48,12 @@ impl Node {
                 name,
                 width,
                 default,
-            } => (name, (*width).clamp(2, 4), *default, String::new()),
+                point,
+            } => {
+                // 🔴 Only at two wide: the engine refuses `@point` on anything wider.
+                let hint = if *point && *width == 2 { "@point" } else { "" };
+                (name, (*width).clamp(2, 4), *default, hint.to_owned())
+            }
             Self::Color { name, default } => (name, 4, *default, "@color".to_owned()),
             _ => return None,
         };
@@ -88,6 +93,7 @@ impl Node {
                 name,
                 width: width.min(4),
                 default,
+                point: false,
             },
             // The noises before their controls existed: same pins in the same places, fBm.
             Self::Noise | Self::GradientNoise | Self::SimplexNoise => {
