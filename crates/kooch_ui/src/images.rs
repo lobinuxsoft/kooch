@@ -38,7 +38,7 @@ pub fn load_images(resources: &mut Resources) {
         .get::<UiTrees>()
         .map(|trees| {
             let mut wanted = HashSet::new();
-            trees.for_each(|tree| wanted.extend(tree.image.iter().flatten().map(|i| i.guid)));
+            trees.for_each(|tree| wanted.extend(shown(tree)));
             wanted
         })
         .unwrap_or_default();
@@ -65,8 +65,14 @@ pub fn load_tree_images(
     server: Option<&mut AssetServer>,
     atlas: &mut GlyphAtlas,
 ) {
-    let wanted: HashSet<Guid> = tree.image.iter().flatten().map(|i| i.guid).collect();
+    let wanted: HashSet<Guid> = shown(tree).collect();
     pack(wanted, database, server, atlas);
+}
+
+/// Every image `tree` needs in the atlas: painted, or cutting by its alpha.
+fn shown(tree: &UiTree) -> impl Iterator<Item = Guid> + '_ {
+    let images = tree.image.iter().flatten().map(|image| image.guid);
+    images.chain(tree.mask.iter().flatten().copied())
 }
 
 fn pack(

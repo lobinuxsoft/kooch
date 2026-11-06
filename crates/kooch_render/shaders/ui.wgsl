@@ -12,6 +12,21 @@ struct Screen {
 @group(0) @binding(1) var atlas: texture_2d<f32>;
 @group(0) @binding(2) var images: sampler;
 
+struct UiMask {
+    min: vec2<f32>,
+    size: vec2<f32>,
+    radius: f32,
+    // Index plus one, like `Instance.mask`.
+    parent: u32,
+    uv_min: vec2<u32>,
+    uv_size: vec2<u32>,
+}
+
+@group(0) @binding(4) var<storage, read> ui_masks: array<UiMask>;
+
+// Masks nested deeper than this stop cutting. It also ends a cycle in a list sent over the wire.
+const UI_MASK_DEPTH: u32 = 16u;
+
 const QUAD_GLYPH: u32 = 1u;
 const QUAD_IMAGE: u32 = 2u;
 
@@ -25,6 +40,7 @@ struct Instance {
     @location(6) uv_min: vec2<u32>,
     @location(7) uv_size: vec2<u32>,
     @location(8) material_flags: vec2<u32>,
+    @location(9) mask: u32,
 }
 
 struct Varyings {
@@ -42,6 +58,7 @@ struct Varyings {
     @location(7) @interpolate(flat) material_flags: vec2<u32>,
     // The image's atlas texels, `min` and `size`.
     @location(8) @interpolate(flat) atlas_rect: vec4<u32>,
+    @location(9) @interpolate(flat) mask: u32,
 }
 
 @vertex
@@ -61,6 +78,7 @@ fn vs_ui(@builtin(vertex_index) vertex: u32, quad: Instance) -> Varyings {
     out.clip = quad.clip;
     out.material_flags = quad.material_flags;
     out.atlas_rect = vec4<u32>(quad.uv_min, quad.uv_size);
+    out.mask = quad.mask;
     return out;
 }
 
@@ -71,13 +89,39 @@ fn sd_rounded_box(point: vec2<f32>, half: vec2<f32>, radius: f32) -> f32 {
     return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 
+// How much of pixel `p` the chain of masks from `first` lets through.
+fn ui_mask_coverage(p: vec2<f32>, first: u32) -> f32 {
+    var coverage = 1.0;
+    var at = first;
+    for (var depth = 0u; depth < UI_MASK_DEPTH && at != 0u; depth++) {
+        let mask = ui_masks[at - 1u];
+        let half = mask.size * 0.5;
+        let local = p - mask.min - half;
+        coverage *= clamp(0.5 - sd_rounded_box(local, half, mask.radius), 0.0, 1.0);
+        if mask.uv_size.x != 0u {
+            let span = vec2<f32>(mask.uv_size);
+            // Half a texel in: the filter would read the atlas neighbour past the edge.
+            let texel = clamp((local + half) / mask.size * span, vec2<f32>(0.5), span - 0.5);
+            let side = vec2<f32>(textureDimensions(atlas));
+            let uv = (vec2<f32>(mask.uv_min) + texel) / side;
+            coverage *= textureSampleLevel(atlas, images, uv, 0.0).a;
+        }
+        at = mask.parent;
+    }
+    return coverage;
+}
+
 @fragment
 fn fs_ui(in: Varyings) -> @location(0) vec4<f32> {
     let p = in.position.xy;
-    let flags = in.material_flags.y;
     if p.x < in.clip.x || p.y < in.clip.y || p.x >= in.clip.z || p.y >= in.clip.w {
         discard;
     }
+    return ui_quad_color(in) * ui_mask_coverage(p, in.mask);
+}
+
+fn ui_quad_color(in: Varyings) -> vec4<f32> {
+    let flags = in.material_flags.y;
     if (flags & QUAD_IMAGE) != 0u {
         let side = vec2<f32>(textureDimensions(atlas));
         let texel = textureSampleLevel(atlas, images, in.uv / side, 0.0) * in.color;

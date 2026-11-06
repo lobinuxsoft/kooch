@@ -18,6 +18,6 @@ fn fs_material(in: Varyings) -> @location(0) vec4<f32> {
     input.atlas_size = vec2<f32>(in.atlas_rect.zw);
     let color = ui(input);
     let edge = sd_rounded_box(in.local, in.half_size, in.radius_border.x);
-    let alpha = color.a * clamp(0.5 - edge, 0.0, 1.0);
+    let alpha = color.a * clamp(0.5 - edge, 0.0, 1.0) * ui_mask_coverage(p, in.mask);
     return vec4<f32>(color.rgb * alpha, alpha);
 }

@@ -66,6 +66,8 @@ pub enum Declaration {
     Param(Box<str>, [f32; 4]),
     /// `none` clears one a less specific rule set: a state can drop its image.
     BackgroundImage(Option<ImageRef>),
+    /// An image whose alpha cuts the node and what is inside it (#1790).
+    Mask(Option<ImageRef>),
     /// Image texels kept unstretched at each edge, top-right-bottom-left (#1708).
     Slice([f32; 4]),
     /// Multiplies the image, sRGB straight alpha.
@@ -152,6 +154,7 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Vec<Declaration>, String> 
             one(D::Param(name[PARAM_PREFIX.len()..].into(), param(text)?))
         }
         "background-image" => one(D::BackgroundImage(image(text)?)),
+        "-kooch-mask" => one(D::Mask(image(text)?)),
         "-kooch-slice" => one(D::Slice(slice(text)?)),
         "-kooch-tint" => one(D::Tint(color(text)?)),
         _ => return Err(format!("`{name}` is not a .kcss property")),

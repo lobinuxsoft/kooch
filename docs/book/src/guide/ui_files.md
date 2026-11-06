@@ -275,7 +275,7 @@ base sheet under every document's own gives all of them a look, which the docume
 | Property | Values |
 |---|---|
 | `display` | `flex`, `grid`, `none` |
-| `overflow` | `visible`, `hidden` (cuts its children at its padding box), `scroll` (also scrolls, with a thumb) |
+| `overflow` | `visible`, `hidden` (cuts its children at its padding box, rounded corners included), `scroll` (also scrolls, with a thumb) |
 | `position` | `relative`, `absolute` |
 | `left`, `top`, `right`, `bottom` | length |
 | `width`, `height`, `min-width`, `min-height`, `max-width`, `max-height` | length, `auto` |
@@ -295,6 +295,7 @@ base sheet under every document's own gives all of them a look, which the docume
 | `font-family` | `"Inter"`, `"Fira Code"`, or the family of a `.ttf`/`.otf` in the project |
 | `font-size` | length |
 | `background-image` | `url("button.png")` relative to the file writing it (the `.kcss`, or the `.kxml` for an inline `style`), PNG or JPEG; `none`. An engine image is written as if it sat in the project's `assets/`, where a build puts it: `url("../textures/prototype/dark/dark_texture_01.png")` from `assets/ui/` |
+| `-kooch-mask` | `url("shape.png")`, as `background-image`; `none`. Its alpha cuts the node and its children |
 | `-kooch-slice` | length, one to four: image texels kept unstretched at each edge |
 | `-kooch-tint` | colour that multiplies the image |
 | `-kooch-material` | a path to a shader with `kind: ui`, relative to the file writing it, as `background-image` |
@@ -310,7 +311,13 @@ the edges and middle stretch. A state rule can swap it, which is how a button ge
 .button:active { background-image: url("button_press.png"); }
 ```
 
-Saving the PNG shows the change without Play. Images are not clipped to `border-radius`.
+Saving the PNG shows the change without Play. A node's own image is not clipped to its
+`border-radius`: to round a picture, put it inside a node with `overflow: hidden`.
+
+**Masks.** `overflow: hidden` on a node with `border-radius` cuts its children to the rounded shape.
+`-kooch-mask` cuts by the alpha of an image, stretched to the node's box, which is how a bar fill
+follows a curve: the bar has the mask, and the fill grows inside it. Masks nest up to 16 deep, and
+the pointer does not hit what a mask took away.
 
 **Materials.** `-kooch-material` draws the node's box with a [`kind: ui` shader](shaders.md#ui)
 instead of its background and image: one quad, so `-kooch-slice` does not apply, and the shader

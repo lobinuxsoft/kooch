@@ -4,8 +4,8 @@ use glam::Vec2;
 use kooch_core::resource::Resources;
 use kooch_ecs::query::Query;
 use kooch_ecs::{
-    AtlasUpload, Entity, QUAD_GLYPH, QUAD_IMAGE, UiDrawList, UiMaterial, UiParam, UiQuad, UiShader,
-    ViewSize,
+    AtlasUpload, Entity, QUAD_GLYPH, QUAD_IMAGE, UiDrawList, UiMask, UiMaterial, UiParam, UiQuad,
+    UiShader, ViewSize,
 };
 
 use crate::layout::CANVAS_HEIGHT;
@@ -60,6 +60,7 @@ pub fn draw_tree(
 
 fn clear(list: &mut UiDrawList) {
     list.quads.clear();
+    list.masks.clear();
     list.materials.clear();
     list.params.clear();
     list.shaders.clear();
@@ -91,8 +92,14 @@ fn push_tree(
 ) {
     let glyphs = tree.glyphs();
     let mut next = 0;
+    // What each node's children are cut by; a parent always comes before them.
+    let mut inner = vec![0; tree.len()];
     for index in 0..tree.len() as u32 {
         let node = UiNode(index);
+        let around = tree.parent(node).map_or(0, |up| inner[up.0 as usize]);
+        let (own, within) = push_masks(tree, node, atlas, scale, around, &mut list.masks);
+        inner[index as usize] = within;
+        let first = list.quads.len();
         // Glyphs built for a node not drawn now are passed over, so `next` stays in step.
         while next < glyphs.len() && glyphs[next].node < index {
             next += 1;
@@ -179,7 +186,47 @@ fn push_tree(
             next += 1;
         }
         push_thumb(tree, node, rect, paint.text, scale, clip, &mut list.quads);
+        for quad in &mut list.quads[first..] {
+            quad.mask = own;
+        }
     }
+}
+
+/// The masks `node` adds inside `around`. Gives back what cuts the node, which its image mask does,
+/// and what cuts its children, which its rounded `overflow` does on top.
+fn push_masks(
+    tree: &UiTree,
+    node: UiNode,
+    atlas: &GlyphAtlas,
+    scale: f32,
+    around: u32,
+    masks: &mut Vec<UiMask>,
+) -> (u32, u32) {
+    let mut own = around;
+    let image = tree.mask(node).and_then(|guid| atlas.image(guid));
+    if let (Some(image), Some(rect), Some(paint)) = (image, tree.rect(node), tree.paint(node)) {
+        let [x0, y0, x1, y1] = image.rect;
+        masks.push(UiMask {
+            min: (rect.min * scale).into(),
+            size: (rect.size * scale).into(),
+            radius: paint.radius * scale,
+            parent: around,
+            uv_min: [x0, y0],
+            uv_size: [x1 - x0, y1 - y0],
+        });
+        own = masks.len() as u32;
+    }
+    let Some(shape) = tree.rounded(node) else {
+        return (own, own);
+    };
+    masks.push(UiMask {
+        min: (shape.min * scale).into(),
+        size: (shape.size * scale).into(),
+        radius: shape.radius * scale,
+        parent: own,
+        ..UiMask::default()
+    });
+    (own, masks.len() as u32)
 }
 
 /// `quad` as drawn by `shader`, with the node's values.

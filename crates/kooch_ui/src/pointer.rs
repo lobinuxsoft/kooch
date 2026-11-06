@@ -13,7 +13,7 @@ use crate::focus::{UiFocus, focusable};
 use crate::layout::CANVAS_HEIGHT;
 use crate::style::{STATE_ACTIVE, STATE_HOVER};
 use crate::ui_input::{UiInput, read};
-use crate::{MODE_OVERLAY, UiDocument, UiNode, UiTrees};
+use crate::{GlyphAtlas, MODE_OVERLAY, UiDocument, UiNode, UiTrees};
 
 /// Something the UI did, named by the action the file gave it.
 #[derive(Debug, Clone, PartialEq)]
@@ -212,8 +212,11 @@ fn show_states(resources: &mut Resources, was: &UiPointer, now: &UiPointer) {
 fn hit(resources: &Resources, overlays: &[(Entity, UiInput)]) -> Option<(Entity, UiNode)> {
     let to_canvas = to_canvas(resources);
     let trees = resources.get::<UiTrees>()?;
+    let atlas = resources.get::<GlyphAtlas>();
     overlays.iter().rev().find_map(|&(entity, input)| {
-        let node = trees.get(entity)?.pick(input.point? * to_canvas)?;
+        let node = trees
+            .get(entity)?
+            .pick_masked(input.point? * to_canvas, atlas)?;
         Some((entity, node))
     })
 }

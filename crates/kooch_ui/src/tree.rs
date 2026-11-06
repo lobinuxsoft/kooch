@@ -97,6 +97,7 @@ pub struct UiTree {
     border: Vec<f32>,
     paint: Vec<Paint>,
     pub(crate) image: Vec<Option<crate::images::UiImage>>,
+    pub(crate) mask: Vec<Option<kooch_core::Guid>>,
     text: Vec<Option<Text>>,
     glyphs: Vec<GlyphQuad>,
     /// Physical pixels per canvas unit and atlas generation the glyphs were built for.
@@ -143,6 +144,7 @@ impl UiTree {
             border: Vec::new(),
             paint: Vec::new(),
             image: Vec::new(),
+            mask: Vec::new(),
             text: Vec::new(),
             glyphs: Vec::new(),
             rastered: None,
@@ -463,6 +465,11 @@ impl UiTree {
     /// The topmost node under `point` that stops the pointer: one with an action or a visible
     /// background. A transparent layout panel lets it through to the game.
     pub fn pick(&self, point: Vec2) -> Option<UiNode> {
+        self.pick_masked(point, None)
+    }
+
+    /// [`pick`](Self::pick) through image masks too, which need `atlas` to read.
+    pub fn pick_masked(&self, point: Vec2, atlas: Option<&GlyphAtlas>) -> Option<UiNode> {
         (0..self.rect.len())
             .rev()
             .map(|i| UiNode(i as u32))
@@ -479,6 +486,7 @@ impl UiTree {
                     && seen
                     && !self.culled[i]
                     && (self.interactive(node) || self.paint[i].background[3] > 0.0)
+                    && self.unmasked(node, point, atlas)
             })
     }
 
@@ -504,6 +512,7 @@ impl UiTree {
         self.border.push(0.0);
         self.paint.push(Paint::default());
         self.image.push(None);
+        self.mask.push(None);
         self.text.push(None);
         self.culled.push(false);
         index
@@ -576,6 +585,7 @@ fn space_key(space: AvailableSpace) -> f32 {
 }
 
 mod instances;
+mod masks;
 mod query;
 mod scroll;
 #[cfg(test)]
