@@ -16,7 +16,47 @@
 use glam::Vec3;
 
 use super::eval::{radius_at, roll_at, segments};
-use super::{Knot, TANGENT_AUTO, arc, eval};
+use super::{Knot, TANGENT_ALIGNED, TANGENT_AUTO, TANGENT_BROKEN, arc, eval};
+
+/// A Hermite tangent spans its segment, so a handle sits at a third of it.
+pub const HANDLE_SCALE: f32 = 1.0 / 3.0;
+
+/// `knot` with a tangent dragged to `vector`, the arriving one when `arriving`.
+///
+/// 🔴 Dragging an `Auto` tangent promotes the knot to `Aligned`, as Blender and Unity both do:
+/// otherwise the handle springs back and the author concludes the editor is broken. `Aligned` moves
+/// the pair together — breaking the pair is a mode, chosen in the Inspector, not a side effect of a
+/// drag nobody asked to be destructive.
+pub fn steered(knot: Knot, arriving: bool, vector: Vec3) -> Knot {
+    // A handle dragged onto its own knot has no direction left to report; keeping the old one is
+    // better than a zero tangent, which flattens the segment to a straight line.
+    if vector.length_squared() < 1.0e-12 {
+        return knot;
+    }
+    let mode = match knot.mode {
+        TANGENT_AUTO => TANGENT_ALIGNED,
+        held => held,
+    };
+    match (arriving, mode) {
+        // Broken is the only mode where the two are independent.
+        (true, TANGENT_BROKEN) => Knot {
+            mode,
+            arriving: vector,
+            ..knot
+        },
+        // Arriving points back, so moving it along its own direction moves `leaving` the other way.
+        (true, _) => Knot {
+            mode,
+            leaving: -vector,
+            ..knot
+        },
+        (false, _) => Knot {
+            mode,
+            leaving: vector,
+            ..knot
+        },
+    }
+}
 
 /// Knots spaced evenly **by arc length**, replacing the list.
 ///

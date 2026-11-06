@@ -2,9 +2,12 @@
 //! the draw and the pointer ever knows. The path is `kooch_ecs`'s spline, flat, and is resampled by
 //! length here, once, for both.
 
+use std::f32::consts::{FRAC_PI_2, PI};
+
 use glam::{Vec2, Vec3};
 use kooch_ecs::CURVE_POINTS;
-use kooch_ecs::spline::{Knot, arc, eval};
+use kooch_ecs::spline::ops::{HANDLE_SCALE, steered};
+use kooch_ecs::spline::{Knot, TANGENT_ALIGNED, TANGENT_BROKEN, arc, eval};
 
 use crate::{UiNode, UiTree};
 
@@ -18,11 +21,23 @@ const SAMPLES: usize = 16;
 /// `CURVE_POINTS` points evenly spaced along a curve.
 pub(crate) type UiLine = [Vec2; CURVE_POINTS];
 
-/// A curve through its points, as fractions of a node. Written `x y x y ...`, then `closed`.
+/// A curve through its points, as fractions of a node, tangents too. Written `x y`, `x y / lx ly`
+/// when aligned or `x y | ax ay lx ly` when broken, point after point, then `closed`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct UiPath {
-    pub points: Vec<[f32; 2]>,
+    pub points: Vec<Knot>,
     pub closed: bool,
+}
+
+/// A vector on the flat path.
+fn flat(x: f32, y: f32) -> Vec3 {
+    Vec3::new(x, y, 0.0)
+}
+
+/// The next two words as a vector.
+fn vector<'a>(words: &mut impl Iterator<Item = &'a str>) -> Option<Vec3> {
+    let mut number = || words.next()?.parse().ok().filter(|n: &f32| n.is_finite());
+    Some(flat(number()?, number()?))
 }
 
 impl UiPath {
@@ -32,17 +47,31 @@ impl UiPath {
         if text == "none" {
             return Ok(None);
         }
-        let (numbers, closed) = match text.strip_suffix("closed") {
-            Some(numbers) => (numbers, true),
+        let (body, closed) = match text.strip_suffix("closed") {
+            Some(body) => (body, true),
             None => (text, false),
         };
-        let numbers: Result<Vec<f32>, _> = numbers.split_whitespace().map(str::parse).collect();
         let refused = || format!("`{text}` is not at least two points, or none");
-        let numbers = numbers.map_err(|_| refused())?;
-        if numbers.len() % 2 != 0 || numbers.iter().any(|number| !number.is_finite()) {
-            return Err(refused());
+        let mut words = body.split_whitespace().peekable();
+        let mut points = Vec::new();
+        while words.peek().is_some() {
+            let mut knot = Knot::at(vector(&mut words).ok_or_else(refused)?);
+            match words.peek().copied() {
+                Some("/") => {
+                    words.next();
+                    knot.mode = TANGENT_ALIGNED;
+                    knot.leaving = vector(&mut words).ok_or_else(refused)?;
+                }
+                Some("|") => {
+                    words.next();
+                    knot.mode = TANGENT_BROKEN;
+                    knot.arriving = vector(&mut words).ok_or_else(refused)?;
+                    knot.leaving = vector(&mut words).ok_or_else(refused)?;
+                }
+                _ => {}
+            }
+            points.push(knot);
         }
-        let points: Vec<[f32; 2]> = numbers.chunks_exact(2).map(|n| [n[0], n[1]]).collect();
         let fewest = if closed { CLOSED_MIN } else { 2 };
         if !(fewest..=MAX_POINTS).contains(&points.len()) {
             return Err(refused());
@@ -52,12 +81,74 @@ impl UiPath {
 
     /// As the `.kcss` writes it.
     pub fn written(&self) -> String {
-        let numbers = self.points.iter().flatten().map(|n| format!("{n:.3}"));
-        let mut words: Vec<String> = numbers.collect();
+        let pair = |v: Vec3| format!("{:.4} {:.4}", v.x, v.y);
+        let mut words: Vec<String> = self
+            .points
+            .iter()
+            .map(|knot| match knot.mode {
+                TANGENT_ALIGNED => format!("{} / {}", pair(knot.position), pair(knot.leaving)),
+                TANGENT_BROKEN => format!(
+                    "{} | {} {}",
+                    pair(knot.position),
+                    pair(knot.arriving),
+                    pair(knot.leaving)
+                ),
+                _ => pair(knot.position),
+            })
+            .collect();
         if self.closed {
             words.push("closed".to_owned());
         }
         words.join(" ")
+    }
+
+    /// Two points, a straight run.
+    pub fn segment() -> Self {
+        let points = [flat(0.1, 0.5), flat(0.9, 0.5)].map(Knot::at).to_vec();
+        Self {
+            points,
+            closed: false,
+        }
+    }
+
+    /// Half a circle over the node, left to right.
+    pub fn arc() -> Self {
+        Self {
+            points: round(-PI, 3),
+            closed: false,
+        }
+    }
+
+    /// Four points clockwise from the top, a fill's natural start. A cubic per quarter is 0.03 % of
+    /// the radius off a true circle: under a tenth of a pixel on a UI.
+    pub fn circle() -> Self {
+        Self {
+            points: round(-FRAC_PI_2, 4),
+            closed: true,
+        }
+    }
+
+    /// Four corners: broken tangents along each side keep them straight.
+    pub fn square() -> Self {
+        let corners = [
+            flat(0.1, 0.1),
+            flat(0.9, 0.1),
+            flat(0.9, 0.9),
+            flat(0.1, 0.9),
+        ];
+        let points = (0..4).map(|index| {
+            let here = corners[index];
+            Knot {
+                mode: TANGENT_BROKEN,
+                arriving: corners[(index + 3) % 4] - here,
+                leaving: corners[(index + 1) % 4] - here,
+                ..Knot::at(here)
+            }
+        });
+        Self {
+            points: points.collect(),
+            closed: true,
+        }
     }
 
     /// Whether a point can go and leave a path.
@@ -82,12 +173,60 @@ impl UiPath {
             .collect()
     }
 
+    /// The tangents a point draws with, arriving then leaving, each pointing away from it. Read
+    /// through the evaluator, so a handle sits on the curve drawn; an open path's ends lack one.
+    fn tangents(&self, index: usize) -> [Option<Vec3>; 2] {
+        let (count, closed) = (self.points.len(), self.closed);
+        let knots = self.points.as_slice();
+        if index >= count || count < 2 {
+            return [None, None];
+        }
+        let arriving = (closed || index > 0)
+            .then(|| -eval::tangents(knots, closed, (index + count - 1) % count, index).1);
+        let leaving = (closed || index + 1 < count)
+            .then(|| eval::tangents(knots, closed, index, (index + 1) % count).0);
+        [arriving, leaving]
+    }
+
+    /// Where a point's handles sit, arriving then leaving.
+    pub fn grips(&self, index: usize) -> [Option<[f32; 2]>; 2] {
+        let Some(knot) = self.points.get(index) else {
+            return [None, None];
+        };
+        self.tangents(index).map(|tangent| {
+            let grip = knot.position + tangent? * HANDLE_SCALE;
+            Some([grip.x, grip.y])
+        })
+    }
+
+    /// Drags a point's handle to `[x, y]`.
+    pub fn steer(&mut self, index: usize, arriving: bool, [x, y]: [f32; 2]) {
+        if let Some(knot) = self.points.get_mut(index) {
+            let vector = (flat(x, y) - knot.position) / HANDLE_SCALE;
+            *knot = steered(*knot, arriving, vector);
+        }
+    }
+
+    /// A point's mode, keeping the curve it had: a tangent left at zero would follow its sibling
+    /// until dragged.
+    pub fn set_mode(&mut self, index: usize, mode: u32) {
+        let [arriving, leaving] = self.tangents(index);
+        if let Some(knot) = self.points.get_mut(index) {
+            knot.mode = mode;
+            knot.arriving = arriving.or(leaving.map(|v| -v)).unwrap_or_default();
+            knot.leaving = leaving.or(arriving.map(|v| -v)).unwrap_or_default();
+        }
+    }
+
     fn knots(&self, min: Vec2, size: Vec2) -> Vec<Knot> {
-        let at = |point: &[f32; 2]| (min + Vec2::from(*point) * size).extend(0.0);
-        self.points
-            .iter()
-            .map(|point| Knot::at(at(point)))
-            .collect()
+        let scale = size.extend(1.0);
+        let scaled = |knot: &Knot| Knot {
+            position: min.extend(0.0) + knot.position * scale,
+            arriving: knot.arriving * scale,
+            leaving: knot.leaving * scale,
+            ..*knot
+        };
+        self.points.iter().map(scaled).collect()
     }
 
     /// Evenly spaced by length, not by `t`: a lopsided curve would stretch what is on it.
@@ -101,6 +240,24 @@ impl UiPath {
             point.truncate()
         })
     }
+}
+
+/// `count` points a quarter turn apart from `start`, on a circle filling most of the node, with
+/// the tangents of a cubic: Catmull-Rom alone bulges between so few.
+fn round(start: f32, count: usize) -> Vec<Knot> {
+    const RADIUS: f32 = 0.4;
+    // A Bezier handle of 4/3 tan(turn / 4), as a Hermite tangent: three times that.
+    let tangent = RADIUS * 4.0 * (FRAC_PI_2 / 4.0).tan();
+    (0..count)
+        .map(|index| {
+            let (sin, cos) = (start + FRAC_PI_2 * index as f32).sin_cos();
+            Knot {
+                mode: TANGENT_ALIGNED,
+                leaving: flat(-sin, cos) * tangent,
+                ..Knot::at(flat(0.5 + cos * RADIUS, 0.5 + sin * RADIUS))
+            }
+        })
+        .collect()
 }
 
 impl UiTree {

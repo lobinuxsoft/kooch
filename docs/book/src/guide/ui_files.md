@@ -352,7 +352,17 @@ buttons and materials, with no shader of yours. The node itself stays straight. 
 as usual, then across the node becomes along the curve and the distance from its middle the distance
 from the line, so a child centred and 40px tall is a band 40px thick. Clicks follow the bend, the
 UI Builder drags the points, adds one with a double-click on the path and removes one with a
-right-click, and `none` clears it. A trailing `closed` joins the ends, so four points make a circle. A band thicker than the curve's radius folds over
+right-click, and `none` clears it. A trailing `closed` joins the ends.
+
+A point is `x y` when it follows its neighbours, `x y / lx ly` with a smooth tangent of its own and
+`x y | ax ay lx ly` with two independent ones, which is how a path gets a corner. Tangents are
+fractions of the box too, relative to their point, so a circle in a wide node is an ellipse. The UI
+Builder draws a grip per tangent, and dragging one on an automatic point makes it smooth, as on a 3D
+spline; each point's mode is in the Inspector. The Inspector also starts a path from a line, arc,
+circle or square: generated once, then yours to edit, and it replaces what was there. Circles are
+four points, within 0.03 % of a true circle.
+
+A band thicker than the curve's radius folds over
 itself, a curve inside a curve replaces the outer one, and a clip or mask from above the node is read
 as if it were straight.
 
