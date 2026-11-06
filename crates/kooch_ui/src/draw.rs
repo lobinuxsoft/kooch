@@ -4,12 +4,15 @@ use glam::Vec2;
 use kooch_core::resource::Resources;
 use kooch_ecs::query::Query;
 use kooch_ecs::{
-    AtlasUpload, Entity, QUAD_GLYPH, QUAD_IMAGE, UiCurve, UiDrawList, UiMask, UiMaterial, UiParam,
-    UiQuad, UiShader, ViewSize,
+    AtlasUpload, Entity, QUAD_GLYPH, QUAD_IMAGE, UiCurve, UiDrawList, UiMask, UiMaterial, UiMirror,
+    UiParam, UiQuad, UiShader, ViewSize,
 };
 
 use crate::layout::CANVAS_HEIGHT;
-use crate::{GlyphAtlas, MODE_OVERLAY, UiDocument, UiImage, UiNode, UiShaders, UiTree, UiTrees};
+use crate::{
+    FLIP_X, FLIP_Y, GlyphAtlas, MODE_OVERLAY, UiDocument, UiImage, UiNode, UiShaders, UiTree,
+    UiTrees,
+};
 
 /// Every Overlay document, in spawn order; within one, a node's panel, image and text, parents
 /// first. World documents draw in phase 5.
@@ -62,6 +65,7 @@ fn clear(list: &mut UiDrawList) {
     list.quads.clear();
     list.masks.clear();
     list.curves.clear();
+    list.mirrors.clear();
     list.materials.clear();
     list.params.clear();
     list.shaders.clear();
@@ -97,13 +101,28 @@ fn push_tree(
     let mut inner = vec![0; tree.len()];
     // The curve each node's children bend along, the same way.
     let mut bent = vec![0; tree.len()];
+    // The flips around each node's children, the same way.
+    let mut turned = vec![(UiMirror::NONE, 0); tree.len()];
     for index in 0..tree.len() as u32 {
         let node = UiNode(index);
         let around = tree.parent(node).map_or(0, |up| inner[up.0 as usize]);
         let (own, within) = push_masks(tree, node, atlas, scale, around, &mut list.masks);
         inner[index as usize] = within;
         let curve = tree.parent(node).map_or(0, |up| bent[up.0 as usize]);
-        bent[index as usize] = push_curve(tree, node, scale, &mut list.curves).unwrap_or(curve);
+        let shaped = push_curve(tree, node, scale, &mut list.curves);
+        bent[index as usize] = shaped.unwrap_or(curve);
+        let around = tree.parent(node).map(|up| turned[up.0 as usize]);
+        let own_turn = push_flip(
+            tree,
+            node,
+            scale,
+            around.unwrap_or((UiMirror::NONE, 0)),
+            &mut list.mirrors,
+        );
+        turned[index as usize] = match shaped {
+            Some(_) => past_curve(own_turn, &mut list.mirrors),
+            None => own_turn,
+        };
         let first = list.quads.len();
         // Glyphs built for a node not drawn now are passed over, so `next` stays in step.
         while next < glyphs.len() && glyphs[next].node < index {
@@ -194,6 +213,7 @@ fn push_tree(
         for quad in &mut list.quads[first..] {
             quad.mask = own;
             quad.curve = curve;
+            quad.mirror = own_turn.1;
         }
     }
 }
@@ -258,6 +278,61 @@ fn push_curve(tree: &UiTree, node: UiNode, scale: f32, curves: &mut Vec<UiCurve>
         closed: tree.curve_closed(node).into(),
     });
     Some(curves.len() as u32)
+}
+
+/// `outer` applied to what `inner` gives.
+fn composed(outer: [f32; 4], inner: [f32; 4]) -> [f32; 4] {
+    [
+        outer[0] * inner[0],
+        outer[1] * inner[1],
+        outer[0] * inner[2] + outer[2],
+        outer[1] * inner[3] + outer[3],
+    ]
+}
+
+/// `around` with `node`'s flip inside it, as a mirror and its index plus one.
+fn push_flip(
+    tree: &UiTree,
+    node: UiNode,
+    scale: f32,
+    around: (UiMirror, u32),
+    mirrors: &mut Vec<UiMirror>,
+) -> (UiMirror, u32) {
+    let flip = tree.flip_of(node);
+    let Some(rect) = tree.rect(node).filter(|_| flip != 0) else {
+        return around;
+    };
+    // Twice the centre, whole: a half pixel here would blur every edge inside.
+    let far = ((rect.min * 2.0 + rect.size) * scale).round();
+    let (sx, mx) = if flip & FLIP_X != 0 {
+        (-1.0, far.x)
+    } else {
+        (1.0, 0.0)
+    };
+    let (sy, my) = if flip & FLIP_Y != 0 {
+        (-1.0, far.y)
+    } else {
+        (1.0, 0.0)
+    };
+    let mirror = UiMirror {
+        before: composed(around.0.before, [sx, sy, mx, my]),
+        after: around.0.after,
+    };
+    mirrors.push(mirror);
+    (mirror, mirrors.len() as u32)
+}
+
+/// What is inside a curve bends first: the flips around it mirror the bent result.
+fn past_curve(turn: (UiMirror, u32), mirrors: &mut Vec<UiMirror>) -> (UiMirror, u32) {
+    if turn.0.before == UiMirror::STILL {
+        return turn;
+    }
+    let mirror = UiMirror {
+        before: UiMirror::STILL,
+        after: composed(turn.0.after, turn.0.before),
+    };
+    mirrors.push(mirror);
+    (mirror, mirrors.len() as u32)
 }
 
 /// `quad` as drawn by `shader`, with the node's values.

@@ -87,5 +87,5 @@ pub use spot_light::SpotLight;
 pub use streamed::StreamedComponents;
 pub use transform::Transform;
 pub use ui_draw::{
-    AtlasUpload, CURVE_POINTS, QUAD_GLYPH, QUAD_IMAGE, UiCurve, UiDrawList, UiMask, UiMaterial, UiParam, UiQuad, UiShader,
+    AtlasUpload, CURVE_POINTS, QUAD_GLYPH, QUAD_IMAGE, UiCurve, UiDrawList, UiMask, UiMaterial, UiMirror, UiParam, UiQuad, UiShader,
 };

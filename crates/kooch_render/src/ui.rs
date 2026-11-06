@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use kooch_ecs::{UiCurve, UiDrawList, UiMask, UiQuad};
+use kooch_ecs::{UiCurve, UiDrawList, UiMask, UiMirror, UiQuad};
 
 use crate::material::MAX_PARAM_SCALARS;
 
@@ -29,6 +29,9 @@ pub struct UiPass {
     /// [`UiDrawList::curves`] on the GPU.
     curves: wgpu::Buffer,
     curves_capacity: u64,
+    /// [`UiDrawList::mirrors`] on the GPU.
+    mirrors: wgpu::Buffer,
+    mirrors_capacity: u64,
     started: std::time::Instant,
 }
 
@@ -37,9 +40,10 @@ mod materials;
 use materials::UiMaterials;
 pub use materials::validate_ui;
 
-const ATTRIBUTES: [wgpu::VertexAttribute; 11] = wgpu::vertex_attr_array![
+const ATTRIBUTES: [wgpu::VertexAttribute; 12] = wgpu::vertex_attr_array![
     0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32x4, 4 => Float32x4,
     5 => Float32x2, 6 => Uint32x2, 7 => Uint32x2, 8 => Uint32x2, 9 => Uint32, 10 => Uint32,
+    11 => Uint32,
 ];
 
 /// `UI_CURVE_STRIPS` in `ui.wgsl`, as vertices of a triangle strip.
@@ -111,6 +115,16 @@ impl UiPass {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -131,11 +145,14 @@ impl UiPass {
         let masks = masks_buffer(device, masks_capacity);
         let curves_capacity = 4;
         let curves = curves_buffer(device, curves_capacity);
+        let mirrors_capacity = 4;
+        let mirrors = mirrors_buffer(device, mirrors_capacity);
         let buffers = Buffers {
             screen: &screen,
             values: &values,
             masks: &masks,
             curves: &curves,
+            mirrors: &mirrors,
         };
         let (atlas, bind) = atlas_and_bind(device, &layout, buffers, 1);
         let capacity = 256;
@@ -157,6 +174,8 @@ impl UiPass {
             masks_capacity,
             curves,
             curves_capacity,
+            mirrors,
+            mirrors_capacity,
             started: std::time::Instant::now(),
         }
     }
@@ -217,6 +236,7 @@ impl UiPass {
         self.upload_values(device, queue);
         self.upload_masks(device, queue, &list.masks);
         self.upload_curves(device, queue, &list.curves);
+        self.upload_mirrors(device, queue, &list.mirrors);
         let time = self.started.elapsed().as_secs_f32();
         queue.write_buffer(
             &self.screen,
@@ -276,6 +296,7 @@ impl UiPass {
             values: &self.values,
             masks: &self.masks,
             curves: &self.curves,
+            mirrors: &self.mirrors,
         }
     }
 
@@ -317,6 +338,18 @@ impl UiPass {
         }
         queue.write_buffer(&self.curves, 0, bytemuck::cast_slice(curves));
     }
+
+    fn upload_mirrors(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, mirrors: &[UiMirror]) {
+        if mirrors.is_empty() {
+            return;
+        }
+        if mirrors.len() as u64 > self.mirrors_capacity {
+            self.mirrors_capacity = (mirrors.len() as u64).next_power_of_two();
+            self.mirrors = mirrors_buffer(device, self.mirrors_capacity);
+            self.bind = bind_group(device, &self.layout, self.buffers(), &self.atlas);
+        }
+        queue.write_buffer(&self.mirrors, 0, bytemuck::cast_slice(mirrors));
+    }
 }
 
 /// `range`, a draw per stretch of straight or curved quads: only a curved one pays for its strips.
@@ -340,6 +373,7 @@ struct Buffers<'a> {
     values: &'a wgpu::Buffer,
     masks: &'a wgpu::Buffer,
     curves: &'a wgpu::Buffer,
+    mirrors: &'a wgpu::Buffer,
 }
 
 /// The pipeline every UI draw shares but for its fragment entry.
@@ -447,6 +481,15 @@ fn curves_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
     })
 }
 
+fn mirrors_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("ui_mirrors"),
+        size: count * size_of::<UiMirror>() as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
 fn atlas_and_bind(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
@@ -512,6 +555,10 @@ fn bind_group(
             wgpu::BindGroupEntry {
                 binding: 5,
                 resource: buffers.curves.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: buffers.mirrors.as_entire_binding(),
             },
         ],
     })

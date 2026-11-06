@@ -44,6 +44,14 @@ struct UiCurve {
 
 @group(0) @binding(5) var<storage, read> ui_curves: array<UiCurve>;
 
+// `[scale, move]` before a quad's curve bends it, then after.
+struct UiMirror {
+    before: vec4<f32>,
+    after: vec4<f32>,
+}
+
+@group(0) @binding(6) var<storage, read> ui_mirrors: array<UiMirror>;
+
 // Strips a curved quad is cut into. `UiPass` draws two vertices more than twice this.
 const UI_CURVE_STRIPS: u32 = 64u;
 
@@ -67,6 +75,7 @@ struct Instance {
     @location(8) material_flags: vec2<u32>,
     @location(9) mask: u32,
     @location(10) curve: u32,
+    @location(11) mirror: u32,
 }
 
 struct Varyings {
@@ -112,6 +121,10 @@ fn ui_bent(pixel: vec2<f32>, curve: u32) -> vec2<f32> {
     return mix(here, next, part) + vec2<f32>(-unit.y, unit.x) * away;
 }
 
+fn ui_mirrored(pixel: vec2<f32>, by: vec4<f32>) -> vec2<f32> {
+    return pixel * by.xy + by.zw;
+}
+
 @vertex
 fn vs_ui(@builtin(vertex_index) vertex: u32, quad: Instance) -> Varyings {
     var corner = vec2<f32>(f32(vertex & 1u), f32(vertex >> 1u));
@@ -122,9 +135,16 @@ fn vs_ui(@builtin(vertex_index) vertex: u32, quad: Instance) -> Varyings {
     var pixel = straight;
     var out: Varyings;
     out.material_flags = quad.material_flags;
+    // Only where it lands: clip, masks and uv stay in the layout, so they mirror with it.
+    if quad.mirror != 0u {
+        pixel = ui_mirrored(pixel, ui_mirrors[quad.mirror - 1u].before);
+    }
     if quad.curve != 0u {
-        pixel = ui_bent(straight, quad.curve);
+        pixel = ui_bent(pixel, quad.curve);
         out.material_flags.y |= QUAD_CURVED;
+    }
+    if quad.mirror != 0u {
+        pixel = ui_mirrored(pixel, ui_mirrors[quad.mirror - 1u].after);
     }
     out.straight = straight;
     // y flipped: pixels descend, clip space climbs.

@@ -5,7 +5,9 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use kooch_core::Guid;
 use kooch_core::resource::Resources;
-use kooch_ecs::{AtlasUpload, UiCurve, UiDrawList, UiMask, UiMaterial, UiParam, UiQuad, UiShader};
+use kooch_ecs::{
+    AtlasUpload, UiCurve, UiDrawList, UiMask, UiMaterial, UiMirror, UiParam, UiQuad, UiShader,
+};
 use serde::{Deserialize, Serialize};
 
 /// A [`UiDrawList`] on the wire. Bytes as base64: a quad is 104 bytes, and as JSON numbers it
@@ -20,6 +22,9 @@ pub struct UiFrame {
     /// `UiCurve`s, which the quads index.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub curves: String,
+    /// `UiMirror`s, which the quads index.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub mirrors: String,
     /// `quad`, `shader`, first param, param count.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub materials: Vec<[u32; 4]>,
@@ -46,6 +51,7 @@ struct SentUi {
     quads: Vec<UiQuad>,
     masks: Vec<UiMask>,
     curves: Vec<UiCurve>,
+    mirrors: Vec<UiMirror>,
     materials: Vec<UiMaterial>,
     params: Vec<UiParam>,
     shaders: Vec<UiShader>,
@@ -68,6 +74,7 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
             && sent.quads == list.quads
             && sent.masks == list.masks
             && sent.curves == list.curves
+            && sent.mirrors == list.mirrors
             && sent.materials == list.materials
             && sent.params == list.params
         {
@@ -76,6 +83,7 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
         sent.quads.clone_from(&list.quads);
         sent.masks.clone_from(&list.masks);
         sent.curves.clone_from(&list.curves);
+        sent.mirrors.clone_from(&list.mirrors);
         sent.materials.clone_from(&list.materials);
         sent.params.clone_from(&list.params);
         sent.shaders.clone_from(&list.shaders);
@@ -83,6 +91,7 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
             quads: STANDARD.encode(bytemuck::cast_slice::<UiQuad, u8>(&list.quads)),
             masks: STANDARD.encode(bytemuck::cast_slice::<UiMask, u8>(&list.masks)),
             curves: STANDARD.encode(bytemuck::cast_slice::<UiCurve, u8>(&list.curves)),
+            mirrors: STANDARD.encode(bytemuck::cast_slice::<UiMirror, u8>(&list.mirrors)),
             materials: list
                 .materials
                 .iter()
@@ -112,6 +121,7 @@ pub struct UiReceiver {
     quads: Vec<UiQuad>,
     masks: Vec<UiMask>,
     curves: Vec<UiCurve>,
+    mirrors: Vec<UiMirror>,
     materials: Vec<UiMaterial>,
     params: Vec<UiParam>,
     shaders: Vec<UiShader>,
@@ -123,10 +133,11 @@ pub struct UiReceiver {
 
 impl UiReceiver {
     pub fn receive(&mut self, frame: UiFrame) {
-        let (Some(quads), Some(masks), Some(curves)) = (
+        let (Some(quads), Some(masks), Some(curves), Some(mirrors)) = (
             decoded(&frame.quads),
             decoded(&frame.masks),
             decoded(&frame.curves),
+            decoded(&frame.mirrors),
         ) else {
             tracing::warn!("the project sent UI quads this editor cannot read");
             return;
@@ -134,6 +145,7 @@ impl UiReceiver {
         self.quads = quads;
         self.masks = masks;
         self.curves = curves;
+        self.mirrors = mirrors;
         self.materials = frame
             .materials
             .iter()
@@ -189,6 +201,7 @@ impl UiReceiver {
             quads: self.quads.clone(),
             masks: self.masks.clone(),
             curves: self.curves.clone(),
+            mirrors: self.mirrors.clone(),
             materials: self.materials.clone(),
             params: self.params.clone(),
             shaders: self.shaders.clone(),

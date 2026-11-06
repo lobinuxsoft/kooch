@@ -99,6 +99,7 @@ pub struct UiTree {
     pub(crate) image: Vec<Option<crate::images::UiImage>>,
     pub(crate) mask: Vec<masks::UiCut>,
     pub(crate) curve: Vec<Option<curves::UiPath>>,
+    flip: Vec<u32>,
     text: Vec<Option<Text>>,
     glyphs: Vec<GlyphQuad>,
     /// Physical pixels per canvas unit and atlas generation the glyphs were built for.
@@ -147,6 +148,7 @@ impl UiTree {
             image: Vec::new(),
             mask: Vec::new(),
             curve: Vec::new(),
+            flip: Vec::new(),
             text: Vec::new(),
             glyphs: Vec::new(),
             rastered: None,
@@ -470,30 +472,6 @@ impl UiTree {
         self.pick_masked(point, None)
     }
 
-    /// [`pick`](Self::pick) through image masks too, which need `atlas` to read.
-    pub fn pick_masked(&self, point: Vec2, atlas: Option<&GlyphAtlas>) -> Option<UiNode> {
-        let mut bent = None;
-        (0..self.rect.len())
-            .rev()
-            .map(|i| UiNode(i as u32))
-            .find(|&node| {
-                let i = node.0 as usize;
-                let rect = self.rect[i];
-                let point = self.straight_again(node, point, &mut bent);
-                let inside = point.cmpge(rect.min).all() && point.cmplt(rect.min + rect.size).all();
-                let clip = self.clip[i];
-                let seen = point.x >= clip[0]
-                    && point.y >= clip[1]
-                    && point.x < clip[2]
-                    && point.y < clip[3];
-                inside
-                    && seen
-                    && !self.culled[i]
-                    && (self.interactive(node) || self.paint[i].background[3] > 0.0)
-                    && self.unmasked(node, point, atlas)
-            })
-    }
-
     pub fn len(&self) -> usize {
         self.taffy.len()
     }
@@ -518,6 +496,7 @@ impl UiTree {
         self.image.push(None);
         self.mask.push(masks::UiCut::default());
         self.curve.push(None);
+        self.flip.push(0);
         self.text.push(None);
         self.culled.push(false);
         index
@@ -589,8 +568,9 @@ fn space_key(space: AvailableSpace) -> f32 {
     }
 }
 
-mod instances;
 pub(crate) mod curves;
+pub(crate) mod flips;
+mod instances;
 pub(crate) mod masks;
 mod query;
 mod scroll;

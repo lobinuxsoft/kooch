@@ -4,8 +4,8 @@
 use glam::Vec3;
 use kooch_ecs::spline::{Knot, TANGENT_CHOICES};
 use kooch_render::material::ShaderParam;
-use kooch_ui::UiPath;
 use kooch_ui::style::{InlineStyle, PARAM_PREFIX};
+use kooch_ui::{FLIP_X, FLIP_Y, UiPath};
 
 use crate::ui_builder::UiBuilder;
 
@@ -33,6 +33,18 @@ const REACH: f32 = 8.0;
 enum Edit {
     Moved(usize, [f32; 2]),
     Removed(usize),
+}
+
+/// `screen` with the corners a flip swaps, so a fraction across it lands where the node draws it.
+pub(super) fn turned(screen: egui::Rect, flip: u32) -> egui::Rect {
+    let mut turned = screen;
+    if flip & FLIP_X != 0 {
+        std::mem::swap(&mut turned.min.x, &mut turned.max.x);
+    }
+    if flip & FLIP_Y != 0 {
+        std::mem::swap(&mut turned.min.y, &mut turned.max.y);
+    }
+    turned
 }
 
 /// `screen` is the element's rect in points; a point at `[0, 0]` sits on its top left corner.

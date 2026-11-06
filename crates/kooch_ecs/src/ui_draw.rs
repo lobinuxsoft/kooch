@@ -38,6 +38,26 @@ pub struct UiQuad {
     pub mask: u32,
     /// Index in [`UiDrawList::curves`] plus one; 0 is straight.
     pub curve: u32,
+    /// Index in [`UiDrawList::mirrors`] plus one; 0 is as laid out.
+    pub mirror: u32,
+}
+
+/// Where the flips around a quad move it, as `[scale x, scale y, move x, move y]` in physical
+/// pixels: `before` its curve bends it, then `after`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
+pub struct UiMirror {
+    pub before: [f32; 4],
+    pub after: [f32; 4],
+}
+
+impl UiMirror {
+    /// Nothing moves.
+    pub const STILL: [f32; 4] = [1.0, 1.0, 0.0, 0.0];
+    pub const NONE: Self = Self {
+        before: Self::STILL,
+        after: Self::STILL,
+    };
 }
 
 /// A shape what is inside a node gets cut to (#1790), in physical pixels.
@@ -115,6 +135,7 @@ pub struct UiDrawList {
     pub quads: Vec<UiQuad>,
     pub masks: Vec<UiMask>,
     pub curves: Vec<UiCurve>,
+    pub mirrors: Vec<UiMirror>,
     pub materials: Vec<UiMaterial>,
     pub params: Vec<UiParam>,
     pub shaders: Vec<UiShader>,

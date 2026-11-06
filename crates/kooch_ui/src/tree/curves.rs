@@ -283,7 +283,7 @@ impl UiTree {
     }
 
     /// The nearest node above `node` with a curve.
-    fn bent_by(&self, node: UiNode) -> Option<UiNode> {
+    pub(super) fn bent_by(&self, node: UiNode) -> Option<UiNode> {
         let mut next = self.parent(node);
         while let Some(above) = next {
             if self.curve.get(above.0 as usize)?.is_some() {
@@ -295,7 +295,7 @@ impl UiTree {
     }
 
     /// Where `point`, as seen on screen, sits in the layout of `curved`'s descendants.
-    fn unbent(&self, curved: UiNode, point: Vec2) -> Option<Vec2> {
+    pub(super) fn unbent(&self, curved: UiNode, point: Vec2) -> Option<Vec2> {
         let line = self.line(curved)?;
         let rect = self.rect.get(curved.0 as usize)?;
         let mut best = (f32::MAX, 0.0, 0.0);
@@ -321,6 +321,9 @@ impl UiTree {
 
     /// Where `point`, as seen on screen, sits in `node`'s layout.
     pub fn straight(&self, node: UiNode, point: Vec2) -> Vec2 {
+        if self.flipped(node) {
+            return self.unflipped(node, point);
+        }
         self.bent_by(node)
             .and_then(|curved| self.unbent(curved, point))
             .unwrap_or(point)
@@ -333,6 +336,9 @@ impl UiTree {
         point: Vec2,
         last: &mut Option<(UiNode, Vec2)>,
     ) -> Vec2 {
+        if self.flipped(node) {
+            return self.unflipped(node, point);
+        }
         let Some(curved) = self.bent_by(node) else {
             return point;
         };
