@@ -13,8 +13,6 @@ use crate::panels::inspector::AssetCatalogEntry;
 use crate::ui_builder::{SOURCE_TYPE, UiBuilder};
 
 pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEntry]) {
-    ui.strong("Inspector");
-    ui.separator();
     let Some(origin) = builder.selected else {
         ui.weak("Select an element in the hierarchy or on the canvas.");
         return;

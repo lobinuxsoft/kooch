@@ -368,6 +368,9 @@ Anything else is a warning naming the file and line, and the rule's other proper
 
 ## UI Builder
 
+Its Hierarchy, Library, canvas and Inspector dock like the editor's panels: drag a divider to resize
+them and a tab to move or stack them. The arrangement stays when you open another file.
+
 Double-click a `.kxml` in the Asset Browser and it opens in the **UI Builder**: the document alone
 on a canvas, drawn by the same pass that draws it in the game. No scene and no camera behind it.
 

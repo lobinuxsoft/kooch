@@ -45,8 +45,6 @@ const STANDARD: [Item; 5] = [
 const HOW: &str = "Drag into the hierarchy or the canvas; double-click adds it to the selection";
 
 pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEntry]) {
-    ui.strong("Library");
-    ui.separator();
     egui::ScrollArea::vertical()
         .id_salt("ui_builder_library")
         .auto_shrink([false, false])
