@@ -43,6 +43,9 @@ const fn prop(name: &'static str, kind: PropertyKind, hint: &'static str) -> Pro
     PropertySpec { name, kind, hint }
 }
 
+/// How a node mirrors; the index is its `FLIP_X` and `FLIP_Y` bits.
+pub const FLIP: &[&str] = &["none", "x", "y", "both"];
+
 /// Where a fill starts; the index is what `UiMask::fill_from` carries and `ui.wgsl` reads.
 pub const FILL_FROM: &[&str] = &["none", "left", "right", "top", "bottom", "clock", "image"];
 
@@ -271,6 +274,11 @@ pub const CATEGORIES: [StyleCategory; 10] = [
                 "-kooch-curve",
                 Curve,
                 "Points the path goes through, 0 to 1: what is inside the node bends along it",
+            ),
+            prop(
+                "-kooch-flip",
+                Keyword(FLIP),
+                "Mirrors the node and all inside it about its centre: x swaps left and right",
             ),
             prop("-kooch-tint", Color, "Multiplies the image"),
             prop(

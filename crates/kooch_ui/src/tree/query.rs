@@ -1,10 +1,36 @@
 //! What the game asks of a document (#96 phase 7): nodes by name or class, classes and visibility.
 
+use glam::Vec2;
 use taffy::{CompactLength, Display, LengthPercentageAuto, Position, Style};
 
 use super::{UiNode, UiTree};
+use crate::GlyphAtlas;
 
 impl UiTree {
+    /// [`pick`](Self::pick) through image masks too, which need `atlas` to read.
+    pub fn pick_masked(&self, point: Vec2, atlas: Option<&GlyphAtlas>) -> Option<UiNode> {
+        let mut bent = None;
+        (0..self.rect.len())
+            .rev()
+            .map(|i| UiNode(i as u32))
+            .find(|&node| {
+                let i = node.0 as usize;
+                let rect = self.rect[i];
+                let point = self.straight_again(node, point, &mut bent);
+                let inside = point.cmpge(rect.min).all() && point.cmplt(rect.min + rect.size).all();
+                let clip = self.clip[i];
+                let seen = point.x >= clip[0]
+                    && point.y >= clip[1]
+                    && point.x < clip[2]
+                    && point.y < clip[3];
+                inside
+                    && seen
+                    && !self.culled[i]
+                    && (self.interactive(node) || self.paint[i].background[3] > 0.0)
+                    && self.unmasked(node, point, atlas)
+            })
+    }
+
     /// The first node with this name, in creation order. A scan: the game asks once and keeps the
     /// handle.
     pub fn query(&self, name: &str) -> Option<UiNode> {

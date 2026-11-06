@@ -74,6 +74,8 @@ pub enum Declaration {
     FillFrom(u32),
     /// A path across the node, which what is inside it bends along (#1827, #1832).
     Curve(Option<crate::UiPath>),
+    /// An index in [`FLIP`](super::catalog::FLIP) (#1840).
+    Flip(u32),
     /// Image texels kept unstretched at each edge, top-right-bottom-left (#1708).
     Slice([f32; 4]),
     /// Multiplies the image, sRGB straight alpha.
@@ -174,6 +176,10 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Vec<Declaration>, String> 
             None => Err(format!("`{text}` is not a place to fill from")),
         },
         "-kooch-curve" => one(D::Curve(crate::UiPath::parse(text)?)),
+        "-kooch-flip" => match super::catalog::FLIP.iter().position(|w| *w == text.trim()) {
+            Some(index) => one(D::Flip(index as u32)),
+            None => Err(format!("`{text}` is not none, x, y or both")),
+        },
         "-kooch-slice" => one(D::Slice(slice(text)?)),
         "-kooch-tint" => one(D::Tint(color(text)?)),
         _ => return Err(format!("`{name}` is not a .kcss property")),

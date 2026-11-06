@@ -198,11 +198,11 @@ fn canvas(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEnt
         egui::StrokeKind::Outside,
     );
     let accent = ui.visuals().selection.stroke.color;
-    if let Some(rect) = under.and_then(|origin| builder.rect_of(origin)) {
+    if let Some((rect, _)) = under.and_then(|origin| builder.shown_of(origin)) {
         let stroke = egui::Stroke::new(1.0, accent.gamma_multiply(0.5));
         painter.rect_stroke(to_screen(rect), 0.0, stroke, egui::StrokeKind::Outside);
     }
-    if let Some(rect) = builder.selected.and_then(|origin| builder.rect_of(origin)) {
+    if let Some((rect, flip)) = builder.selected.and_then(|origin| builder.shown_of(origin)) {
         let stroke = egui::Stroke::new(2.0, accent);
         painter.rect_stroke(to_screen(rect), 0.0, stroke, egui::StrokeKind::Outside);
         // A template's node is written as overrides, not as a rect of this file.
@@ -211,7 +211,7 @@ fn canvas(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEnt
             .filter(|o| *o != 0 && builder.inner.is_none())
         {
             gizmo::draw(ui, builder, origin, to_screen(rect), units, &response);
-            points::draw(ui, builder, origin, to_screen(rect));
+            points::draw(ui, builder, origin, points::turned(to_screen(rect), flip));
         }
     }
     // A drop lands inside what holds children, after what does not.

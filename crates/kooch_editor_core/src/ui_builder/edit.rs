@@ -230,6 +230,13 @@ impl UiBuilder {
         tree.rect(tree.node_of(origin)?)
     }
 
+    /// Where `origin` draws: its rect through the flips around it, and the axes they mirror.
+    pub(crate) fn shown_of(&self, origin: u32) -> Option<(UiRect, u32)> {
+        let tree = self.tree.as_ref()?;
+        let node = tree.node_of(origin)?;
+        Some((tree.shown(node)?, tree.flip_total(node)))
+    }
+
     pub(crate) fn save(&mut self) {
         if let Err(error) = std::fs::write(&self.path, self.markup.write()) {
             tracing::error!(file = %self.path.display(), %error, "could not save the UI document");

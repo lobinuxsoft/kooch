@@ -362,6 +362,11 @@ spline; each point's mode is in the Inspector. The Inspector also starts a path 
 circle or square: generated once, then yours to edit, and it replaces what was there. Circles are
 four points, within 0.03 % of a true circle.
 
+`-kooch-flip: x`, `y` or `both` mirrors a node and everything inside it about its centre, after
+layout: images, text, masks and clicks all follow, and siblings do not move. On a node with a curve
+it mirrors the bent result, so `x` on a circle runs it counter-clockwise, fill included. Text reads
+mirrored too, as it does in a mirror.
+
 A band thicker than the curve's radius folds over
 itself, a curve inside a curve replaces the outer one, and a clip or mask from above the node is read
 as if it were straight.

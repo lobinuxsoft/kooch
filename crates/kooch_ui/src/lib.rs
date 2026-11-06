@@ -49,6 +49,7 @@ pub use pointer::{UiAction, UiActions, UiEvent, UiEventKind, UiPointer, pick_poi
 pub use restyle::restyle_documents;
 pub use text::UiFonts;
 pub use tree::curves::UiPath;
+pub use tree::flips::{FLIP_X, FLIP_Y};
 pub use tree::masks::UiMaskImage;
 pub use tree::{GlyphQuad, Paint, UiNode, UiRect, UiTree};
 pub use trees::{UiTrees, prune_trees};

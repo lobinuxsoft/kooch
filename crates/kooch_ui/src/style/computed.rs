@@ -70,6 +70,7 @@ pub fn computed(style: &ResolvedStyle, property: &str) -> Option<String> {
             let amount = style.params.iter().find(|(name, _)| &**name == "fill");
             number(amount.map_or(1.0, |(_, value)| value[0]))
         }
+        "-kooch-flip" => (*super::catalog::FLIP.get(style.flip as usize)?).to_owned(),
         "-kooch-curve" => style
             .curve
             .as_ref()
