@@ -6,9 +6,10 @@ use std::time::{Duration, Instant};
 
 use kooch_core::Guid;
 use kooch_core::asset_database::AssetDatabase;
+use kooch_core::asset_loader::AssetServer;
 use kooch_ui::markup::Markup;
 use kooch_ui::source::UiSource;
-use kooch_ui::style::UiStyleSheet;
+use kooch_ui::style::{ResolvedStyle, UiStyleSheet};
 
 use super::{SOURCE_TYPE, UiBuilder};
 use crate::panels::inspector::AssetCatalogEntry;
@@ -36,13 +37,24 @@ pub(crate) struct Known {
     pub sheet: Option<OpenSheet>,
     /// The file as written, templates not spliced: element `i` is markup origin `i`.
     pub file: Option<UiSource>,
+    /// Element `i` of `file` once the sheets have spoken.
+    pub styles: Vec<ResolvedStyle>,
     actions: Vec<KnownAction>,
     scanned: Option<Instant>,
 }
 
 impl Known {
-    pub(super) fn refresh(&mut self, database: &AssetDatabase, text: &str, style: Option<Guid>) {
+    pub(super) fn refresh(
+        &mut self,
+        database: &AssetDatabase,
+        server: Option<&mut AssetServer>,
+        text: &str,
+        style: Option<Guid>,
+    ) {
         self.file = UiSource::parse(text).ok();
+        self.styles = self.file.as_ref().map_or_else(Vec::new, |file| {
+            kooch_ui::styles_of(database, server, file, style)
+        });
         self.sheet = style
             .and_then(|guid| database.entry(guid))
             .and_then(|entry| {

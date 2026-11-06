@@ -2,6 +2,7 @@
 //! go through taffy's own CSS parser; this module owns the rule grammar and the mapping.
 
 mod catalog;
+mod computed;
 mod declaration;
 mod inline;
 mod resolved;
@@ -9,6 +10,7 @@ mod sheet;
 mod tokens;
 
 pub use catalog::{CATEGORIES, PropertyKind, PropertySpec, StyleCategory};
+pub use computed::computed;
 pub use declaration::{Axis, Declaration, Edge, ImageRef, PARAM_PREFIX};
 pub use inline::InlineStyle;
 pub use resolved::ResolvedStyle;

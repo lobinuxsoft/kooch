@@ -35,7 +35,9 @@ pub use build::{DEFAULT_FONT_SIZE, build_tree};
 pub use cascade::matching_rules;
 pub use controls::{SLIDER_FILL, SLIDER_REST, SLIDER_THUMB, TOGGLE_CHECK, UiBinding};
 pub use document::{MODE_CHOICES, MODE_OVERLAY, MODE_WORLD, UiDocument};
-pub use documents::{Refreshed, build_documents, build_markup, refresh_tree, ui_instance};
+pub use documents::{
+    Refreshed, build_documents, build_markup, refresh_tree, styles_of, ui_instance,
+};
 pub use draw::{draw_documents, draw_tree};
 pub use focus::{UiFocus, navigate_focus};
 pub use font::{ENGINE_FONTS, FONT_TYPE, UiFont, load_fonts};
