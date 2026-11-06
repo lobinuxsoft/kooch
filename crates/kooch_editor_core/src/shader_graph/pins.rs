@@ -67,6 +67,8 @@ impl Node {
         let name = *self.inputs().get(input)?;
         let splat = |value: f32| Some([value; 4]);
         match (self, name) {
+            (Self::Function { .. }, "uv") => None,
+            (Self::Function { inputs, .. }, _) => inputs.get(input).map(|pin| pin.default),
             (Self::Loop { .. }, "rounds") => splat(8.0),
             (Self::Subgraph { .. } | Self::Loop { .. }, _) => splat(0.0),
             (_, "uv" | "point" | "map") => None,

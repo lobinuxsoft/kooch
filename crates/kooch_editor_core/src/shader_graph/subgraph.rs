@@ -7,7 +7,9 @@ use egui::Pos2;
 use egui_snarl::{InPinId, NodeId, OutPinId};
 use kooch_render::material::SUBGRAPH_EXTENSION;
 
-use super::{Graph, Node, extract};
+use kooch_core::shader_uses::engine_source;
+
+use super::{Graph, Node, extract, functions};
 
 /// What the preview says for a subgraph, which is no failure.
 pub(crate) const NO_SHAPE: &str =
@@ -149,30 +151,53 @@ pub(crate) fn relative(folder: &Path, to: &Path) -> String {
 /// Brings every subgraph node in `graph`, the graph of `file`, up to its file. Whether one changed.
 pub(crate) fn refresh(graph: &mut Graph, file: &Path) -> bool {
     let folder = file.parent().unwrap_or(Path::new(""));
-    let calls: Vec<(NodeId, String, bool)> = graph
+    let calls: Vec<(NodeId, Node)> = graph
         .node_ids()
-        .filter_map(|(id, cell)| match &cell.node {
-            Node::Subgraph { path, .. } => Some((id, path.clone(), false)),
-            Node::Loop { path, .. } => Some((id, path.clone(), true)),
-            _ => None,
+        .filter(|(_, cell)| {
+            matches!(
+                cell.node,
+                Node::Subgraph { .. } | Node::Loop { .. } | Node::Function { .. }
+            )
         })
+        .map(|(id, cell)| (id, cell.node.clone()))
         .collect();
     let mut changed = false;
-    for (id, path, looped) in calls {
-        let target = folder.join(&path);
-        let fresh = std::fs::read_to_string(&target)
-            .ok()
-            .and_then(|source| call_node(&target, &source, path));
-        let Some(fresh) = fresh else {
+    for (id, node) in calls {
+        let Some(fresh) = current(&node, folder) else {
             continue;
         };
-        let fresh = if looped { fresh.looped() } else { fresh };
-        if graph.get_node(id).is_some_and(|cell| cell.node != fresh) {
+        if node != fresh {
             repin(graph, id, fresh);
             changed = true;
         }
     }
     changed
+}
+
+/// `node` as the file it calls says it is now; `None` when that file or function is gone, which the
+/// shader's own compile reports.
+fn current(node: &Node, folder: &Path) -> Option<Node> {
+    match node {
+        Node::Subgraph { path, .. } | Node::Loop { path, .. } => {
+            let target = folder.join(path);
+            let source = std::fs::read_to_string(&target).ok()?;
+            let fresh = call_node(&target, &source, path.clone())?;
+            Some(match node {
+                Node::Loop { .. } => fresh.looped(),
+                _ => fresh,
+            })
+        }
+        Node::Function { path, function, .. } => {
+            let source = match engine_source(path) {
+                Some(text) => text.to_owned(),
+                None => std::fs::read_to_string(folder.join(path)).ok()?,
+            };
+            functions(path, &source).into_iter().find_map(|(node, _)| {
+                matches!(&node, Node::Function { function: f, .. } if f == function).then_some(node)
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Puts `fresh` in `id`. 🔴 Wires and values follow a pin by name: a pin added above the others would

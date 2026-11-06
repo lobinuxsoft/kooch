@@ -13,6 +13,7 @@ pub(crate) mod clipboard;
 mod codegen;
 mod nodes;
 mod pins;
+mod signature;
 mod step;
 pub(crate) mod subgraph;
 
@@ -24,6 +25,7 @@ pub(crate) use nodes::{
     VORONOI_METRICS, VORONOI_TILING, WHITE_TILING, Width, palette,
 };
 pub(crate) use pins::GraphNode;
+pub(crate) use signature::{FunctionPin, functions};
 pub(crate) use step::{GraphStep, change};
 
 /// What the block comment holding a graph starts with.

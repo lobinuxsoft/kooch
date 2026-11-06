@@ -11,7 +11,7 @@ use crate::panels::inspector::AssetCatalogEntry;
 use crate::shader_graph::subgraph::{call_node, is_subgraph, relative};
 use crate::shader_graph::{
     BLEND_MODES, Category, GraphNode, NOISE_BASES, NOISE_FRACTALS, Node, OUTPUT_KINDS,
-    TEXTURE_FALLBACKS, VORONOI_METRICS, Width, palette,
+    TEXTURE_FALLBACKS, VORONOI_METRICS, Width, functions, palette,
 };
 
 /// How the nodes draw and connect.
@@ -107,7 +107,7 @@ impl SnarlViewer<GraphNode> for Viewer<'_> {
             .and_then(|node| {
                 let name = *node.inputs().get(pin.id.input)?;
                 let doc = node.input_docs().get(pin.id.input).copied();
-                Some((name, doc.unwrap_or((Width::Any, ""))))
+                Some((name, doc.unwrap_or((node.pin_width(pin.id.input), ""))))
             })
             .unwrap_or(("in", (Width::Any, "")));
         let label = label(name, width);
@@ -310,6 +310,7 @@ impl SnarlViewer<GraphNode> for Viewer<'_> {
             });
         }
         self.subgraph_menu(pos, ui, snarl);
+        self.function_menu(pos, ui, snarl);
     }
 
     fn has_node_menu(&mut self, _node: &GraphNode) -> bool {
@@ -339,6 +340,20 @@ impl SnarlViewer<GraphNode> for Viewer<'_> {
 }
 
 impl Viewer<'_> {
+    /// The engine's library and every documented function of the project's `.wgsl` files.
+    fn function_menu(&self, pos: egui::Pos2, ui: &mut egui::Ui, snarl: &mut Snarl<GraphNode>) {
+        let folder = self.path.and_then(std::path::Path::parent);
+        let offered = offered_functions(ui.ctx(), folder, self.catalog);
+        ui.menu_button("Functions", |ui| {
+            for (node, about) in offered.iter() {
+                if ui.button(node.title()).on_hover_text(about).clicked() {
+                    snarl.insert_node(pos, node.clone().into());
+                    ui.close();
+                }
+            }
+        });
+    }
+
     /// The project's subgraphs, each a node calling it. Never the open file: a function calling
     /// itself does not compile.
     fn subgraph_menu(&self, pos: egui::Pos2, ui: &mut egui::Ui, snarl: &mut Snarl<GraphNode>) {
@@ -382,6 +397,42 @@ impl Viewer<'_> {
             });
         }
     }
+}
+
+/// What the menu lists, read again every couple of seconds: it is drawn every frame it is open, and
+/// the project's files are on disk.
+fn offered_functions(
+    ctx: &egui::Context,
+    folder: Option<&std::path::Path>,
+    catalog: &[AssetCatalogEntry],
+) -> std::sync::Arc<Vec<(Node, String)>> {
+    type Cached = (f64, std::sync::Arc<Vec<(Node, String)>>);
+    const REFRESH: f64 = 2.0;
+    let id = egui::Id::new("shader_graph_functions");
+    let now = ctx.input(|input| input.time);
+    if let Some((at, offered)) = ctx.data(|d| d.get_temp::<Cached>(id))
+        && now - at < REFRESH
+    {
+        return offered;
+    }
+    let mut offered: Vec<(Node, String)> = kooch_core::shader_uses::LIBRARY
+        .iter()
+        .flat_map(|(name, text)| functions(name, text))
+        .collect();
+    if let Some(folder) = folder {
+        let hand_written = catalog.iter().filter(|entry| {
+            let extension = entry.path.extension();
+            extension.is_some_and(|e| e == kooch_render::material::SHADER_EXTENSION)
+        });
+        for entry in hand_written {
+            if let Ok(text) = std::fs::read_to_string(&entry.path) {
+                offered.extend(functions(&relative(folder, &entry.path), &text));
+            }
+        }
+    }
+    let offered = std::sync::Arc::new(offered);
+    ctx.data_mut(|d| d.insert_temp::<Cached>(id, (now, offered.clone())));
+    offered
 }
 
 /// Whether a node draws fields of its own beside its first output.

@@ -53,3 +53,11 @@ fn a_missing_file_is_refused() {
     let result = used_files(Path::new("/a/main.wgsl"), "// use: b.wgsl\n", &mut read);
     assert!(result.is_err());
 }
+
+#[test]
+fn the_library_needs_no_file() {
+    let mut read = reader(&[]);
+    let source = "// use: engine:shapes\n";
+    let used = used_files(Path::new("/a/main.wgsl"), source, &mut read).unwrap();
+    assert!(flatten(source, &used).contains("fn lib_box"));
+}

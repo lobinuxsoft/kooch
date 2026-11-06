@@ -56,6 +56,7 @@ impl Node {
             Self::Subgraph { .. } => {
                 "Calls a .subgraph file. Saving that file changes this shader."
             }
+            Self::Function { .. } => "Calls a function written in WGSL.",
             Self::Loop { .. } => {
                 "Calls a .subgraph up to `rounds` times, 256 at most. A Result named like an Argument \
                  carries into the next round, an `index` Argument reads the round, and a `stop` \
