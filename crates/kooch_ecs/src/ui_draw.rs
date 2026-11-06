@@ -54,8 +54,12 @@ pub struct UiMask {
     pub uv_size: [u32; 2],
     /// 1 when the image cuts by how bright it is too, not by its alpha alone.
     pub luminance: u32,
+    /// Where a fill starts, as an index in `-kooch-fill-from`'s words; 0 cuts no fill (#1829).
+    pub fill_from: u32,
+    /// How much of it shows, 0 to 1.
+    pub fill: f32,
     /// WGSL rounds the struct to 8 bytes.
-    pub pad: u32,
+    pub pad: f32,
 }
 
 /// A line the quads inside a node bend along (#1827), in physical pixels. Resampled by length, so

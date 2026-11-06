@@ -9,7 +9,7 @@ mod resolved;
 mod sheet;
 mod tokens;
 
-pub use catalog::{CATEGORIES, PropertyKind, PropertySpec, StyleCategory};
+pub use catalog::{CATEGORIES, FILL_AMOUNT, PropertyKind, PropertySpec, StyleCategory};
 pub use computed::computed;
 pub use declaration::{Axis, Declaration, Edge, ImageRef, PARAM_PREFIX};
 pub use inline::InlineStyle;

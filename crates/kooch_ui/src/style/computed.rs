@@ -62,6 +62,14 @@ pub fn computed(style: &ResolvedStyle, property: &str) -> Option<String> {
         "-kooch-tint" => color(style.tint.unwrap_or([1.0; 4])),
         "font-size" => format!("{}px", number(style.font_size.unwrap_or(DEFAULT_FONT_SIZE))),
         "font-family" => format!("\"{}\"", style.font_family.as_ref()?),
+        "-kooch-fill-from" => {
+            let words = super::catalog::FILL_FROM;
+            (*words.get(style.fill_from as usize)?).to_owned()
+        }
+        super::catalog::FILL_AMOUNT => {
+            let amount = style.params.iter().find(|(name, _)| &**name == "fill");
+            number(amount.map_or(1.0, |(_, value)| value[0]))
+        }
         "-kooch-curve" => match style.curve {
             Some(curve) => {
                 let numbers: Vec<String> = curve.iter().flatten().map(|n| number(*n)).collect();

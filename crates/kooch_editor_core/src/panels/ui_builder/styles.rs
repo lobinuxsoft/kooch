@@ -4,8 +4,8 @@
 
 use kooch_render::material::{ParamKind, ShaderParam};
 use kooch_ui::style::{
-    CATEGORIES, InlineStyle, PARAM_PREFIX, PropertyKind, PropertySpec, ResolvedStyle, computed,
-    parse_color,
+    CATEGORIES, FILL_AMOUNT, InlineStyle, PARAM_PREFIX, PropertyKind, PropertySpec, ResolvedStyle,
+    computed, parse_color,
 };
 
 use std::path::Path;
@@ -40,6 +40,10 @@ pub(super) fn draw(
         .iter()
         .find(|entry| entry.guid == builder.source)
         .and_then(|entry| entry.path.ancestors().nth(entry.name.components().count()));
+    let declares_fill = builder
+        .params_of(origin)
+        .iter()
+        .any(|param| param.name.eq_ignore_ascii_case("fill"));
     let resolved = builder.known.styles.get(origin as usize).cloned();
     let resolved = resolved.unwrap_or_default();
     let assets = Assets {
@@ -80,6 +84,10 @@ pub(super) fn draw(
                 .striped(true)
                 .show(ui, |ui| {
                     for spec in category.properties {
+                        // Its own row under Material, with the shader's range.
+                        if spec.name == FILL_AMOUNT && declares_fill {
+                            continue;
+                        }
                         changed |= row(ui, &mut style, origin, spec, &assets);
                     }
                 });
@@ -289,6 +297,13 @@ fn field(
         }
         PropertyKind::Length { auto } => length(ui, origin, spec.name, value, auto),
         PropertyKind::Curve => super::points::field(ui, value),
+        PropertyKind::Ratio => {
+            let mut number = value
+                .and_then(|value| value.trim().parse().ok())
+                .unwrap_or(1.0);
+            let slider = egui::Slider::new(&mut number, 0.0..=1.0);
+            ui.add(slider).changed().then(|| decimal(number))
+        }
         PropertyKind::Number => {
             let Some(mut number) = value.map_or(Some(0.0), |value| value.trim().parse().ok())
             else {

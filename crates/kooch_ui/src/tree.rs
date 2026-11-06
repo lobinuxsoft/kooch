@@ -97,7 +97,7 @@ pub struct UiTree {
     border: Vec<f32>,
     paint: Vec<Paint>,
     pub(crate) image: Vec<Option<crate::images::UiImage>>,
-    pub(crate) mask: Vec<Option<masks::UiMaskImage>>,
+    pub(crate) mask: Vec<masks::UiCut>,
     pub(crate) curve: Vec<Option<[Vec2; 3]>>,
     text: Vec<Option<Text>>,
     glyphs: Vec<GlyphQuad>,
@@ -516,7 +516,7 @@ impl UiTree {
         self.border.push(0.0);
         self.paint.push(Paint::default());
         self.image.push(None);
-        self.mask.push(None);
+        self.mask.push(masks::UiCut::default());
         self.curve.push(None);
         self.text.push(None);
         self.culled.push(false);
