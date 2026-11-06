@@ -191,7 +191,10 @@ fn ui_mask_coverage(p: vec2<f32>, first: u32) -> f32 {
             coverage *= cut.a;
             let bright = dot(cut.rgb, vec3<f32>(0.2125, 0.7154, 0.0721));
             if mask.fill_from == UI_FILL_IMAGE {
-                coverage *= ui_filled(bright, mask.fill, UI_FILL_SOFT);
+                // Over its alpha: the filter mixes the map's edge with the black around it, and a
+                // darker edge would fill first, a thin line ahead of the bar.
+                let order = bright / max(cut.a, 0.004);
+                coverage *= ui_filled(order, mask.fill, UI_FILL_SOFT);
             } else if mask.luminance != 0u {
                 coverage *= bright;
             }
