@@ -64,3 +64,97 @@ fn a_material_parameter_stays_out() {
     let file = std::path::Path::new("/p/ripple.subgraph");
     assert!(generate_file(&graph, file).is_err());
 }
+
+fn wire(
+    graph: &mut Graph,
+    from: egui_snarl::NodeId,
+    output: usize,
+    to: egui_snarl::NodeId,
+    input: usize,
+) {
+    graph.connect(OutPinId { node: from, output }, InPinId { node: to, input });
+}
+
+fn named(graph: &mut Graph, node: Node) -> egui_snarl::NodeId {
+    graph.insert_node(Pos2::ZERO, node.into())
+}
+
+fn argument(graph: &mut Graph, name: &str) -> egui_snarl::NodeId {
+    let name = name.to_owned();
+    named(graph, Node::Argument { name })
+}
+
+fn result(graph: &mut Graph, name: &str) -> egui_snarl::NodeId {
+    let name = name.to_owned();
+    named(graph, Node::Result { name })
+}
+
+/// #1807's acceptance: a parallax march out of nodes, with no dedicated node.
+#[test]
+fn a_march_needs_no_node() {
+    let mut step = Graph::new();
+    let uv = argument(&mut step, "uv");
+    let layer = argument(&mut step, "layer");
+    let view = argument(&mut step, "view");
+    let index = argument(&mut step, "index");
+    let image = named(&mut step, Node::UiImage);
+    let height = named(&mut step, Node::Luminance);
+    let reached = named(&mut step, Node::Step);
+    let next_uv = named(&mut step, Node::Subtract);
+    let next_layer = named(&mut step, Node::Subtract);
+    let (out_uv, out_layer) = (result(&mut step, "uv"), result(&mut step, "layer"));
+    let (stop, round) = (result(&mut step, "stop"), result(&mut step, "round"));
+    wire(&mut step, uv, 0, image, 0);
+    wire(&mut step, image, 0, height, 0);
+    wire(&mut step, layer, 0, reached, 0);
+    wire(&mut step, height, 0, reached, 1);
+    wire(&mut step, uv, 0, next_uv, 0);
+    wire(&mut step, view, 0, next_uv, 1);
+    wire(&mut step, layer, 0, next_layer, 0);
+    wire(&mut step, next_uv, 0, out_uv, 0);
+    wire(&mut step, next_layer, 0, out_layer, 0);
+    wire(&mut step, reached, 0, stop, 0);
+    wire(&mut step, index, 0, round, 0);
+    let file = std::path::Path::new("/p/march.subgraph");
+    let function = generate_file(&step, file).unwrap();
+    let call = subgraph::call_node(file, &function, "march.subgraph".to_owned()).unwrap();
+
+    let mut shader = Graph::new();
+    let march = named(&mut shader, call.looped());
+    let kind = "ui".to_owned();
+    let output = named(&mut shader, Node::ShaderOutput { kind });
+    wire(&mut shader, march, 0, output, 0);
+    let source = generate(&shader).unwrap();
+    assert!(source.contains("break"));
+    let used = [(file.to_path_buf(), function)];
+    let flat = kooch_core::shader_uses::flatten(&source, &used);
+    let parsed = kooch_render::material::Shader::parse(&flat).unwrap();
+    kooch_render::ui::validate_ui(&parsed).unwrap();
+}
+
+#[test]
+fn a_used_texture_joins_the_material() {
+    let mut step = Graph::new();
+    let uv = argument(&mut step, "uv");
+    let texture = Node::Texture {
+        name: "heights".to_owned(),
+        fallback: "white".to_owned(),
+        preview: None,
+    };
+    let sample = named(&mut step, texture);
+    let out = result(&mut step, "uv");
+    wire(&mut step, uv, 0, sample, 0);
+    wire(&mut step, sample, 0, out, 0);
+    let file = std::path::Path::new("/p/march.subgraph");
+    let function = generate_file(&step, file).unwrap();
+    let call = subgraph::call_node(file, &function, "march.subgraph".to_owned()).unwrap();
+
+    let mut shader = Graph::new();
+    let march = named(&mut shader, call.looped());
+    let output = named(&mut shader, Node::surface_output());
+    wire(&mut shader, march, 0, output, 0);
+    let used = [(file.to_path_buf(), function)];
+    let source = generate(&shader).unwrap();
+    let flat = kooch_core::shader_uses::flatten(&source, &used);
+    super::noise::compiles(&flat, "a march over a texture");
+}

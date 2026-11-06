@@ -38,6 +38,15 @@ pub(crate) enum Node {
         /// The kind of shader whose `input` the function takes, if it takes one.
         reads: Option<String>,
     },
+    /// The same call, repeated: a Result named like an Argument carries into the next round, an
+    /// `index` Argument reads the round, and a `stop` Result above 0.5 ends the loop.
+    Loop {
+        path: String,
+        function: String,
+        inputs: Vec<String>,
+        outputs: Vec<String>,
+        reads: Option<String>,
+    },
     // -- Input ----------------------------------------------------------
     /// The mesh's uv, in `xy`.
     Uv,

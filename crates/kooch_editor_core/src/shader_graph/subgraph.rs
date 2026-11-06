@@ -13,6 +13,12 @@ use super::{Graph, Node, extract};
 pub(crate) const NO_SHAPE: &str =
     "A subgraph has no shape of its own: it shows in the shaders using it.";
 
+/// The Argument a Loop fills with the round.
+pub(crate) const INDEX: &str = "index";
+
+/// The Result that ends a Loop.
+pub(crate) const STOP: &str = "stop";
+
 /// Whether `path` is a subgraph's file.
 pub(crate) fn is_subgraph(path: &Path) -> bool {
     path.extension()
@@ -58,6 +64,28 @@ pub(crate) fn starter() -> Graph {
     graph
 }
 
+impl Node {
+    /// A subgraph call as a Loop over the same file.
+    pub(crate) fn looped(self) -> Self {
+        match self {
+            Self::Subgraph {
+                path,
+                function,
+                inputs,
+                outputs,
+                reads,
+            } => Self::Loop {
+                path,
+                function,
+                inputs,
+                outputs,
+                reads,
+            },
+            other => other,
+        }
+    }
+}
+
 /// The node calling the subgraph held in `source`, named `path` from the shader using it.
 pub(crate) fn call_node(file: &Path, source: &str, path: String) -> Option<Node> {
     let graph = extract(source)?;
@@ -91,6 +119,20 @@ pub(crate) fn call_node(file: &Path, source: &str, path: String) -> Option<Node>
     })
 }
 
+/// The pins of a Loop calling a function with `inputs`: `index` is the loop's to fill.
+pub(crate) fn loop_inputs(inputs: &[String]) -> impl Iterator<Item = &str> {
+    let own = inputs.iter().map(String::as_str);
+    std::iter::once("rounds").chain(own.filter(|name| ident(name) != INDEX))
+}
+
+/// The same for what it gives back: `stop` is the loop's to read.
+pub(crate) fn loop_outputs(outputs: &[String]) -> impl Iterator<Item = &str> {
+    outputs
+        .iter()
+        .map(String::as_str)
+        .filter(|name| ident(name) != STOP)
+}
+
 /// `to` as a `// use:` line in a file inside `folder` names it.
 pub(crate) fn relative(folder: &Path, to: &Path) -> String {
     let from: Vec<Component> = folder.components().collect();
@@ -107,15 +149,16 @@ pub(crate) fn relative(folder: &Path, to: &Path) -> String {
 /// Brings every subgraph node in `graph`, the graph of `file`, up to its file. Whether one changed.
 pub(crate) fn refresh(graph: &mut Graph, file: &Path) -> bool {
     let folder = file.parent().unwrap_or(Path::new(""));
-    let calls: Vec<(NodeId, String)> = graph
+    let calls: Vec<(NodeId, String, bool)> = graph
         .node_ids()
         .filter_map(|(id, cell)| match &cell.node {
-            Node::Subgraph { path, .. } => Some((id, path.clone())),
+            Node::Subgraph { path, .. } => Some((id, path.clone(), false)),
+            Node::Loop { path, .. } => Some((id, path.clone(), true)),
             _ => None,
         })
         .collect();
     let mut changed = false;
-    for (id, path) in calls {
+    for (id, path, looped) in calls {
         let target = folder.join(&path);
         let fresh = std::fs::read_to_string(&target)
             .ok()
@@ -123,6 +166,7 @@ pub(crate) fn refresh(graph: &mut Graph, file: &Path) -> bool {
         let Some(fresh) = fresh else {
             continue;
         };
+        let fresh = if looped { fresh.looped() } else { fresh };
         if graph.get_node(id).is_some_and(|cell| cell.node != fresh) {
             repin(graph, id, fresh);
             changed = true;

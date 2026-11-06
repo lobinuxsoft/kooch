@@ -351,8 +351,8 @@ fn unlit(input: SurfaceInput) -> UnlitOutput {
 ```
 
 The path is relative to the shader, and a used file can use others; a file reached twice lands once.
-A used file holds functions, not parameters or textures, since those belong to the shader that
-declares them. Saving it rebuilds every shader that reaches it, and a missing file is an error that
+A used file holds functions and textures; its textures join the material of the shader using it.
+Scalar parameters stay in the shader, since `SurfaceParams` is one struct per shader. Saving it rebuilds every shader that reaches it, and a missing file is an error that
 names it. Moving a used file does not rewrite the lines naming it.
 
 ## The shader graph
@@ -369,14 +369,26 @@ same code either way. Files named `.shader` from older projects keep loading and
 
 **Asset Browser → New Subgraph** writes a `.subgraph`: a graph that generates one function instead
 of a shader, so a piece of logic lives in one file. **Argument** nodes are its inputs and **Result**
-nodes its outputs, each named by you and each a `vec4<f32>`, like every wire. A subgraph has no
-material behind it, so parameters and textures stay in the shader: pass them in through an Argument.
+nodes its outputs, each named by you and each a `vec4<f32>`, like every wire. A scalar parameter stays
+in the shader, so pass it in through an Argument; a Texture node works, and appears in the material of
+every shader using the subgraph.
 
 Inside any graph, **right-click → Subgraphs** lists the project's subgraphs. The node's pins are the
 file's, and it writes a `// use:` line, so saving the subgraph changes every shader calling it. New
 pins reach those shaders too: wires follow a pin by its name, and a removed pin drops its wire. A
 subgraph with UI nodes only fits a `ui` shader, one with mesh nodes only the others, and one that
 reads nothing but its Arguments fits all of them.
+
+**Right-click → Loop over** calls a subgraph several times, which is how a ray march or a blur is
+built from nodes. The node's `rounds` pin says how many, 256 at most, and three names matter:
+
+- A **Result named like an Argument** carries: what one round gives back, the next one receives. The
+  pin on the Loop is its starting value.
+- An **Argument named `index`** reads the round, from 0, and shows no pin.
+- A **Result named `stop`** ends the loop once it is above 0.5, and shows no pin.
+
+Every other Argument holds its value for all the rounds. The loop's cost is its rounds times the
+subgraph's, so read it against the panel's GPU time; on a handheld a march wants a `stop`.
 
 The generated function can also be called by hand: `sg_<file>` takes `in_<name>` arguments and
 returns a struct with `out_<name>` fields.
