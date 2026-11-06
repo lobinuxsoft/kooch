@@ -9,6 +9,7 @@ mod actions;
 mod classes;
 mod dock;
 mod drop;
+mod fields;
 mod gizmo;
 mod hierarchy;
 mod inspector;

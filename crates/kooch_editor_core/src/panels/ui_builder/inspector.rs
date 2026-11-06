@@ -37,7 +37,7 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
             egui::CollapsingHeader::new("Attributes")
                 .default_open(true)
                 .show(ui, |ui| {
-                    fields_grid(ui, "ui_builder_fields", ATTRIBUTE_LABELS)
+                    super::fields::grid(ui, "ui_builder_fields")
                         .striped(true)
                         .show(ui, |ui| {
                             let set = |value: &str| (!value.is_empty()).then(|| value.to_owned());
@@ -61,7 +61,7 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
                                 if ui.add(text_edit(&mut value, &hint)).changed() {
                                     builder.set_text(origin, &value);
                                 }
-                                ui.label("");
+                                super::fields::no_reset(ui);
                                 ui.end_row();
                             }
                             for spec in schema {
@@ -98,7 +98,7 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
             egui::CollapsingHeader::new("Other attributes")
                 .default_open(!others.is_empty())
                 .show(ui, |ui| {
-                    fields_grid(ui, "ui_builder_others", ATTRIBUTE_LABELS).show(ui, |ui| {
+                    super::fields::grid(ui, "ui_builder_others").show(ui, |ui| {
                         for (key, value) in others {
                             text_row(ui, builder, origin, &key, OTHER_HINT, Some(value), "");
                         }
@@ -130,7 +130,7 @@ fn text_preview_row(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32) {
     {
         builder.set_text_preview(origin, &text);
     }
-    ui.label("");
+    super::fields::no_reset(ui);
     ui.end_row();
 }
 
@@ -161,14 +161,15 @@ fn preview_row(
             label(ui, "preview", hint, false);
             let number = |key| attribute(attributes, key).and_then(|text| text.parse::<f32>().ok());
             let (min, max) = (number("min").unwrap_or(0.0), number("max").unwrap_or(1.0));
-            ui.add(egui::Slider::new(&mut value, min..=max)).changed()
+            let slider = egui::Slider::new(&mut value, min..=max);
+            super::fields::wide(ui, |ui| ui.add(slider)).changed()
         }
         _ => return,
     };
     if changed {
         builder.set_preview(origin, value);
     }
-    ui.label("");
+    super::fields::no_reset(ui);
     ui.end_row();
 }
 
@@ -206,10 +207,8 @@ fn typed_row(
                 .unwrap_or(default)
                 .parse()
                 .unwrap_or_default();
-            if ui
-                .add(egui::DragValue::new(&mut number).speed(0.05))
-                .changed()
-            {
+            let drag = egui::DragValue::new(&mut number).speed(0.05);
+            if super::fields::fill(ui, drag).changed() {
                 builder.set_attribute(origin, spec.key, &number.to_string());
             }
             unset(ui, builder, origin, spec.key, value.is_some());
@@ -266,14 +265,16 @@ fn template_row(
             .find(|entry| entry.type_name == SOURCE_TYPE && written(&entry.path) == value)
             .map(|entry| entry.guid)
     });
-    let picked = crate::widgets::asset_picker(
-        ui,
-        ("ui_builder_src", origin),
-        current,
-        SOURCE_TYPE,
-        catalog,
-        Some(builder.source),
-    );
+    let picked = super::fields::wide(ui, |ui| {
+        crate::widgets::asset_picker(
+            ui,
+            ("ui_builder_src", origin),
+            current,
+            SOURCE_TYPE,
+            catalog,
+            Some(builder.source),
+        )
+    });
     match picked {
         Some(Some(guid)) => {
             if let Some(entry) = catalog.iter().find(|entry| entry.guid == guid) {
@@ -301,6 +302,7 @@ pub(super) fn label(ui: &mut egui::Ui, key: &str, hint: &str, set: bool) {
     };
     let text = egui::RichText::new(shown).monospace();
     ui.horizontal(|ui| {
+        super::fields::hold_label(ui);
         ui.spacing_mut().item_spacing.x = 4.0;
         let name = ui.label(if set { text.strong() } else { text.weak() });
         if hint.is_empty() {
@@ -314,31 +316,19 @@ pub(super) fn label(ui: &mut egui::Ui, key: &str, hint: &str, set: bool) {
 
 pub(super) fn unset(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, key: &str, set: bool) {
     if !set {
-        ui.label("");
+        super::fields::no_reset(ui);
         return;
     }
-    if ui
-        .small_button("↺")
-        .on_hover_text("Remove it from the element: it reads its default")
-        .clicked()
-    {
+    if super::fields::reset(ui, "Remove it from the element: it reads its default") {
         builder.set_attribute(origin, key, "");
     }
 }
 
-/// Room the label and ↺ columns take beside an attribute's field.
-const ATTRIBUTE_LABELS: f32 = 135.0;
+/// Room the Add button and the gaps take beside the two new attribute's fields.
+const ADD_BUTTON: f32 = 64.0;
 
 const NAME_HINT: &str = "What code finds it by with tree.query; unique in the document";
 const OTHER_HINT: &str = "Not one this element knows: the game ignores it unless code reads it";
-
-/// A label, field and ↺ grid whose field column is sized from the panel. Left to egui, a middle
-/// column is as wide as it was last frame, so a field that overflows it widens it every frame.
-pub(super) fn fields_grid(ui: &egui::Ui, id: impl egui::AsIdSalt, labels: f32) -> egui::Grid {
-    egui::Grid::new(id)
-        .num_columns(3)
-        .max_col_width((ui.available_width() - labels).max(80.0))
-}
 
 fn text_edit<'a>(text: &'a mut String, hint: &'a str) -> egui::TextEdit<'a> {
     egui::TextEdit::singleline(text)
@@ -352,15 +342,16 @@ fn add_attribute(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32) {
         .data(|data| data.get_temp::<(String, String)>(id))
         .unwrap_or_default();
     ui.horizontal(|ui| {
+        let width = ((ui.available_width() - ADD_BUTTON) / 2.0).max(60.0);
         ui.add(
             egui::TextEdit::singleline(&mut key)
                 .hint_text("attribute")
-                .desired_width(90.0),
+                .desired_width(width),
         );
         ui.add(
             egui::TextEdit::singleline(&mut value)
                 .hint_text("value")
-                .desired_width(90.0),
+                .desired_width(width),
         );
         if ui
             .add_enabled(

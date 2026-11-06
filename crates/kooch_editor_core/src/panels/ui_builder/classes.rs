@@ -5,6 +5,9 @@ use super::inspector::{label, unset};
 use crate::icons;
 use crate::ui_builder::UiBuilder;
 
+/// Room the ▾ takes beside the new class's field.
+const MENU: f32 = 30.0;
+
 pub(super) fn row(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, written: &str) {
     label(
         ui,
@@ -47,7 +50,7 @@ pub(super) fn row(ui: &mut egui::Ui, builder: &mut UiBuilder, origin: u32, writt
         let field = ui.add(
             egui::TextEdit::singleline(&mut typed)
                 .hint_text("+ class")
-                .desired_width(72.0),
+                .desired_width((ui.available_width() - MENU).max(72.0)),
         );
         if field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
             let class = typed.trim().trim_start_matches('.');

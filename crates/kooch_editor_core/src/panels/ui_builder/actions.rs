@@ -10,6 +10,8 @@ use crate::ui_builder::UiBuilder;
 
 /// Room the ▾, the mark and the copy button take beside the text.
 const TRAILING: f32 = 72.0;
+/// Room the ▾ alone takes.
+const MENU: f32 = 30.0;
 
 pub(super) fn row(
     ui: &mut egui::Ui,
@@ -27,10 +29,12 @@ pub(super) fn row(
         .collect();
     let mut picked = None;
     ui.horizontal(|ui| {
+        let named = value.as_deref().is_some_and(|name| !name.is_empty());
+        let trailing = if named { TRAILING } else { MENU };
         let mut text = value.clone().unwrap_or_default();
         let edit = egui::TextEdit::singleline(&mut text)
             .hint_text("menu.resume")
-            .desired_width((ui.available_width() - TRAILING).max(40.0));
+            .desired_width((ui.available_width() - trailing).max(40.0));
         if ui.add(edit).changed() {
             picked = Some(text);
         }

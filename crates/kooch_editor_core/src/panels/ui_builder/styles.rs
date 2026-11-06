@@ -76,21 +76,17 @@ pub(super) fn draw(
                     }
                     changed = true;
                 }
-                super::inspector::fields_grid(
-                    ui,
-                    ("ui_builder_style_grid", category.title),
-                    STYLE_LABELS,
-                )
-                .striped(true)
-                .show(ui, |ui| {
-                    for spec in category.properties {
-                        // Its own row under Material, with the shader's range.
-                        if spec.name == FILL_AMOUNT && declares_fill {
-                            continue;
+                super::fields::grid(ui, ("ui_builder_style_grid", category.title))
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for spec in category.properties {
+                            // Its own row under Material, with the shader's range.
+                            if spec.name == FILL_AMOUNT && declares_fill {
+                                continue;
+                            }
+                            changed |= row(ui, &mut style, origin, spec, &assets);
                         }
-                        changed |= row(ui, &mut style, origin, spec, &assets);
-                    }
-                });
+                    });
             });
     }
     let params = builder.params_of(origin);
@@ -99,7 +95,7 @@ pub(super) fn draw(
             .id_salt("ui_builder_material")
             .default_open(true)
             .show(ui, |ui| {
-                super::inspector::fields_grid(ui, "ui_builder_material_grid", STYLE_LABELS)
+                super::fields::grid(ui, "ui_builder_material_grid")
                     .striped(true)
                     .show(ui, |ui| {
                         for param in params {
@@ -120,12 +116,8 @@ fn param_row(ui: &mut egui::Ui, style: &mut InlineStyle, param: &ShaderParam) ->
     super::inspector::label(ui, &param.name, "", value.is_some());
     let mut edited = param_field(ui, param, value.as_deref()).map(Some);
     if value.is_none() {
-        ui.label("");
-    } else if ui
-        .small_button("↺")
-        .on_hover_text("Remove it: the sheet decides")
-        .clicked()
-    {
+        super::fields::no_reset(ui);
+    } else if super::fields::reset(ui, "Remove it: the sheet decides") {
         edited = Some(None);
     }
     ui.end_row();
@@ -143,17 +135,18 @@ fn param_field(ui: &mut egui::Ui, param: &ShaderParam, value: Option<&str>) -> O
                 .and_then(|value| value.trim().parse().ok())
                 .unwrap_or(param.default[0]);
             let response = match param.range {
-                Some([min, max]) => ui.add(egui::Slider::new(&mut number, min..=max)),
-                None => ui.add(egui::DragValue::new(&mut number).speed(0.01)),
+                Some([min, max]) => {
+                    let slider = egui::Slider::new(&mut number, min..=max);
+                    super::fields::wide(ui, |ui| ui.add(slider))
+                }
+                None => super::fields::fill(ui, egui::DragValue::new(&mut number).speed(0.01)),
             };
             response.changed().then(|| decimal(number))
         }
         ParamKind::Color => {
             let rgba = value.and_then(parse_color).unwrap_or(param.default);
             let mut bytes = rgba.map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8);
-            ui.color_edit_button_srgba_unmultiplied(&mut bytes)
-                .changed()
-                .then(|| hex(bytes))
+            super::fields::color(ui, &mut bytes).then(|| hex(bytes))
         }
         ParamKind::Vec2 => vector::<2>(ui, param, value),
         ParamKind::Vec3 => vector::<3>(ui, param, value),
@@ -179,21 +172,13 @@ fn vector<const N: usize>(
     } else {
         f32::MIN..=f32::MAX
     };
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        for (number, axis) in numbers.iter_mut().zip(["X", "Y", "Z", "W"]) {
-            ui.label(axis);
-            let drag = egui::DragValue::new(number)
-                .speed(0.005)
-                .range(range.clone());
-            changed |= ui.add(drag).changed();
-        }
-    });
+    let width = ui.available_width();
+    let changed = super::fields::axes(ui, &mut numbers, width, range);
     changed.then(|| numbers.map(decimal).join(" "))
 }
 
-/// Room the property names and ↺ take: `border-bottom-width` is the longest.
-const STYLE_LABELS: f32 = 185.0;
+/// A length's unit, beside its number.
+const UNIT: f32 = 52.0;
 
 fn row(
     ui: &mut egui::Ui,
@@ -210,12 +195,8 @@ fn row(
     }
     .map(Some);
     if value.is_none() {
-        ui.label("");
-    } else if ui
-        .small_button("↺")
-        .on_hover_text("Remove it: the sheet decides")
-        .clicked()
-    {
+        super::fields::no_reset(ui);
+    } else if super::fields::reset(ui, "Remove it: the sheet decides") {
         edited = Some(None);
     }
     ui.end_row();
@@ -226,7 +207,7 @@ fn row(
             "A % gap is a share of this element's own size: without a set height (or width) it is \
              laid out with none, then overflows. Set the size, or use px.",
         );
-        ui.label("");
+        super::fields::no_reset(ui);
         ui.end_row();
     }
     let Some(value) = edited else {
@@ -302,7 +283,9 @@ fn field(
                 .and_then(|value| value.trim().parse().ok())
                 .unwrap_or(1.0);
             let slider = egui::Slider::new(&mut number, 0.0..=1.0);
-            ui.add(slider).changed().then(|| decimal(number))
+            super::fields::wide(ui, |ui| ui.add(slider))
+                .changed()
+                .then(|| decimal(number))
         }
         PropertyKind::Number => {
             let Some(mut number) = value.map_or(Some(0.0), |value| value.trim().parse().ok())
@@ -310,7 +293,9 @@ fn field(
                 return text(ui, value);
             };
             let drag = egui::DragValue::new(&mut number).speed(0.05);
-            ui.add(drag).changed().then(|| decimal(number))
+            super::fields::fill(ui, drag)
+                .changed()
+                .then(|| decimal(number))
         }
         PropertyKind::Px => {
             let Some(mut number) = value.map_or(Some(0.0), |value| {
@@ -323,7 +308,7 @@ fn field(
             let drag = egui::DragValue::new(&mut number)
                 .range(0.0..=f32::MAX)
                 .suffix(" px");
-            ui.add(drag)
+            super::fields::fill(ui, drag)
                 .changed()
                 .then(|| format!("{}px", decimal(number)))
         }
@@ -332,9 +317,7 @@ fn field(
                 return text(ui, value);
             };
             let mut bytes = rgba.map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8);
-            ui.color_edit_button_srgba_unmultiplied(&mut bytes)
-                .changed()
-                .then(|| hex(bytes))
+            super::fields::color(ui, &mut bytes).then(|| hex(bytes))
         }
         PropertyKind::Text => text(ui, value),
         PropertyKind::Font => font(ui, origin, value, assets),
@@ -404,15 +387,17 @@ fn quoted_path(
     let written = value.map(|value| value.trim().trim_matches(['"', '\'']).to_owned());
     let current = written.and_then(|written| find(assets, kind, &written));
     let usable = super::shaders::ui_shaders(ui.ctx(), assets.catalog);
-    let picked = crate::widgets::asset_picker_where(
-        ui,
-        ("ui_builder_shader", origin),
-        current,
-        kind,
-        assets.catalog,
-        // What is written stays listed, even a shader that stopped parsing.
-        |entry| usable.contains(&entry.guid) || current == Some(entry.guid),
-    )?;
+    let picked = super::fields::wide(ui, |ui| {
+        crate::widgets::asset_picker_where(
+            ui,
+            ("ui_builder_shader", origin),
+            current,
+            kind,
+            assets.catalog,
+            // What is written stays listed, even a shader that stopped parsing.
+            |entry| usable.contains(&entry.guid) || current == Some(entry.guid),
+        )
+    })?;
     Some(format!("\"{}\"", relative(assets, picked?)?))
 }
 
@@ -423,7 +408,9 @@ fn picker(
     kind: &str,
     assets: &Assets,
 ) -> Option<Option<Guid>> {
-    crate::widgets::asset_picker(ui, id, current, kind, assets.catalog, None)
+    super::fields::wide(ui, |ui| {
+        crate::widgets::asset_picker(ui, id, current, kind, assets.catalog, None)
+    })
 }
 
 /// A project file shadows the engine's of the same name, as it does at runtime.
@@ -472,13 +459,19 @@ fn length(
     let mut picked = unit;
     let mut changed = false;
     ui.horizontal(|ui| {
+        let mut unit_width = ui.available_width();
         if unit != "auto" {
+            unit_width = UNIT;
+            let height = ui.spacing().interact_size.y;
+            let number_width = ui.available_width() - UNIT - ui.spacing().item_spacing.x;
             let drag = egui::DragValue::new(&mut number).speed(if unit == "%" { 0.5 } else { 1.0 });
-            changed |= ui.add(drag).changed();
+            changed |= ui
+                .add_sized([number_width.max(30.0), height], drag)
+                .changed();
         }
         egui::ComboBox::from_id_salt(("ui_builder_unit", origin, name))
             .selected_text(unit)
-            .width(52.0)
+            .width(unit_width)
             .show_ui(ui, |ui| {
                 for unit in units {
                     ui.selectable_value(&mut picked, *unit, *unit);
