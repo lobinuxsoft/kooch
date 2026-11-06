@@ -1,9 +1,11 @@
 //! The inline style as Unity's Builder shows it: a foldout per category, a typed field per
-//! property. A set property is bold and ↺ unsets it; a value its field cannot show stays text.
+//! property. A set property is bold and ↺ unsets it; a value its field cannot show stays text. An
+//! unset one shows in grey what the node really gets, from the sheet or the engine.
 
 use kooch_render::material::{ParamKind, ShaderParam};
 use kooch_ui::style::{
-    CATEGORIES, InlineStyle, PARAM_PREFIX, PropertyKind, PropertySpec, parse_color,
+    CATEGORIES, InlineStyle, PARAM_PREFIX, PropertyKind, PropertySpec, ResolvedStyle, computed,
+    parse_color,
 };
 
 use std::path::Path;
@@ -20,6 +22,8 @@ struct Assets<'a> {
     folder: &'a Path,
     /// The project's `assets/`, where a build merges the engine's: an engine image is written there.
     project: Option<&'a Path>,
+    /// The element once the sheets have spoken.
+    resolved: &'a ResolvedStyle,
 }
 
 pub(super) fn draw(
@@ -36,11 +40,14 @@ pub(super) fn draw(
         .iter()
         .find(|entry| entry.guid == builder.source)
         .and_then(|entry| entry.path.ancestors().nth(entry.name.components().count()));
+    let resolved = builder.known.styles.get(origin as usize).cloned();
+    let resolved = resolved.unwrap_or_default();
     let assets = Assets {
         fonts: &builder.fonts,
         catalog,
         folder: &folder,
         project,
+        resolved: &resolved,
     };
     for category in &CATEGORIES {
         let set = category
@@ -157,7 +164,11 @@ fn row(
 ) -> bool {
     let value = style.get(spec.name);
     super::inspector::label(ui, spec.name, spec.hint, value.is_some());
-    let mut edited = field(ui, origin, spec, value.as_deref(), assets).map(Some);
+    let mut edited = match &value {
+        Some(value) => field(ui, origin, spec, Some(value), assets),
+        None => unset(ui, origin, spec, assets),
+    }
+    .map(Some);
     if value.is_none() {
         ui.label("");
     } else if ui
@@ -183,6 +194,39 @@ fn row(
     };
     style.set(spec.name, value.as_deref());
     true
+}
+
+/// `spec`'s field showing what the node gets without it; editing writes it inline.
+fn unset(ui: &mut egui::Ui, origin: u32, spec: &PropertySpec, assets: &Assets) -> Option<String> {
+    let shown = effective(spec, assets);
+    let engine = computed(&ResolvedStyle::default(), spec.name);
+    let weak = ui.visuals().weak_text_color();
+    let scope = ui.scope(|ui| {
+        ui.visuals_mut().override_text_color = Some(weak);
+        field(ui, origin, spec, shown.as_deref(), assets)
+    });
+    let from = match shown == engine {
+        true => "The engine's default. Editing it writes it on this element.",
+        false => "From the sheet or a parent. Editing it writes it on this element.",
+    };
+    scope.response.on_hover_text(from);
+    scope.inner
+}
+
+/// What the element gets for `spec`, as the field would have it written.
+fn effective(spec: &PropertySpec, assets: &Assets) -> Option<String> {
+    let style = assets.resolved;
+    match spec.kind {
+        PropertyKind::Image => {
+            let guid = match spec.name {
+                "-kooch-mask" => style.mask,
+                _ => style.image,
+            };
+            Some(format!("url(\"{}\")", relative(assets, guid?)?))
+        }
+        PropertyKind::Shader => Some(format!("\"{}\"", relative(assets, style.material?)?)),
+        _ => computed(style, spec.name),
+    }
 }
 
 /// The value written when the field changed.

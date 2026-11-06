@@ -353,6 +353,10 @@ Anything else is a warning naming the file and line, and the rule's other proper
 Double-click a `.kxml` in the Asset Browser and it opens in the **UI Builder**: the document alone
 on a canvas, drawn by the same pass that draws it in the game. No scene and no camera behind it.
 
+The Inspector's style fields show what the element really gets. Bold is written on the element; grey
+comes from the sheet, a parent or the engine, and hovering says which. Editing a grey field writes it
+on the element.
+
 - **Resolution** — the screen the canvas is laid out for: the handheld's 1280×800 first, then 720p,
   1080p, 1440p and a portrait phone. The layout is the game's: 1080 canvas units tall, the width
   from the aspect.

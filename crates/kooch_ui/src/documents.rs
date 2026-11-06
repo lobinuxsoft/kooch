@@ -11,9 +11,10 @@ use kooch_core::resource::Resources;
 use kooch_ecs::Entity;
 use kooch_ecs::query::Query;
 
-use crate::build::build_tree;
+use crate::build::{build_tree, disabled};
+use crate::cascade::resolve;
 use crate::source::UiSource;
-use crate::style::{UiStyleSheet, warn_skipped};
+use crate::style::{ResolvedStyle, UiStyleSheet, warn_skipped};
 use crate::templates::expand;
 use crate::{UiDocument, UiFocus, UiTree, UiTrees};
 
@@ -285,6 +286,33 @@ fn instance_source(
         &|path| image_guid(database, engine.as_deref(), path),
         0,
     )
+}
+
+/// What each element of `source` ends up with at rest, for showing it: a document's sheet decides
+/// more than its own text does. `align-self` left unset reads as the parent's `align-items`, which
+/// is what it does. Empty when the sheet cannot be read.
+pub fn styles_of(
+    database: &AssetDatabase,
+    server: Option<&mut AssetServer>,
+    source: &UiSource,
+    style: Option<Guid>,
+) -> Vec<ResolvedStyle> {
+    let Ok(sheet) = read_sheet(database, server, style) else {
+        return Vec::new();
+    };
+    let states: Vec<u8> = source.elements.iter().map(disabled).collect();
+    let mut styles = resolve(source, Some(&sheet), &states);
+    for (index, element) in source.elements.iter().enumerate() {
+        let parent = styles
+            .get(element.parent as usize)
+            .map(|s| s.layout.align_items);
+        if let (Some(items), Some(own)) = (parent, styles.get_mut(index))
+            && own.layout.align_self.is_none()
+        {
+            own.layout.align_self = Some(items);
+        }
+    }
+    styles
 }
 
 /// The document's `style` over the controls' sheet, or the engine's default sheet when it has none.

@@ -85,7 +85,7 @@ fn setup(tree: &mut UiTree, node: UiNode, element: &Element, font_size: f32) {
     }
 }
 
-fn disabled(element: &Element) -> u8 {
+pub(crate) fn disabled(element: &Element) -> u8 {
     let off = element
         .attributes
         .iter()

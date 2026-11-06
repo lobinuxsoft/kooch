@@ -24,6 +24,11 @@ pub struct ResolvedStyle {
     pub tint: Option<[f32; 4]>,
 }
 
+// SAFETY: as for `UiTree`: taffy's lengths are `!Send` only for a `calc()` pointer, and taffy is
+// built without `calc`, so no style holds one.
+unsafe impl Send for ResolvedStyle {}
+unsafe impl Sync for ResolvedStyle {}
+
 impl ResolvedStyle {
     pub fn apply(&mut self, declaration: &Declaration) {
         let layout = &mut self.layout;
