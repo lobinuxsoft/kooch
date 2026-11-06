@@ -6,7 +6,7 @@ use crate::images::UiImage;
 use crate::restyle::Styled;
 use crate::source::{Element, NO_PARENT, UiSource};
 use crate::style::{ResolvedStyle, STATE_DISABLED, UiStyleSheet};
-use crate::{UiEventKind, UiNode, UiTree};
+use crate::{UiEventKind, UiMaskImage, UiNode, UiTree};
 
 /// A label's size when nothing up its chain sets `font-size`, in canvas units.
 pub const DEFAULT_FONT_SIZE: f32 = 24.0;
@@ -145,7 +145,11 @@ pub(crate) fn apply(tree: &mut UiTree, node: UiNode, style: &ResolvedStyle) {
         tint: style.tint.unwrap_or([1.0; 4]),
     });
     tree.set_image(node, image);
-    tree.set_mask(node, style.mask);
+    let mask = style.mask.map(|guid| UiMaskImage {
+        guid,
+        luminance: style.mask_luminance,
+    });
+    tree.set_mask(node, mask);
     tree.set_material(node, style.material);
     tree.style_params(node, &style.params);
 }

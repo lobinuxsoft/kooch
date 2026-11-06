@@ -48,6 +48,10 @@ pub struct UiMask {
     /// The atlas texels whose alpha cuts too; a zero size is the shape alone.
     pub uv_min: [u32; 2],
     pub uv_size: [u32; 2],
+    /// 1 when the image cuts by how bright it is too, not by its alpha alone.
+    pub luminance: u32,
+    /// WGSL rounds the struct to 8 bytes.
+    pub pad: u32,
 }
 
 /// A rectangle of the atlas that changed, and its RGBA8 texels, row by row.

@@ -48,6 +48,7 @@ pub use plugin::{UiComponentsPlugin, UiPlugin};
 pub use pointer::{UiAction, UiActions, UiEvent, UiEventKind, UiPointer, pick_pointer, ui_actions};
 pub use restyle::restyle_documents;
 pub use text::UiFonts;
+pub use tree::masks::UiMaskImage;
 pub use tree::{GlyphQuad, Paint, UiNode, UiRect, UiTree};
 pub use trees::{UiTrees, prune_trees};
 

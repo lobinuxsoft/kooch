@@ -203,8 +203,12 @@ fn push_masks(
     masks: &mut Vec<UiMask>,
 ) -> (u32, u32) {
     let mut own = around;
-    let image = tree.mask(node).and_then(|guid| atlas.image(guid));
-    if let (Some(image), Some(rect), Some(paint)) = (image, tree.rect(node), tree.paint(node)) {
+    let image = tree
+        .mask(node)
+        .and_then(|mask| Some((mask, atlas.image(mask.guid)?)));
+    if let (Some((mask, image)), Some(rect), Some(paint)) =
+        (image, tree.rect(node), tree.paint(node))
+    {
         let [x0, y0, x1, y1] = image.rect;
         masks.push(UiMask {
             min: (rect.min * scale).into(),
@@ -213,6 +217,8 @@ fn push_masks(
             parent: around,
             uv_min: [x0, y0],
             uv_size: [x1 - x0, y1 - y0],
+            luminance: mask.luminance.into(),
+            pad: 0,
         });
         own = masks.len() as u32;
     }

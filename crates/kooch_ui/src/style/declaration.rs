@@ -68,6 +68,8 @@ pub enum Declaration {
     BackgroundImage(Option<ImageRef>),
     /// An image whose alpha cuts the node and what is inside it (#1790).
     Mask(Option<ImageRef>),
+    /// Whether the mask cuts by brightness as well as alpha.
+    MaskLuminance(bool),
     /// Image texels kept unstretched at each edge, top-right-bottom-left (#1708).
     Slice([f32; 4]),
     /// Multiplies the image, sRGB straight alpha.
@@ -155,6 +157,11 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Vec<Declaration>, String> 
         }
         "background-image" => one(D::BackgroundImage(image(text)?)),
         "-kooch-mask" => one(D::Mask(image(text)?)),
+        "-kooch-mask-mode" => match text.trim() {
+            "alpha" => one(D::MaskLuminance(false)),
+            "luminance" => one(D::MaskLuminance(true)),
+            other => Err(format!("`{other}` is not alpha or luminance")),
+        },
         "-kooch-slice" => one(D::Slice(slice(text)?)),
         "-kooch-tint" => one(D::Tint(color(text)?)),
         _ => return Err(format!("`{name}` is not a .kcss property")),

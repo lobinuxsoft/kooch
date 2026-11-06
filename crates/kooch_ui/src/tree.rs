@@ -97,7 +97,7 @@ pub struct UiTree {
     border: Vec<f32>,
     paint: Vec<Paint>,
     pub(crate) image: Vec<Option<crate::images::UiImage>>,
-    pub(crate) mask: Vec<Option<kooch_core::Guid>>,
+    pub(crate) mask: Vec<Option<masks::UiMaskImage>>,
     text: Vec<Option<Text>>,
     glyphs: Vec<GlyphQuad>,
     /// Physical pixels per canvas unit and atlas generation the glyphs were built for.
@@ -585,7 +585,7 @@ fn space_key(space: AvailableSpace) -> f32 {
 }
 
 mod instances;
-mod masks;
+pub(crate) mod masks;
 mod query;
 mod scroll;
 #[cfg(test)]
