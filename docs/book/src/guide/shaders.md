@@ -390,6 +390,14 @@ built from nodes. The node's `rounds` pin says how many, 256 at most, and three 
 Every other Argument holds its value for all the rounds. The loop's cost is its rounds times the
 subgraph's, so read it against the panel's GPU time; on a handheld a march wants a `stop`.
 
+**Right-click → Functions** lists functions written in WGSL. The engine brings a library, `stripes`,
+`iridescence`, `sheen`, `double_frame` and `inner_shadow`, which a shader reaches with
+`// use: engine:patterns` or `// use: engine:shapes` and which lives in the editor, not in your
+project. Any function of yours in a `.wgsl` joins the menu once it has a `///` comment; one without
+it stays the file's own helper. Its pins come from the signature: `f32` and `vec2` to `vec4` narrow
+the wire, a struct return gives a pin per member, and any other type keeps it out of the menu. A
+trailing `// @default(1, 0)` sets a pin's starting value, and an unwired `uv` reads this pixel.
+
 The generated function can also be called by hand: `sg_<file>` takes `in_<name>` arguments and
 returns a struct with `out_<name>` fields.
 

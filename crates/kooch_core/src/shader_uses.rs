@@ -9,6 +9,24 @@ use std::path::{Component, Path, PathBuf};
 /// What the block comments an editor stores in a file start with: a graph, its notes.
 const EDITOR_BLOCK: &str = "/*KOOCH_";
 
+/// What names a file of the engine's own library rather than a path.
+pub const ENGINE_PREFIX: &str = "engine:";
+
+/// The engine's functions. In the binary, so a project reaches them with no file of its own to
+/// vendor, package or keep up to date.
+pub const LIBRARY: [(&str, &str); 2] = [
+    ("engine:patterns", include_str!("shader_uses/patterns.wgsl")),
+    ("engine:shapes", include_str!("shader_uses/shapes.wgsl")),
+];
+
+/// The text of the library file `name`.
+pub fn engine_source(name: &str) -> Option<&'static str> {
+    LIBRARY
+        .iter()
+        .find(|(file, _)| *file == name)
+        .map(|(_, text)| *text)
+}
+
 /// Every file `path` reaches through `// use:`, with its text, each once. A cycle ends here.
 pub fn used_files<E: Display>(
     path: &Path,
@@ -22,9 +40,15 @@ pub fn used_files<E: Display>(
         if file == root || found.iter().any(|(seen, _)| *seen == file) {
             continue;
         }
-        let bytes = read(&file).map_err(|e| format!("// use: {}: {e}", file.display()))?;
-        let text =
-            String::from_utf8(bytes).map_err(|e| format!("// use: {}: {e}", file.display()))?;
+        let name = file.to_string_lossy();
+        let text = if name.starts_with(ENGINE_PREFIX) {
+            engine_source(&name)
+                .ok_or_else(|| format!("// use: the engine has no `{name}`"))?
+                .to_owned()
+        } else {
+            let bytes = read(&file).map_err(|e| format!("// use: {name}: {e}"))?;
+            String::from_utf8(bytes).map_err(|e| format!("// use: {name}: {e}"))?
+        };
         pending.extend(named(&file, &text)?);
         found.push((file, text));
     }
@@ -51,6 +75,9 @@ fn named(path: &Path, source: &str) -> Result<Vec<PathBuf>, String> {
         .filter_map(|line| line.strip_prefix("//")?.trim().strip_prefix("use:"))
         .map(|name| {
             let name = Path::new(name.trim());
+            if name.to_string_lossy().starts_with(ENGINE_PREFIX) {
+                return Ok(name.to_path_buf());
+            }
             if name.is_absolute() {
                 return Err(format!("// use: {} is not relative", name.display()));
             }

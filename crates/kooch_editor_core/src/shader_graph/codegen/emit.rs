@@ -1,5 +1,6 @@
 //! One `let` per node, in dependency order: what each node is as a WGSL expression (#1159).
 
+mod call;
 mod looped;
 mod noise;
 mod uv;
@@ -8,6 +9,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use egui_snarl::{InPinId, NodeId, OutPinId};
+
+pub(crate) use call::widened;
 
 use super::{swizzled, vec4_literal};
 use crate::shader_graph::{Graph, Node};
@@ -459,6 +462,17 @@ impl Body<'_> {
                 reads,
                 ..
             } => self.looped(id, function, inputs, outputs, reads.is_some())?,
+            Node::Function {
+                function,
+                inputs,
+                outputs,
+                fields,
+                reads,
+                ..
+            } => {
+                let width = outputs.first().filter(|_| !fields).map(|pin| pin.width);
+                self.call(id, function, inputs, width, reads.is_some())?
+            }
             Node::Output | Node::ShaderOutput { .. } | Node::Result { .. } => {
                 return Err("an output node feeds nothing".to_owned());
             }

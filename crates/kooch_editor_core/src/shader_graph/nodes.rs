@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::FunctionPin;
+
 mod docs;
 mod meta;
 mod params;
@@ -45,6 +47,16 @@ pub(crate) enum Node {
         function: String,
         inputs: Vec<String>,
         outputs: Vec<String>,
+        reads: Option<String>,
+    },
+    /// A call to a hand-written function, its pins read from its signature.
+    Function {
+        path: String,
+        function: String,
+        inputs: Vec<FunctionPin>,
+        outputs: Vec<FunctionPin>,
+        /// Whether it returns a struct, one pin per member, rather than one value.
+        fields: bool,
         reads: Option<String>,
     },
     // -- Input ----------------------------------------------------------

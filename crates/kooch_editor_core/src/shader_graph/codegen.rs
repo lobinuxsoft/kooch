@@ -13,6 +13,7 @@ mod function;
 mod helpers;
 
 use emit::Body;
+pub(crate) use emit::widened;
 use function::generate_function;
 use helpers::helpers;
 
@@ -29,7 +30,9 @@ fn use_lines(graph: &Graph) -> String {
     let paths: std::collections::BTreeSet<&str> = graph
         .node_ids()
         .filter_map(|(_, node)| match &node.node {
-            Node::Subgraph { path, .. } | Node::Loop { path, .. } => Some(path.as_str()),
+            Node::Subgraph { path, .. } | Node::Loop { path, .. } | Node::Function { path, .. } => {
+                Some(path.as_str())
+            }
             _ => None,
         })
         .collect();

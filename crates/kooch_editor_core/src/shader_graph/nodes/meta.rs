@@ -98,6 +98,7 @@ impl Node {
             Self::Result { name } => format!("Out: {name}"),
             Self::Subgraph { function, .. } => function.trim_start_matches("sg_").to_owned(),
             Self::Loop { function, .. } => format!("Loop: {}", function.trim_start_matches("sg_")),
+            Self::Function { function, .. } => function.trim_start_matches("lib_").to_owned(),
             Self::Uv => "UV".to_owned(),
             Self::RoundedBox => "Rounded Box".to_owned(),
             Self::UiImage => "UI Image".to_owned(),
@@ -204,6 +205,7 @@ impl Node {
         match self {
             Self::Subgraph { inputs, .. } => inputs.iter().map(String::as_str).collect(),
             Self::Loop { inputs, .. } => loop_inputs(inputs).collect(),
+            Self::Function { inputs, .. } => inputs.iter().map(|p| p.name.as_str()).collect(),
             _ => Cow::Borrowed(self.fixed_inputs()),
         }
     }
@@ -211,7 +213,10 @@ impl Node {
     /// The same, for a node whose pins are not read from a file.
     fn fixed_inputs(&self) -> &'static [&'static str] {
         match self {
-            Self::Argument { .. } | Self::Subgraph { .. } | Self::Loop { .. } => &[],
+            Self::Argument { .. }
+            | Self::Subgraph { .. }
+            | Self::Loop { .. }
+            | Self::Function { .. } => &[],
             Self::Result { .. } => &["value"],
             Self::Uv
             | Self::UiColor
@@ -353,6 +358,10 @@ impl Node {
                 outputs.iter().map(|n| (n.as_str(), Pick::Whole)).collect()
             }
             Self::Loop { outputs, .. } => loop_outputs(outputs).map(|n| (n, Pick::Whole)).collect(),
+            Self::Function { outputs, .. } => outputs
+                .iter()
+                .map(|pin| (pin.name.as_str(), Pick::Whole))
+                .collect(),
             _ => Cow::Borrowed(self.fixed_outputs()),
         }
     }
@@ -409,6 +418,9 @@ impl Node {
 
     /// What output pin `index` reads of the node's value, held in `value`.
     pub(crate) fn output_of(&self, value: &str, index: usize) -> String {
+        if let Some(field) = self.field_of(index, value) {
+            return field;
+        }
         if matches!(self, Self::Subgraph { .. } | Self::Loop { .. }) {
             let name = self.outputs().get(index).map_or("", |output| output.0);
             return format!("{value}.out_{}", ident(name));
@@ -434,7 +446,8 @@ impl Node {
             Self::Argument { .. }
             | Self::Result { .. }
             | Self::Subgraph { .. }
-            | Self::Loop { .. } => Category::Subgraph,
+            | Self::Loop { .. }
+            | Self::Function { .. } => Category::Subgraph,
             Self::Uv
             | Self::WorldPosition
             | Self::WorldNormal
@@ -535,7 +548,9 @@ impl Node {
         }
         match self {
             Self::Argument { .. } | Self::Result { .. } => false,
-            Self::Subgraph { reads, .. } | Self::Loop { reads, .. } => reads
+            Self::Subgraph { reads, .. }
+            | Self::Loop { reads, .. }
+            | Self::Function { reads, .. } => reads
                 .as_deref()
                 .is_none_or(|reads| (reads == "ui") == (kind == "ui")),
             Self::UiImage

@@ -158,3 +158,23 @@ fn a_used_texture_joins_the_material() {
     let flat = kooch_core::shader_uses::flatten(&source, &used);
     super::noise::compiles(&flat, "a march over a texture");
 }
+
+/// What the menu offers has to compile: the library is only ever read by the panel.
+#[test]
+fn every_library_function_compiles() {
+    for (name, text) in kooch_core::shader_uses::LIBRARY {
+        for (node, _) in crate::shader_graph::functions(name, text) {
+            let title = node.title();
+            let mut shader = Graph::new();
+            let call = shader.insert_node(Pos2::ZERO, node.into());
+            let output = shader.insert_node(Pos2::ZERO, Node::surface_output().into());
+            wire(&mut shader, call, 0, output, 0);
+            let source = generate(&shader).unwrap();
+            let path = std::path::Path::new("/p/a.shgraph");
+            let mut read = |_: &std::path::Path| Err::<Vec<u8>, String>("no file".to_owned());
+            let used = kooch_core::shader_uses::used_files(path, &source, &mut read).unwrap();
+            let flat = kooch_core::shader_uses::flatten(&source, &used);
+            super::noise::compiles(&flat, &title);
+        }
+    }
+}
