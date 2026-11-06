@@ -248,7 +248,7 @@ fn field(
         PropertyKind::Font => font(ui, origin, value, assets),
         PropertyKind::Image => url(
             ui,
-            origin,
+            (origin, spec.name),
             value,
             assets,
             std::any::type_name::<kooch_render::Image>(),
@@ -283,7 +283,7 @@ fn font(ui: &mut egui::Ui, origin: u32, value: Option<&str>, assets: &Assets) ->
 /// An image asset, written as `url()` relative to the open file.
 fn url(
     ui: &mut egui::Ui,
-    origin: u32,
+    field: (u32, &str),
     value: Option<&str>,
     assets: &Assets,
     kind: &str,
@@ -293,7 +293,8 @@ fn url(
         Some(inner.trim().trim_matches(['"', '\'']).to_owned())
     });
     let current = written.and_then(|written| find(assets, kind, &written));
-    let picked = picker(ui, ("ui_builder_url", origin), current, kind, assets)?;
+    // By property too: two image fields on one node would share a popup, and neither would open.
+    let picked = picker(ui, ("ui_builder_url", field), current, kind, assets)?;
     Some(match picked {
         Some(guid) => format!("url(\"{}\")", relative(assets, guid)?),
         None => "none".to_owned(),
@@ -310,13 +311,22 @@ fn quoted_path(
     let kind = kooch_render::material::SHADER_TYPE_NAME;
     let written = value.map(|value| value.trim().trim_matches(['"', '\'']).to_owned());
     let current = written.and_then(|written| find(assets, kind, &written));
-    let picked = picker(ui, ("ui_builder_shader", origin), current, kind, assets)?;
+    let usable = super::shaders::ui_shaders(ui.ctx(), assets.catalog);
+    let picked = crate::widgets::asset_picker_where(
+        ui,
+        ("ui_builder_shader", origin),
+        current,
+        kind,
+        assets.catalog,
+        // What is written stays listed, even a shader that stopped parsing.
+        |entry| usable.contains(&entry.guid) || current == Some(entry.guid),
+    )?;
     Some(format!("\"{}\"", relative(assets, picked?)?))
 }
 
 fn picker(
     ui: &mut egui::Ui,
-    id: (&str, u32),
+    id: impl std::hash::Hash + std::fmt::Debug,
     current: Option<Guid>,
     kind: &str,
     assets: &Assets,

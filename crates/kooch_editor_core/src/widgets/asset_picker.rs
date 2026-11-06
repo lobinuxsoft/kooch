@@ -16,10 +16,24 @@ pub(crate) fn asset_picker(
     catalog: &[AssetCatalogEntry],
     skip: Option<Guid>,
 ) -> Option<Option<Guid>> {
+    asset_picker_where(ui, id_salt, current, asset_type, catalog, |entry| {
+        Some(entry.guid) != skip
+    })
+}
+
+/// [`asset_picker`] offering only the assets `keep` accepts, in the list and on a drop alike.
+pub(crate) fn asset_picker_where(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    current: Option<Guid>,
+    asset_type: &str,
+    catalog: &[AssetCatalogEntry],
+    keep: impl Fn(&AssetCatalogEntry) -> bool,
+) -> Option<Option<Guid>> {
     let filtered: Vec<&AssetCatalogEntry> = catalog
         .iter()
         .filter(|entry| !crate::shader_graph::subgraph::is_subgraph(&entry.path))
-        .filter(|entry| entry.type_name == asset_type && Some(entry.guid) != skip)
+        .filter(|entry| entry.type_name == asset_type && keep(entry))
         .collect();
     let current_entry = current.and_then(|guid| filtered.iter().find(|e| e.guid == guid).copied());
     let selected_text = match (current, current_entry) {
@@ -73,8 +87,7 @@ pub(crate) fn asset_picker(
     // Only this slot's own type is accepted, so a mesh dragged over a material field neither
     // highlights nor assigns.
     if let Some(hovered) = slot.dnd_hover_payload::<DraggedAsset>()
-        && hovered.type_name == asset_type
-        && Some(hovered.guid) != skip
+        && filtered.iter().any(|entry| entry.guid == hovered.guid)
     {
         ui.painter().rect_filled(
             slot.rect,
