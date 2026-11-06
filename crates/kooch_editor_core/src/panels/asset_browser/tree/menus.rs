@@ -90,6 +90,14 @@ pub(in crate::panels) fn folder_menu(
     }
     if entry(
         ui,
+        format!("{} New Subgraph", icons::TREE_STRUCTURE),
+        FolderRole::Assets,
+    ) {
+        start(CreateKind::File(NewFileKind::Subgraph));
+        ui.close();
+    }
+    if entry(
+        ui,
         format!("{} New Shader (WGSL)", icons::FADERS),
         FolderRole::Assets,
     ) {
@@ -280,6 +288,7 @@ pub(in crate::panels) fn leaf_menu(
     // Registered shaders only: the material names the shader by its guid.
     if let Some((guid, _)) = &leaf.asset
         && is_shader(&leaf.path)
+        && !crate::shader_graph::subgraph::is_subgraph(&leaf.path)
         && writable
         && ui
             .button(format!("{} Create Material", icons::FADERS))

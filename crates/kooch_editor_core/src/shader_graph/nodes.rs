@@ -18,6 +18,26 @@ pub(crate) use docs::Width;
 /// 🔴 Serialised by name, so adding a variant keeps every graph already written readable.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Node {
+    // -- Subgraph -------------------------------------------------------
+    /// A value a subgraph takes: one input pin on the nodes calling it.
+    Argument {
+        name: String,
+    },
+    /// A value a subgraph gives back: one output pin on the nodes calling it.
+    Result {
+        name: String,
+    },
+    /// A call to the function a `.subgraph` generates. Its pins are the file's, kept here so a graph
+    /// opens without its subgraphs and refreshed from them when it does.
+    Subgraph {
+        /// As the `// use:` line names it, relative to this graph's file.
+        path: String,
+        function: String,
+        inputs: Vec<String>,
+        outputs: Vec<String>,
+        /// The kind of shader whose `input` the function takes, if it takes one.
+        reads: Option<String>,
+    },
     // -- Input ----------------------------------------------------------
     /// The mesh's uv, in `xy`.
     Uv,
@@ -263,12 +283,13 @@ pub(crate) enum Category {
     Noise,
     /// What a `ui` shader reads of its node.
     Ui,
+    Subgraph,
     Output,
 }
 
 impl Category {
     /// In menu order.
-    pub(crate) const ALL: [Self; 10] = [
+    pub(crate) const ALL: [Self; 11] = [
         Self::Input,
         Self::Constant,
         Self::Math,
@@ -278,6 +299,7 @@ impl Category {
         Self::Shape,
         Self::Noise,
         Self::Ui,
+        Self::Subgraph,
         Self::Output,
     ];
 
@@ -292,6 +314,7 @@ impl Category {
             Self::Shape => "Shapes",
             Self::Noise => "Noise",
             Self::Ui => "UI",
+            Self::Subgraph => "Subgraph",
             Self::Output => "Output",
         }
     }
@@ -311,6 +334,12 @@ pub(crate) const OUTPUT_KINDS: [&str; 6] = [
 /// Every node the menu offers, one per kind, in menu order.
 pub(crate) fn palette() -> Vec<Node> {
     vec![
+        Node::Argument {
+            name: "value".to_owned(),
+        },
+        Node::Result {
+            name: "result".to_owned(),
+        },
         Node::Uv,
         Node::WorldPosition,
         Node::WorldNormal,

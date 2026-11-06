@@ -9,7 +9,7 @@ pub(super) fn open_shader_graph(resources: &mut Resources, path: &std::path::Pat
         tracing::error!(file = %path.display(), "could not read the shader");
         return;
     };
-    let Some(graph) = crate::shader_graph::extract(&source) else {
+    let Some(mut graph) = crate::shader_graph::extract(&source) else {
         // Written by hand, so there is nothing to draw: its text is the only view of it.
         tracing::info!(
             file = %path.display(),
@@ -18,6 +18,7 @@ pub(super) fn open_shader_graph(resources: &mut Resources, path: &std::path::Pat
         open_in_ide(resources, path);
         return;
     };
+    crate::shader_graph::subgraph::refresh(&mut graph, path);
     resources.insert(crate::state::OpenShaderGraph {
         path: path.to_path_buf(),
         graph,
@@ -32,9 +33,14 @@ pub(super) fn save_shader_graph(resources: &mut Resources) {
     let Some(open) = resources.get::<crate::state::OpenShaderGraph>() else {
         return;
     };
-    let (path, graph) = (open.path.clone(), open.graph.clone());
+    let (path, mut graph) = (open.path.clone(), open.graph.clone());
     let annotations = open.annotations.clone();
-    let source = match crate::shader_graph::generate(&graph)
+    if crate::shader_graph::subgraph::refresh(&mut graph, &path)
+        && let Some(open) = resources.get_mut::<crate::state::OpenShaderGraph>()
+    {
+        open.graph = graph.clone();
+    }
+    let source = match crate::shader_graph::generate_file(&graph, &path)
         .and_then(|source| crate::shader_graph::annotations::embed(source, &annotations))
     {
         Ok(source) => source,
@@ -52,6 +58,47 @@ pub(super) fn save_shader_graph(resources: &mut Resources) {
         open.dirty = false;
     }
     tracing::info!(file = %path.display(), "shader written from its graph");
+    if crate::shader_graph::subgraph::is_subgraph(&path) {
+        rewrite_callers(resources, &path);
+    }
+}
+
+/// 🔴 A saved subgraph can have new pins, and a caller written against the old ones no longer
+/// compiles. Its body needs nothing: `// use:` already brings the new one.
+fn rewrite_callers(resources: &mut Resources, saved: &std::path::Path) {
+    let files: Vec<std::path::PathBuf> = resources
+        .get::<kooch_core::asset_database::AssetDatabase>()
+        .map(|db| {
+            db.entries_of_type(kooch_render::material::SHADER_TYPE_NAME)
+                .map(|(_, entry)| entry.path.clone())
+                .filter(|file| file != saved)
+                .collect()
+        })
+        .unwrap_or_default();
+    for file in files {
+        let Some(source) = std::fs::read_to_string(&file)
+            .ok()
+            .filter(|source| source.contains("// use:"))
+        else {
+            continue;
+        };
+        let Some(mut graph) = crate::shader_graph::extract(&source) else {
+            continue;
+        };
+        if !crate::shader_graph::subgraph::refresh(&mut graph, &file) {
+            continue;
+        }
+        let annotations = crate::shader_graph::annotations::extract(&source);
+        let written = crate::shader_graph::generate_file(&graph, &file)
+            .and_then(|text| crate::shader_graph::annotations::embed(text, &annotations))
+            .and_then(|text| std::fs::write(&file, text).map_err(|e| e.to_string()));
+        match written {
+            Ok(()) => crate::actions::handlers::asset_saved(resources, &file),
+            Err(reason) => {
+                tracing::error!(file = %file.display(), "could not update a caller: {reason}");
+            }
+        }
+    }
 }
 
 pub(super) fn open_input_map(resources: &mut Resources, path: &std::path::Path) {

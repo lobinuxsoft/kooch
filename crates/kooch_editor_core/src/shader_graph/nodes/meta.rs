@@ -1,5 +1,7 @@
 //! What each node is called, which pins it has, and which menu it is added from (#1159).
 
+use std::borrow::Cow;
+
 use super::{Category, Node};
 
 /// What an output pin reads of its node's value.
@@ -91,6 +93,9 @@ impl Node {
     /// What the node is called in the panel.
     pub(crate) fn title(&self) -> String {
         match self {
+            Self::Argument { name } => format!("In: {name}"),
+            Self::Result { name } => format!("Out: {name}"),
+            Self::Subgraph { function, .. } => function.trim_start_matches("sg_").to_owned(),
             Self::Uv => "UV".to_owned(),
             Self::RoundedBox => "Rounded Box".to_owned(),
             Self::UiImage => "UI Image".to_owned(),
@@ -193,8 +198,18 @@ impl Node {
     }
 
     /// The inputs it takes, named for their pins.
-    pub(crate) fn inputs(&self) -> &'static [&'static str] {
+    pub(crate) fn inputs(&self) -> Cow<'_, [&str]> {
         match self {
+            Self::Subgraph { inputs, .. } => inputs.iter().map(String::as_str).collect(),
+            _ => Cow::Borrowed(self.fixed_inputs()),
+        }
+    }
+
+    /// The same, for a node whose pins are not read from a file.
+    fn fixed_inputs(&self) -> &'static [&'static str] {
+        match self {
+            Self::Argument { .. } | Self::Subgraph { .. } => &[],
+            Self::Result { .. } => &["value"],
             Self::Uv
             | Self::UiColor
             | Self::UiBorderColor
@@ -329,9 +344,21 @@ impl Node {
     /// Its output pins, named, and what each reads of the node's value. Pin 0 is the whole value
     /// wherever the whole means something, so a wire drawn before a node had channels still reads it;
     /// then one pin per channel, as a colour or a vector is taken apart in Unity and Unreal.
-    pub(crate) fn outputs(&self) -> &'static [(&'static str, Pick)] {
+    pub(crate) fn outputs(&self) -> Cow<'_, [(&str, Pick)]> {
         match self {
-            Self::Output | Self::ShaderOutput { .. } => &[],
+            Self::Subgraph { outputs, .. } => outputs
+                .iter()
+                .map(|name| (name.as_str(), Pick::Whole))
+                .collect(),
+            _ => Cow::Borrowed(self.fixed_outputs()),
+        }
+    }
+
+    /// The same, for a node whose pins are not read from a file.
+    fn fixed_outputs(&self) -> &'static [(&'static str, Pick)] {
+        match self {
+            Self::Output | Self::ShaderOutput { .. } | Self::Result { .. } => &[],
+            Self::Argument { .. } => XYZW,
             Self::SceneColor
             | Self::UiImage
             | Self::UiColor
@@ -379,6 +406,10 @@ impl Node {
 
     /// What output pin `index` reads of the node's value, held in `value`.
     pub(crate) fn output_of(&self, value: &str, index: usize) -> String {
+        if let Self::Subgraph { outputs, .. } = self {
+            let name = outputs.get(index).map_or("", String::as_str);
+            return format!("{value}.out_{}", super::super::subgraph::ident(name));
+        }
         match self.outputs().get(index).map(|&(_, pick)| pick) {
             None | Some(Pick::Whole) => value.to_owned(),
             Some(Pick::Rgb) => format!("vec4<f32>({value}.xyz, 0.0)"),
@@ -397,6 +428,9 @@ impl Node {
     /// Which submenu adds it.
     pub(crate) fn category(&self) -> Category {
         match self {
+            Self::Argument { .. } | Self::Result { .. } | Self::Subgraph { .. } => {
+                Category::Subgraph
+            }
             Self::Uv
             | Self::WorldPosition
             | Self::WorldNormal
@@ -488,7 +522,17 @@ impl Node {
 
     /// Whether a shader of `kind` has what it reads: a UI node has no world, a mesh no UI node.
     pub(crate) fn fits(&self, kind: &str) -> bool {
+        // A function has no material behind it, so nothing a material edits reaches it.
+        if kind == "subgraph" {
+            return self.output_kind().is_none()
+                && self.declared().is_none()
+                && !matches!(self, Self::Texture { .. } | Self::SceneColor);
+        }
         match self {
+            Self::Argument { .. } | Self::Result { .. } => false,
+            Self::Subgraph { reads, .. } => reads
+                .as_deref()
+                .is_none_or(|reads| (reads == "ui") == (kind == "ui")),
             Self::UiImage
             | Self::UiColor
             | Self::UiBorderColor
@@ -504,6 +548,14 @@ impl Node {
             | Self::Texture { .. }
             | Self::SceneColor => kind != "ui",
             _ => true,
+        }
+    }
+
+    /// Whether the menu of a graph that is, or is not, a subgraph offers it.
+    pub(crate) fn offered(&self, in_subgraph: bool) -> bool {
+        match self {
+            Self::Argument { .. } | Self::Result { .. } => in_subgraph,
+            _ => !in_subgraph || self.fits("subgraph"),
         }
     }
 

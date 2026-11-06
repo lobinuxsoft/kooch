@@ -436,8 +436,23 @@ impl Body<'_> {
                 let (uv, tiles) = (argument(self, 0)?, argument(self, 1)?);
                 format!("vec4<f32>(graph_checker({uv}.xy, {tiles}.xy))")
             }
-            Node::Output | Node::ShaderOutput { .. } => {
-                return Err("the Output node feeds nothing".to_owned());
+            Node::Argument { name } => {
+                format!("in_{}", crate::shader_graph::subgraph::ident(name))
+            }
+            Node::Subgraph {
+                function,
+                inputs,
+                reads,
+                ..
+            } => {
+                let mut values: Vec<String> = reads.iter().map(|_| "input".to_owned()).collect();
+                for input in 0..inputs.len() {
+                    values.push(argument(self, input)?);
+                }
+                format!("{function}({})", values.join(", "))
+            }
+            Node::Output | Node::ShaderOutput { .. } | Node::Result { .. } => {
+                return Err("an output node feeds nothing".to_owned());
             }
         };
         self.visiting.remove(&id);

@@ -8,6 +8,7 @@ use super::editors::{FIELD, choice, components, name_field, number_editor, pin_f
 use super::framed;
 use super::pin::{NamedPin, Side, label, reserve};
 use crate::panels::inspector::AssetCatalogEntry;
+use crate::shader_graph::subgraph::{call_node, is_subgraph, relative};
 use crate::shader_graph::{
     BLEND_MODES, Category, GraphNode, NOISE_BASES, NOISE_FRACTALS, Node, OUTPUT_KINDS,
     TEXTURE_FALLBACKS, VORONOI_METRICS, Width, palette,
@@ -17,8 +18,10 @@ use crate::shader_graph::{
 pub(super) struct Viewer<'a> {
     /// The whole graph's bounds, when the view should be framed around them this frame.
     pub(super) fit: Option<egui::Rect>,
-    /// Every asset, for a texture node's preview image.
+    /// Every asset, for a texture node's preview image and the subgraphs a graph can call.
     pub(super) catalog: &'a [AssetCatalogEntry],
+    /// The file the graph generates.
+    pub(super) path: Option<&'a std::path::Path>,
     /// How far the panel moved since the last frame.
     pub(super) drift: egui::Vec2,
     /// Where the minimap asked to look, in graph space.
@@ -102,8 +105,9 @@ impl SnarlViewer<GraphNode> for Viewer<'_> {
         let (name, (width, about)) = snarl
             .get_node(pin.id.node)
             .and_then(|node| {
-                let name = node.inputs().get(pin.id.input)?;
-                Some((*name, *node.input_docs().get(pin.id.input)?))
+                let name = *node.inputs().get(pin.id.input)?;
+                let doc = node.input_docs().get(pin.id.input).copied();
+                Some((name, doc.unwrap_or((Width::Any, ""))))
             })
             .unwrap_or(("in", (Width::Any, "")));
         let label = label(name, width);
@@ -169,6 +173,7 @@ impl SnarlViewer<GraphNode> for Viewer<'_> {
         let top_down = egui::Layout::top_down(egui::Align::Min);
         ui.allocate_ui_with_layout(column, top_down, |ui| {
             match &mut node.node {
+                Node::Argument { name } | Node::Result { name } => name_field(ui, name),
                 Node::Float {
                     name,
                     default,
@@ -282,12 +287,17 @@ impl SnarlViewer<GraphNode> for Viewer<'_> {
         }
         ui.separator();
         ui.label("Add node");
+        let in_subgraph = self.path.is_some_and(is_subgraph);
         for category in Category::ALL {
+            let nodes: Vec<Node> = palette()
+                .into_iter()
+                .filter(|node| node.category() == category && node.offered(in_subgraph))
+                .collect();
+            if nodes.is_empty() {
+                continue;
+            }
             ui.menu_button(category.label(), |ui| {
-                for node in palette()
-                    .into_iter()
-                    .filter(|node| node.category() == category)
-                {
+                for node in nodes {
                     if ui
                         .button(node.title())
                         .on_hover_text(node.about())
@@ -299,6 +309,7 @@ impl SnarlViewer<GraphNode> for Viewer<'_> {
                 }
             });
         }
+        self.subgraph_menu(pos, ui, snarl);
     }
 
     fn has_node_menu(&mut self, _node: &GraphNode) -> bool {
@@ -327,11 +338,54 @@ impl SnarlViewer<GraphNode> for Viewer<'_> {
     }
 }
 
+impl Viewer<'_> {
+    /// The project's subgraphs, each a node calling it. Never the open file: a function calling
+    /// itself does not compile.
+    fn subgraph_menu(&self, pos: egui::Pos2, ui: &mut egui::Ui, snarl: &mut Snarl<GraphNode>) {
+        let Some(open) = self.path else {
+            return;
+        };
+        let mut files: Vec<_> = self
+            .catalog
+            .iter()
+            .filter(|entry| is_subgraph(&entry.path) && entry.path != open)
+            .collect();
+        if files.is_empty() {
+            return;
+        }
+        files.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        ui.menu_button("Subgraphs", |ui| {
+            for entry in files {
+                if !ui.button(&entry.display_name).clicked() {
+                    continue;
+                }
+                let folder = open.parent().unwrap_or(std::path::Path::new(""));
+                let path = relative(folder, &entry.path);
+                let node = std::fs::read_to_string(&entry.path)
+                    .ok()
+                    .and_then(|source| call_node(&entry.path, &source, path));
+                match node {
+                    Some(node) => {
+                        snarl.insert_node(pos, node.into());
+                    }
+                    None => tracing::error!(
+                        file = %entry.path.display(),
+                        "this subgraph could not be read",
+                    ),
+                }
+                ui.close();
+            }
+        });
+    }
+}
+
 /// Whether a node draws fields of its own beside its first output.
 fn has_fields(node: &Node) -> bool {
     matches!(
         node,
-        Node::Float { .. }
+        Node::Argument { .. }
+            | Node::Result { .. }
+            | Node::Float { .. }
             | Node::FractalNoise { .. }
             | Node::VoronoiNoise { .. }
             | Node::Int { .. }
@@ -361,6 +415,7 @@ fn tint(category: Category) -> egui::Color32 {
         Category::Shape => [0x7A, 0x4A, 0x2A],
         Category::Noise => [0x5A, 0x4A, 0x7A],
         Category::Ui => [0x2E, 0x6B, 0x4F],
+        Category::Subgraph => [0x2F, 0x5F, 0x7A],
         Category::Output => [0x8C, 0x2F, 0x2F],
     };
     egui::Color32::from_rgb(r, g, b)

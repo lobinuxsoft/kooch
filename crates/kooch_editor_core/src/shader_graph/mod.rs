@@ -14,9 +14,10 @@ mod codegen;
 mod nodes;
 mod pins;
 mod step;
+pub(crate) mod subgraph;
 
 pub(crate) use arrange::{NODE_SIZE, arrange};
-pub(crate) use codegen::generate;
+pub(crate) use codegen::{generate, generate_file};
 pub(crate) use nodes::{
     BLEND_MODES, Category, NOISE_BASES, NOISE_COLOUR, NOISE_DISTORTION, NOISE_FRACTALS,
     NOISE_PHASE, NOISE_TILING, Node, OUTPUT_KINDS, TEXTURE_FALLBACKS, VORONOI_BORDER,

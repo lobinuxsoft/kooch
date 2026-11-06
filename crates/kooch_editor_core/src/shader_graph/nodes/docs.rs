@@ -49,6 +49,13 @@ impl Node {
     /// One line on what the node does.
     pub(crate) fn about(&self) -> &'static str {
         match self {
+            Self::Argument { .. } => "A value this subgraph takes: a pin on the nodes calling it.",
+            Self::Result { .. } => {
+                "A value this subgraph gives back: a pin on the nodes calling it."
+            }
+            Self::Subgraph { .. } => {
+                "Calls a .subgraph file. Saving that file changes this shader."
+            }
             Self::Uv => "The mesh's texture coordinate; across the node in a UI shader.",
             Self::UiImage => "The node's background-image. UI shaders only.",
             Self::UiColor => "The node's background-color. UI shaders only.",

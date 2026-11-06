@@ -484,6 +484,8 @@ pub(crate) enum NewFileKind {
     Layers,
     /// A surface shader, starting as a copy of the engine's PBR one (#1157).
     Shader,
+    /// A function the node graph owns (#1807): the file shaders call it from.
+    Subgraph,
     /// A shader the node graph owns (#1159): an empty graph, and the shader it generates.
     ShaderGraph,
 }

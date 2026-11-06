@@ -102,7 +102,7 @@ fn render_preview(
     // 🔴 A failure is shown, not dropped: a frozen preview makes every later edit look ignored.
     let generated = resources
         .get::<crate::state::OpenShaderGraph>()
-        .map(|open| crate::shader_graph::generate(&open.graph));
+        .map(preview_source);
     let shader = match generated {
         Some(Ok(source)) => kooch_render::material::Shader::parse(&source).ok(),
         Some(Err(why)) => {
@@ -127,4 +127,17 @@ fn render_preview(
             dt,
         );
     }
+}
+
+/// The open graph's shader with what it uses appended, as the engine would load it.
+fn preview_source(open: &crate::state::OpenShaderGraph) -> Result<String, String> {
+    let subgraph = crate::shader_graph::subgraph::is_subgraph(&open.path);
+    // Checked all the same: a subgraph that does not generate says why here.
+    let source = crate::shader_graph::generate_file(&open.graph, &open.path)?;
+    if subgraph {
+        return Err(crate::shader_graph::subgraph::NO_SHAPE.to_owned());
+    }
+    let used =
+        kooch_core::shader_uses::used_files(&open.path, &source, &mut |file| std::fs::read(file))?;
+    Ok(kooch_core::shader_uses::flatten(&source, &used))
 }
