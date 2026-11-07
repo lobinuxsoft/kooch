@@ -376,6 +376,8 @@ impl ComputeShading {
             tiles,
             rate.factor(),
             slots.end,
+            scopes,
+            parent,
         );
 
         let frame_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {

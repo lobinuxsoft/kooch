@@ -1,9 +1,10 @@
 // material_tile_bins.wgsl — the tiles each material covers, so compute shading dispatches a material
-// only over those (#1157), the way Nanite bins shading by material. Two entry points, run in order:
-// `cs_classify` over the tiles, then `cs_lists` once.
+// only over those (#1157), the way Nanite bins shading by material. Four entry points, run in order:
+// `cs_classify` per tile, `cs_count` per chunk of tiles, `cs_scan` once, `cs_scatter` per chunk.
+// One thread per slot in the last three: a single thread walking every tile cost 17.7 ms at 1080p (#1857).
 //
 // 🔴 No atomics on buffers. RADV does not make them atomic: concurrent `atomicAdd`s on a shared
-// counter lost updates and left tile-sized holes. Every write here has exactly one writer.
+// counter lost updates and left tile-sized holes. Every buffer write here has exactly one writer.
 
 struct MeshInstance {
     transform: mat4x4<f32>,
@@ -41,6 +42,8 @@ const WORDS: u32 = 8u;
 const LIST: u32 = 259u;
 // Workgroups per row of an indirect dispatch, so a long list stays under the per-axis limit.
 const ROW: u32 = 4096u;
+// Tiles per chunk: the serial walk of each slot's thread in `cs_count` and `cs_scatter`.
+const CHUNK: u32 = 64u;
 
 @group(0) @binding(0) var vbuf64: texture_storage_2d<r64uint, read>;
 @group(0) @binding(1) var<storage, read> visible_meshlets: array<u32>;
@@ -49,9 +52,11 @@ const ROW: u32 = 4096u;
 @group(0) @binding(4) var<storage, read_write> tile_bits: array<u32>;
 @group(0) @binding(5) var<storage, read_write> bins: array<u32>;
 @group(0) @binding(6) var<storage, read_write> args: array<u32>;
+// `[chunk * MAX_SLOTS + slot]`: the slot's tiles in that chunk, then where they start in its list.
+@group(0) @binding(7) var<storage, read_write> chunk_counts: array<u32>;
 
-// Each thread's material, written only by that thread.
-var<workgroup> thread_slot: array<u32, TILE_THREADS>;
+// The tile's slots, one bit each. Workgroup atomics are shared memory, not the buffers RADV drops.
+var<workgroup> tile_words: array<atomic<u32>, WORDS>;
 
 // 🔴 The same representative the shading frame picks: the first covered pixel of the quad.
 @compute @workgroup_size(16, 16, 1)
@@ -60,6 +65,10 @@ fn cs_classify(
     @builtin(local_invocation_id) local: vec3<u32>,
     @builtin(local_invocation_index) lid: u32,
 ) {
+    if (lid < WORDS) {
+        atomicStore(&tile_words[lid], 0u);
+    }
+    workgroupBarrier();
     let rate = params.shading_rate;
     let origin = (tile_id.xy * TILE_SIZE + local.xy) * rate;
     var slot = MAX_SLOTS;
@@ -74,78 +83,94 @@ fn cs_classify(
             }
         }
     }
-    thread_slot[lid] = slot;
+    if (slot < params.slots) {
+        atomicOr(&tile_words[slot >> 5u], 1u << (slot & 31u));
+    }
     // No early return above: a thread that leaves skips its neighbours' barrier.
     workgroupBarrier();
-
-    if (lid == 0u) {
-        var words: array<u32, WORDS>;
-        for (var t = 0u; t < TILE_THREADS; t = t + 1u) {
-            let s = thread_slot[t];
-            if (s < params.slots) {
-                words[s >> 5u] = words[s >> 5u] | (1u << (s & 31u));
-            }
-        }
-        let base = (tile_id.y * params.tiles.x + tile_id.x) * WORDS;
-        for (var w = 0u; w < WORDS; w = w + 1u) {
-            tile_bits[base + w] = words[w];
-        }
+    if (lid < WORDS) {
+        tile_bits[(tile_id.y * params.tiles.x + tile_id.x) * WORDS + lid] = atomicLoad(&tile_words[lid]);
     }
 }
 
-// One invocation: counts, first entries, dispatch arguments, then the lists.
-@compute @workgroup_size(1)
-fn cs_lists() {
-    let tile_count = params.tiles.x * params.tiles.y;
-    var counts: array<u32, MAX_SLOTS>;
-    for (var tile = 0u; tile < tile_count; tile = tile + 1u) {
-        for (var w = 0u; w < WORDS; w = w + 1u) {
-            var bits = tile_bits[tile * WORDS + w];
-            while (bits != 0u) {
-                let s = w * 32u + firstTrailingBit(bits);
-                counts[s] = counts[s] + 1u;
-                bits = bits & (bits - 1u);
-            }
-        }
-    }
+fn covers(tile: u32, slot: u32) -> bool {
+    return (tile_bits[tile * WORDS + (slot >> 5u)] & (1u << (slot & 31u))) != 0u;
+}
 
-    var first: array<u32, MAX_SLOTS>;
-    var total = 0u;
-    for (var s = 0u; s < MAX_SLOTS; s = s + 1u) {
-        first[s] = total;
-        bins[2u + s] = total;
-        total = total + counts[s];
+// One workgroup per chunk, one thread per slot: how many of the chunk's tiles each slot covers.
+@compute @workgroup_size(256, 1, 1)
+fn cs_count(@builtin(workgroup_id) chunk: vec3<u32>, @builtin(local_invocation_index) slot: u32) {
+    let tile_count = params.tiles.x * params.tiles.y;
+    let first = chunk.x * CHUNK;
+    let last = min(first + CHUNK, tile_count);
+    var count = 0u;
+    for (var tile = first; tile < last; tile = tile + 1u) {
+        count = count + select(0u, 1u, covers(tile, slot));
     }
-    bins[2u + MAX_SLOTS] = total;
-    // Past capacity every covered material dispatches over the whole grid, as before binning.
-    let overflow = total > params.capacity;
-    bins[0] = select(0u, 1u, overflow);
-    bins[1] = params.tiles.x;
-    for (var s = 0u; s < MAX_SLOTS; s = s + 1u) {
-        let count = counts[s];
-        var dispatch = vec3<u32>(0u, 1u, 1u);
-        if (count > 0u && overflow) {
-            dispatch = vec3<u32>(params.tiles, 1u);
-        } else if (count > 0u) {
-            dispatch = vec3<u32>(min(count, ROW), (count + ROW - 1u) / ROW, 1u);
+    chunk_counts[chunk.x * MAX_SLOTS + slot] = count;
+}
+
+var<workgroup> slot_counts: array<u32, MAX_SLOTS>;
+// Read back through the workgroup: a barrier does not make thread 0's buffer write visible.
+var<workgroup> overflow: u32;
+
+// One workgroup, one thread per slot: each slot's chunks become offsets in its list, then the slots'
+// totals become each list's first entry, the dispatch arguments and the overflow flag.
+@compute @workgroup_size(256, 1, 1)
+fn cs_scan(@builtin(local_invocation_index) slot: u32) {
+    let chunks = (params.tiles.x * params.tiles.y + CHUNK - 1u) / CHUNK;
+    var running = 0u;
+    for (var c = 0u; c < chunks; c = c + 1u) {
+        let at = c * MAX_SLOTS + slot;
+        let count = chunk_counts[at];
+        chunk_counts[at] = running;
+        running = running + count;
+    }
+    slot_counts[slot] = running;
+    workgroupBarrier();
+
+    // 256 steps, once a frame: not worth a parallel scan.
+    if (slot == 0u) {
+        var total = 0u;
+        for (var s = 0u; s < MAX_SLOTS; s = s + 1u) {
+            bins[2u + s] = total;
+            total = total + slot_counts[s];
         }
-        args[s * 3u] = dispatch.x;
-        args[s * 3u + 1u] = dispatch.y;
-        args[s * 3u + 2u] = dispatch.z;
+        bins[2u + MAX_SLOTS] = total;
+        // Past capacity every covered material dispatches over the whole grid, as before binning.
+        overflow = select(0u, 1u, total > params.capacity);
+        bins[0] = overflow;
+        bins[1] = params.tiles.x;
     }
-    if (overflow) {
+    workgroupBarrier();
+
+    let count = slot_counts[slot];
+    var dispatch = vec3<u32>(0u, 1u, 1u);
+    if (count > 0u && overflow != 0u) {
+        dispatch = vec3<u32>(params.tiles, 1u);
+    } else if (count > 0u) {
+        dispatch = vec3<u32>(min(count, ROW), (count + ROW - 1u) / ROW, 1u);
+    }
+    args[slot * 3u] = dispatch.x;
+    args[slot * 3u + 1u] = dispatch.y;
+    args[slot * 3u + 2u] = dispatch.z;
+}
+
+// One workgroup per chunk, one thread per slot: the slot's tiles in the chunk, in tile order, at
+// the offset `cs_scan` left. Lists come out as a single walk over the tiles would write them.
+@compute @workgroup_size(256, 1, 1)
+fn cs_scatter(@builtin(workgroup_id) chunk: vec3<u32>, @builtin(local_invocation_index) slot: u32) {
+    if (bins[0] != 0u) {
         return;
     }
-
-    for (var tile = 0u; tile < tile_count; tile = tile + 1u) {
-        for (var w = 0u; w < WORDS; w = w + 1u) {
-            var bits = tile_bits[tile * WORDS + w];
-            while (bits != 0u) {
-                let s = w * 32u + firstTrailingBit(bits);
-                bins[LIST + first[s]] = tile;
-                first[s] = first[s] + 1u;
-                bits = bits & (bits - 1u);
-            }
+    let tile_count = params.tiles.x * params.tiles.y;
+    let first = chunk.x * CHUNK;
+    let last = min(first + CHUNK, tile_count);
+    var at = LIST + bins[2u + slot] + chunk_counts[chunk.x * MAX_SLOTS + slot];
+    for (var tile = first; tile < last; tile = tile + 1u) {
+        if (covers(tile, slot)) {
+            bins[at] = tile;
+            at = at + 1u;
         }
     }
 }

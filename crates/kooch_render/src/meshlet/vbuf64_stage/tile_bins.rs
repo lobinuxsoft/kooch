@@ -17,6 +17,8 @@ const WORDS: u64 = 8;
 const HEADER: u64 = 3 + SLOTS;
 /// List entries per tile before binning gives up and every material covers the grid again.
 const ENTRIES_PER_TILE: u64 = 4;
+/// Tiles per chunk, `CHUNK` in the shader.
+const CHUNK: u32 = 64;
 
 /// `KOOCH_TILE_BINS=off` (or `0`, `false`) forces the whole-grid fallback, for an A/B against the
 /// binned lists. Read once.
@@ -53,6 +55,8 @@ struct Grid {
     tiles: (u32, u32),
     bits: wgpu::Buffer,
     bins: wgpu::Buffer,
+    /// Each chunk's count per slot, then its offset in the slot's list.
+    chunks: wgpu::Buffer,
 }
 
 /// What a frame's binning hands the shading pass.
@@ -65,7 +69,9 @@ pub(super) struct Binned {
 
 pub(super) struct TileBins {
     classify: wgpu::ComputePipeline,
-    lists: wgpu::ComputePipeline,
+    count: wgpu::ComputePipeline,
+    scan: wgpu::ComputePipeline,
+    scatter: wgpu::ComputePipeline,
     bgl: wgpu::BindGroupLayout,
     params: wgpu::Buffer,
     args: wgpu::Buffer,
@@ -118,6 +124,7 @@ impl TileBins {
                 storage(4, false),
                 storage(5, false),
                 storage(6, false),
+                storage(7, false),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -146,7 +153,9 @@ impl TileBins {
         use wgpu::BufferUsages as U;
         Self {
             classify: pipeline("cs_classify"),
-            lists: pipeline("cs_lists"),
+            count: pipeline("cs_count"),
+            scan: pipeline("cs_scan"),
+            scatter: pipeline("cs_scatter"),
             bgl,
             params: buffer(
                 "material_tile_bins_params",
@@ -177,6 +186,8 @@ impl TileBins {
         tiles: (u32, u32),
         rate: u32,
         slots: u32,
+        scopes: Option<&kooch_core::gpu::GpuScopes>,
+        parent: Option<&kooch_core::gpu::GpuQuery>,
     ) -> Binned {
         let count = tiles.0 * tiles.1;
         let mut grid = self.grid.lock().unwrap_or_else(|e| e.into_inner());
@@ -194,6 +205,10 @@ impl TileBins {
                 tiles,
                 bits: buffer("material_tile_bits", entries * WORDS),
                 bins: buffer("material_tile_bins", HEADER + entries * ENTRIES_PER_TILE),
+                chunks: buffer(
+                    "material_tile_chunks",
+                    u64::from(count.div_ceil(CHUNK)) * SLOTS,
+                ),
             });
         }
         let grid = grid.as_ref().expect("sized above");
@@ -224,6 +239,7 @@ impl TileBins {
             grid.bits.as_entire_binding(),
             grid.bins.as_entire_binding(),
             self.args.as_entire_binding(),
+            grid.chunks.as_entire_binding(),
         ];
         let entries: Vec<_> = entries
             .into_iter()
@@ -244,10 +260,24 @@ impl TileBins {
             timestamp_writes: None,
         });
         pass.set_bind_group(0, &bind_group, &[]);
+        // Timed apart from the shading so their share of `shade: compute` has a name (#1857).
+        let query = scopes.map(|s| s.begin_in("bin: classify", &mut pass, parent));
         pass.set_pipeline(&self.classify);
         pass.dispatch_workgroups(tiles.0, tiles.1, 1);
-        pass.set_pipeline(&self.lists);
+        if let (Some(scopes), Some(query)) = (scopes, query) {
+            scopes.end_in(&mut pass, query);
+        }
+        let query = scopes.map(|s| s.begin_in("bin: lists", &mut pass, parent));
+        let chunks = count.div_ceil(CHUNK);
+        pass.set_pipeline(&self.count);
+        pass.dispatch_workgroups(chunks, 1, 1);
+        pass.set_pipeline(&self.scan);
         pass.dispatch_workgroups(1, 1, 1);
+        pass.set_pipeline(&self.scatter);
+        pass.dispatch_workgroups(chunks, 1, 1);
+        if let (Some(scopes), Some(query)) = (scopes, query) {
+            scopes.end_in(&mut pass, query);
+        }
         drop(pass);
 
         Binned {
