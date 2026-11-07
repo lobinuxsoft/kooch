@@ -19,6 +19,9 @@ pub(crate) trait ReflectAccessor: Send + Sync {
     /// Reads all field values of the component **at** `value`.
     unsafe fn read_fields(&self, value: *const u8) -> Vec<(String, ReflectValue)>;
 
+    /// One field of the component **at** `value`.
+    unsafe fn read_field(&self, value: *const u8, field: &str) -> Option<ReflectValue>;
+
     /// Sets a single field on the component **at** `value`.
     unsafe fn write_field(
         &self,
@@ -108,6 +111,11 @@ impl<T: Reflect> ReflectAccessor for TypedReflectAccessor<T> {
                     .map(|v| (meta.name.to_owned(), v))
             })
             .collect()
+    }
+
+    unsafe fn read_field(&self, value: *const u8, field: &str) -> Option<ReflectValue> {
+        // SAFETY: the caller guarantees `value` points to a live `T`.
+        unsafe { &*value.cast::<T>() }.reflect_get(field)
     }
 
     unsafe fn write_field(

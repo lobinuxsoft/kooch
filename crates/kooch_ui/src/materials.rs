@@ -13,6 +13,7 @@ use kooch_core::resource::Resources;
 use kooch_core::shader_uses::{flatten, used_files};
 
 use crate::documents::{path_of, read_bytes, stamp};
+use crate::fields::FieldPath;
 use crate::{UiNode, UiTree, UiTrees};
 
 const BIND_PREFIX: &str = "bind:param.";
@@ -31,8 +32,7 @@ pub(crate) struct NodeParam {
 pub struct ParamBind {
     pub node: UiNode,
     pub param: Arc<str>,
-    pub component: Box<str>,
-    pub field: Box<str>,
+    pub path: FieldPath,
 }
 
 /// A shader's text with what it uses appended, which is what travels to a remote editor.
@@ -114,12 +114,11 @@ impl UiTree {
         let Some(param) = key.strip_prefix(BIND_PREFIX) else {
             return;
         };
-        if let Some((component, field)) = path.split_once('.') {
+        if let Some(path) = FieldPath::parse(path) {
             self.param_binds.push(ParamBind {
                 node,
                 param: param.into(),
-                component: component.into(),
-                field: field.into(),
+                path,
             });
         }
     }
