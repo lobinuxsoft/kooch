@@ -86,7 +86,9 @@ Showing a node again gives it back the display the sheet sets. Hiding a whole la
 
 `use` instances a file. `<set node="…" attribute="…"/>` inside it overrides one attribute of a named
 node of the instance — the same button file used twice with two texts. Attributes on `use` itself
-(`name`, `class`, `on:*`) apply to the instance's root.
+(`name`, `class`, `on:*`) apply to the instance's root. A `style` on either goes on top of the
+template's: only what it writes changes, so moving a `<use>` in the UI Builder keeps the rest, and
+unsetting a property gives the template's value back.
 
 ```xml
 <use src="menu_button.kxml" name="quit" class="danger" on:click="game.quit">

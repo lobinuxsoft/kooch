@@ -288,21 +288,33 @@ fn instance_source(
     )
 }
 
-/// What each element of `source` ends up with at rest, for showing it: a document's sheet decides
-/// more than its own text does. `align-self` left unset reads as the parent's `align-items`, which
+/// What each element of `source`, read from `at`, ends up with at rest, for showing it: a
+/// document's sheet decides more than its own text does, and a `<use>` is its instance's root. `align-self` left unset reads as the parent's `align-items`, which
 /// is what it does. Empty when the sheet cannot be read.
 pub fn styles_of(
     database: &AssetDatabase,
-    server: Option<&mut AssetServer>,
+    mut server: Option<&mut AssetServer>,
     source: &UiSource,
+    at: &Path,
     style: Option<Guid>,
 ) -> Vec<ResolvedStyle> {
-    let Ok(sheet) = read_sheet(database, server, style) else {
+    let Ok(sheet) = read_sheet(database, server.as_deref_mut(), style) else {
         return Vec::new();
     };
-    let states: Vec<u8> = source.elements.iter().map(disabled).collect();
-    let mut styles = resolve(source, Some(&sheet), &states);
-    for (index, element) in source.elements.iter().enumerate() {
+    let engine = engine_assets(server.as_deref());
+    let expanded = expand(
+        source.clone(),
+        at,
+        &mut |path| read(server.as_deref_mut(), path),
+        &mut Vec::new(),
+        &|path| image_guid(database, engine.as_deref(), path),
+        0,
+    );
+    // A template that does not read still shows the file's own elements.
+    let expanded = expanded.unwrap_or_else(|_| source.clone());
+    let states: Vec<u8> = expanded.elements.iter().map(disabled).collect();
+    let mut styles = resolve(&expanded, Some(&sheet), &states);
+    for (index, element) in expanded.elements.iter().enumerate() {
         let parent = styles
             .get(element.parent as usize)
             .map(|s| s.layout.align_items);
@@ -312,7 +324,13 @@ pub fn styles_of(
             own.layout.align_self = Some(items);
         }
     }
-    styles
+    let mut shown = vec![None; source.elements.len()];
+    for (element, style) in expanded.elements.iter().zip(styles) {
+        if let Some(slot @ None) = shown.get_mut(element.origin as usize) {
+            *slot = Some(style);
+        }
+    }
+    shown.into_iter().map(Option::unwrap_or_default).collect()
 }
 
 /// The document's `style` over the controls' sheet, or the engine's default sheet when it has none.
