@@ -365,7 +365,8 @@ four points, within 0.03 % of a true circle.
 `-kooch-flip: x`, `y` or `both` mirrors a node and everything inside it about its centre, after
 layout: images, text, masks and clicks all follow, and siblings do not move. On a node with a curve
 it mirrors the bent result, so `x` on a circle runs it counter-clockwise, fill included. Text reads
-mirrored too, as it does in a mirror.
+mirrored too, as it does in a mirror. What bends or mirrors is cut by the window where it lands, not
+where it was laid out.
 
 A band thicker than the curve's radius folds over
 itself, a curve inside a curve replaces the outer one, and a clip or mask from above the node is read
