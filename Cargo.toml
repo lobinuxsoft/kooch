@@ -30,7 +30,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.98.162"
+version = "0.98.163"
 edition = "2024"
 license = "LicenseRef-Proprietary"
 repository = "https://github.com/lobinuxsoft/kooch"
@@ -82,6 +82,7 @@ encase = "0.13"
 pollster = "1"
 # Logging
 tracing = "0.1"
+strfmt = "0.2.6"
 # UI layout: flexbox and CSS Grid over a retained tree (#96).
 # UI text (#1686): the same stack as bevy_text 0.19. parley shapes and lays out, swash
 # rasterizes, etagere packs the atlas.

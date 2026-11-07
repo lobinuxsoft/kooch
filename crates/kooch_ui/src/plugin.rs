@@ -10,8 +10,9 @@ use kooch_core::schedule::Order;
 
 use crate::{
     GlyphAtlas, UiActions, UiDocument, UiEvent, UiFocus, UiFonts, UiPointer, UiShaders, UiTrees,
-    bind_params, bind_values, build_documents, draw_documents, layout_documents, load_fonts,
-    load_images, load_shaders, navigate_focus, pick_pointer, prune_trees, restyle_documents,
+    bind_params, bind_texts, bind_values, build_documents, draw_documents, layout_documents,
+    load_fonts, load_images, load_shaders, navigate_focus, pick_pointer, prune_trees,
+    restyle_documents,
 };
 
 /// Only the components: what the editor needs to offer and inspect them, without running any UI.
@@ -60,7 +61,6 @@ impl Plugin for UiPlugin {
             Order::after("navigate_focus"),
             bind_values,
         );
-        app.add_ordered(Stage::PreUpdate, Order::after("bind_values"), bind_params);
         // Ungated: a document removed while stopped frees its tree too.
         app.add_system(Stage::PostUpdate, prune_trees);
         // Before the build: a document shapes its text with the fonts registered by then.
@@ -82,10 +82,14 @@ impl Plugin for UiPlugin {
             load_images,
         );
         app.add_ordered(Stage::PostUpdate, Order::after("load_images"), load_shaders);
+        // After gameplay's `Update`, so a bound field shows this frame's value, and after the
+        // build, so a new document never shows a raw `{Type.field}`.
+        app.add_ordered(Stage::PostUpdate, Order::after("load_shaders"), bind_params);
+        app.add_ordered(Stage::PostUpdate, Order::after("bind_params"), bind_texts);
         // After gameplay's `Update`, which is where a game edits its trees.
         app.add_ordered(
             Stage::PostUpdate,
-            Order::after("load_shaders"),
+            Order::after("bind_texts"),
             layout_documents,
         );
         app.add_ordered(

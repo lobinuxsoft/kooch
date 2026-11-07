@@ -519,23 +519,46 @@ impl ComponentRegistry {
         type_id: &TypeId,
         entity: Entity,
     ) -> Option<Vec<(String, ReflectValue)>> {
+        let (accessor, value) = self.reflected_at(type_id, entity)?;
+        // SAFETY: `value` points at a live component of the accessor's type.
+        Some(unsafe { accessor.read_fields(value) })
+    }
+
+    /// One reflected field of a component on an entity, without reading the others.
+    pub fn reflect_get_field(
+        &self,
+        type_id: &TypeId,
+        entity: Entity,
+        field: &str,
+    ) -> Option<ReflectValue> {
+        let (accessor, value) = self.reflected_at(type_id, entity)?;
+        // SAFETY: `value` points at a live component of the accessor's type.
+        unsafe { accessor.read_field(value, field) }
+    }
+
+    /// How many component types are registered: a code reload only ever adds to it.
+    pub fn type_count(&self) -> usize {
+        self.slots.len()
+    }
+
+    fn reflected_at(
+        &self,
+        type_id: &TypeId,
+        entity: Entity,
+    ) -> Option<(&dyn ReflectAccessor, *const u8)> {
         let slot = self.slot(type_id)?;
         let accessor = slot.reflector.as_deref()?;
-
         if let Some(id) = self.ids.get(type_id).copied()
             && let Some((table, row)) = self.at(entity)
             && let Some(column) = table.column(id)
         {
             // SAFETY: the column was built for this component's type, and
             // the row came from this registry's own index.
-            let value = unsafe { column.value_ptr::<u8>(row.index())? };
-            return Some(unsafe { accessor.read_fields(value) });
+            return Some((accessor, unsafe { column.value_ptr::<u8>(row.index())? }));
         }
-
         // SAFETY: We have &self and no mutable references are active.
         let storage = unsafe { &**slot.storage.get() };
-        let value = storage.get_ptr(entity)?;
-        Some(unsafe { accessor.read_fields(value) })
+        Some((accessor, storage.get_ptr(entity)?))
     }
 
     /// Sets a single reflected field on a component for an entity.

@@ -1,115 +1,106 @@
 //! `bind:value="Type.field"` (#280 phase 6): a control kept in step with a field of a component on
 //! the document's entity, through reflection. The UI holds no state of its own: the field does.
 
-use std::any::TypeId;
-
 use kooch_core::resource::Resources;
 use kooch_ecs::ReflectValue;
 use kooch_ecs::component::ComponentRegistry;
+use kooch_ecs::entity::Entity;
 
-use crate::UiTrees;
+use crate::{UiTree, UiTrees};
 
 /// After the pointer and focus: a gesture this frame writes the field, otherwise the field moves
 /// the control. In `PreUpdate`, so gameplay reads what the player just set.
 pub fn bind_values(resources: &mut Resources) {
-    let mut bound = Vec::new();
-    if let Some(trees) = resources.get_mut::<UiTrees>() {
-        trees.for_each_entity_mut(|document, tree| {
-            bound.extend(tree.take_bindings().into_iter().map(|b| (document, b)));
-        });
-    }
-    if bound.is_empty() {
-        return;
-    }
-    let mut reads = Vec::new();
-    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
-        return;
-    };
-    for (document, bound) in bound {
-        let Some(type_id) = component_id(registry, &bound.component) else {
-            kooch_core::warn_once!(
-                "`bind:value` names `{}`, which is no reflected component",
-                bound.component
-            );
-            continue;
-        };
-        let Some(field) = registry
-            .reflect_get_fields(&type_id, document)
-            .and_then(|fields| fields.into_iter().find(|(name, _)| *name == *bound.field))
-            .map(|(_, value)| value)
-        else {
-            continue;
-        };
-        if bound.touched {
-            if let Some(value) = field_written(&field, bound.value)
-                && let Err(error) =
-                    registry.reflect_set_field(&type_id, document, &bound.field, value)
-            {
-                kooch_core::warn_once!("`bind:value` could not write: {error:?}");
+    with_trees(resources, |document, tree, registry| {
+        for index in 0..tree.controls.len() {
+            let Some(control) = tree.controls.get_mut(index) else {
+                continue;
+            };
+            let touched = std::mem::take(&mut control.touched);
+            let (node, value) = (control.node, control.value);
+            let Some(path) = control.bind.as_mut() else {
+                continue;
+            };
+            let Some(type_id) = path.resolve(registry) else {
+                continue;
+            };
+            let Some(field) = registry.reflect_get_field(&type_id, document, &path.field) else {
+                continue;
+            };
+            if touched {
+                if let Some(value) = field_written(&field, value)
+                    && let Err(error) =
+                        registry.reflect_set_field(&type_id, document, &path.field, value)
+                {
+                    kooch_core::warn_once!("`bind:value` could not write: {error:?}");
+                }
+            } else if let Some(value) = field_number(&field) {
+                tree.set_value(node, value);
             }
-        } else if let Some(value) = field_number(&field) {
-            reads.push((document, bound.node, value));
         }
-    }
-    let Some(trees) = resources.get_mut::<UiTrees>() else {
-        return;
-    };
-    for (document, node, value) in reads {
-        if let Some(tree) = trees.get_mut(document) {
-            tree.set_value(node, value);
-        }
-    }
+    });
 }
 
 /// `bind:param.<name>`: the field moves the parameter, never the other way. Costs a tree with no
 /// such binding nothing.
 pub fn bind_params(resources: &mut Resources) {
-    let mut bound = Vec::new();
-    if let Some(trees) = resources.get_mut::<UiTrees>() {
-        trees.for_each_entity_mut(|document, tree| {
-            bound.extend(tree.param_binds().iter().cloned().map(|b| (document, b)));
-        });
-    }
-    if bound.is_empty() {
-        return;
-    }
-    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
-        return;
-    };
-    let mut reads = Vec::with_capacity(bound.len());
-    for (document, bind) in bound {
-        let Some(type_id) = component_id(registry, &bind.component) else {
-            kooch_core::warn_once!(
-                "`bind:param` names `{}`, which is no reflected component",
-                bind.component
-            );
-            continue;
-        };
-        let value = registry
-            .reflect_get_fields(&type_id, document)
-            .and_then(|fields| fields.into_iter().find(|(name, _)| *name == *bind.field))
-            .and_then(|(_, value)| field_number(&value));
-        if let Some(value) = value {
-            reads.push((document, bind.node, bind.param, value));
+    with_trees(resources, |document, tree, registry| {
+        for index in 0..tree.param_binds.len() {
+            let Some(bind) = tree.param_binds.get_mut(index) else {
+                continue;
+            };
+            let value = bind.path.resolve(registry).and_then(|type_id| {
+                registry.reflect_get_field(&type_id, document, &bind.path.field)
+            });
+            if let Some(value) = value.as_ref().and_then(field_number) {
+                let (node, param) = (bind.node, bind.param.clone());
+                tree.set_param(node, &param, value);
+            }
         }
-    }
-    let Some(trees) = resources.get_mut::<UiTrees>() else {
-        return;
-    };
-    for (document, node, param, value) in reads {
-        if let Some(tree) = trees.get_mut(document) {
-            tree.set_param(node, &param, value);
-        }
-    }
+    });
 }
 
-/// A reflected component by its name as written: `Hud` or its full path.
-fn component_id(registry: &ComponentRegistry, name: &str) -> Option<TypeId> {
-    registry
-        .reflected_type_names()
-        .into_iter()
-        .find(|(_, full)| *full == name || full.rsplit("::").next() == Some(name))
-        .map(|(id, _)| id)
+/// A label's `{Type.field}` holes: the text is formatted and laid out again only when a value
+/// it shows moved.
+pub fn bind_texts(resources: &mut Resources) {
+    with_trees(resources, |document, tree, registry| {
+        for index in 0..tree.text_binds.len() {
+            let Some(bind) = tree.text_binds.get_mut(index) else {
+                continue;
+            };
+            let mut moved = false;
+            for (path, shown) in bind.holes.iter_mut().zip(bind.shown.iter_mut()) {
+                let value = path.resolve(registry).and_then(|type_id| {
+                    registry.reflect_get_field(&type_id, document, &path.field)
+                });
+                if value != *shown {
+                    *shown = value;
+                    moved = true;
+                }
+            }
+            if moved && let Some(text) = bind.format() {
+                let node = bind.node;
+                tree.write_text(node, &text);
+            }
+        }
+    });
+}
+
+/// Every document's tree beside the registry. The trees are lifted out for the walk, which swaps
+/// two maps and allocates nothing; `UiTrees` reads empty only while this runs.
+fn with_trees(
+    resources: &mut Resources,
+    mut each: impl FnMut(Entity, &mut UiTree, &mut ComponentRegistry),
+) {
+    let Some(mut trees) = resources.get_mut::<UiTrees>().map(std::mem::take) else {
+        return;
+    };
+    if let Some(registry) = resources.get_mut::<ComponentRegistry>() {
+        trees.for_each_entity_mut(|document, tree| each(document, tree, registry));
+    }
+    if let Some(slot) = resources.get_mut::<UiTrees>() {
+        *slot = trees;
+    }
 }
 
 /// A field a control can show.

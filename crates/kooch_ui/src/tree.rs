@@ -10,6 +10,7 @@ use taffy::{AvailableSpace, NodeId, Size, Style, TaffyTree};
 use crate::atlas::{GlyphAtlas, GlyphKey, subpixel};
 use crate::materials::{NodeParam, ParamBind};
 use crate::text::{Text, UiFonts, measure};
+use crate::text_binds::TextBind;
 use scroll::UNCLIPPED;
 
 /// A node of one [`UiTree`]: dense from the root, which is `0`.
@@ -88,6 +89,7 @@ pub struct UiTree {
     pub(crate) material: Vec<Option<Guid>>,
     pub(crate) params: Vec<Vec<NodeParam>>,
     pub(crate) param_binds: Vec<ParamBind>,
+    pub(crate) text_binds: Vec<TextBind>,
     rect: Vec<UiRect>,
     /// How far a container's children are moved up and left by scrolling, in canvas units.
     scroll: Vec<Vec2>,
@@ -142,6 +144,7 @@ impl UiTree {
             material: Vec::new(),
             params: Vec::new(),
             param_binds: Vec::new(),
+            text_binds: Vec::new(),
             rect: Vec::new(),
             scroll: Vec::new(),
             clip: Vec::new(),
@@ -586,10 +589,10 @@ fn space_key(space: AvailableSpace) -> f32 {
 pub(crate) mod curves;
 mod fit;
 pub(crate) mod flips;
-pub(crate) mod transforms;
 mod instances;
 pub(crate) mod masks;
 mod query;
 mod scroll;
 #[cfg(test)]
 mod tests;
+pub(crate) mod transforms;

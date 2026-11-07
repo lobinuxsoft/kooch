@@ -1,6 +1,7 @@
 //! Toggles and sliders (#280 phase 6): a value on the node, parts the sheet styles, and the
 //! gestures that change it.
 
+use crate::fields::FieldPath;
 use crate::source::{Element, ElementKind, UiSource};
 use crate::style::STATE_CHECKED;
 use crate::{UiNode, UiTree};
@@ -18,13 +19,6 @@ const PAD_STEPS: f32 = 10.0;
 pub(crate) enum ControlKind {
     Toggle,
     Slider,
-}
-
-/// `bind:value="Type.field"`: a field of a component on the document's entity.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Binding {
-    pub component: Box<str>,
-    pub field: Box<str>,
 }
 
 /// A `bind:value="Type.field"` control, as [`UiTree::take_bindings`] hands it out.
@@ -49,7 +43,8 @@ pub(crate) struct Control {
     pub max: f32,
     /// `0` slides freely.
     pub step: f32,
-    pub bind: Option<Binding>,
+    /// `bind:value="Type.field"`: a field of a component on the document's entity.
+    pub bind: Option<FieldPath>,
     /// A slider's fill, thumb and rest.
     pub parts: Option<[UiNode; 3]>,
     /// Changed by a gesture since the bindings last ran: the UI writes, the field does not.
@@ -111,11 +106,7 @@ pub(crate) fn declared(element: &Element, node: UiNode) -> Option<Control> {
         .attributes
         .iter()
         .find(|(key, _)| &**key == "bind:value")
-        .and_then(|(_, path)| path.split_once('.'))
-        .map(|(component, field)| Binding {
-            component: component.into(),
-            field: field.into(),
-        });
+        .and_then(|(_, path)| FieldPath::parse(path));
     Some(Control {
         node,
         kind,

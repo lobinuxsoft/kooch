@@ -164,6 +164,20 @@ document's entity, both ways: moving the slider writes the field, and changing t
 slider. `Type` is the reflected component's name; the field may be a float, an integer or a `bool`.
 The UI holds no value of its own that matters: the field does.
 
+A label's text can name fields too. Each `{Type.field}` hole shows the field's value, and the text is
+laid out again only when one of them changes:
+
+```xml
+<label name="hp_label">[HP {Hud.hp:>3%}]</label>
+<label>Coins: {Inventory.coins}</label>
+```
+
+After the `:` goes a format spec, as in Python: fill and alignment (`<`, `^`, `>`), width (`>3`,
+`*^8`) and precision (`.1`). `%` shows a 0–1 value as a whole percent (`.1%` keeps a decimal).
+Numbers align right and text aligns left. `{{` and `}}` write a brace. A hole that names no field
+stays as written, and the log says which name it could not find. A label with no `{Type.field}` is
+plain text.
+
 A click or `Submit` flips a toggle; a slider follows a held press, and a focused one moves with
 left/right on the pad or keys (up/down still move focus). Each sends `on:change`, its event's
 `value` the new one. Code reads and sets a control with `UiTree::value` / `set_value`; setting from
@@ -229,8 +243,8 @@ pointer, 40 canvas units a wheel line.
 A system answers an action by name: `ui_actions(resources, "hud.count")` is every document that sent
 it this frame, once per send.
 
-> Live today: `on:click`, `on:focus`/`on:blur`, `on:cancel`, `on:change`, `bind:value` and pad
-> navigation on Overlay documents.
+> Live today: `on:click`, `on:focus`/`on:blur`, `on:cancel`, `on:change`, `bind:value`,
+> `bind:param`, `{Type.field}` text and pad navigation on Overlay documents.
 
 ## Style
 

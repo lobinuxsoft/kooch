@@ -82,6 +82,8 @@ fn setup(tree: &mut UiTree, node: UiNode, element: &Element, font_size: f32) {
         .extend(crate::controls::declared(element, node));
     if let Some(text) = &element.text {
         tree.set_text(node, text, font_size);
+        tree.text_binds
+            .extend(crate::text_binds::TextBind::parse(node, text));
     }
 }
 
