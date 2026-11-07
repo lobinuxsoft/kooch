@@ -100,6 +100,7 @@ pub struct UiTree {
     pub(crate) mask: Vec<masks::UiCut>,
     pub(crate) curve: Vec<Option<curves::UiPath>>,
     flip: Vec<u32>,
+    transform: Vec<transforms::UiTransform>,
     font_share: Vec<Option<f32>>,
     text: Vec<Option<Text>>,
     glyphs: Vec<GlyphQuad>,
@@ -150,6 +151,7 @@ impl UiTree {
             mask: Vec::new(),
             curve: Vec::new(),
             flip: Vec::new(),
+            transform: Vec::new(),
             font_share: Vec::new(),
             text: Vec::new(),
             glyphs: Vec::new(),
@@ -508,6 +510,7 @@ impl UiTree {
         self.mask.push(masks::UiCut::default());
         self.curve.push(None);
         self.flip.push(0);
+        self.transform.push(transforms::UiTransform::NONE);
         self.font_share.push(None);
         self.text.push(None);
         self.culled.push(false);
@@ -583,6 +586,7 @@ fn space_key(space: AvailableSpace) -> f32 {
 pub(crate) mod curves;
 mod fit;
 pub(crate) mod flips;
+pub(crate) mod transforms;
 mod instances;
 pub(crate) mod masks;
 mod query;

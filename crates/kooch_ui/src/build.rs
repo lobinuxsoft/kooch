@@ -157,6 +157,7 @@ pub(crate) fn apply(tree: &mut UiTree, node: UiNode, style: &ResolvedStyle) {
     tree.set_fill_from(node, style.fill_from);
     tree.set_curve(node, style.curve.clone());
     tree.set_flip(node, style.flip);
+    tree.set_transform(node, style.transform);
     tree.set_material(node, style.material);
     tree.style_params(node, &style.params);
 }

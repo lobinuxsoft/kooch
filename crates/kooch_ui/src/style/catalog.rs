@@ -68,7 +68,7 @@ const ALIGN_CONTENT: PropertyKind = Keyword(&[
     "space-evenly",
 ]);
 
-pub const CATEGORIES: [StyleCategory; 10] = [
+pub const CATEGORIES: [StyleCategory; 11] = [
     StyleCategory {
         title: "Display",
         properties: &[
@@ -296,6 +296,34 @@ pub const CATEGORIES: [StyleCategory; 10] = [
                 "Texels kept unstretched: top right bottom left",
             ),
             prop("-kooch-material", Shader, "\"path.wgsl\" with kind: ui"),
+        ],
+    },
+    StyleCategory {
+        title: "Transform",
+        properties: &[
+            prop(
+                "rotate",
+                Number,
+                "Degrees clockwise, about transform-origin",
+            ),
+            prop(
+                "-kooch-rotate-x",
+                Number,
+                "Degrees about the horizontal axis: tips the top away",
+            ),
+            prop(
+                "-kooch-rotate-y",
+                Number,
+                "Degrees about the vertical axis: turns the right side away",
+            ),
+            prop(
+                "-kooch-perspective",
+                Px,
+                "Distance to the eye: smaller is stronger, 0 is none",
+            ),
+            prop("scale", Text, "One value, or x and y"),
+            prop("translate", Text, "One length, or x and y, in px"),
+            prop("transform-origin", Text, "The pivot, as x% y% of the box"),
         ],
     },
     StyleCategory {

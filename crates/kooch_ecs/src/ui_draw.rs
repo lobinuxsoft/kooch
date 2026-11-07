@@ -42,22 +42,13 @@ pub struct UiQuad {
     pub mirror: u32,
 }
 
-/// Where the flips around a quad move it, as `[scale x, scale y, move x, move y]` in physical
-/// pixels: `before` its curve bends it, then `after`.
+/// Where the flips and transforms around a quad move it, in physical pixels: `before` its curve
+/// bends it, then `after`. Each is a 3x3 matrix by columns, padded as WGSL lays out a `mat3x3`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
 pub struct UiMirror {
-    pub before: [f32; 4],
-    pub after: [f32; 4],
-}
-
-impl UiMirror {
-    /// Nothing moves.
-    pub const STILL: [f32; 4] = [1.0, 1.0, 0.0, 0.0];
-    pub const NONE: Self = Self {
-        before: Self::STILL,
-        after: Self::STILL,
-    };
+    pub before: [[f32; 4]; 3],
+    pub after: [[f32; 4]; 3],
 }
 
 /// A shape what is inside a node gets cut to (#1790), in physical pixels.

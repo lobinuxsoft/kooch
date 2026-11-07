@@ -44,10 +44,10 @@ struct UiCurve {
 
 @group(0) @binding(5) var<storage, read> ui_curves: array<UiCurve>;
 
-// `[scale, move]` before a quad's curve bends it, then after.
+// Flips and transforms: the matrix before a quad's curve bends it, then the one after.
 struct UiMirror {
-    before: vec4<f32>,
-    after: vec4<f32>,
+    before: mat3x3<f32>,
+    after: mat3x3<f32>,
 }
 
 @group(0) @binding(6) var<storage, read> ui_mirrors: array<UiMirror>;
@@ -121,10 +121,6 @@ fn ui_bent(pixel: vec2<f32>, curve: u32) -> vec2<f32> {
     return mix(here, next, part) + vec2<f32>(-unit.y, unit.x) * away;
 }
 
-fn ui_mirrored(pixel: vec2<f32>, by: vec4<f32>) -> vec2<f32> {
-    return pixel * by.xy + by.zw;
-}
-
 @vertex
 fn vs_ui(@builtin(vertex_index) vertex: u32, quad: Instance) -> Varyings {
     var corner = vec2<f32>(f32(vertex & 1u), f32(vertex >> 1u));
@@ -132,24 +128,25 @@ fn vs_ui(@builtin(vertex_index) vertex: u32, quad: Instance) -> Varyings {
         corner = vec2<f32>(f32(vertex >> 1u) / f32(UI_CURVE_STRIPS), f32(vertex & 1u));
     }
     let straight = quad.min + corner * quad.size;
-    var pixel = straight;
+    // Homogeneous: a tilt's perspective reaches `w`, so the GPU interpolates uv and all correctly.
+    var pixel = vec3<f32>(straight, 1.0);
     var out: Varyings;
     out.material_flags = quad.material_flags;
     // Only where it lands: clip, masks and uv stay in the layout, so they mirror with it.
     if quad.mirror != 0u {
-        pixel = ui_mirrored(pixel, ui_mirrors[quad.mirror - 1u].before);
+        pixel = ui_mirrors[quad.mirror - 1u].before * pixel;
     }
     if quad.curve != 0u {
-        pixel = ui_bent(pixel, quad.curve);
+        pixel = vec3<f32>(ui_bent(pixel.xy / pixel.z, quad.curve), 1.0);
         out.material_flags.y |= QUAD_CURVED;
     }
     if quad.mirror != 0u {
-        pixel = ui_mirrored(pixel, ui_mirrors[quad.mirror - 1u].after);
+        pixel = ui_mirrors[quad.mirror - 1u].after * pixel;
     }
     out.straight = straight;
     // y flipped: pixels descend, clip space climbs.
-    let ndc = pixel / screen.size * 2.0 - 1.0;
-    out.position = vec4<f32>(ndc.x, -ndc.y, 0.0, 1.0);
+    let ndc = pixel.xy / screen.size * 2.0 - pixel.z;
+    out.position = vec4<f32>(ndc.x, -ndc.y, 0.0, pixel.z);
     out.half_size = quad.size * 0.5;
     out.local = (corner - 0.5) * quad.size;
     out.color = quad.color;

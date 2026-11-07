@@ -80,6 +80,17 @@ pub enum Declaration {
     Curve(Option<crate::UiPath>),
     /// An index in [`FLIP`](super::catalog::FLIP) (#1840).
     Flip(u32),
+    /// Degrees, clockwise (#1789).
+    Rotate(f32),
+    RotateX(f32),
+    RotateY(f32),
+    Scale([f32; 2]),
+    /// In px.
+    Translate([f32; 2]),
+    /// Fractions of the node's box.
+    TransformOrigin([f32; 2]),
+    /// In px; 0 has none.
+    Perspective(f32),
     /// Image texels kept unstretched at each edge, top-right-bottom-left (#1708).
     Slice([f32; 4]),
     /// Multiplies the image, sRGB straight alpha.
@@ -188,6 +199,16 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Vec<Declaration>, String> 
             Some(index) => one(D::Flip(index as u32)),
             None => Err(format!("`{text}` is not none, x, y or both")),
         },
+        "rotate" => one(D::Rotate(angle(text)?)),
+        "-kooch-rotate-x" => one(D::RotateX(angle(text)?)),
+        "-kooch-rotate-y" => one(D::RotateY(angle(text)?)),
+        "scale" => one(D::Scale(pair(text, number)?)),
+        "translate" => one(D::Translate(pair(text, px)?)),
+        "transform-origin" => one(D::TransformOrigin(pair(text, share)?)),
+        "-kooch-perspective" => match text.trim() {
+            "none" => one(D::Perspective(0.0)),
+            _ => one(D::Perspective(px(text)?)),
+        },
         "-kooch-slice" => one(D::Slice(slice(text)?)),
         "-kooch-tint" => one(D::Tint(color(text)?)),
         _ => return Err(format!("`{name}` is not a .kcss property")),
@@ -206,6 +227,35 @@ fn param(text: &str) -> Result<[f32; 4], String> {
             Ok(value)
         }
         _ => color(text),
+    }
+}
+
+/// Degrees, written bare or with `deg`, `rad` or `turn`.
+fn angle(text: &str) -> Result<f32, String> {
+    let text = text.trim();
+    if let Some(turns) = text.strip_suffix("turn") {
+        return Ok(number(turns)? * 360.0);
+    }
+    if let Some(radians) = text.strip_suffix("rad") {
+        return Ok(number(radians)?.to_degrees());
+    }
+    number(text.strip_suffix("deg").unwrap_or(text))
+}
+
+/// A percent, as a fraction.
+fn share(text: &str) -> Result<f32, String> {
+    match text.trim().strip_suffix('%') {
+        Some(percent) => Ok(number(percent)? / 100.0),
+        None => Err(format!("`{text}` is not a percent")),
+    }
+}
+
+/// One value for both axes, or x and y.
+fn pair(text: &str, read: fn(&str) -> Result<f32, String>) -> Result<[f32; 2], String> {
+    match components(text).as_slice() {
+        [both] => read(both).map(|value| [value, value]),
+        [x, y] => Ok([read(x)?, read(y)?]),
+        _ => Err(format!("`{text}` is not one or two values")),
     }
 }
 
