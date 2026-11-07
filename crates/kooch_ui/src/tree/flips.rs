@@ -1,5 +1,5 @@
 //! Flips (#1840): a node and what is inside it lay out as usual and mirror about its centre when
-//! drawn, so only the draw and the pointer know.
+//! drawn, so only the draw and the pointer know. Undoing the draw here takes transforms along.
 
 use glam::Vec2;
 
@@ -27,9 +27,10 @@ impl UiTree {
         std::iter::successors(Some(node), |&at| self.parent(at))
     }
 
-    /// Whether anything mirrors `node`.
+    /// Whether a flip or a transform moves `node`.
     pub(super) fn flipped(&self, node: UiNode) -> bool {
-        self.upwards(node).any(|at| self.flip_of(at) != 0)
+        self.upwards(node)
+            .any(|at| self.flip_of(at) != 0 || self.turn_of(at).is_some())
     }
 
     /// `point` across `node`'s flip, which is its own inverse.
@@ -59,7 +60,7 @@ impl UiTree {
         let curved = self.bent_by(node);
         let chain: Vec<UiNode> = self.upwards(node).collect();
         chain.iter().rev().fold(point, |point, &at| {
-            let point = self.across(at, point);
+            let point = self.across(at, self.unturned(at, point));
             match curved == Some(at) {
                 true => self.unbent(at, point).unwrap_or(point),
                 false => point,
@@ -67,17 +68,28 @@ impl UiTree {
         })
     }
 
-    /// `node`'s rect where the flips draw it, curves aside.
+    /// The box around `node`'s rect where the flips and transforms draw it, curves aside.
     pub fn shown(&self, node: UiNode) -> Option<UiRect> {
         let rect = self.rect(node)?;
         let turned = |point| {
-            self.upwards(node)
-                .fold(point, |point, at| self.across(at, point))
+            self.upwards(node).fold(point, |point, at| {
+                let point = self.across(at, point);
+                self.turn_of(at)
+                    .map_or(point, |turn| super::transforms::projected(turn, point))
+            })
         };
-        let (a, b) = (turned(rect.min), turned(rect.min + rect.size));
+        let far = rect.min + rect.size;
+        let corners = [
+            turned(rect.min),
+            turned(Vec2::new(far.x, rect.min.y)),
+            turned(Vec2::new(rect.min.x, far.y)),
+            turned(far),
+        ];
+        let min = corners.iter().copied().fold(corners[0], Vec2::min);
+        let max = corners.iter().copied().fold(corners[0], Vec2::max);
         Some(UiRect {
-            min: a.min(b),
-            size: (a - b).abs(),
+            min,
+            size: max - min,
         })
     }
 

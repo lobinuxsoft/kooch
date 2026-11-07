@@ -372,6 +372,25 @@ spline; each point's mode is in the Inspector. The Inspector also starts a path 
 circle or square: generated once, then yours to edit, and it replaces what was there. Circles are
 four points, within 0.03 % of a true circle.
 
+**Transforms.** `rotate: 15deg`, `scale: 1.2` (or `1.2 0.8`), `translate: 10px 4px` and
+`transform-origin: 50% 100%` move a node and everything inside it after layout, so siblings stay
+put: text, images, masks and clicks follow. `-kooch-rotate-x` and `-kooch-rotate-y` tilt it in 3D,
+and `-kooch-perspective: 600px` is how far the eye is: smaller is stronger, 0 is flat. An angle
+without a unit is in degrees. Inside a curve a transform moves the node before it bends; on the
+curved node or above it, the bent result.
+
+```css
+.ring { -kooch-rotate-x: 60deg; -kooch-perspective: 500px; }
+```
+
+A system moves a node every frame with no relayout, the style's values being the start:
+
+```rust
+let mut tilt = tree.transform_of(card);
+tilt.rotate_y = pointer.x * 20.0;
+tree.set_transform(card, tilt);
+```
+
 `-kooch-flip: x`, `y` or `both` mirrors a node and everything inside it about its centre, after
 layout: images, text, masks and clicks all follow, and siblings do not move. On a node with a curve
 it mirrors the bent result, so `x` on a circle runs it counter-clockwise, fill included. Text reads

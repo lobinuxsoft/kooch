@@ -26,6 +26,7 @@ pub struct ResolvedStyle {
     pub fill_from: u32,
     pub curve: Option<crate::UiPath>,
     pub flip: u32,
+    pub transform: crate::UiTransform,
     pub slice: [f32; 4],
     pub tint: Option<[f32; 4]>,
 }
@@ -96,6 +97,13 @@ impl ResolvedStyle {
             Declaration::FillFrom(from) => self.fill_from = *from,
             Declaration::Curve(curve) => self.curve.clone_from(curve),
             Declaration::Flip(flip) => self.flip = *flip,
+            Declaration::Rotate(degrees) => self.transform.rotate = *degrees,
+            Declaration::RotateX(degrees) => self.transform.rotate_x = *degrees,
+            Declaration::RotateY(degrees) => self.transform.rotate_y = *degrees,
+            Declaration::Scale(scale) => self.transform.scale = *scale,
+            Declaration::Translate(by) => self.transform.translate = *by,
+            Declaration::TransformOrigin(origin) => self.transform.origin = *origin,
+            Declaration::Perspective(distance) => self.transform.perspective = *distance,
             Declaration::Slice(slice) => self.slice = *slice,
             Declaration::Tint(rgba) => self.tint = Some(*rgba),
         }

@@ -77,6 +77,22 @@ pub fn computed(style: &ResolvedStyle, property: &str) -> Option<String> {
             number(amount.map_or(1.0, |(_, value)| value[0]))
         }
         "-kooch-flip" => (*super::catalog::FLIP.get(style.flip as usize)?).to_owned(),
+        "rotate" => number(style.transform.rotate),
+        "-kooch-rotate-x" => number(style.transform.rotate_x),
+        "-kooch-rotate-y" => number(style.transform.rotate_y),
+        "scale" => {
+            let [x, y] = style.transform.scale.map(number);
+            format!("{x} {y}")
+        }
+        "translate" => {
+            let [x, y] = style.transform.translate.map(number);
+            format!("{x}px {y}px")
+        }
+        "transform-origin" => {
+            let [x, y] = style.transform.origin.map(|share| number(share * 100.0));
+            format!("{x}% {y}%")
+        }
+        "-kooch-perspective" => format!("{}px", number(style.transform.perspective)),
         "-kooch-curve" => style
             .curve
             .as_ref()

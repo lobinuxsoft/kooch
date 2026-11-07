@@ -1,6 +1,6 @@
 //! Turning laid-out Overlay documents into the frame's [`UiDrawList`].
 
-use glam::Vec2;
+use glam::{Mat3, Vec2};
 use kooch_core::resource::Resources;
 use kooch_ecs::query::Query;
 use kooch_ecs::{
@@ -104,8 +104,8 @@ fn push_tree(
     let mut inner = vec![0; tree.len()];
     // The curve each node's children bend along, the same way.
     let mut bent = vec![0; tree.len()];
-    // The flips around each node's children, the same way.
-    let mut turned = vec![(UiMirror::NONE, 0); tree.len()];
+    // The flips and transforms around each node's children, the same way.
+    let mut turned = vec![Turn::NONE; tree.len()];
     for index in 0..tree.len() as u32 {
         let node = UiNode(index);
         let around = tree.parent(node).map_or(0, |up| inner[up.0 as usize]);
@@ -115,11 +115,11 @@ fn push_tree(
         let shaped = push_curve(tree, node, scale, &mut list.curves);
         bent[index as usize] = shaped.unwrap_or(curve);
         let around = tree.parent(node).map(|up| turned[up.0 as usize]);
-        let own_turn = push_flip(
+        let own_turn = push_turn(
             tree,
             node,
             scale,
-            around.unwrap_or((UiMirror::NONE, 0)),
+            around.unwrap_or(Turn::NONE),
             &mut list.mirrors,
         );
         turned[index as usize] = match shaped {
@@ -143,7 +143,7 @@ fn push_tree(
             continue;
         };
         // The clip is tested in the layout: what moves when drawn may land on screen from off it.
-        let bounds = if curve != 0 || own_turn.1 != 0 {
+        let bounds = if curve != 0 || own_turn.index != 0 {
             ANYWHERE
         } else {
             screen
@@ -222,7 +222,7 @@ fn push_tree(
         for quad in &mut list.quads[first..] {
             quad.mask = own;
             quad.curve = curve;
-            quad.mirror = own_turn.1;
+            quad.mirror = own_turn.index;
         }
     }
 }
@@ -289,28 +289,39 @@ fn push_curve(tree: &UiTree, node: UiNode, scale: f32, curves: &mut Vec<UiCurve>
     Some(curves.len() as u32)
 }
 
-/// `outer` applied to what `inner` gives.
-fn composed(outer: [f32; 4], inner: [f32; 4]) -> [f32; 4] {
-    [
-        outer[0] * inner[0],
-        outer[1] * inner[1],
-        outer[0] * inner[2] + outer[2],
-        outer[1] * inner[3] + outer[3],
-    ]
+/// What moves a node's quads: `before` its curve, `after` it, and their index in the list plus one.
+#[derive(Clone, Copy)]
+struct Turn {
+    before: Mat3,
+    after: Mat3,
+    index: u32,
 }
 
-/// `around` with `node`'s flip inside it, as a mirror and its index plus one.
-fn push_flip(
-    tree: &UiTree,
-    node: UiNode,
-    scale: f32,
-    around: (UiMirror, u32),
-    mirrors: &mut Vec<UiMirror>,
-) -> (UiMirror, u32) {
-    let flip = tree.flip_of(node);
-    let Some(rect) = tree.rect(node).filter(|_| flip != 0) else {
-        return around;
+impl Turn {
+    const NONE: Self = Self {
+        before: Mat3::IDENTITY,
+        after: Mat3::IDENTITY,
+        index: 0,
     };
+
+    fn pushed(before: Mat3, after: Mat3, mirrors: &mut Vec<UiMirror>) -> Self {
+        let padded = |matrix: Mat3| matrix.to_cols_array_2d().map(|[x, y, z]| [x, y, z, 0.0]);
+        mirrors.push(UiMirror {
+            before: padded(before),
+            after: padded(after),
+        });
+        Self {
+            before,
+            after,
+            index: mirrors.len() as u32,
+        }
+    }
+}
+
+/// `node`'s flip in physical pixels, about its centre.
+fn flip_matrix(tree: &UiTree, node: UiNode, scale: f32) -> Option<Mat3> {
+    let flip = tree.flip_of(node);
+    let rect = tree.rect(node).filter(|_| flip != 0)?;
     // Twice the centre, whole: a half pixel here would blur every edge inside.
     let far = ((rect.min * 2.0 + rect.size) * scale).round();
     let (sx, mx) = if flip & FLIP_X != 0 {
@@ -323,25 +334,35 @@ fn push_flip(
     } else {
         (1.0, 0.0)
     };
-    let mirror = UiMirror {
-        before: composed(around.0.before, [sx, sy, mx, my]),
-        after: around.0.after,
-    };
-    mirrors.push(mirror);
-    (mirror, mirrors.len() as u32)
+    Some(Mat3::from_translation(Vec2::new(mx, my)) * Mat3::from_scale(Vec2::new(sx, sy)))
 }
 
-/// What is inside a curve bends first: the flips around it mirror the bent result.
-fn past_curve(turn: (UiMirror, u32), mirrors: &mut Vec<UiMirror>) -> (UiMirror, u32) {
-    if turn.0.before == UiMirror::STILL {
+/// `around` with `node`'s flip and transform inside it.
+fn push_turn(
+    tree: &UiTree,
+    node: UiNode,
+    scale: f32,
+    around: Turn,
+    mirrors: &mut Vec<UiMirror>,
+) -> Turn {
+    let flip = flip_matrix(tree, node, scale);
+    let pixels = Mat3::from_scale(Vec2::splat(scale));
+    let transform = tree
+        .turn_of(node)
+        .map(|turn| pixels * turn * pixels.inverse());
+    if flip.is_none() && transform.is_none() {
+        return around;
+    }
+    let own = transform.unwrap_or(Mat3::IDENTITY) * flip.unwrap_or(Mat3::IDENTITY);
+    Turn::pushed(around.before * own, around.after, mirrors)
+}
+
+/// What is inside a curve bends first: the turns around it move the bent result.
+fn past_curve(turn: Turn, mirrors: &mut Vec<UiMirror>) -> Turn {
+    if turn.before == Mat3::IDENTITY {
         return turn;
     }
-    let mirror = UiMirror {
-        before: UiMirror::STILL,
-        after: composed(turn.0.after, turn.0.before),
-    };
-    mirrors.push(mirror);
-    (mirror, mirrors.len() as u32)
+    Turn::pushed(Mat3::IDENTITY, turn.after * turn.before, mirrors)
 }
 
 /// `quad` as drawn by `shader`, with the node's values.
