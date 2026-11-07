@@ -33,6 +33,9 @@ pub fn computed(style: &ResolvedStyle, property: &str) -> Option<String> {
         "justify-content" => content(layout.justify_content, "flex-start"),
         "align-self" => layout.align_self.map_or("stretch".to_owned(), items),
         "align-content" => content(layout.align_content, "stretch"),
+        "aspect-ratio" => layout
+            .aspect_ratio
+            .map_or_else(|| "auto".to_owned(), number),
         "width" => length(layout.size.width.into_raw()),
         "height" => length(layout.size.height.into_raw()),
         "min-width" => length(layout.min_size.width.into_raw()),
@@ -60,7 +63,10 @@ pub fn computed(style: &ResolvedStyle, property: &str) -> Option<String> {
             false => "alpha".to_owned(),
         },
         "-kooch-tint" => color(style.tint.unwrap_or([1.0; 4])),
-        "font-size" => format!("{}px", number(style.font_size.unwrap_or(DEFAULT_FONT_SIZE))),
+        "font-size" => match style.font_share {
+            Some(share) => format!("{}%", number(share * 100.0)),
+            None => format!("{}px", number(style.font_size.unwrap_or(DEFAULT_FONT_SIZE))),
+        },
         "font-family" => format!("\"{}\"", style.font_family.as_ref()?),
         "-kooch-fill-from" => {
             let words = super::catalog::FILL_FROM;

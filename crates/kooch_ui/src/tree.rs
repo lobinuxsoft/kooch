@@ -100,6 +100,7 @@ pub struct UiTree {
     pub(crate) mask: Vec<masks::UiCut>,
     pub(crate) curve: Vec<Option<curves::UiPath>>,
     flip: Vec<u32>,
+    font_share: Vec<Option<f32>>,
     text: Vec<Option<Text>>,
     glyphs: Vec<GlyphQuad>,
     /// Physical pixels per canvas unit and atlas generation the glyphs were built for.
@@ -149,6 +150,7 @@ impl UiTree {
             mask: Vec::new(),
             curve: Vec::new(),
             flip: Vec::new(),
+            font_share: Vec::new(),
             text: Vec::new(),
             glyphs: Vec::new(),
             rastered: None,
@@ -266,6 +268,15 @@ impl UiTree {
     /// Lays the tree out in `available` logical units, unless it already is for that size and
     /// nothing changed since. Returns whether it ran.
     pub fn layout(&mut self, available: Size<AvailableSpace>, fonts: &mut UiFonts) -> bool {
+        let ran = self.layout_once(available, fonts);
+        // Resized text may move what follows it.
+        if ran && self.fit_text() {
+            self.layout_once(available, fonts);
+        }
+        ran
+    }
+
+    fn layout_once(&mut self, available: Size<AvailableSpace>, fonts: &mut UiFonts) -> bool {
         let key = Vec2::new(space_key(available.width), space_key(available.height));
         if self.taffy.is_empty() {
             return false;
@@ -497,6 +508,7 @@ impl UiTree {
         self.mask.push(masks::UiCut::default());
         self.curve.push(None);
         self.flip.push(0);
+        self.font_share.push(None);
         self.text.push(None);
         self.culled.push(false);
         index
@@ -569,6 +581,7 @@ fn space_key(space: AvailableSpace) -> f32 {
 }
 
 pub(crate) mod curves;
+mod fit;
 pub(crate) mod flips;
 mod instances;
 pub(crate) mod masks;

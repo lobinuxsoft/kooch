@@ -254,7 +254,12 @@ every rule of the sheet, as in CSS. `var()` and `url()` images belong in the she
 ```
 
 **Units.** `px` is a canvas unit — the screen is 1080 of them tall, as in [UI](./ui.md) — and `%`
-is of the parent. Nothing else.
+is of the parent. Nothing else. So `px` follows the screen's height, and a width in `%` its width: a
+node sized `%` on both axes changes shape with the aspect ratio. `height: 30%; aspect-ratio: 16 / 9`
+holds it, with the other side left `auto`.
+
+`font-size: 50%` is half the parent's height, so text follows its box when that resizes. The parent
+needs a height of its own: one sized by the text it holds has nothing to follow.
 
 **Selectors.** Element (`slider`), class (`.card`), name (`#label`), the descendant combinator (a
 space), and the states `:hover`, `:active`, `:focus`, `:checked`, `:disabled`. Specificity and

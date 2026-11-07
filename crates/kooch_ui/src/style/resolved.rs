@@ -13,6 +13,8 @@ pub struct ResolvedStyle {
     pub paint: Paint,
     pub font_family: Option<Box<str>>,
     pub font_size: Option<f32>,
+    /// Its text as a share of the parent's height, over `font_size`.
+    pub font_share: Option<f32>,
     /// The `kind: ui` shader; `None` when unset or a path no asset answers.
     pub material: Option<kooch_core::Guid>,
     /// `-kooch-param-*`, each name once.
@@ -73,7 +75,12 @@ impl ResolvedStyle {
             Declaration::BorderColor(rgba) => self.paint.border = *rgba,
             Declaration::BorderRadius(radius) => self.paint.radius = *radius,
             Declaration::FontFamily(family) => self.font_family = Some(family.clone()),
-            Declaration::FontSize(size) => self.font_size = Some(*size),
+            Declaration::FontSize(size) => {
+                self.font_size = Some(*size);
+                self.font_share = None;
+            }
+            Declaration::FontShare(share) => self.font_share = Some(*share),
+            Declaration::AspectRatio(ratio) => layout.aspect_ratio = *ratio,
             Declaration::Material(material) => self.material = material.guid,
             Declaration::Param(name, value) => {
                 match self.params.iter_mut().find(|(own, _)| own == name) {

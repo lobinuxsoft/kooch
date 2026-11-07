@@ -173,6 +173,11 @@ pub const CATEGORIES: [StyleCategory; 10] = [
                 AUTO,
                 "Its height; auto fits its content, % is of its parent's",
             ),
+            prop(
+                "aspect-ratio",
+                Text,
+                "Width over height, as 16 / 9: with one side auto it keeps its shape on any screen",
+            ),
             prop("min-width", AUTO, "It never gets narrower than this"),
             prop("min-height", AUTO, "It never gets shorter than this"),
             prop("max-width", AUTO, "It never gets wider than this"),
@@ -238,7 +243,11 @@ pub const CATEGORIES: [StyleCategory; 10] = [
                 Font,
                 "A family of the engine or the project; passes down",
             ),
-            prop("font-size", Px, "Passes down"),
+            prop(
+                "font-size",
+                FIXED,
+                "Passes down; % is of its parent's height, so the text follows the box",
+            ),
         ],
     },
     StyleCategory {

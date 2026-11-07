@@ -129,6 +129,7 @@ fn inherited(parent: &ResolvedStyle) -> ResolvedStyle {
     style.paint.text = parent.paint.text;
     style.font_family.clone_from(&parent.font_family);
     style.font_size = parent.font_size;
+    style.font_share = parent.font_share;
     style
 }
 
