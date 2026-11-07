@@ -1,4 +1,4 @@
-//! PNG / JPEG image loader implementing [`AssetLoader<Image>`].
+//! PNG / JPEG / SVG image loader implementing [`AssetLoader<Image>`].
 
 use kooch_core::asset_loader::{AssetError, AssetLoader, AssetResult, LoadContext};
 use serde::{Deserialize, Serialize};
@@ -70,17 +70,25 @@ impl Default for ImageLoader {
 
 impl AssetLoader<Image> for ImageLoader {
     fn extensions(&self) -> &[&'static str] {
-        &["png", "jpg", "jpeg"]
+        &["png", "jpg", "jpeg", "svg"]
     }
 
     fn load(&self, bytes: &[u8], ctx: &mut LoadContext<'_>) -> AssetResult<Image> {
-        let dynamic = image::load_from_memory(bytes)
-            .map_err(|e| AssetError::Loader(Box::new(ImageDecodeError(e))))?;
-        // Normalize to RGBA8 — branch-free downstream upload.
-        let rgba = dynamic.to_rgba8();
-        let (width, height) = rgba.dimensions();
+        // An SVG as a texture is drawn at the size it declares; the UI draws it at its own (#1700).
+        let (rgba, width, height) = if kooch_core::svg::is_svg(ctx.path) {
+            let raster = kooch_core::svg::rasterize(bytes, None)
+                .map_err(|e| AssetError::Loader(e.into()))?;
+            (raster.rgba, raster.width, raster.height)
+        } else {
+            let dynamic = image::load_from_memory(bytes)
+                .map_err(|e| AssetError::Loader(Box::new(ImageDecodeError(e))))?;
+            // Normalize to RGBA8 — branch-free downstream upload.
+            let rgba = dynamic.to_rgba8();
+            let (width, height) = rgba.dimensions();
+            (rgba.into_raw(), width, height)
+        };
         let import: ImageImport = ctx.import();
-        let image = Image::from_rgba8(rgba.into_raw(), width, height, self.format);
+        let image = Image::from_rgba8(rgba, width, height, self.format);
         Ok(if import.mipmaps {
             image
         } else {

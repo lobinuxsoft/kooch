@@ -19,6 +19,7 @@ glam.workspace = true
 pollster.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+resvg.workspace = true
 
 # The profiling facade (#785). No backend is selected here: with none of
 # `profiling`'s `profile-with-*` features on, every `scope!` below expands
