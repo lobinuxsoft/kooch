@@ -339,14 +339,18 @@ fn read_sheet(
         }
         None => UiStyleSheet::parse(DEFAULT_SHEET),
     };
-    // The controls' look first: a tie of specificity goes to the later rule, the document's.
+    Ok(over_controls(sheet))
+}
+
+/// The controls' look first: a tie of specificity goes to the later rule, the document's.
+pub(crate) fn over_controls(sheet: UiStyleSheet) -> UiStyleSheet {
     let mut base = UiStyleSheet::parse(CONTROLS_SHEET);
     base.rules.extend(sheet.rules);
     base.warnings = sheet.warnings;
-    Ok(base)
+    base
 }
 
-const DEFAULT_SHEET: &str = include_str!("default.kcss");
+pub(crate) const DEFAULT_SHEET: &str = include_str!("default.kcss");
 const CONTROLS_SHEET: &str = include_str!("controls.kcss");
 
 /// The engine's `assets/` while it is a tree of its own (the editor, Play); a build merges it into

@@ -71,6 +71,8 @@ pub struct Element {
     pub mask: Option<kooch_core::Guid>,
     /// The inline `style`'s `-kooch-material`, resolved the same way.
     pub material: Option<kooch_core::Guid>,
+    /// The sheet of the template this came from, when it names one; `None` wears the document's.
+    pub sheet: Option<std::sync::Arc<crate::style::UiStyleSheet>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -155,6 +157,7 @@ fn push(
         image: None,
         mask: None,
         material: None,
+        sheet: None,
     };
     for attribute in node.attributes() {
         let local = attribute.name();

@@ -10,7 +10,7 @@ use kooch_ui::source::ElementKind;
 
 use crate::icons;
 use crate::panels::inspector::AssetCatalogEntry;
-use crate::ui_builder::{SOURCE_TYPE, UiBuilder};
+use crate::ui_builder::{SHEET_TYPE, SOURCE_TYPE, UiBuilder};
 
 pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEntry]) {
     let Some(origin) = builder.selected else {
@@ -213,7 +213,24 @@ fn typed_row(
             }
             unset(ui, builder, origin, spec.key, value.is_some());
         }
-        AttributeKind::Template => template_row(ui, builder, origin, spec, value, catalog),
+        AttributeKind::Template => {
+            file_row(ui, builder, origin, spec, value, catalog, SOURCE_TYPE);
+        }
+        AttributeKind::Sheet => {
+            let default = value.as_deref() == Some(ENGINE_SHEET);
+            file_row(ui, builder, origin, spec, value, catalog, SHEET_TYPE);
+            ui.end_row();
+            ui.label("");
+            let button = egui::Button::new("Engine's default sheet").selected(default);
+            let hint = "Wears the sheet a document with no Style wears";
+            if super::fields::fill(ui, button)
+                .on_hover_text(hint)
+                .clicked()
+            {
+                builder.set_attribute(origin, spec.key, ENGINE_SHEET);
+            }
+            super::fields::no_reset(ui);
+        }
         AttributeKind::Action => {
             super::actions::row(ui, builder, origin, spec, value, catalog);
             return;
@@ -248,29 +265,33 @@ fn text_row(
     ui.end_row();
 }
 
-/// A `.kxml` of the project through the editor's asset picker, written relative to the file.
-fn template_row(
+/// What `sheet` reads as the engine's own.
+const ENGINE_SHEET: &str = "default";
+
+/// A file of the project through the editor's asset picker, written relative to the file.
+fn file_row(
     ui: &mut egui::Ui,
     builder: &mut UiBuilder,
     origin: u32,
     spec: &AttributeSpec,
     value: Option<String>,
     catalog: &[AssetCatalogEntry],
+    asset_type: &str,
 ) {
     label(ui, spec.key, spec.hint, value.is_some());
     let written = |path: &Path| template_src(builder, path);
     let current = value.as_deref().and_then(|value| {
         catalog
             .iter()
-            .find(|entry| entry.type_name == SOURCE_TYPE && written(&entry.path) == value)
+            .find(|entry| entry.type_name == asset_type && written(&entry.path) == value)
             .map(|entry| entry.guid)
     });
     let picked = super::fields::wide(ui, |ui| {
         crate::widgets::asset_picker(
             ui,
-            ("ui_builder_src", origin),
+            ("ui_builder_file", origin, spec.key),
             current,
-            SOURCE_TYPE,
+            asset_type,
             catalog,
             Some(builder.source),
         )

@@ -78,6 +78,7 @@ pub(crate) fn with_parts(source: &UiSource) -> UiSource {
                 image: None,
                 mask: None,
                 material: None,
+                sheet: element.sheet.clone(),
             });
         }
     }

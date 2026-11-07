@@ -1,5 +1,7 @@
 //! Which rules reach which element, and in what order.
 
+use std::sync::Arc;
+
 use taffy::Size;
 use taffy::prelude::percent;
 
@@ -22,7 +24,10 @@ pub fn resolve(
             NO_PARENT => root(),
             parent => inherited(&resolved[parent as usize]),
         };
-        if let Some(sheet) = sheet {
+        if let Some(own) = entered(&source.elements, index) {
+            style = under_ui(own, style);
+        }
+        if let Some(sheet) = element.sheet.as_deref().or(sheet) {
             matched.clear();
             for (rule, entry) in sheet.rules.iter().enumerate() {
                 let best = entry
@@ -96,6 +101,29 @@ fn root() -> ResolvedStyle {
 }
 
 /// `color` and `font-*` pass down; nothing else does.
+/// The sheet of the template `index` is the root of, when it has its own.
+fn entered(elements: &[Element], index: usize) -> Option<&UiStyleSheet> {
+    let own = elements[index].sheet.as_ref()?;
+    let above = elements.get(elements[index].parent as usize);
+    let same = above.and_then(|above| above.sheet.as_ref());
+    (!same.is_some_and(|same| Arc::ptr_eq(same, own))).then_some(&**own)
+}
+
+/// What the sheet's `ui` rules hand down: splicing removed the template's `<ui>`, not what it set.
+fn under_ui(sheet: &UiStyleSheet, mut style: ResolvedStyle) -> ResolvedStyle {
+    let on_ui = |selector: &Selector| matches!(&selector.0[..], [only] if only.element.as_deref() == Some("ui"));
+    for rule in sheet
+        .rules
+        .iter()
+        .filter(|rule| rule.selectors.iter().any(on_ui))
+    {
+        for declaration in &rule.declarations {
+            style.apply(declaration);
+        }
+    }
+    inherited(&style)
+}
+
 fn inherited(parent: &ResolvedStyle) -> ResolvedStyle {
     let mut style = ResolvedStyle::default();
     style.paint.text = parent.paint.text;

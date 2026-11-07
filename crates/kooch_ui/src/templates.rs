@@ -2,12 +2,13 @@
 //! the build and focus see one flat document and never a template.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use kooch_core::Guid;
 
-use crate::documents::normalise;
+use crate::documents::{DEFAULT_SHEET, normalise, over_controls};
 use crate::source::{Element, ElementKind, NO_PARENT, UiSource};
-use crate::style::{Declaration, ImageRef, UiStyleSheet};
+use crate::style::{Declaration, ImageRef, UiStyleSheet, warn_skipped};
 
 /// The asset at a path, for an inline `background-image`.
 pub(crate) type ImageOf<'a> = &'a dyn Fn(&Path) -> Option<Guid>;
@@ -49,11 +50,42 @@ pub(crate) fn expand(
         files.push(path.clone());
         let inner =
             UiSource::parse(&read(&path)?).map_err(|e| format!("{}: {e}", path.display()))?;
+        let sheet = own_sheet(&inner, &path, read, files, image_of)?;
         let inner = expand(inner, &path, read, files, image_of, depth + 1)?;
-        splice(inner, &element, parent, &mut out, at, image_of)
+        splice(inner, &element, parent, sheet, &mut out, at, image_of)
             .map_err(|e| format!("{}: {e}", path.display()))?;
     }
     Ok(UiSource { elements: out })
+}
+
+/// The sheet a template's `<ui sheet>` names, so it looks the same wherever it is used. `default`
+/// is the engine's; a path reads beside the template.
+fn own_sheet(
+    template: &UiSource,
+    at: &Path,
+    read: &mut dyn FnMut(&Path) -> Result<String, String>,
+    files: &mut Vec<PathBuf>,
+    image_of: ImageOf,
+) -> Result<Option<Arc<UiStyleSheet>>, String> {
+    let named = template
+        .elements
+        .first()
+        .and_then(|ui| attribute(ui, "sheet"));
+    let Some(named) = named.filter(|named| !named.is_empty()) else {
+        return Ok(None);
+    };
+    if named == "default" {
+        let sheet = UiStyleSheet::parse(DEFAULT_SHEET);
+        return Ok(Some(Arc::new(over_controls(sheet))));
+    }
+    let folder = at.parent().unwrap_or(Path::new(""));
+    let path = normalise(&folder.join(named));
+    files.push(path.clone());
+    let mut sheet = UiStyleSheet::parse(&read(&path)?);
+    warn_skipped(&path, &sheet);
+    let beside = path.parent().unwrap_or(Path::new(""));
+    sheet.resolve_images(|url| image_of(&normalise(&beside.join(url))));
+    Ok(Some(Arc::new(over_controls(sheet))))
 }
 
 /// The template's one element under `<ui>` becomes the instance root, under `parent`; the
@@ -62,6 +94,7 @@ fn splice(
     inner: UiSource,
     with: &Element,
     parent: u32,
+    sheet: Option<Arc<UiStyleSheet>>,
     out: &mut Vec<Element>,
     at: &Path,
     image_of: ImageOf,
@@ -74,6 +107,8 @@ fn splice(
     // Skipping the `<ui>` moves every index down by one.
     for mut element in inner.elements.into_iter().skip(1) {
         element.origin = with.origin;
+        // A template inside this one that names its own keeps it.
+        element.sheet = element.sheet.or_else(|| sheet.clone());
         element.parent = match element.parent {
             0 => parent,
             own => base + own - 1,
