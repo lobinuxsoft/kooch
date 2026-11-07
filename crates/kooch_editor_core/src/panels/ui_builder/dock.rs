@@ -1,6 +1,8 @@
 //! The UI Builder's panes as a dock of their own, inside its tab: dividers resize them, tabs move
 //! them, and each clips what does not fit, as the rest of the editor does.
 
+use std::path::PathBuf;
+
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use serde::{Deserialize, Serialize};
 
@@ -74,11 +76,40 @@ fn layout() -> DockState<Pane> {
     dock
 }
 
+/// Beside the editor's own layout.
+fn saved_path() -> Option<PathBuf> {
+    Some(crate::layout::layout_path()?.with_file_name("ui_builder_layout.ron"))
+}
+
+/// The arrangement of the last session; anything unreadable is the default's business.
+fn saved() -> Option<DockState<Pane>> {
+    let text = std::fs::read_to_string(saved_path()?).ok()?;
+    ron::from_str(&text)
+        .inspect_err(|error| tracing::warn!(%error, "could not read the UI Builder's layout"))
+        .ok()
+}
+
+fn save(text: &str) {
+    let Some(path) = saved_path() else {
+        return;
+    };
+    let written = path
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| std::fs::write(&path, text));
+    if let Err(error) = written {
+        tracing::warn!(file = %path.display(), %error, "could not save the UI Builder's layout");
+    }
+}
+
 pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEntry]) {
-    // In egui's memory, not the builder: opening another file keeps the arrangement.
+    // In egui's memory, not the builder: opening another file keeps the arrangement. The editor
+    // does not save that memory, so the disk carries it between sessions.
     let id = egui::Id::new("ui_builder_dock");
+    let written_id = id.with("written");
     let mut dock = ui
-        .data_mut(|data| data.get_persisted::<DockState<Pane>>(id))
+        .data_mut(|data| data.get_temp::<DockState<Pane>>(id))
+        .or_else(saved)
         .unwrap_or_else(layout);
     DockArea::new(&mut dock)
         .id(id)
@@ -88,5 +119,16 @@ pub(super) fn draw(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetC
         .show_leaf_close_all_buttons(false)
         .show_leaf_collapse_buttons(false)
         .show_inside(ui, &mut Panes { builder, catalog });
-    ui.data_mut(|data| data.insert_persisted(id, dock));
+    // Once the pointer lets go: a dragged divider is one write, not one per frame.
+    if !ui.input(|input| input.pointer.any_down())
+        && let Ok(text) = ron::ser::to_string(&dock)
+        && ui
+            .data_mut(|data| data.get_temp::<String>(written_id))
+            .as_ref()
+            != Some(&text)
+    {
+        save(&text);
+        ui.data_mut(|data| data.insert_temp(written_id, text));
+    }
+    ui.data_mut(|data| data.insert_temp(id, dock));
 }
