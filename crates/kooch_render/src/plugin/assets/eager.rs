@@ -38,7 +38,7 @@ pub fn eager_import_with(resources: &mut Resources, root: &Path) {
                 server.identify::<MeshletMesh>(path, resources);
                 counts.meshlet += 1;
             }
-            "png" | "jpg" | "jpeg" => {
+            "png" | "jpg" | "jpeg" | "svg" => {
                 server.identify::<Image>(path, resources);
                 counts.image += 1;
             }
@@ -112,6 +112,7 @@ fn walk_collect(dir: &Path, out: &mut Vec<PathBuf>) {
             || lower.ends_with(".png")
             || lower.ends_with(".jpg")
             || lower.ends_with(".jpeg")
+            || lower.ends_with(".svg")
             || lower.ends_with(&format!(".{}", crate::material::MATERIAL_EXTENSION));
         if typed {
             out.push(path);

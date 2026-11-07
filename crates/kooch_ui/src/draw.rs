@@ -10,8 +10,8 @@ use kooch_ecs::{
 
 use crate::layout::CANVAS_HEIGHT;
 use crate::{
-    FLIP_X, FLIP_Y, GlyphAtlas, MODE_OVERLAY, UiDocument, UiImage, UiNode, UiShaders, UiTree,
-    UiTrees,
+    AtlasImage, FLIP_X, FLIP_Y, GlyphAtlas, MODE_OVERLAY, UiDocument, UiImage, UiNode, UiShaders,
+    UiTree, UiTrees,
 };
 
 /// Bounds of what the viewport cuts where it lands. Finite: `UNCLIPPED` would not interpolate.
@@ -163,13 +163,17 @@ fn push_tree(
         });
         let image = tree
             .image(node)
-            .and_then(|image| Some((image, atlas.image(image.guid)?.rect)));
+            .zip(tree.rect(node))
+            .and_then(|(image, rect)| {
+                let shown = crate::images::shown_size(rect.size, scale);
+                Some((image, atlas.image(image.guid, shown)?))
+            });
         let plain = shaded.is_none();
         if let Some(shader) = shaded {
             // One quad over the whole rect: its uv has to span the node, so a slice does not apply.
             let min = (rect.min * scale).round();
             let max = ((rect.min + rect.size) * scale).round();
-            let [u0, v0, u1, v1] = image.map_or([0; 4], |(_, rect)| rect);
+            let [u0, v0, u1, v1] = image.map_or([0; 4], |(_, packed)| packed.rect);
             let quad = UiQuad {
                 min: min.into(),
                 size: (max - min).into(),
@@ -240,7 +244,11 @@ fn push_masks(
     let mut own = around;
     let image = tree
         .mask(node)
-        .and_then(|mask| Some((mask, atlas.image(mask.guid)?)));
+        .zip(tree.rect(node))
+        .and_then(|(mask, rect)| {
+            let shown = crate::images::shown_size(rect.size, scale);
+            Some((mask, atlas.image(mask.guid, shown)?))
+        });
     let fill_from = tree.fill_from(node);
     if let (true, Some(rect), Some(paint)) = (
         image.is_some() || fill_from != 0,
@@ -437,28 +445,29 @@ fn push_thumb(
     }
 }
 
-/// Nine quads when sliced, so the corners keep their texels' size and the middle stretches; one
-/// when not. A slice wider than the rect is squeezed to fit, as CSS's `border-image` does.
+/// Nine quads when sliced, so the corners keep their size and the middle stretches; one when not.
+/// A slice wider than the rect is squeezed to fit, as CSS's `border-image` does. The slice is in
+/// the file's units, which `density` turns into texels.
 fn push_image(
     image: UiImage,
-    [u0, v0, u1, v1]: [u32; 4],
+    packed: AtlasImage,
     min: Vec2,
     max: Vec2,
     scale: f32,
     screen: [f32; 4],
     out: &mut Vec<UiQuad>,
 ) {
+    let [u0, v0, u1, v1] = packed.rect;
+    let [dx, dy] = packed.density.map(|d| d.max(f32::EPSILON));
     let [top, right, bottom, left] = image.slice.map(|edge| edge.max(0.0));
-    let texel_w = (u1 - u0) as f32;
-    let texel_h = (v1 - v0) as f32;
-    let (left, right) = squeeze(left, right, texel_w);
-    let (top, bottom) = squeeze(top, bottom, texel_h);
+    let (left, right) = squeeze(left, right, (u1 - u0) as f32 / dx);
+    let (top, bottom) = squeeze(top, bottom, (v1 - v0) as f32 / dy);
     let (screen_left, screen_right) = squeeze(left * scale, right * scale, max.x - min.x);
     let (screen_top, screen_bottom) = squeeze(top * scale, bottom * scale, max.y - min.y);
     let xs = [min.x, min.x + screen_left, max.x - screen_right, max.x];
     let ys = [min.y, min.y + screen_top, max.y - screen_bottom, max.y];
-    let us = [u0, u0 + left as u32, u1 - right as u32, u1];
-    let vs = [v0, v0 + top as u32, v1 - bottom as u32, v1];
+    let us = [u0, u0 + (left * dx) as u32, u1 - (right * dx) as u32, u1];
+    let vs = [v0, v0 + (top * dy) as u32, v1 - (bottom * dy) as u32, v1];
     for row in 0..3 {
         for column in 0..3 {
             let size = [xs[column + 1] - xs[column], ys[row + 1] - ys[row]];

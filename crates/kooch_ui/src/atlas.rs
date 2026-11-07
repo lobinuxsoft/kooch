@@ -16,6 +16,28 @@ const SUBPIXEL: f32 = 4.0;
 
 /// The atlas doubles up to this before it clears instead: 64 MiB of RGBA8 at the top.
 const MAX_SIDE: u32 = 4096;
+/// The largest size class: a raster whose longer side is half the atlas.
+pub(crate) const TOP_CLASS: u8 = 8;
+
+/// The size class of `shown` physical pixels: 1 holds a longer side up to 16, each next one twice
+/// that, up to [`TOP_CLASS`]. 0 is an image drawn at its own size, or a size not known yet.
+pub(crate) fn size_class(shown: [u32; 2]) -> u8 {
+    match shown[0].max(shown[1]) {
+        0 => 0,
+        side => {
+            (side
+                .clamp(16, class_side(TOP_CLASS))
+                .next_power_of_two()
+                .trailing_zeros()
+                - 3) as u8
+        }
+    }
+}
+
+/// The longer side of a raster of `class`.
+pub(crate) fn class_side(class: u8) -> u32 {
+    1 << (u32::from(class.clamp(1, TOP_CLASS)) + 3)
+}
 
 /// What makes two rasterized glyphs the same bitmap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -44,6 +66,8 @@ pub struct AtlasGlyph {
 pub struct AtlasImage {
     pub rect: [u32; 4],
     pub modified: SystemTime,
+    /// Texels per unit of the file, per axis: 1 for a PNG; an SVG is drawn at the size it shows.
+    pub density: [f32; 2],
 }
 
 /// The atlas: RGBA8 pixels, what is where, and what changed since the last upload.
@@ -53,7 +77,8 @@ pub struct GlyphAtlas {
     pixels: Vec<u8>,
     /// `None`: a glyph with no ink (a space). Cached too, so it is not rasterized every frame.
     glyphs: HashMap<GlyphKey, Option<AtlasGlyph>>,
-    images: HashMap<Guid, (etagere::AllocId, AtlasImage)>,
+    /// By asset and size class: an SVG is drawn once per class it shows at.
+    images: HashMap<(Guid, u8), (etagere::AllocId, AtlasImage)>,
     /// Bounds of what was written since [`take_dirty`](Self::take_dirty), `[x0, y0, x1, y1]`.
     dirty: Option<[u32; 4]>,
     /// Bumped when a full atlas is cleared: every quad built before points at freed space.
@@ -155,23 +180,38 @@ impl GlyphAtlas {
         Some(glyph)
     }
 
-    pub fn image(&self, guid: Guid) -> Option<AtlasImage> {
-        self.images.get(&guid).map(|(_, image)| *image)
+    /// The mtime the raster of `guid` in `class` was read at, if there is one.
+    pub(crate) fn packed(&self, guid: Guid, class: u8) -> Option<SystemTime> {
+        self.images
+            .get(&(guid, class))
+            .map(|(_, image)| image.modified)
+    }
+
+    /// What draws `guid` at `shown` physical pixels: its own size class, its only raster, or the
+    /// nearest class packed so far.
+    pub fn image(&self, guid: Guid, shown: [u32; 2]) -> Option<AtlasImage> {
+        let class = size_class(shown);
+        let get = |class: u8| self.images.get(&(guid, class)).map(|(_, image)| *image);
+        get(class).or_else(|| get(0)).or_else(|| {
+            let above = class.saturating_add(1)..=TOP_CLASS;
+            above.chain((1..class).rev()).find_map(get)
+        })
     }
 
     /// Packs an RGBA8 image, replacing what `guid` had. Its edge is repeated one texel out, so
     /// filtering at the border does not pull in a neighbour.
     pub(crate) fn insert_image(
         &mut self,
-        guid: Guid,
+        (guid, class): (Guid, u8),
         modified: SystemTime,
         (w, h): (u32, u32),
         rgba: &[u8],
+        density: [f32; 2],
     ) -> Option<AtlasImage> {
         if w == 0 || h == 0 {
             return None;
         }
-        if let Some((id, _)) = self.images.remove(&guid) {
+        if let Some((id, _)) = self.images.remove(&(guid, class)) {
             self.allocator.deallocate(id);
         }
         let slot = self.allocate(w + 2, h + 2)?;
@@ -189,8 +229,9 @@ impl GlyphAtlas {
         let image = AtlasImage {
             rect: [x0 + 1, y0 + 1, x0 + 1 + w, y0 + 1 + h],
             modified,
+            density,
         };
-        self.images.insert(guid, (slot.id, image));
+        self.images.insert((guid, class), (slot.id, image));
         Some(image)
     }
 

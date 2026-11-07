@@ -318,7 +318,7 @@ base sheet under every document's own gives all of them a look, which the docume
 | `border-radius` | length |
 | `font-family` | `"Inter"`, `"Fira Code"`, or the family of a `.ttf`/`.otf` in the project |
 | `font-size` | length |
-| `background-image` | `url("button.png")` relative to the file writing it (the `.kcss`, or the `.kxml` for an inline `style`), PNG or JPEG; `none`. An engine image is written as if it sat in the project's `assets/`, where a build puts it: `url("../textures/prototype/dark/dark_texture_01.png")` from `assets/ui/` |
+| `background-image` | `url("button.png")` relative to the file writing it (the `.kcss`, or the `.kxml` for an inline `style`), PNG, JPEG or SVG; `none`. An engine image is written as if it sat in the project's `assets/`, where a build puts it: `url("../textures/prototype/dark/dark_texture_01.png")` from `assets/ui/` |
 | `-kooch-mask` | `url("shape.png")`, as `background-image`; `none`. Its alpha cuts the node and its children |
 | `-kooch-mask-mode` | `alpha`, or `luminance`: black cuts too, for an image with no transparency |
 | `-kooch-slice` | length, one to four: image texels kept unstretched at each edge |
@@ -338,6 +338,15 @@ the edges and middle stretch. A state rule can swap it, which is how a button ge
 
 Saving the PNG shows the change without Play. A node's own image is not clipped to its
 `border-radius`: to round a picture, put it inside a node with `overflow: hidden`.
+
+**SVG.** An `.svg` is drawn at the size it shows on screen, so an icon stays sharp on a handheld
+and on a 4K monitor alike. It is drawn once per size class (16, 32, 64… up to 2048 pixels on its
+longer side), and each node uses the class just above its size, so the same icon at 24 and at 480
+pixels is two drawings. A transform does not redraw it: to animate one, lay the node out at its
+largest size and animate `scale` below 1. A
+`-kooch-slice` on an SVG is in the file's own units. Text inside an SVG and images embedded in it
+are not drawn: convert text to paths before exporting. As a material texture, an SVG is drawn once
+at the size it declares.
 
 **Masks.** `overflow: hidden` on a node with `border-radius` cuts its children to the rounded shape.
 `-kooch-mask` cuts by the alpha of an image, stretched to the node's box, which is how a bar fill

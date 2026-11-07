@@ -1,13 +1,18 @@
-//! `background-image` (#1708): which asset a node shows, and decoding it into the atlas.
+//! `background-image` (#1708): which asset a node shows, and decoding it into the atlas; an SVG
+//! drawn at the size it shows (#1700).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use kooch_core::Guid;
 use kooch_core::asset_database::AssetDatabase;
 use kooch_core::asset_loader::AssetServer;
 use kooch_core::resource::Resources;
 
+use kooch_ecs::ViewSize;
+
+use crate::atlas::{TOP_CLASS, class_side, size_class};
 use crate::documents::{path_of, read_bytes, stamp};
+use crate::layout::CANVAS_HEIGHT;
 use crate::{GlyphAtlas, UiNode, UiTree, UiTrees};
 
 /// A node's image: the asset, the texels each edge keeps unstretched, and its tint.
@@ -32,16 +37,15 @@ impl UiTree {
 }
 
 /// Packs every image a tree shows that the atlas lacks, or holds at an older mtime: editing the
-/// PNG shows without Play. A stat per image per frame, no read.
+/// PNG shows without Play. A stat per image per frame, no read. An SVG is drawn once per size
+/// class it shows at, so each node filters it down at most twice.
 pub fn load_images(resources: &mut Resources) {
-    let wanted: HashSet<Guid> = resources
-        .get::<UiTrees>()
-        .map(|trees| {
-            let mut wanted = HashSet::new();
-            trees.for_each(|tree| wanted.extend(shown(tree)));
-            wanted
-        })
-        .unwrap_or_default();
+    let physical = resources.get::<ViewSize>().copied().unwrap_or_default().0;
+    let scale = physical.y.max(1) as f32 / CANVAS_HEIGHT;
+    let mut wanted = Wanted::new();
+    if let Some(trees) = resources.get::<UiTrees>() {
+        trees.for_each(|tree| want(tree, scale, &mut wanted));
+    }
     if wanted.is_empty() {
         return;
     }
@@ -50,7 +54,7 @@ pub fn load_images(resources: &mut Resources) {
     };
     let mut server = resources.remove::<AssetServer>();
     if let Some(database) = resources.get::<AssetDatabase>() {
-        pack(wanted, database, server.as_mut(), &mut atlas);
+        pack(wanted, scale, database, server.as_mut(), &mut atlas);
     }
     if let Some(server) = server {
         resources.insert(server);
@@ -58,59 +62,128 @@ pub fn load_images(resources: &mut Resources) {
     resources.insert(atlas);
 }
 
-/// [`load_images`] for one tree drawn with an atlas of its own, as the UI Builder's canvas is.
+/// [`load_images`] for one tree drawn with an atlas of its own at `scale` pixels per canvas unit,
+/// as the UI Builder's canvas is.
 pub fn load_tree_images(
     tree: &UiTree,
+    scale: f32,
     database: &AssetDatabase,
     server: Option<&mut AssetServer>,
     atlas: &mut GlyphAtlas,
 ) {
-    let wanted: HashSet<Guid> = shown(tree).collect();
-    pack(wanted, database, server, atlas);
+    let mut wanted = Wanted::new();
+    want(tree, scale, &mut wanted);
+    pack(wanted, scale, database, server, atlas);
 }
 
-/// Every image `tree` needs in the atlas: painted, or cutting by its alpha.
-fn shown(tree: &UiTree) -> impl Iterator<Item = Guid> + '_ {
-    let images = tree.image.iter().flatten().map(|image| image.guid);
-    images.chain(tree.mask.iter().filter_map(|cut| Some(cut.image?.guid)))
+/// Each image wanted, and the size classes nodes show it at; 0 for a node not laid out yet.
+type Wanted = HashMap<Guid, HashSet<u8>>;
+
+/// Every image `tree` needs in the atlas, painted or cutting by its alpha.
+fn want(tree: &UiTree, scale: f32, wanted: &mut Wanted) {
+    let images = tree.image.iter().map(|image| image.map(|image| image.guid));
+    let cuts = tree
+        .mask
+        .iter()
+        .map(|cut| cut.image.map(|image| image.guid));
+    for (index, guid) in images.enumerate().chain(cuts.enumerate()) {
+        let Some(guid) = guid else {
+            continue;
+        };
+        let shown = tree
+            .rect(UiNode(index as u32))
+            .map_or([0, 0], |rect| shown_size(rect.size, scale));
+        wanted.entry(guid).or_default().insert(size_class(shown));
+    }
+}
+
+/// A node's size in whole physical pixels, which picks its raster.
+pub(crate) fn shown_size(size: glam::Vec2, scale: f32) -> [u32; 2] {
+    (size * scale)
+        .ceil()
+        .max(glam::Vec2::ZERO)
+        .as_uvec2()
+        .into()
 }
 
 fn pack(
-    wanted: HashSet<Guid>,
+    wanted: Wanted,
+    scale: f32,
     database: &AssetDatabase,
     mut server: Option<&mut AssetServer>,
     atlas: &mut GlyphAtlas,
 ) {
-    for guid in wanted {
+    for (guid, classes) in wanted {
         let modified = stamp(database, guid, None, &[]);
-        if atlas
-            .image(guid)
-            .is_some_and(|image| image.modified == modified)
-        {
+        let path = match path_of(database, guid) {
+            Ok(path) => path,
+            Err(error) => {
+                tracing::warn!("UI image not loaded: {error}");
+                continue;
+            }
+        };
+        let vector = kooch_core::svg::is_svg(&path);
+        let classes: Vec<u8> = match vector {
+            true => classes.into_iter().collect(),
+            false => vec![0],
+        };
+        let stale: Vec<u8> = classes
+            .into_iter()
+            .filter(|&class| atlas.packed(guid, class) != Some(modified))
+            .collect();
+        if stale.is_empty() {
             continue;
         }
-        match decode(database, server.as_deref_mut(), guid) {
-            Ok(image) => {
-                if atlas
-                    .insert_image(guid, modified, image.dimensions(), image.as_raw())
-                    .is_none()
-                {
-                    tracing::warn!("UI image {guid} does not fit the atlas");
-                }
+        let bytes = match read_bytes(server.as_deref_mut(), &path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::warn!("UI image not loaded: {}: {error}", path.display());
+                continue;
             }
-            Err(error) => tracing::warn!("UI image not loaded: {error}"),
+        };
+        for class in stale {
+            let decoded = match vector {
+                true => raster(&bytes, class, scale),
+                false => decode(&bytes),
+            };
+            let inserted = decoded.map(|(rgba, size, density)| {
+                atlas.insert_image((guid, class), modified, size, &rgba, density)
+            });
+            match inserted {
+                Ok(Some(_)) => {}
+                Ok(None) => tracing::warn!("UI image {guid} does not fit the atlas"),
+                Err(error) => tracing::warn!("UI image not loaded: {}: {error}", path.display()),
+            }
         }
     }
 }
 
-fn decode(
-    database: &AssetDatabase,
-    server: Option<&mut AssetServer>,
-    guid: Guid,
-) -> Result<image::RgbaImage, String> {
-    let path = path_of(database, guid)?;
-    let bytes = read_bytes(server, &path)?;
-    image::load_from_memory(&bytes)
-        .map(|image| image.to_rgba8())
-        .map_err(|e| format!("{}: {e}", path.display()))
+type Decoded = (Vec<u8>, (u32, u32), [f32; 2]);
+
+fn decode(bytes: &[u8]) -> Result<Decoded, String> {
+    let rgba = image::load_from_memory(bytes)
+        .map_err(|e| e.to_string())?
+        .to_rgba8();
+    let size = rgba.dimensions();
+    Ok((rgba.into_raw(), size, [1.0; 2]))
+}
+
+/// An SVG whose longer side fills `class`; with no class yet, at its own size on screen.
+fn raster(bytes: &[u8], class: u8, scale: f32) -> Result<Decoded, String> {
+    let (w, h) = kooch_core::svg::intrinsic_size(bytes)?;
+    let longer = match class {
+        0 => (w.max(h) * scale).ceil(),
+        class => class_side(class) as f32,
+    };
+    let fit = longer.min(class_side(TOP_CLASS) as f32) / w.max(h).max(f32::EPSILON);
+    let size = (
+        (w * fit).round().max(1.0) as u32,
+        (h * fit).round().max(1.0) as u32,
+    );
+    let raster = kooch_core::svg::rasterize(bytes, Some(size))?;
+    let density = [
+        raster.width as f32 / raster.own.0,
+        raster.height as f32 / raster.own.1,
+    ];
+    Ok((raster.rgba, (raster.width, raster.height), density))
 }

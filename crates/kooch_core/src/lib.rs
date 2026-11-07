@@ -81,6 +81,7 @@ pub const CPU_SCOPES: bool = cfg!(feature = "cpu-profiler");
 
 pub mod shader_uses;
 pub mod stage;
+pub mod svg;
 pub mod system;
 pub mod time;
 pub mod window_mode;

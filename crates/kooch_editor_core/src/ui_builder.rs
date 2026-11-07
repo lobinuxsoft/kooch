@@ -210,7 +210,8 @@ impl UiBuilder {
             }
             // The canvas draws with its own atlas, which the game's `load_images` never fills.
             if let Some(tree) = self.tree.as_ref() {
-                kooch_ui::load_tree_images(tree, database, server.as_mut(), &mut self.atlas);
+                let scale = size.1.max(1) as f32 / CANVAS_HEIGHT;
+                kooch_ui::load_tree_images(tree, scale, database, server.as_mut(), &mut self.atlas);
                 kooch_ui::load_tree_shaders(tree, database, server.as_mut(), &mut self.shaders);
             }
         }
