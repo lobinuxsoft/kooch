@@ -14,6 +14,9 @@ use crate::{
     UiTrees,
 };
 
+/// Bounds of what the viewport cuts where it lands. Finite: `UNCLIPPED` would not interpolate.
+const ANYWHERE: [f32; 4] = [-1.0e6, -1.0e6, 1.0e6, 1.0e6];
+
 /// Every Overlay document, in spawn order; within one, a node's panel, image and text, parents
 /// first. World documents draw in phase 5.
 pub fn draw_documents(resources: &mut Resources) {
@@ -139,11 +142,17 @@ fn push_tree(
         ) else {
             continue;
         };
+        // The clip is tested in the layout: what moves when drawn may land on screen from off it.
+        let bounds = if curve != 0 || own_turn.1 != 0 {
+            ANYWHERE
+        } else {
+            screen
+        };
         let clip = [
-            (cut[0] * scale).max(screen[0]),
-            (cut[1] * scale).max(screen[1]),
-            (cut[2] * scale).min(screen[2]),
-            (cut[3] * scale).min(screen[3]),
+            (cut[0] * scale).max(bounds[0]),
+            (cut[1] * scale).max(bounds[1]),
+            (cut[2] * scale).min(bounds[2]),
+            (cut[3] * scale).min(bounds[3]),
         ];
         let shaded = tree.material(node).and_then(|guid| {
             let source = shaders.source(guid)?;
