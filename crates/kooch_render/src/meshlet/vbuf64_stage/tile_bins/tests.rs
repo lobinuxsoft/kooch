@@ -138,6 +138,8 @@ fn each_material_gets_its_tiles() {
         (2, 1),
         1,
         3,
+        None,
+        None,
     );
     queue.submit([encoder.finish()]);
 
@@ -182,6 +184,8 @@ fn a_second_binning_starts_clean() {
             (2, 1),
             1,
             3,
+            None,
+            None,
         )
     };
     bin(&mut encoder);
@@ -294,6 +298,8 @@ fn a_busy_screen_bins_exactly() {
             (tiles_x, tiles_y),
             1,
             256,
+            None,
+            None,
         );
         queue.submit([encoder.finish()]);
         let words = read(&device, &queue, &binned.bins);
