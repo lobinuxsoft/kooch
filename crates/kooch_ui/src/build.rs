@@ -135,7 +135,11 @@ pub(crate) fn apply(tree: &mut UiTree, node: UiNode, style: &ResolvedStyle) {
     tree.set_border_color(node, style.paint.border);
     tree.set_radius(node, style.paint.radius);
     tree.set_text_color(node, style.paint.text);
-    tree.set_text_size(node, style.font_size.unwrap_or(DEFAULT_FONT_SIZE));
+    tree.set_font_share(node, style.font_share);
+    // A share's size comes from the layout: writing one here would undo it at every restyle.
+    if style.font_share.is_none() {
+        tree.set_text_size(node, style.font_size.unwrap_or(DEFAULT_FONT_SIZE));
+    }
     if let Some(family) = &style.font_family {
         tree.set_font(node, family);
     }

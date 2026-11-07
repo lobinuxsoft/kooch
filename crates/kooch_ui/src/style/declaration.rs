@@ -60,6 +60,10 @@ pub enum Declaration {
     BorderRadius(f32),
     FontFamily(Box<str>),
     FontSize(f32),
+    /// A share of the parent's height.
+    FontShare(f32),
+    /// Width over height; `None` is `auto`.
+    AspectRatio(Option<f32>),
     /// A shader's path with `kind: ui` (#1690), relative to its `.kcss`.
     Material(ImageRef),
     /// `-kooch-param-<name>`: a value for what the material declares, lower case as CSS reads it.
@@ -153,7 +157,11 @@ pub(super) fn parse(name: &str, text: &str) -> Result<Vec<Declaration>, String> 
         "border" => border(text),
         "border-radius" => one(D::BorderRadius(px(text)?)),
         "font-family" => one(D::FontFamily(family(text)?)),
-        "font-size" => one(D::FontSize(px(text)?)),
+        "font-size" => match text.trim().strip_suffix('%') {
+            Some(share) => one(D::FontShare(positive(share)? / 100.0)),
+            None => one(D::FontSize(px(text)?)),
+        },
+        "aspect-ratio" => one(D::AspectRatio(aspect(text)?)),
         "-kooch-material" => one(D::Material(ImageRef {
             url: quoted(text)?,
             guid: None,
@@ -272,6 +280,28 @@ fn number(text: &str) -> Result<f32, String> {
     text.trim()
         .parse()
         .map_err(|_| format!("`{text}` is not a number"))
+}
+
+/// A finite number above zero.
+fn positive(text: &str) -> Result<f32, String> {
+    let value = number(text)?;
+    if !(value > 0.0) || !value.is_finite() {
+        return Err(format!("`{text}` is not above zero"));
+    }
+    Ok(value)
+}
+
+/// `auto`, `1.5` or `16 / 9`.
+fn aspect(text: &str) -> Result<Option<f32>, String> {
+    if text.trim() == "auto" {
+        return Ok(None);
+    }
+    let (width, height) = text.split_once('/').unwrap_or((text, "1"));
+    let ratio = positive(width)? / positive(height)?;
+    if !ratio.is_finite() {
+        return Err(format!("`{text}` is not a ratio"));
+    }
+    Ok(Some(ratio))
 }
 
 /// A length in `px`: canvas units, not physical pixels.
