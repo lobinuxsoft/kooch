@@ -184,7 +184,8 @@ impl UiBuilder {
             self.reread(database);
             if std::mem::take(&mut self.edited) || self.tree.is_none() {
                 let text = self.markup.write();
-                self.known.refresh(database, server.as_mut(), &text, self.style);
+                self.known
+                    .refresh(database, server.as_mut(), &text, &self.path, self.style);
                 self.ghosts = ghosts::of(&self.markup, &self.path);
                 match kooch_ui::build_markup(
                     database,

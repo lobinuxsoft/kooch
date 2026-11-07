@@ -49,11 +49,12 @@ impl Known {
         database: &AssetDatabase,
         server: Option<&mut AssetServer>,
         text: &str,
+        path: &Path,
         style: Option<Guid>,
     ) {
         self.file = UiSource::parse(text).ok();
         self.styles = self.file.as_ref().map_or_else(Vec::new, |file| {
-            kooch_ui::styles_of(database, server, file, style)
+            kooch_ui::styles_of(database, server, file, path, style)
         });
         self.sheet = style
             .and_then(|guid| database.entry(guid))

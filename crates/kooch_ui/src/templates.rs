@@ -121,55 +121,78 @@ fn splice(
     }
     root.classes.extend(with.classes.iter().cloned());
     for (key, value) in with.attributes.iter().filter(|(key, _)| &**key != "src") {
-        set(root, key, value);
-    }
-    // What the `<use>` writes reads from the file that uses the template.
-    if attribute(with, "style").is_some() {
-        inline_image(root, at, image_of);
+        match &**key {
+            "style" => over_style(root, value, at, image_of),
+            _ => set(root, key, value),
+        }
     }
     for (node, key, value) in &with.overrides {
         let target = out[base as usize..]
             .iter_mut()
             .find(|e| e.name.as_deref() == Some(node))
             .ok_or_else(|| format!("`<set node=\"{node}\">` names no node of the template"))?;
-        set(target, key, value);
-        if &**key == "style" {
-            inline_image(target, at, image_of);
+        match &**key {
+            "style" => over_style(target, value, at, image_of),
+            _ => set(target, key, value),
         }
     }
     Ok(())
 }
 
-/// The inline `background-image`'s and `-kooch-material`'s assets, relative to `at`, the file
-/// writing them.
-fn inline_image(element: &mut Element, at: &Path, image_of: ImageOf) {
-    let declarations = attribute(element, "style")
-        .map(UiStyleSheet::parse_inline)
-        .unwrap_or_default();
+/// What a `style` writes of `background-image`, `-kooch-mask` and `-kooch-material`, as assets
+/// relative to `at`, the file writing it: `None` where it does not say, `Some(None)` where it clears.
+fn assets_of(style: &str, at: &Path, image_of: ImageOf) -> [Option<Option<Guid>>; 3] {
+    let declarations = UiStyleSheet::parse_inline(style);
     let written = |pick: fn(&Declaration) -> Option<Option<&ImageRef>>| {
-        let url = declarations.iter().rev().find_map(pick).flatten()?;
+        let Some(url) = declarations.iter().rev().find_map(pick)? else {
+            return Some(None);
+        };
         let path = normalise(&at.parent().unwrap_or(Path::new("")).join(&*url.url));
         let guid = image_of(&path);
         if guid.is_none() {
-            tracing::warn!("{}: `{}` is not a known asset", at.display(), url.url);
+            tracing::warn!(
+                "{}: `{}` is not a known asset",
+                at.display(),
+                path.display()
+            );
         }
-        guid
+        Some(guid)
     };
-    let image = written(|declaration| match declaration {
-        Declaration::BackgroundImage(image) => Some(image.as_ref()),
-        _ => None,
-    });
-    let material = written(|declaration| match declaration {
-        Declaration::Material(material) => Some(Some(material)),
-        _ => None,
-    });
-    let mask = written(|declaration| match declaration {
-        Declaration::Mask(mask) => Some(mask.as_ref()),
-        _ => None,
-    });
-    element.image = image;
-    element.mask = mask;
-    element.material = material;
+    [
+        written(|declaration| match declaration {
+            Declaration::BackgroundImage(image) => Some(image.as_ref()),
+            _ => None,
+        }),
+        written(|declaration| match declaration {
+            Declaration::Mask(mask) => Some(mask.as_ref()),
+            _ => None,
+        }),
+        written(|declaration| match declaration {
+            Declaration::Material(material) => Some(Some(material)),
+            _ => None,
+        }),
+    ]
+}
+
+/// The inline style's assets, relative to `at`, the file writing them.
+fn inline_image(element: &mut Element, at: &Path, image_of: ImageOf) {
+    let style = attribute(element, "style").unwrap_or_default();
+    let [image, mask, material] = assets_of(style, at, image_of);
+    element.image = image.flatten();
+    element.mask = mask.flatten();
+    element.material = material.flatten();
+}
+
+/// `style` on top of `element`'s: the last declaration wins, so only what it writes changes. The
+/// assets it names read from `at`, the rest stay as the template resolved them.
+fn over_style(element: &mut Element, style: &str, at: &Path, image_of: ImageOf) {
+    let own = attribute(element, "style").unwrap_or_default();
+    let joined = format!("{own};{style}");
+    set_attribute(element, "style", &joined);
+    let [image, mask, material] = assets_of(style, at, image_of);
+    element.image = image.unwrap_or(element.image);
+    element.mask = mask.unwrap_or(element.mask);
+    element.material = material.unwrap_or(element.material);
 }
 
 fn set(element: &mut Element, key: &str, value: &str) {
@@ -177,10 +200,14 @@ fn set(element: &mut Element, key: &str, value: &str) {
         "text" => element.text = Some(value.into()),
         "class" => element.classes = value.split_whitespace().map(Into::into).collect(),
         "name" => element.name = Some(value.into()),
-        _ => match element.attributes.iter_mut().find(|(own, _)| &**own == key) {
-            Some(slot) => slot.1 = value.into(),
-            None => element.attributes.push((key.into(), value.into())),
-        },
+        _ => set_attribute(element, key, value),
+    }
+}
+
+fn set_attribute(element: &mut Element, key: &str, value: &str) {
+    match element.attributes.iter_mut().find(|(own, _)| &**own == key) {
+        Some(slot) => slot.1 = value.into(),
+        None => element.attributes.push((key.into(), value.into())),
     }
 }
 
