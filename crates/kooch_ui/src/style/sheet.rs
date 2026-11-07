@@ -59,7 +59,7 @@ pub struct StyleWarning {
 }
 
 /// A parsed `.kcss`, rules in source order.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct UiStyleSheet {
     pub rules: Vec<StyleRule>,
     pub warnings: Vec<StyleWarning>,

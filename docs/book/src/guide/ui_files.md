@@ -104,8 +104,11 @@ A template is a `.kxml` like any other, whose `<ui>` holds exactly one element â
 
 `src` is relative to the file that uses it, and a template may use another. `<set>` takes any
 attribute: `text`, `class` (replaces the node's classes), `on:click`, `disabled`â€¦ The instance is
-styled by the document's sheet, not by one of its own, and saving the template rebuilds every
-document that uses it. Names inside an instance stay as written, so two instances both have a
+styled by the document's sheet, which lets one button file follow each menu's look, and saving the
+template rebuilds every document that uses it. `<ui sheet="bar.kcss">` makes a template look the same
+everywhere instead: it wears that sheet, read beside it, or the engine's with `sheet="default"`, and
+the sheet's `ui` rule reaches it by inheritance. A template inside it keeps its own if it names one.
+The UI Builder picks it on `<ui>`; opened on its own, a file wears what the canvas picks. Names inside an instance stay as written, so two instances both have a
 `label`; reach one through the instance's own name.
 
 ### From code

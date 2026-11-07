@@ -15,6 +15,8 @@ pub enum AttributeKind {
     Binding,
     /// A `.kxml` path, relative to the file.
     Template,
+    /// A `.kcss` path, relative to the file, or `default`.
+    Sheet,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -40,7 +42,7 @@ const fn spec(
     }
 }
 
-use AttributeKind::{Action, Binding, Bool, Number, Template};
+use AttributeKind::{Action, Binding, Bool, Number, Sheet, Template};
 
 const FOCUS: [AttributeSpec; 5] = [
     spec(
@@ -105,6 +107,16 @@ const USE: [AttributeSpec; 2] = [
     CLICK,
 ];
 
+const UI: [AttributeSpec; 2] = [
+    CANCEL,
+    spec(
+        "sheet",
+        Sheet,
+        "",
+        "Used as a template it wears this sheet, not the document's; unset takes the document's",
+    ),
+];
+
 impl ElementKind {
     /// Takes child elements: what the UI Builder drops into.
     pub fn holds_children(self) -> bool {
@@ -115,7 +127,7 @@ impl ElementKind {
     /// Inspector lists them.
     pub fn attributes(self) -> &'static [AttributeSpec] {
         match self {
-            Self::Ui => std::slice::from_ref(&CANCEL),
+            Self::Ui => &UI,
             Self::Panel | Self::Label => &[],
             Self::Button => &BUTTON,
             Self::Toggle => &TOGGLE,
