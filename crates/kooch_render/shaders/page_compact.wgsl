@@ -34,6 +34,8 @@
 @group(0) @binding(10) var<storage, read> moved: array<vec4<f32>>;
 // Only `cs_invalidate` reads them, for a lamp page's range test.
 @group(0) @binding(11) var<storage, read> inv_lights: array<ClusterLight>;
+// Per lamp slot: whether its cull runs this frame (#1860). The CPU writes its own reasons first.
+@group(0) @binding(13) var<storage, read_write> lamp_need: array<u32>;
 const COMPACT_GROUP: u32 = 64u;
 const EXPAND_GROUP: u32 = 64u;
 
@@ -115,6 +117,11 @@ fn cs_compact(
     let stamp = table_read[entry * PAGE_READ + PAGE_STAMP];
     if stamp == gen {
         atomicAdd(&page_counts[buckets + 4u], 1u);
+        return;
+    }
+    // A lamp whose cull the gate kept closed has no survivors to draw this page with: defer it
+    // unstamped rather than stamp it empty. Only a view the gate did not see reaches this (#1860).
+    if !id.is_sun && lamp_need[id.light] == 0u && stamp != PAGE_EMPTY {
         return;
     }
     // 🔴 An EMPTY page is valid under every generation, and that is what rescues a moving light
@@ -242,6 +249,55 @@ fn cs_expand_args(@builtin(global_invocation_id) gid: vec3<u32>) {
     expand_args[level * 3u + 0u] = (threads + EXPAND_GROUP - 1u) / EXPAND_GROUP;
     expand_args[level * 3u + 1u] = 1u;
     expand_args[level * 3u + 2u] = 1u;
+}
+
+// One thread per entry of this view's span, BEFORE the lamp cull: a lamp page the compaction would
+// list (a stamp that is neither this generation nor empty) opens its lamp's cull. Several threads
+// store the same 1, so no atomic is needed.
+@compute @workgroup_size(COMPACT_GROUP, 1, 1)
+fn cs_lamp_need(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    let within = gid.y * (groups.x * COMPACT_GROUP) + gid.x;
+    if within >= raster.views.y {
+        return;
+    }
+    let entry = raster.views.x * raster.views.y + within;
+    if table_read[entry * PAGE_READ + PAGE_SLOT] == PAGE_ABSENT {
+        return;
+    }
+    let id = page_decode(
+        entry,
+        raster.views.y,
+        raster.space.x,
+        raster.space.y,
+        raster.space.z,
+        raster.space.w,
+        raster.pool.w,
+    );
+    if id.is_sun || id.light >= LAMP_CULLS {
+        return;
+    }
+    let gen = gens[raster.views.x * (raster.chain.x + LAMP_CULLS) + raster.chain.x + id.light];
+    let stamp = table_read[entry * PAGE_READ + PAGE_STAMP];
+    if stamp != gen && stamp != PAGE_EMPTY {
+        lamp_need[id.light] = 1u;
+    }
+}
+
+// One thread per sun level, after the compaction: a level with no page to draw keeps its cull's
+// dispatch at zero, so a still camera stops re-culling the scene for pages the cache holds (#1860).
+// The full sizes were copied in ahead of this; the gate only closes.
+@compute @workgroup_size(64, 1, 1)
+fn cs_cull_gate(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let level = gid.x;
+    if level >= raster.chain.x {
+        return;
+    }
+    if atomicLoad(&page_counts[level]) == 0u {
+        expand_args[(raster.chain.x + LAMP_CULLS + level) * 3u] = 0u;
+    }
 }
 
 // One thread, after every level has expanded: the draw covers all of them at once, so its instance

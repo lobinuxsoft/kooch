@@ -176,7 +176,10 @@ pub struct PageRasterizer {
     uniform_stride: u64,
     page_list: wgpu::Buffer,
     counts: wgpu::Buffer,
+    /// The expansion's args per bucket, then the sun level culls' args behind them (#1860).
     expand_args: wgpu::Buffer,
+    /// The level culls' full sizes, copied into `expand_args` before the gate closes some.
+    gate_full: wgpu::Buffer,
     draw_args: wgpu::Buffer,
     pairs: wgpu::Buffer,
     visible_counts: wgpu::Buffer,
@@ -212,6 +215,7 @@ pub struct PageRasterizer {
     expand_args_pass: wgpu::ComputePipeline,
     /// Fills `PAGE_LOD` so the reader jumps instead of walking.
     lod_offsets: wgpu::ComputePipeline,
+    cull_gate: wgpu::ComputePipeline,
     draw_args_pass: wgpu::ComputePipeline,
 
     expand_bgl: wgpu::BindGroupLayout,
@@ -266,6 +270,15 @@ pub struct PageRasterizer {
     /// view-independent, so the second camera of a frame reuses the
     /// first one's survivors instead of re-culling.
     lamp_frame: Option<u32>,
+    /// Per lamp slot, whether its cull runs this frame: the CPU's reasons, then `cs_lamp_need`'s.
+    lamp_need: wgpu::Buffer,
+    lamp_need_pass: wgpu::ComputePipeline,
+    /// The lamps' generations last frame, to open the cull of one that changed (#1860).
+    lamp_gens: Vec<u32>,
+    /// Views recorded this frame and whether last frame had more than one: a second view reuses a
+    /// cull gated on the first one's pages, so with two the gate stays open.
+    frame_views: u32,
+    multi_view: bool,
     /// The bind groups that never change once built.
     bound: Option<Bound>,
     readback: RasterReadback,
@@ -349,6 +362,7 @@ impl PageRasterizer {
                 &self.page_list,
                 &self.counts,
                 &self.expand_args,
+                &self.gate_full,
                 &self.draw_args,
                 &self.pairs,
                 &self.visible_counts,

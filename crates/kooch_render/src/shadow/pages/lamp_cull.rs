@@ -46,6 +46,7 @@ struct LampKeys {
     bounds: wgpu::Buffer,
     counts: wgpu::Buffer,
     group_err: wgpu::Buffer,
+    need: wgpu::Buffer,
 }
 
 struct LampBound {
@@ -102,6 +103,7 @@ impl LampCull {
                 buffer_entry(2, true, c),
                 buffer_entry(3, true, c),
                 buffer_entry(4, false, c),
+                buffer_entry(11, true, c),
             ],
         });
         let args_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -264,6 +266,7 @@ impl LampCull {
         instances: &wgpu::Buffer,
         lights: &wgpu::Buffer,
         visible_counts: &wgpu::Buffer,
+        need: &wgpu::Buffer,
         sun_buckets: u32,
         lamp_slots: u32,
         instance_count: u32,
@@ -311,7 +314,7 @@ impl LampCull {
             Some(LAMP_CULLS as u64 * 4),
         );
 
-        self.ensure_bound(device, mesh_pool, instances, lights, visible_counts);
+        self.ensure_bound(device, mesh_pool, instances, lights, visible_counts, need);
         let bound = self.bound.as_ref().expect("just built");
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("shadow pages: lamp cull"),
@@ -344,6 +347,7 @@ impl LampCull {
         instances: &wgpu::Buffer,
         lights: &wgpu::Buffer,
         visible_counts: &wgpu::Buffer,
+        need: &wgpu::Buffer,
     ) {
         let keys = LampKeys {
             lights: lights.clone(),
@@ -353,6 +357,7 @@ impl LampCull {
             bounds: mesh_pool.mesh_bounds.clone(),
             counts: visible_counts.clone(),
             group_err: self.group_err.clone(),
+            need: need.clone(),
         };
         if self.bound.as_ref().is_some_and(|b| b.keys == keys) {
             return;
@@ -367,6 +372,7 @@ impl LampCull {
                     entry(2, &keys.bounds),
                     entry(3, instances),
                     entry(4, &self.pairs),
+                    entry(11, need),
                 ],
             }),
             args: device.create_bind_group(&wgpu::BindGroupDescriptor {

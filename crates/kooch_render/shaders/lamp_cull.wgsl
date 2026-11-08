@@ -84,6 +84,8 @@ struct LampCullUniform {
 // `cs_expand_args` sizes the expansion from, so a lamp's survivors need no copy to be consumed.
 // Uncapped; readers clamp to `LAMP_SURVIVORS`.
 @group(0) @binding(10) var<storage, read_write> lamp_counts: array<atomic<u32>>;
+// Per slot: 0 when nothing the lamp shadows changed, so its pages are all cached (#1860).
+@group(0) @binding(11) var<storage, read> lamp_need: array<u32>;
 
 const LAMP_GROUP: u32 = 64u;
 
@@ -126,7 +128,7 @@ fn cs_lamp_pairs(
     // Directional lights are a prefix of the buffer and never mark a
     // local page; their slots stay empty rather than shifting everyone
     // else's bucket.
-    if light.kind == 0u || light.range <= 0.0 {
+    if light.kind == 0u || light.range <= 0.0 || lamp_need[slot] == 0u {
         return;
     }
     let inst = lamp_instances[instance];

@@ -80,6 +80,7 @@ pub(super) fn compact_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             // The table's other half: the listing word moved there so the widest binding is three
             // words a page rather than six, which is what the light count was capped by (#1579).
             buffer_entry(12, false, c),
+            buffer_entry(13, false, c),
         ],
     })
 }
