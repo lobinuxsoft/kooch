@@ -238,7 +238,7 @@ pub fn report_moved_blends(resources: &mut kooch_core::resource::Resources) {
     let Some(mut storage) = registry.get_cpu_mut::<VirtualCamera>() else {
         return;
     };
-    for (&entity, vcam) in storage.iter_mut() {
+    for (&entity, mut vcam) in storage.iter_mut() {
         if vcam.blend_duration < 0.0 {
             continue;
         }

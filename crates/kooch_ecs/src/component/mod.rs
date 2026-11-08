@@ -17,7 +17,7 @@ pub use names::{ComponentId, ComponentNames};
 pub use registry::{ComponentRegistry, Settled};
 pub use storage_id::StorageId;
 pub use traits::Component;
-pub use view::{ComponentView, ComponentViewMut};
+pub use view::{ComponentView, ComponentViewMut, Mut};
 
 use kooch_core::resource::Resources;
 

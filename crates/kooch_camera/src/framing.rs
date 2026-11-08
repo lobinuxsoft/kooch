@@ -344,7 +344,7 @@ pub fn migrate_soft_time(resources: &mut kooch_core::resource::Resources) {
     let Some(mut storage) = registry.get_cpu_mut::<RotationComposer>() else {
         return;
     };
-    for (&entity, framing) in storage.iter_mut() {
+    for (&entity, mut framing) in storage.iter_mut() {
         if framing.was_soft_time <= 0.0 {
             continue;
         }

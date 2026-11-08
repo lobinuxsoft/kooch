@@ -16,6 +16,8 @@ pub(super) struct AnySystem {
     key: SystemKey,
     /// Where in its stage it runs (#392).
     order: Order,
+    /// The change tick of its last run (#1870); 0 until it runs.
+    last_run: u64,
 }
 
 /// Either a CPU or GPU system.
@@ -37,6 +39,7 @@ impl AnySystem {
             source,
             key,
             order,
+            last_run: 0,
         }
     }
 
@@ -52,6 +55,7 @@ impl AnySystem {
             source,
             key,
             order,
+            last_run: 0,
         }
     }
 
@@ -95,7 +99,20 @@ impl AnySystem {
         // Held for exactly the run: the guard closes on drop, and
         // nothing between here and `system.run` belongs to the system.
         let _scope = self.scope.enter(system.name());
+        let window = crate::change_tick::SystemTick {
+            last_run: self.last_run,
+            this_run: crate::change_tick::advance(),
+        };
+        match resources.get_mut::<crate::change_tick::SystemTick>() {
+            Some(tick) => *tick = window,
+            None => {
+                resources.insert(window);
+            }
+        }
         system.run(resources);
+        self.last_run = window.this_run;
+        // Whatever is written after this system finished is newer than its run.
+        crate::change_tick::advance();
     }
 
     /// Opens this system's scope around whatever the caller does next.
