@@ -14,6 +14,7 @@ glam.workspace = true
 tracing.workspace = true
 rapier3d.workspace = true
 slotmap = "1.0"
+rayon.workspace = true
 
 [features]
 # Rapier's debug-render walk, which the editor turns into a viewport

@@ -111,6 +111,11 @@ impl ColliderMeshCache {
 
     /// How often this GUID's answer changed; `0` means unanswered, distinguishing it in a
     /// [`ShapeSpec`](crate::components::ShapeSpec).
+    /// Moves whenever any mesh lands, fails or is dropped: a sync that cached its bodies rereads them.
+    pub fn revision(&self) -> (u64, usize) {
+        (self.next_epoch, self.entries.len())
+    }
+
     pub fn epoch(&self, key: impl Into<MeshKey>) -> u64 {
         let guid = key.into();
         self.entries

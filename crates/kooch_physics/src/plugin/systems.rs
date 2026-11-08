@@ -20,6 +20,7 @@
 //! same frame instead of the next one.
 
 use glam::{Quat, Vec3};
+use rayon::prelude::*;
 
 use crate::components::KIND_STATIC;
 use kooch_core::resource::Resources;
@@ -34,11 +35,14 @@ use crate::components::{Collider, PhysicsBody};
 
 use super::world::{BodySpec, PhysicsWorld, SolverBody};
 
+mod changed;
+
 /// How far a pose may drift before the authored transform is pushed into
 /// the solver. Below this, pushing would only wake sleeping bodies.
 const POSE_EPSILON: f32 = 1e-5;
 
 /// What the ECS says an entity's body should be, this frame.
+#[derive(Clone)]
 struct Authored {
     entity: Entity,
     /// Shapes contributed by descendants that have no body of their own.
@@ -58,9 +62,11 @@ pub fn physics_sync_system(resources: &mut Resources) {
         return;
     };
     let playing = Playing::is_playing(resources);
+    let mut cache = resources.remove::<changed::SyncCache>().unwrap_or_default();
 
-    let Some(mut authored) = read_authored(resources) else {
+    let Some(mut authored) = changed::authored(resources, &mut cache) else {
         resources.insert(world);
+        resources.insert(cache);
         return;
     };
 
@@ -75,6 +81,8 @@ pub fn physics_sync_system(resources: &mut Resources) {
     super::joints::sync_joints(resources, &mut world);
 
     resources.insert(world);
+    changed::keep(&mut cache, authored);
+    resources.insert(cache);
     sync_archetypes(resources, &gained, &orphans);
 }
 
@@ -109,67 +117,110 @@ pub fn migrate_collider_layers(resources: &mut Resources) {
     }
 }
 
-/// Reads the authored intent, in a deterministic order.
+/// The storages one body's authored intent is read from, fetched once per sync.
+struct Reader<'a> {
+    registry: &'a ComponentRegistry,
+    views: super::compound::Views<'a>,
+    layers: &'a kooch_core::layers::LayerNames,
+    meshes: Option<&'a ColliderMeshCache>,
+    slots: Option<kooch_ecs::component::ComponentView<'a, SolverBody>>,
+    colliders: Option<kooch_ecs::component::ComponentView<'a, Collider>>,
+}
+
+impl<'a> Reader<'a> {
+    fn new(
+        registry: &'a ComponentRegistry,
+        layers: &'a kooch_core::layers::LayerNames,
+        meshes: Option<&'a ColliderMeshCache>,
+    ) -> Self {
+        Self {
+            registry,
+            views: super::compound::Views::new(registry, layers),
+            layers,
+            meshes,
+            slots: registry.get_cpu::<SolverBody>(),
+            colliders: registry.get_cpu::<Collider>(),
+        }
+    }
+
+    /// What `entity`'s body should be this frame.
+    fn body(&self, entity: Entity, body: &PhysicsBody) -> Authored {
+        // A half-authored entity gets defaults rather than a panic: a unit sphere at the origin
+        // still falls, and falling is a better bug report than a crash.
+        let collider = as_region(
+            self.registry,
+            entity,
+            collider_or_default(self.colliders, entity),
+        )
+        .in_layers(self.layers);
+        // The world pose, from the `GlobalTransform` that `PrePhysics` propagated a moment ago:
+        // authored at the LOCAL offset, a parented volume sat 19 m from where it is drawn (#1316).
+        let (position, rotation, scale) = super::pose::world_pose(self.registry, entity);
+        let attachments = super::compound::attachments_in(&self.views, entity);
+        let spec = BodySpec::with_attachments(
+            body,
+            &collider,
+            entity,
+            scale,
+            super::compound::digest(&attachments),
+            self.meshes,
+        );
+        Authored {
+            entity,
+            claimed: self
+                .slots
+                .as_ref()
+                .and_then(|s| s.get(entity))
+                .map(SolverBody::slot),
+            spec,
+            position,
+            rotation,
+            attachments,
+        }
+    }
+}
+
+/// The project's layer table, or the default one where a project has none: everything meets
+/// everything, which is what every collider did before the matrix existed.
+fn layer_table(resources: &Resources) -> kooch_core::layers::LayerNames {
+    resources
+        .get::<kooch_core::layers::LayerNames>()
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Reads the authored intent of every body, in a deterministic order.
 ///
 /// Returns `None` when there is no component registry to read.
 fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
-    // The project's table, or the default one where a project has none: everything meets
-    // everything, which is what every collider did before the matrix existed.
-    let owned_layers;
-    let layers = match resources.get::<kooch_core::layers::LayerNames>() {
-        Some(layers) => layers,
-        None => {
-            owned_layers = kooch_core::layers::LayerNames::default();
-            &owned_layers
-        }
-    };
+    let layers = layer_table(resources);
     let registry = resources.get::<ComponentRegistry>()?;
     let meshes = resources.get::<ColliderMeshCache>();
-    let slots = registry.get_cpu::<SolverBody>();
+    let reader = Reader::new(registry, &layers, meshes);
 
-    let bodies = registry.get_cpu::<PhysicsBody>();
-    let colliders = registry.get_cpu::<Collider>();
-
-    let mut authored: Vec<Authored> = bodies
+    let owned: Vec<(Entity, &PhysicsBody)> = registry
+        .get_cpu::<PhysicsBody>()
         .map(|storage| {
             storage
                 .iter()
-                .map(|(&entity, body)| {
-                    // A half-authored entity gets defaults rather than a
-                    // panic: a unit sphere at the origin still falls, and
-                    // falling is a better bug report than a crash.
-                    let collider =
-                        as_region(registry, entity, collider_or_default(colliders, entity))
-                            .in_layers(layers);
-                    // The world pose, from the `GlobalTransform` that `PrePhysics` propagated a
-                    // moment ago. Before that stage existed, propagation ran after the fixed
-                    // stages and a parented body was authored at its LOCAL offset — a volume 19 m
-                    // from where it is drawn, and a sensor nobody could walk into (#1316).
-                    let (position, rotation, scale) = super::pose::world_pose(registry, entity);
-                    let attachments = super::compound::attachments_for(resources, entity);
-                    let spec = BodySpec::with_attachments(
-                        body,
-                        &collider,
-                        entity,
-                        scale,
-                        super::compound::digest(&attachments),
-                        meshes,
-                    );
-                    Authored {
-                        entity,
-                        claimed: slots.and_then(|s| s.get(entity)).map(SolverBody::slot),
-                        spec,
-                        position,
-                        rotation,
-                        attachments,
-                    }
-                })
+                .map(|(&entity, body)| (entity, body))
                 .collect()
         })
         .unwrap_or_default();
+    // Each body reads only shared storages, so the bodies split across threads; the sort below
+    // restores the order the solver needs.
+    let mut authored: Vec<Authored> = owned
+        .par_iter()
+        .map(|&(entity, body)| reader.body(entity, body))
+        .collect();
 
     authored.extend(regions(
-        registry, colliders, slots, meshes, layers, &authored,
+        registry,
+        reader.colliders,
+        reader.slots,
+        meshes,
+        &layers,
+        &authored,
     ));
 
     // Entity order, not hash order: creation order is observable in the solver, and runs would

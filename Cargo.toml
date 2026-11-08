@@ -30,7 +30,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.98.168"
+version = "0.98.169"
 edition = "2024"
 license = "LicenseRef-Proprietary"
 repository = "https://github.com/lobinuxsoft/kooch"
@@ -76,6 +76,7 @@ dlss_wgpu = "=6.0.0"
 winit = { version = "0.30", features = ["serde"] }
 # Math
 glam = { version = "0.33", features = ["bytemuck", "serde"] }
+rayon = "1.12"
 # Utils
 bytemuck = { version = "1.21", features = ["derive"] }
 encase = "0.13"
