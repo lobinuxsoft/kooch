@@ -244,6 +244,41 @@ fn nested_hierarchy_propagation() {
     assert!((col3.z - 3.0).abs() < f32::EPSILON);
 }
 
+/// After the first pass only moved subtrees republish; a moved child under a moved ancestor must see
+/// the ancestor's NEW global, not the one published last pass (#1859).
+#[test]
+fn moved_child_under_moved_root() {
+    let mut resources = setup();
+    let root = spawn_entity(&mut resources);
+    let mid = spawn_entity(&mut resources);
+    let leaf = spawn_entity(&mut resources);
+    insert_component(&mut resources, root, Transform::from_position(Vec3::X));
+    insert_component(&mut resources, mid, Transform::from_position(Vec3::Y));
+    insert_component(&mut resources, leaf, Transform::from_position(Vec3::Z));
+    insert_component(&mut resources, mid, Parent { entity: root });
+    insert_component(&mut resources, leaf, Parent { entity: mid });
+    hierarchy_sync_system(&mut resources);
+    transform_propagation_system(&mut resources);
+
+    // The leaf comes first in no particular order; both it and the root moved.
+    insert_component(
+        &mut resources,
+        leaf,
+        Transform::from_position(Vec3::Z * 5.0),
+    );
+    insert_component(
+        &mut resources,
+        root,
+        Transform::from_position(Vec3::X * 10.0),
+    );
+    transform_propagation_system(&mut resources);
+
+    let registry = resources.get::<ComponentRegistry>().unwrap();
+    let globals = registry.get_cpu::<GlobalTransform>().unwrap();
+    let at = globals.get(leaf).unwrap().matrix.col(3).truncate();
+    assert_eq!(at, Vec3::new(10.0, 1.0, 5.0));
+}
+
 // -- Recursive despawn tests --
 
 #[test]

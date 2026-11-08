@@ -7,12 +7,27 @@ use glam::Mat4;
 use crate::entity::Entity;
 
 use super::children::Children;
+use super::dirty::{PropagationCache, moved_roots};
 use super::global_transform::GlobalTransform;
 use super::parent::Parent;
 use super::position_only::{PositionOnly, parent_frame};
 
-/// Propagates transforms top-down through the hierarchy.
+/// Republishes the subtrees that moved since the last pass; the whole hierarchy only when that
+/// cannot be told (first pass, a new entity, a cycle).
 pub fn transform_propagation_system(resources: &mut kooch_core::resource::Resources) {
+    let mut cache = resources.remove::<PropagationCache>().unwrap_or_default();
+    let roots = resources
+        .get::<crate::component::ComponentRegistry>()
+        .and_then(|registry| moved_roots(registry, &mut cache));
+    resources.insert(cache);
+    match roots {
+        Some(roots) => propagate_subtrees(resources, &roots),
+        None => full_pass(resources),
+    }
+}
+
+/// Propagates transforms top-down through the whole hierarchy.
+fn full_pass(resources: &mut kooch_core::resource::Resources) {
     use crate::component::ComponentRegistry;
     use crate::transform::Transform;
 
