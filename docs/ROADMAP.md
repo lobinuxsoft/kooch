@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-11-01 — 🎯 **A UI Builder you can edit a menu in.** Its own canvas at a chosen resolution, the document tree, and an Inspector typed per element: attributes with real widgets, inline styles in Unity's categories, every asset picked from one searchable picker, classes as chips with the sheet rules that reach the element, and actions listed from what the project's `.kxml` send and its code reads. Hot reload restyles without rebuilding. Next: the Library (#280 8.2d), elements and templates dragged in.
+Last updated 2026-11-08 — 🎯 **The handheld frame got 20 ms back.** On the OneXFly at 1080p, 10 W: shading tiles are binned across GPU threads instead of one (54.7 → 34.1 ms a frame, #1857), shadow culls skip lights whose pages are all cached (#1860), and transform propagation republishes only what moved (0.70 → 0.11 ms, #1859). Vello is adopted for vector UI nodes after measuring it on the handheld (#1856 → #1865). Next: an audit of systems that run more than they need to, and spreading CPU work across threads.
 
 
 ---
