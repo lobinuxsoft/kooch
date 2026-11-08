@@ -59,7 +59,7 @@ pub fn migrate_renderer_layers(resources: &mut kooch_core::resource::Resources) 
     let Some(mut storage) = registry.get_cpu_mut::<MeshRenderer>() else {
         return;
     };
-    for (&entity, renderer) in storage.iter_mut() {
+    for (&entity, mut renderer) in storage.iter_mut() {
         if renderer.layer != 0 {
             let was = renderer.layer;
             renderer.layers = renderer.layer_mask();

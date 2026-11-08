@@ -2,6 +2,7 @@
 
 use std::any::Any;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::entity::Entity;
 use crate::storage::Column;
@@ -19,6 +20,8 @@ use super::traits::{AnyStorage, Component};
 /// came through: that is how every transform in a loaded scene ended up at the identity.
 pub(crate) struct ComponentStorage<T: Component> {
     data: HashMap<Entity, T>,
+    /// The change tick of each value's last write (#1870).
+    changed: HashMap<Entity, AtomicU64>,
 }
 
 impl<T: Component> ComponentStorage<T> {
@@ -26,16 +29,19 @@ impl<T: Component> ComponentStorage<T> {
     pub fn new() -> Self {
         Self {
             data: HashMap::new(),
+            changed: HashMap::new(),
         }
     }
 
     /// Inserts a component value for `entity`, returning the previous value.
     pub fn insert(&mut self, entity: Entity, value: T) -> Option<T> {
+        self.stamp(entity);
         self.data.insert(entity, value)
     }
 
     /// Removes the component for `entity`, returning it if present.
     pub fn remove(&mut self, entity: Entity) -> Option<T> {
+        self.changed.remove(&entity);
         self.data.remove(&entity)
     }
 
@@ -46,6 +52,9 @@ impl<T: Component> ComponentStorage<T> {
 
     /// Returns a mutable reference to the component, if present.
     pub fn get_mut(&mut self, entity: Entity) -> Option<&mut T> {
+        if self.data.contains_key(&entity) {
+            self.stamp(entity);
+        }
         self.data.get_mut(&entity)
     }
 
@@ -62,7 +71,30 @@ impl<T: Component> ComponentStorage<T> {
 
     /// Iterates mutably over all `(entity, component)` pairs.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&Entity, &mut T)> {
+        // The inbox is transient: everything in it counts as written.
+        let now = kooch_core::change_tick::now();
+        for tick in self.changed.values() {
+            tick.store(now, Ordering::Relaxed);
+        }
         self.data.iter_mut()
+    }
+
+    /// The change tick of `entity`'s value; 0 when it has none here.
+    pub fn changed_at(&self, entity: Entity) -> u64 {
+        self.changed
+            .get(&entity)
+            .map_or(0, |tick| tick.load(Ordering::Relaxed))
+    }
+
+    /// Marks `entity`'s value as written now.
+    fn stamp(&mut self, entity: Entity) {
+        let now = kooch_core::change_tick::now();
+        match self.changed.get(&entity) {
+            Some(tick) => tick.store(now, Ordering::Relaxed),
+            None => {
+                self.changed.insert(entity, AtomicU64::new(now));
+            }
+        }
     }
 }
 
@@ -74,6 +106,7 @@ impl<T: Component> Default for ComponentStorage<T> {
 
 impl<T: Component> AnyStorage for ComponentStorage<T> {
     fn remove_entity(&mut self, entity: Entity) {
+        self.changed.remove(&entity);
         self.data.remove(&entity);
     }
 
@@ -90,6 +123,9 @@ impl<T: Component> AnyStorage for ComponentStorage<T> {
     }
 
     fn get_mut_ptr(&mut self, entity: Entity) -> Option<*mut u8> {
+        if let Some(tick) = self.changed.get(&entity) {
+            tick.store(kooch_core::change_tick::now(), Ordering::Relaxed);
+        }
         self.data.get_mut(&entity).map(|v| v as *mut T as *mut u8)
     }
 
@@ -97,6 +133,7 @@ impl<T: Component> AnyStorage for ComponentStorage<T> {
         let Some(value) = self.data.remove(&entity) else {
             return false;
         };
+        self.changed.remove(&entity);
         // SAFETY: the column was built by `Column::of::<T>` for this very slot.
         unsafe { column.push(value) };
         true
@@ -107,6 +144,7 @@ impl<T: Component> AnyStorage for ComponentStorage<T> {
         let Some(value) = (unsafe { column.take::<T>(row) }) else {
             return false;
         };
+        self.stamp(entity);
         self.data.insert(entity, value);
         true
     }

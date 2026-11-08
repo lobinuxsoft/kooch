@@ -2,6 +2,7 @@
 
 use std::alloc::{self, Layout};
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Every value of one component type, packed end to end.
 pub struct Column {
@@ -18,6 +19,9 @@ pub struct Column {
     /// `None` when the item type has no destructor, so the common case
     /// costs no indirect call per row.
     drop_one: Option<unsafe fn(*mut u8)>,
+    /// The change tick of each row's last write (#1870), parallel to the values. Atomic so a
+    /// query holding `&Column` can stamp the row it hands out mutably; a relaxed store is a plain one.
+    changed: Vec<AtomicU64>,
 }
 
 // SAFETY: a column only ever holds values of one component type, and this
@@ -40,6 +44,7 @@ impl Column {
             stride: layout.size(),
             align,
             drop_one: std::mem::needs_drop::<T>().then_some(drop_in_place::<T>),
+            changed: Vec::new(),
         }
     }
 
@@ -73,6 +78,8 @@ impl Column {
         // guarantees `T` is the item type.
         unsafe { std::ptr::write(self.row_ptr(row).cast::<T>(), value) };
         self.len += 1;
+        self.changed
+            .push(AtomicU64::new(kooch_core::change_tick::now()));
         row
     }
 
@@ -90,6 +97,7 @@ impl Column {
         if row >= self.len {
             return None;
         }
+        self.stamp(row);
         // SAFETY: `row` is in bounds, we hold `&mut self`, and the caller
         // guarantees the type.
         Some(unsafe { &mut *self.row_ptr(row).cast::<T>() })
@@ -121,11 +129,37 @@ impl Column {
         unsafe { std::slice::from_raw_parts_mut(self.data.as_ptr().cast::<T>(), self.len) }
     }
 
+    /// Every item mutably, with the change tick of each, so a writer stamps only what it touched.
+    pub unsafe fn as_mut_slice_ticked<T>(&mut self) -> (&mut [T], &[AtomicU64]) {
+        debug_assert_eq!(Layout::new::<T>().size(), self.stride, "wrong item type");
+        // SAFETY: as `as_mut_slice`; `changed` is a separate allocation.
+        let values =
+            unsafe { std::slice::from_raw_parts_mut(self.data.as_ptr().cast::<T>(), self.len) };
+        (values, &self.changed)
+    }
+
+    /// The change tick of `row`'s last write; 0 past the end.
+    #[inline]
+    pub fn changed_at(&self, row: usize) -> u64 {
+        self.changed
+            .get(row)
+            .map_or(0, |tick| tick.load(Ordering::Relaxed))
+    }
+
+    /// Marks `row` as written now.
+    #[inline]
+    pub fn stamp(&self, row: usize) {
+        if let Some(tick) = self.changed.get(row) {
+            tick.store(kooch_core::change_tick::now(), Ordering::Relaxed);
+        }
+    }
+
     /// Overwrites `row`, returning what was there.
     pub unsafe fn replace<T>(&mut self, row: usize, value: T) -> Option<T> {
         if row >= self.len {
             return None;
         }
+        self.stamp(row);
         // SAFETY: `row` is in bounds and the caller guarantees the type.
         Some(unsafe { std::ptr::replace(self.row_ptr(row).cast::<T>(), value) })
     }
@@ -162,6 +196,11 @@ impl Column {
             std::ptr::copy_nonoverlapping(self.row_ptr(row), dst.row_ptr(landed), self.stride)
         };
         dst.len += 1;
+        dst.changed
+            .push(AtomicU64::new(match self.changed.get(row) {
+                Some(tick) => tick.load(Ordering::Relaxed),
+                None => kooch_core::change_tick::now(),
+            }));
 
         self.vacate(row, false);
         landed
@@ -182,6 +221,9 @@ impl Column {
             }
         }
         self.len = last;
+        if row < self.changed.len() {
+            self.changed.swap_remove(row);
+        }
     }
 
     /// Drops every item, keeping the allocation.
@@ -193,6 +235,7 @@ impl Column {
             }
         }
         self.len = 0;
+        self.changed.clear();
     }
 
     #[inline]

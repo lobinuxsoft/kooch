@@ -56,6 +56,9 @@ pub struct ComponentRegistry {
     pub(super) tables: Tables,
     /// Which table row holds an entity's values, once they live in one.
     pub(super) entity_at: Locations,
+    /// The change tick of the last time any component left any entity (#1870): removals have no
+    /// row left to stamp, so a system that caches per entity asks this before trusting its cache.
+    removed: u64,
 }
 
 // SAFETY: All public methods either take `&mut self` (exclusive access) or
@@ -72,7 +75,14 @@ impl ComponentRegistry {
             ids: HashMap::new(),
             tables: Tables::new(),
             entity_at: Locations::default(),
+            removed: 0,
         }
+    }
+
+    /// The change tick of the last removal of any component from any entity.
+    #[inline]
+    pub fn removed_at(&self) -> u64 {
+        self.removed
     }
 
     // -- Where the values live (#891) -----------------------------------------
@@ -400,6 +410,7 @@ impl ComponentRegistry {
 
     /// Removes `entity` from all registered storages, columns included.
     pub fn remove_entity(&mut self, entity: Entity) {
+        self.removed = kooch_core::change_tick::now();
         self.drop_row(entity);
         for slot in &mut self.slots {
             slot.storage.get_mut().remove_entity(entity);
@@ -413,6 +424,7 @@ impl ComponentRegistry {
     /// and nothing is going to read them again.
     pub fn drop_row(&mut self, entity: Entity) -> Option<Entity> {
         let (table, row) = self.entity_at.take(entity)?;
+        self.removed = kooch_core::change_tick::now();
         let displaced = self.tables.get_mut(table)?.swap_remove(row);
         if let Some(other) = displaced {
             self.entity_at.set(other, table, row);
@@ -431,6 +443,7 @@ impl ComponentRegistry {
         let Some(id) = self.ids.get(type_id).copied() else {
             return;
         };
+        self.removed = kooch_core::change_tick::now();
         if let Some(slot) = self.slots.get_mut(id.index()) {
             slot.storage.get_mut().remove_entity(entity);
             slot.revision += 1;
@@ -578,6 +591,7 @@ impl ComponentRegistry {
             .ok_or(ReflectError::ComponentNotFound)?;
         let column_value = self.entity_at.get(entity).and_then(|(table, row)| {
             let column = self.tables.get(table)?.column(slot)?;
+            column.stamp(row.index());
             // SAFETY: the column holds this component's type, and the
             // pointer derives from the column's own allocation.
             unsafe { column.value_ptr::<u8>(row.index()) }
@@ -681,6 +695,7 @@ impl ComponentRegistry {
         // reached — the same reason `reflect_set_field` does it this way.
         let settled = self.entity_at.get(entity).and_then(|(table, row)| {
             let column = self.tables.get(table)?.column(id)?;
+            column.stamp(row.index());
             // SAFETY: the column holds this component's type, and the
             // pointer derives from the column's own allocation.
             unsafe { column.value_ptr::<u8>(row.index()) }
