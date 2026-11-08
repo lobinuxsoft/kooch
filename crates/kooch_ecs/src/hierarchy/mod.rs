@@ -3,6 +3,7 @@
 
 pub mod children;
 pub mod descendants;
+mod dirty;
 pub mod global_transform;
 pub mod hierarchy_sync;
 pub mod parent;
