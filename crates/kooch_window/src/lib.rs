@@ -40,10 +40,13 @@ use kooch_core::plugin::Plugin;
 pub struct WindowConfig {
     /// Window title.
     pub title: String,
-    /// Window width in logical pixels.
+    /// Window width, logical pixels unless `physical`.
     pub width: u32,
-    /// Window height in logical pixels.
+    /// Window height, logical pixels unless `physical`.
     pub height: u32,
+    /// The size is in device pixels. A game's is: under gamescope winit guesses a 3.25 scale and a
+    /// logical 1280×720 became a 4160×2340 surface, shaded at that size and scaled down (#1861).
+    pub physical: bool,
 }
 
 impl Default for WindowConfig {
@@ -52,6 +55,7 @@ impl Default for WindowConfig {
             title: "Kóoch".to_string(),
             width: 1280,
             height: 720,
+            physical: false,
         }
     }
 }
@@ -86,16 +90,35 @@ pub struct WindowPlugin {
     pub applies_window_mode: bool,
 }
 
+/// A game's window: its `project.kooch` asks for the title and size, and the engine's defaults fill
+/// in when it says nothing.
 impl Default for WindowPlugin {
     fn default() -> Self {
         let config = WindowConfig::default();
+        let (title, width, height) =
+            manifest_window().unwrap_or((config.title, config.width, config.height));
         Self {
-            title: config.title,
-            width: config.width,
-            height: config.height,
+            title,
+            width,
+            height,
             applies_window_mode: true,
         }
     }
+}
+
+/// The manifest's window, beside the executable then the cwd, read from disk as the scene is. The
+/// first manifest found answers, even with nothing, so a second project's is never read.
+fn manifest_window() -> Option<(String, u32, u32)> {
+    use kooch_core::scene_paths::{PROJECT_MANIFEST_FILE, window_of};
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::PathBuf::from));
+    let cwd = std::env::current_dir().ok();
+    let text = [exe_dir, cwd]
+        .into_iter()
+        .flatten()
+        .find_map(|base| std::fs::read_to_string(base.join(PROJECT_MANIFEST_FILE)).ok())?;
+    window_of(&text)
 }
 
 impl Plugin for WindowPlugin {
@@ -104,6 +127,8 @@ impl Plugin for WindowPlugin {
             title: self.title.clone(),
             width: self.width,
             height: self.height,
+            // The game's window is the one that follows the project; the editor's stays logical.
+            physical: self.applies_window_mode,
         });
 
         app.insert_resource(ExtraWindows::default());

@@ -272,10 +272,15 @@ impl ApplicationHandler<WakeUp> for WinitApp {
         // 🔴 Only the environment override: the settings asset needs the GPU, which needs this
         // window, so its mode lands a few frames later via `mode::apply_window_mode_system`.
         let mode = kooch_core::window_mode::mode_override();
+        let size: winit::dpi::Size = if config.physical {
+            winit::dpi::PhysicalSize::new(config.width, config.height).into()
+        } else {
+            winit::dpi::LogicalSize::new(config.width, config.height).into()
+        };
         let attrs = WindowAttributes::default()
             .with_title(&config.title)
             .with_window_icon(crate::icon::window_icon())
-            .with_inner_size(winit::dpi::LogicalSize::new(config.width, config.height))
+            .with_inner_size(size)
             .with_decorations(mode.is_none_or(|mode| mode.decorated()))
             .with_fullscreen(
                 mode.filter(|mode| mode.fullscreen())

@@ -137,6 +137,17 @@ impl GpuLights {
                     },
                     count: None,
                 },
+                // The lamps' paged pose (#1861), same records as binding 1.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 13,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
                 wgpu::BindGroupLayoutEntry {
                     binding: 11,
                     visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
@@ -213,6 +224,7 @@ impl GpuLights {
                 slots: &dummy_page_buffer,
                 work: &dummy_page_buffer,
                 atlas: &dummy_page_atlas,
+                lamps: &light_buffer,
             },
         );
         Self {
@@ -229,6 +241,7 @@ impl GpuLights {
             page_slots: None,
             page_work: None,
             page_atlas: None,
+            page_lamps: None,
             dummy_page_buffer,
             dummy_page_atlas,
             shadow_atlas: None,

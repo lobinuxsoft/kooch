@@ -103,6 +103,7 @@ fn paint(
         queue,
         &mut encoder,
         &lights,
+        &lights.light_buffer(),
         &depth_view,
         (proj * view).inverse(),
         eye,

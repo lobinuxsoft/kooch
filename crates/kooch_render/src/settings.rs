@@ -351,7 +351,7 @@ impl RenderSettings {
             page_halo: self.shadow_page_halo,
             max_distance: self.shadow_distance,
             cascade_texels: self.shadow_cascade_texels,
-            enabled: self.shadows_enabled,
+            enabled: self.shadows_enabled && !shadows_off_by_environment(),
             sun_softness: self.sun_softness,
             first_cascade_distance: self.shadow_first_cascade_distance,
             point_shadows: crate::shadow::point_shadows_from_environment()
@@ -363,7 +363,7 @@ impl RenderSettings {
                 || crate::shadow::pages::mark::enabled_by_environment(),
             page_density: self.shadow_density,
             pool_pages: self.shadow_pool_pages,
-            page_softness: self.shadow_softness,
+            page_softness: softness_from_environment().unwrap_or(self.shadow_softness),
             page_min_pixels: self.shadow_min_pixels,
             page_light_reach: self.shadow_light_reach,
         }
@@ -478,3 +478,29 @@ use choices::*;
 
 #[cfg(test)]
 mod tests;
+
+/// `KOOCH_SHADOWS=off`, read once: every shadow off whatever the asset says, to measure what they
+/// cost (#1861).
+fn shadows_off_by_environment() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| {
+        let off = std::env::var("KOOCH_SHADOWS").is_ok_and(|value| value.trim() == "off");
+        if off {
+            tracing::info!(target: "kooch_render::settings", "KOOCH_SHADOWS=off: no light casts a shadow");
+        }
+        off
+    })
+}
+
+/// `KOOCH_SHADOW_SOFTNESS=<n>`, read once: the page shadows' filter footprint instead of the
+/// asset's, to measure what the softness costs (#1861).
+fn softness_from_environment() -> Option<u32> {
+    static SOFTNESS: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *SOFTNESS.get_or_init(|| {
+        let softness = std::env::var("KOOCH_SHADOW_SOFTNESS").ok()?.trim().parse().ok();
+        if let Some(value) = softness {
+            tracing::info!(target: "kooch_render::settings", "KOOCH_SHADOW_SOFTNESS={value}: page shadows filter with this footprint");
+        }
+        softness
+    })
+}

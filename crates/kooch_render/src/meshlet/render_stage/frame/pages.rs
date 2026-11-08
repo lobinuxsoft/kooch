@@ -133,7 +133,10 @@ fn page_settings(resources: &Resources) -> PageSettings {
         two_level: lod.two_level,
         // 🔴 The environment force is ORed HERE **as well as** in `RenderSettings::shadows()`, and
         // the duplication is the point.
-        enabled: shadows.virtual_pages || crate::shadow::pages::mark::enabled_by_environment(),
+        // Gated by `enabled` too: with shadows off nothing samples the pages, and the track still
+        // cost ~7 ms a frame on the OneXFly (#1861).
+        enabled: shadows.enabled
+            && (shadows.virtual_pages || crate::shadow::pages::mark::enabled_by_environment()),
         // Overwritten by `page_settings_for_views` from the debug view
         // selector. `ShadowSettings` has no say: it is a debug view.
         paint: false,
@@ -221,6 +224,11 @@ impl MeshletRenderStage {
         // after the fused pass, and the parity has to be right now.
         raster.set_frame(frame);
         let pool = marker.pool();
+        let lamps = self
+            .lamp_pace
+            .buffer()
+            .unwrap_or(self.lights.light_buffer())
+            .clone();
         self.lights.bind_shadow_pages(
             device,
             kooch_lighting::PageBinding {
@@ -232,6 +240,7 @@ impl MeshletRenderStage {
                 slots: pool.slots(),
                 work: pool.work(),
                 atlas: raster.atlas(),
+                lamps: &lamps,
             },
         );
     }
