@@ -20,6 +20,7 @@
 //! same frame instead of the next one.
 
 use glam::{Quat, Vec3};
+use rayon::prelude::*;
 
 use crate::components::KIND_STATIC;
 use kooch_core::resource::Resources;
@@ -58,7 +59,6 @@ pub fn physics_sync_system(resources: &mut Resources) {
         return;
     };
     let playing = Playing::is_playing(resources);
-
     let Some(mut authored) = read_authored(resources) else {
         resources.insert(world);
         return;
@@ -130,43 +130,51 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
     let bodies = registry.get_cpu::<PhysicsBody>();
     let colliders = registry.get_cpu::<Collider>();
 
-    let mut authored: Vec<Authored> = bodies
+    let views = super::compound::Views::new(registry, layers);
+    let owned: Vec<(Entity, &PhysicsBody)> = bodies
+        .as_ref()
         .map(|storage| {
             storage
                 .iter()
-                .map(|(&entity, body)| {
-                    // A half-authored entity gets defaults rather than a
-                    // panic: a unit sphere at the origin still falls, and
-                    // falling is a better bug report than a crash.
-                    let collider =
-                        as_region(registry, entity, collider_or_default(colliders, entity))
-                            .in_layers(layers);
-                    // The world pose, from the `GlobalTransform` that `PrePhysics` propagated a
-                    // moment ago. Before that stage existed, propagation ran after the fixed
-                    // stages and a parented body was authored at its LOCAL offset — a volume 19 m
-                    // from where it is drawn, and a sensor nobody could walk into (#1316).
-                    let (position, rotation, scale) = super::pose::world_pose(registry, entity);
-                    let attachments = super::compound::attachments_for(resources, entity);
-                    let spec = BodySpec::with_attachments(
-                        body,
-                        &collider,
-                        entity,
-                        scale,
-                        super::compound::digest(&attachments),
-                        meshes,
-                    );
-                    Authored {
-                        entity,
-                        claimed: slots.and_then(|s| s.get(entity)).map(SolverBody::slot),
-                        spec,
-                        position,
-                        rotation,
-                        attachments,
-                    }
-                })
+                .map(|(&entity, body)| (entity, body))
                 .collect()
         })
         .unwrap_or_default();
+    // Each body reads only shared storages, so the bodies split across threads; the sort below
+    // restores the order the solver needs.
+    let mut authored: Vec<Authored> = owned
+        .par_iter()
+        .map(|&(entity, body)| {
+            // A half-authored entity gets defaults rather than a panic: a unit sphere at the
+            // origin still falls, and falling is a better bug report than a crash.
+            let collider = as_region(registry, entity, collider_or_default(colliders, entity))
+                .in_layers(layers);
+            // The world pose, from the `GlobalTransform` that `PrePhysics` propagated a moment
+            // ago: authored at the LOCAL offset, a parented volume sat 19 m from where it is drawn
+            // (#1316).
+            let (position, rotation, scale) = super::pose::world_pose(registry, entity);
+            let attachments = super::compound::attachments_in(&views, entity);
+            let spec = BodySpec::with_attachments(
+                body,
+                &collider,
+                entity,
+                scale,
+                super::compound::digest(&attachments),
+                meshes,
+            );
+            Authored {
+                entity,
+                claimed: slots
+                    .as_ref()
+                    .and_then(|s| s.get(entity))
+                    .map(SolverBody::slot),
+                spec,
+                position,
+                rotation,
+                attachments,
+            }
+        })
+        .collect();
 
     authored.extend(regions(
         registry, colliders, slots, meshes, layers, &authored,

@@ -3,6 +3,7 @@
 //! ends the walk.
 
 use glam::{Quat, Vec3};
+#[cfg(test)]
 use kooch_core::resource::Resources;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
@@ -37,29 +38,62 @@ impl Attachment {
     }
 }
 
+/// The storages a walk reads, fetched once per sync instead of once per body.
+pub(super) struct Views<'a> {
+    children: Option<kooch_ecs::component::ComponentView<'a, Children>>,
+    globals: Option<kooch_ecs::component::ComponentView<'a, GlobalTransform>>,
+    colliders: Option<kooch_ecs::component::ComponentView<'a, Collider>>,
+    bodies: Option<kooch_ecs::component::ComponentView<'a, PhysicsBody>>,
+    layers: &'a kooch_core::layers::LayerNames,
+}
+
+impl<'a> Views<'a> {
+    pub fn new(
+        registry: &'a ComponentRegistry,
+        layers: &'a kooch_core::layers::LayerNames,
+    ) -> Self {
+        Self {
+            children: registry.get_cpu::<Children>(),
+            globals: registry.get_cpu::<GlobalTransform>(),
+            colliders: registry.get_cpu::<Collider>(),
+            bodies: registry.get_cpu::<PhysicsBody>(),
+            layers,
+        }
+    }
+}
+
 /// Shapes a body inherits: depth-first, stopping at any [`PhysicsBody`], poses composed through
 /// [`GlobalTransform`] relative to `root`.
+#[cfg(test)]
 pub(super) fn attachments_for(resources: &Resources, root: Entity) -> Vec<Attachment> {
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Vec::new();
     };
-    let (Some(children), Some(globals)) = (
-        registry.get_cpu::<Children>(),
-        registry.get_cpu::<GlobalTransform>(),
-    ) else {
+    let owned = kooch_core::layers::LayerNames::default();
+    let layers = resources
+        .get::<kooch_core::layers::LayerNames>()
+        .unwrap_or(&owned);
+    attachments_in(&Views::new(registry, layers), root)
+}
+
+/// [`attachments_for`] over storages already fetched.
+pub(super) fn attachments_in(views: &Views<'_>, root: Entity) -> Vec<Attachment> {
+    // Most bodies have no children: answer that before inverting a matrix.
+    let Some(below) = views
+        .children
+        .as_ref()
+        .and_then(|storage| storage.get(root))
+    else {
         return Vec::new();
     };
-    let colliders = registry.get_cpu::<Collider>();
-    // The project's table, or the one every collider had before it existed.
-    let owned_layers;
-    let layers = match resources.get::<kooch_core::layers::LayerNames>() {
-        Some(layers) => layers,
-        None => {
-            owned_layers = kooch_core::layers::LayerNames::default();
-            &owned_layers
-        }
+    let (Some(children), Some(globals)) = (views.children.as_ref(), views.globals.as_ref()) else {
+        return Vec::new();
     };
-    let bodies = registry.get_cpu::<PhysicsBody>();
+    let (colliders, bodies, layers) = (
+        views.colliders.as_ref(),
+        views.bodies.as_ref(),
+        views.layers,
+    );
 
     // The root's world pose, inverted once: every descendant's local pose
     // is its world pose seen from here.
@@ -69,10 +103,7 @@ pub(super) fn attachments_for(resources: &Resources, root: Entity) -> Vec<Attach
     let to_local = root_world.matrix.inverse();
 
     let mut found = Vec::new();
-    let mut stack: Vec<Entity> = children
-        .get(root)
-        .map(|c| c.entities.clone())
-        .unwrap_or_default();
+    let mut stack: Vec<Entity> = below.entities.clone();
 
     while let Some(entity) = stack.pop() {
         // Its own body: an independent simulation. Not ours, and neither
