@@ -104,6 +104,9 @@ pub struct MeshletCull {
     pub(super) chunk_capacity: u32,
     /// Whether anyone reads `reject_reasons`. See [`Self::set_rejects`].
     pub(super) rejects: bool,
+    /// Indirect args the scene-wide passes dispatch off instead of their own size. See
+    /// [`Self::set_gate`].
+    pub(super) gate: Option<(wgpu::Buffer, u64)>,
 
     pub(super) capacity: u32,
     pub(super) vertex_count_per_instance: u32,
@@ -159,6 +162,20 @@ impl MeshletCull {
     /// [`Self::ensure_capacity`]. Whether anything will READ `reject_reasons` after the dispatch.
     pub fn set_rejects(&mut self, rejects: bool) {
         self.rejects = rejects;
+    }
+
+    /// Dispatches the scene-wide passes off `(buffer, offset)` rather than their own size, so the
+    /// GPU can zero a cull nobody needs this frame (#1860). The args must hold that size otherwise.
+    pub fn set_gate(&mut self, gate: Option<(wgpu::Buffer, u64)>) {
+        self.gate = gate;
+    }
+
+    /// The scene-wide dispatch: `groups` directly, or the gate's args when one is set.
+    pub(super) fn dispatch_gated(&self, pass: &mut wgpu::ComputePass<'_>, groups: (u32, u32)) {
+        match &self.gate {
+            Some((args, offset)) => pass.dispatch_workgroups_indirect(args, *offset),
+            None => pass.dispatch_workgroups(groups.0, groups.1, 1),
+        }
     }
 
     pub fn ensure_group_capacity(&mut self, device: &wgpu::Device, required: u32) {

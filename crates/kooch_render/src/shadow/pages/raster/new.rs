@@ -90,6 +90,8 @@ impl PageRasterizer {
         let compact = compute("cs_compact", &compact_module, &compact_layout_pipeline);
         let expand_args_pass = compute("cs_expand_args", &compact_module, &compact_layout_pipeline);
         let lod_offsets = compute("cs_lod_offsets", &compact_module, &compact_layout_pipeline);
+        let cull_gate = compute("cs_cull_gate", &compact_module, &compact_layout_pipeline);
+        let lamp_need_pass = compute("cs_lamp_need", &compact_module, &compact_layout_pipeline);
         let draw_args_pass = compute("cs_draw_args", &compact_module, &compact_layout_pipeline);
         let invalidate_bgl = invalidate_layout(device);
         let invalidate_pipeline_layout =
@@ -255,8 +257,15 @@ impl PageRasterizer {
             }),
             expand_args: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_expand_args"),
-                size: buckets as u64 * 12,
+                // The sun levels' cull args sit behind the buckets' (#1860).
+                size: buckets as u64 * 2 * 12,
                 usage: storage | wgpu::BufferUsages::INDIRECT,
+                mapped_at_creation: false,
+            }),
+            gate_full: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("page_raster_gate_full"),
+                size: buckets as u64 * 12,
+                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
             draw_args: device.create_buffer(&wgpu::BufferDescriptor {
@@ -319,6 +328,7 @@ impl PageRasterizer {
             compact,
             expand_args_pass,
             lod_offsets,
+            cull_gate,
             draw_args_pass,
             expand_bgl,
             storage_bgl,
@@ -346,6 +356,16 @@ impl PageRasterizer {
                 .collect(),
             lamp_cull: super::lamp_cull::LampCull::new(device),
             lamp_frame: None,
+            lamp_need: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("page_raster_lamp_need"),
+                size: LAMP_CULLS as u64 * 4,
+                usage: storage,
+                mapped_at_creation: false,
+            }),
+            lamp_need_pass,
+            lamp_gens: Vec::new(),
+            frame_views: 0,
+            multi_view: true,
             bound: None,
             readback: RasterReadback::new(device, count_slots(buckets)),
             config,

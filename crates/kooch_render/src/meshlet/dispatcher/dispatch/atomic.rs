@@ -145,7 +145,7 @@ impl MeshletCull {
             pass.set_bind_group(2, &scene_bg, &[]);
             pass.set_bind_group(3, &group_err_bg, &[]);
             pass.set_bind_group(4, &debug_bg, &[]);
-            pass.dispatch_workgroups(groups_x, groups_y, 1);
+            self.dispatch_gated(&mut pass, (groups_x, groups_y));
         }
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -158,7 +158,7 @@ impl MeshletCull {
             pass.set_bind_group(2, &scene_bg, &[]);
             pass.set_bind_group(3, &group_err_bg, &[]);
             pass.set_bind_group(4, &debug_bg, &[]);
-            pass.dispatch_workgroups(groups_x, groups_y, 1);
+            self.dispatch_gated(&mut pass, (groups_x, groups_y));
         }
 
         self.mirror_count_to_indirect_args(encoder);

@@ -26,13 +26,28 @@ impl PageRasterizer {
         eye: Vec3,
         sun: Vec3,
         lamps: &[GpuLight],
-    ) {
+    ) -> Vec<u32> {
         let gens = self.gens_for(eye, sun, lamps);
         queue.write_buffer(
             &self.gens,
             view as u64 * self.buckets() as u64 * 4,
             bytemuck::cast_slice(&gens),
         );
+        gens
+    }
+
+    /// Per lamp slot, 1 when the CPU already knows its cull must run (#1860): its generation moved,
+    /// which the need pass cannot see for an EMPTY page, or last frame had two views.
+    pub(super) fn lamp_force(&mut self, gens: &[u32]) -> Vec<u32> {
+        let now = gens.get(self.clipmap.levels as usize..).unwrap_or(&[]);
+        let force = (0..LAMP_CULLS as usize)
+            .map(|slot| {
+                let changed = self.lamp_gens.get(slot) != now.get(slot);
+                u32::from(!lamp_gate_enabled() || self.multi_view || changed)
+            })
+            .collect();
+        self.lamp_gens = now.to_vec();
+        force
     }
 
     /// [`Self::write_gens`] without the upload — the arithmetic alone,
@@ -251,6 +266,12 @@ impl PageRasterizer {
         lamps: &[GpuLight],
     ) {
         self.write_uniform(queue, view, eye, sun, lamps.len() as u32);
+        // No lamp cull runs here, so none is gated: every lamp page lists as it would ungated.
+        queue.write_buffer(
+            &self.lamp_need,
+            0,
+            bytemuck::cast_slice(&[1u32; LAMP_CULLS as usize]),
+        );
         self.write_gens(
             queue,
             view.min(atlas_layers(self.pool) - 1),
@@ -300,6 +321,7 @@ impl PageRasterizer {
                 entry(8, &self.gens),
                 entry(9, &self.dirty),
                 entry(12, page_pool.work()),
+                entry(13, &self.lamp_need),
             ],
         })
     }
@@ -456,4 +478,23 @@ impl PageRasterizer {
     pub(super) fn level_clip(&self, level: u32, eye: Vec3, sun: Vec3) -> Mat4 {
         level_clip(self.clipmap, self.config.side(0), level, eye, sun)
     }
+}
+
+/// `KOOCH_LAMP_GATE=off` (or `0`, `false`) culls every lamp every frame, for an A/B against the
+/// gate (#1860). Read once.
+fn lamp_gate_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let off = matches!(
+            std::env::var("KOOCH_LAMP_GATE").ok().as_deref(),
+            Some("off" | "0" | "false")
+        );
+        if off {
+            tracing::info!(
+                target: "kooch_render::shadow",
+                "KOOCH_LAMP_GATE=off: every lamp culls every frame",
+            );
+        }
+        !off
+    })
 }

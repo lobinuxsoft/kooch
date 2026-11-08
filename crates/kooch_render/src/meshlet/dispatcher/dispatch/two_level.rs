@@ -156,8 +156,9 @@ impl MeshletCull {
             bind(&mut pass);
 
             pass.set_pipeline(&pipelines.pipeline_cull_instances);
-            let (groups_x, groups_y) = tiled_workgroups(scene_params.instance_count, 64);
-            pass.dispatch_workgroups(groups_x, groups_y, 1);
+            // Gated, the instance pass alone is enough: the chunk header was cleared above, so a
+            // skipped pass expands to zero chunks.
+            self.dispatch_gated(&mut pass, tiled_workgroups(scene_params.instance_count, 64));
 
             pass.set_pipeline(&pipelines.pipeline_cull_expand_args);
             pass.dispatch_workgroups(1, 1, 1);

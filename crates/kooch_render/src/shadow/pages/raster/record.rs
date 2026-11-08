@@ -45,20 +45,54 @@ impl PageRasterizer {
         let view = view.min(atlas_layers(self.pool) - 1);
         self.write_moved(device, queue, moved);
         self.write_uniform(queue, view, eye, sun, light_count);
-        self.write_gens(queue, view, eye, sun, lamps);
+        let gens = self.write_gens(queue, view, eye, sun, lamps);
         let uniform_offset = self.uniform_span(view).0 as u32;
 
         // 🔴 Cleared BEFORE anything writes it: a bucket whose cull does not run this frame — a
         // directional slot, a lamp past the cap — must read zero survivors, and an unwritten
         // storage buffer is not zero, it is whatever the allocator handed over.
         encoder.clear_buffer(&self.visible_counts, 0, Some(levels as u64 * 4));
+        let first_view = self.lamp_frame != Some(self.frame);
+        if first_view {
+            self.multi_view = self.frame_views > 1;
+            self.frame_views = 0;
+        }
+        self.frame_views += 1;
+        self.ensure_bound(device, page_pool, instances, &mesh_pool.meshlets, lights);
         let cull_query = nested(track, "page lamp cull", encoder);
         // 1b. The lamps' shared hierarchical cull (#939) — Olsson et al.'s light/instance pre-pass,
         // then one group-coherent meshlet pass for every lamp at once.
         let lamp_slots = lamps.len().min(LAMP_CULLS as usize);
-        if self.lamp_frame != Some(self.frame) {
+        if first_view {
             self.lamp_frame = Some(self.frame);
             profiling::scope!("cull: lamps");
+            // Which lamps cull at all (#1860): the CPU's reasons, then every lamp with a page the
+            // compaction would list. A gated lamp keeps zero survivors and its cached pages.
+            let force = self.lamp_force(&gens);
+            queue.write_buffer(&self.lamp_need, 0, bytemuck::cast_slice(&force));
+            let bound = self.bound.as_ref().expect("bound above");
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("shadow pages: lamp need"),
+                    timestamp_writes: None,
+                });
+                // The invalidation FIRST, so the pages a moved caster reaches are already zero when
+                // the need pass reads them; it then has nothing to do later in this view.
+                pass.set_pipeline(&self.invalidate);
+                pass.set_bind_group(0, &bound.invalidate, &[uniform_offset]);
+                let (x, y) = kooch_core::gpu::tiled_workgroups(
+                    self.compact_threads(device, light_count),
+                    64,
+                );
+                pass.dispatch_workgroups(x, y, 1);
+                pass.set_pipeline(&self.lamp_need_pass);
+                pass.set_bind_group(0, &bound.compact, &[uniform_offset]);
+                let (x, y) = kooch_core::gpu::tiled_workgroups(
+                    self.compact_threads(device, light_count),
+                    64,
+                );
+                pass.dispatch_workgroups(x, y, 1);
+            }
             self.lamp_cull.record(
                 device,
                 queue,
@@ -67,6 +101,7 @@ impl PageRasterizer {
                 instances,
                 lights,
                 &self.visible_counts,
+                &self.lamp_need,
                 levels,
                 lamp_slots as u32,
                 scene_params.instance_count,
@@ -100,8 +135,25 @@ impl PageRasterizer {
         encoder.clear_buffer(&self.expand_args, 0, None);
         encoder.clear_buffer(&self.draw_args, 0, None);
         encoder.clear_buffer(&self.dirty, 0, Some(4));
+        // Each sun level cull's full size, behind the buckets' args, for the gate to close (#1860).
+        // Copied per view, after the clear, so a second camera's gate starts open again.
+        let full_threads = if self.two_level {
+            scene_params.instance_count
+        } else {
+            scene_params.instance_count * scene_params.meshlets_per_mesh
+        };
+        let (gx, gy) = kooch_core::gpu::tiled_workgroups(full_threads, 64);
+        let full: Vec<u32> = (0..levels).flat_map(|_| [gx, gy, 1]).collect();
+        queue.write_buffer(&self.gate_full, 0, bytemuck::cast_slice(&full));
+        let gate_base = buckets as u64 * 12;
+        encoder.copy_buffer_to_buffer(
+            &self.gate_full,
+            0,
+            &self.expand_args,
+            gate_base,
+            levels as u64 * 12,
+        );
 
-        self.ensure_bound(device, page_pool, instances, &mesh_pool.meshlets, lights);
         let bound = self.bound.as_ref().expect("just built");
 
         let pages_query = nested(track, "page table", encoder);
@@ -113,11 +165,15 @@ impl PageRasterizer {
             // 1c. Invalidation, BEFORE the compaction reads the stamps:
             //     every page a moved caster reaches loses its content
             //     stamp and redraws like a fresh one.
-            pass.set_pipeline(&self.invalidate);
-            pass.set_bind_group(0, &bound.invalidate, &[uniform_offset]);
-            let (x, y) =
-                kooch_core::gpu::tiled_workgroups(self.compact_threads(device, light_count), 64);
-            pass.dispatch_workgroups(x, y, 1);
+            if !first_view {
+                pass.set_pipeline(&self.invalidate);
+                pass.set_bind_group(0, &bound.invalidate, &[uniform_offset]);
+                let (x, y) = kooch_core::gpu::tiled_workgroups(
+                    self.compact_threads(device, light_count),
+                    64,
+                );
+                pass.dispatch_workgroups(x, y, 1);
+            }
             // 2. The flat table becomes a dense list, bucketed by
             //    octave — the dispatch covers exactly this camera's
             //    span, so the other view's pages are never walked.
@@ -132,6 +188,9 @@ impl PageRasterizer {
             let clipmap = levels * self.config.side(0).pow(2);
             pass.set_pipeline(&self.lod_offsets);
             pass.dispatch_workgroups(clipmap.div_ceil(64), 1, 1);
+            // 2c. Zero the cull of every sun level with no page to draw.
+            pass.set_pipeline(&self.cull_gate);
+            pass.dispatch_workgroups(levels.div_ceil(64), 1, 1);
         }
 
         // 2b. The page pyramid, over the listing the compaction just wrote (#1022).
@@ -177,6 +236,10 @@ impl PageRasterizer {
                     lod_target.max(0.01),
                 )
                 .with_culling_mask(sun_shadow_layers);
+                self.culls[level as usize].set_gate(Some((
+                    self.expand_args.clone(),
+                    gate_base + level as u64 * 12,
+                )));
                 if self.two_level {
                     self.culls[level as usize].dispatch_scene_pool_atomic_chunked(
                         cull_pipelines,
