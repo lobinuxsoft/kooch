@@ -279,6 +279,29 @@ fn moved_child_under_moved_root() {
     assert_eq!(at, Vec3::new(10.0, 1.0, 5.0));
 }
 
+/// Stop's restore puts `GlobalTransform` back at its default (it is read-only to reflection); an
+/// entity whose pose never changed must still be republished.
+#[test]
+fn restore_republishes_still_entities() {
+    let mut resources = setup();
+    let still = spawn_entity(&mut resources);
+    insert_component(&mut resources, still, Transform::from_position(Vec3::X));
+    // The snapshot walks archetypes, so the entity has to be listed in one.
+    crate::move_entity::gained(&mut resources, still, std::any::TypeId::of::<Transform>());
+    hierarchy_sync_system(&mut resources);
+    transform_propagation_system(&mut resources);
+
+    let snapshot = crate::world_snapshot::WorldSnapshot::capture(&resources);
+    transform_propagation_system(&mut resources);
+    snapshot.restore(&mut resources);
+    transform_propagation_system(&mut resources);
+
+    let registry = resources.get::<ComponentRegistry>().unwrap();
+    let globals = registry.get_cpu::<GlobalTransform>().unwrap();
+    let at = globals.get(still).unwrap().matrix.col(3).truncate();
+    assert_eq!(at, Vec3::X);
+}
+
 // -- Recursive despawn tests --
 
 #[test]
