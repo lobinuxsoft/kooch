@@ -97,6 +97,7 @@ impl PageConfig {
 
 pub mod lamp_cull;
 pub mod mark;
+pub mod pace;
 pub mod pool;
 pub mod pyramid;
 pub mod raster;

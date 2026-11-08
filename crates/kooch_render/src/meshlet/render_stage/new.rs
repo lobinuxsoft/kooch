@@ -93,6 +93,7 @@ impl MeshletRenderStage {
             // Built on the first frame that finds the environment
             // variable set; see the field's doc.
             page_marker: None,
+            lamp_pace: Default::default(),
             page_marking_last: None,
             page_marking_logged: Vec::new(),
             page_raster: None,

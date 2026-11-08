@@ -221,7 +221,7 @@ fn inti_light_lit(
             // are keyed by light index.
             if (inti_pages.sun.w > 0.5) {
                 shadow = inti_local_page_shadow(
-                    index, false, light.position, light.direction,
+                    index, false, inti_page_lights[index].position, light.direction,
                     surf.world_position, surf.n, s.to_light);
             } else if (light.shadow_slot != INTI_NO_SHADOW_SLOT) {
                 // Six faces of one cube (#778).
@@ -232,7 +232,8 @@ fn inti_light_lit(
             if (inti_pages.sun.w > 0.5) {
                 // One face, aligned with the spot's own axis.
                 shadow = inti_local_page_shadow(
-                    index, true, light.position, light.direction,
+                    index, true, inti_page_lights[index].position,
+                    inti_page_lights[index].direction,
                     surf.world_position, surf.n, s.to_light);
             } else if (light.shadow_slot != INTI_NO_SHADOW_SLOT) {
                 // A spot casts into the cascade array (#777); axial distance as Bevy, since radial

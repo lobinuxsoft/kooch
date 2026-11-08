@@ -28,6 +28,22 @@ pub fn main_scene_of(manifest: &str) -> Option<String> {
     fields.main_scene.filter(|s| !s.trim().is_empty())
 }
 
+/// The `window` a manifest asks for: its title and its size in pixels.
+pub fn window_of(manifest: &str) -> Option<(String, u32, u32)> {
+    #[derive(serde::Deserialize)]
+    struct Window {
+        title: String,
+        width: u32,
+        height: u32,
+    }
+    #[derive(serde::Deserialize)]
+    struct WindowFields {
+        window: Window,
+    }
+    let window = ron::from_str::<WindowFields>(manifest).ok()?.window;
+    (window.width > 0 && window.height > 0).then_some((window.title, window.width, window.height))
+}
+
 /// The same path, tolerating the form that omits `assets/`.
 pub fn normalise_main_scene(path: &str) -> String {
     let trimmed = path.trim_start_matches("./");

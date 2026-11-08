@@ -208,6 +208,9 @@ struct IntiClusterCell {
 // 🔴 `textureLoad`, never a sampler: a filter cannot stop at a page border. An array with a layer
 // per view, so two viewports share the pool without clearing each other's pages.
 @group({{INTI_GROUP}}) @binding(11) var inti_page_atlas: texture_depth_2d_array;
+// Each light at the pose its pages were drawn from (#1861): a small moving lamp redraws every few
+// frames, so its shadow is sampled from where it was drawn, not where it lights from.
+@group({{INTI_GROUP}}) @binding(13) var<storage, read> inti_page_lights: array<IntiLight>;
 
 // GGX / Trowbridge-Reitz, in Filament's reassociated form. The naïve
 // `a2 / (π·((NdotH²)(a2-1)+1)²)` loses catastrophic precision in f32 at

@@ -96,6 +96,7 @@ fn a_stopped_pass_reports_nothing() {
         &queue,
         &mut encoder,
         &lights,
+        &lights.light_buffer(),
         &depth_view,
         (proj * view).inverse(),
         eye,

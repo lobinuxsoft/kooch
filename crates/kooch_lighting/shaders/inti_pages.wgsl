@@ -17,7 +17,7 @@ fn inti_page_lookup(page: u32) -> u32 {
 }
 
 /// Page PCF by hand, since hardware filters cross page edges: taps clamp to the page, weights cross
-/// it. `world.w` is the box width (#941): 1 bilinear, wider a sub-texel box of `(W + 1)²` loads.
+/// it. `world.w` is the footprint width (#941), tent-weighted over `(W + 1)²` taps.
 fn inti_page_filter(
     origin: vec2<f32>,
     layer: i32,
@@ -38,21 +38,15 @@ fn inti_page_filter(
     let last = f32(page_texels) - 1.0;
     let corner = floor(texel - vec2<f32>(half));
     let frac = texel - vec2<f32>(half) - corner;
+    // Most footprints sit inside their page: no tap needs the table, so gather four at a time.
+    if all(corner >= vec2<f32>(0.0)) && all(corner + f32(width) <= vec2<f32>(last)) {
+        return inti_page_filter_inside(origin, layer, texel, receiver, slope, corner, frac, width);
+    }
     var lit = 0.0;
     for (var y = 0u; y <= width; y = y + 1u) {
-        var wy = 1.0;
-        if y == 0u {
-            wy = 1.0 - frac.y;
-        } else if y == width {
-            wy = frac.y;
-        }
+        let wy = inti_tap_weight(y, width, frac.y);
         for (var x = 0u; x <= width; x = x + 1u) {
-            var wx = 1.0;
-            if x == 0u {
-                wx = 1.0 - frac.x;
-            } else if x == width {
-                wx = frac.x;
-            }
+            let wx = inti_tap_weight(x, width, frac.x);
             // 🔴 A tap leaving the page resolves through the table, as Unreal's
             // `VirtualToPhysicalTexel` per tap. Clamping read this page near seams and answered lit
             // — a band along every seam. Absent neighbour: clamp.
@@ -102,7 +96,62 @@ fn inti_page_filter(
             lit = lit + hit * wx * wy;
         }
     }
-    return lit / (f32(width) * f32(width));
+    return lit;
+}
+
+/// `inti_page_filter` for a footprint wholly inside its page, with the same weights and per-tap
+/// receiver depth: `textureGather` returns a 2×2 block per fetch, so `(W + 1)²` loads become
+/// `⌈(W + 1) / 2⌉²`. Taps past the box weigh 0, so a block may overhang it.
+fn inti_page_filter_inside(
+    origin: vec2<f32>,
+    layer: i32,
+    texel: vec2<f32>,
+    receiver: f32,
+    slope: vec2<f32>,
+    corner: vec2<f32>,
+    frac: vec2<f32>,
+    width: u32,
+) -> f32 {
+    let size = vec2<f32>(textureDimensions(inti_page_atlas));
+    var lit = 0.0;
+    for (var y = 0u; y <= width; y = y + 2u) {
+        let wy = vec2<f32>(inti_tap_weight(y, width, frac.y), inti_tap_weight(y + 1u, width, frac.y));
+        for (var x = 0u; x <= width; x = x + 2u) {
+            let wx = vec2<f32>(
+                inti_tap_weight(x, width, frac.x),
+                inti_tap_weight(x + 1u, width, frac.x),
+            );
+            let base = corner + vec2<f32>(f32(x), f32(y));
+            // The shared corner of the four texels, so the gather picks exactly them.
+            let depths = textureGather(
+                inti_page_atlas,
+                inti_shadow_point_sampler,
+                (origin + base + 1.0) / size,
+                layer,
+            );
+            // Gather order: x = (0, 1), y = (1, 1), z = (1, 0), w = (0, 0).
+            let r = receiver + dot(slope, base - texel);
+            let here = vec4<f32>(r + slope.y, r + slope.x + slope.y, r + slope.x, r);
+            // Reversed-Z: a LARGER stored depth is closer to the light, so it is an occluder.
+            let hit = select(vec4<f32>(1.0), vec4<f32>(0.0), depths > here);
+            lit = lit + dot(hit, vec4<f32>(wx.x * wy.y, wx.y * wy.y, wx.y * wy.x, wx.x * wy.x));
+        }
+    }
+    return lit;
+}
+
+/// A tap's weight along one axis: a tent over the box's span, integrated over the tap's texel
+/// (Castaño's PCF). Softer penumbrae than a box from the same taps; each axis sums to 1.
+fn inti_tap_weight(i: u32, width: u32, frac: f32) -> f32 {
+    let half = f32(width) * 0.5;
+    let low = f32(i) - half - frac;
+    return inti_tent_cdf(low + 1.0, half) - inti_tent_cdf(low, half);
+}
+
+/// The integral of a unit-area tent of half-width `half` from its left foot to `u`.
+fn inti_tent_cdf(u: f32, half: f32) -> f32 {
+    let t = clamp(u / half, -1.0, 1.0);
+    return select(1.0 - 0.5 * (1.0 - t) * (1.0 - t), 0.5 * (1.0 + t) * (1.0 + t), t < 0.0);
 }
 
 /// One probe of the sun's atlas: `x` stored depth, `y` this position's depth in the same encoding,

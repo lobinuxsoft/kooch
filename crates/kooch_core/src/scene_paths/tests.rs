@@ -99,3 +99,23 @@ fn the_short_form_is_normalised() {
     // Somebody's own layout is their business.
     assert_eq!(normalise_main_scene("levels/one.scene"), "levels/one.scene");
 }
+
+/// A game reads its window from the manifest, since it does not link the editor's `ProjectManifest`.
+#[test]
+fn a_manifest_names_its_window() {
+    let manifest = r#"(
+    name: "roll-a-ball",
+    main_scene: Some("assets/scenes/dense.scene"),
+    window: (
+        title: "roll-a-ball",
+        width: 1920,
+        height: 1080,
+    ),
+    build: (include: []),
+)"#;
+    assert_eq!(
+        window_of(manifest),
+        Some(("roll-a-ball".to_owned(), 1920, 1080))
+    );
+    assert_eq!(window_of(r#"(name: "bare")"#), None);
+}

@@ -112,6 +112,8 @@ pub struct MeshletRenderStage {
     pub(super) reject_overlay: Option<MeshletRejectOverlay>,
     /// The shadow-page marking pass (#866), when it was asked for.
     pub(super) page_marker: Option<crate::shadow::pages::mark::PageMarker>,
+    /// The lights as the pages see them: moving lamps redraw on a budget (#1861).
+    pub(super) lamp_pace: crate::shadow::pages::pace::LampPace,
     /// The last count read back, for the panel.
     pub(super) page_marking_last: Option<crate::shadow::pages::mark::MarkCounts>,
     /// The last count LOGGED, per camera.
