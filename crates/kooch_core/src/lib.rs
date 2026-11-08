@@ -55,6 +55,7 @@ pub mod asset_meta;
 pub mod asset_registry;
 pub mod assets;
 pub mod buffer;
+pub mod change_tick;
 pub mod compute;
 pub mod coord;
 pub mod event;

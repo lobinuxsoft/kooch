@@ -41,7 +41,7 @@ fn step_sprints(resources: &mut Resources) {
     let Some(mut sprints) = registry.get_cpu_mut::<Sprint>() else {
         return;
     };
-    for (&entity, sprint) in sprints.iter_mut() {
+    for (&entity, mut sprint) in sprints.iter_mut() {
         let moving = moving.iter().any(|&(e, m)| e == entity && m);
         sprint.step(moving);
     }

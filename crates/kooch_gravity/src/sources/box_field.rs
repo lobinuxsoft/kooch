@@ -149,7 +149,7 @@ pub fn migrate_box_range(resources: &mut kooch_core::resource::Resources) {
     let Some(mut storage) = registry.get_cpu_mut::<BoxGravity>() else {
         return;
     };
-    for (&entity, field) in storage.iter_mut() {
+    for (&entity, mut field) in storage.iter_mut() {
         if field.legacy_range == 0.0 {
             continue;
         }

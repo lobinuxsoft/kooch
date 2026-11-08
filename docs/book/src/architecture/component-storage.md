@@ -76,3 +76,23 @@ Nothing errors; a query and `get_cpu` simply answer differently about the same e
 - **Chunked tables.** Unity splits an archetype into 16–64 KiB chunks, which matters for handing
   slices to parallel jobs. Whole-table columns iterate just as densely; the chunk is for the
   scheduler we do not have yet.
+
+## Change ticks: reading only what was written (#1870)
+
+Every write stamps the value's row with a tick from a process-wide clock: `get_mut`, `insert`, a
+`&mut T` query, a reflected `SetField`. The scheduler hands each CPU system its window in the
+`SystemTick` resource, so a system asks for what changed since it last ran:
+
+```rust
+let since = resources
+    .get::<kooch_core::change_tick::SystemTick>()
+    .map_or(0, |tick| tick.last_run);
+for (entity, body) in registry.get_cpu::<PhysicsBody>()?.iter_changed(since) {
+    // only bodies written since this system's last run
+}
+```
+
+`iter_mut` hands out a `Mut<T>`: reading through it is free, writing through it stamps the row, and
+`set_if_neq` writes only a different value. A loop that reads everything and changes a few marks
+only the few. Removals leave no row to stamp; `ComponentRegistry::removed_at()` is the tick of the
+last one, so a per-entity cache knows when to rebuild.

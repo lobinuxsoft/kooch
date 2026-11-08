@@ -89,7 +89,7 @@ pub fn migrate_collider_layers(resources: &mut Resources) {
     let Some(mut storage) = registry.get_cpu_mut::<Collider>() else {
         return;
     };
-    for (&entity, collider) in storage.iter_mut() {
+    for (&entity, mut collider) in storage.iter_mut() {
         if collider.layer != 0 || collider.collision_memberships != u32::MAX {
             let was = (collider.layer, collider.collision_memberships);
             collider.layers = collider.layer_mask();

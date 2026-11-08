@@ -378,3 +378,54 @@ mod reflection {
         assert_eq!(view.len(), 1, "counted once, not twice");
     }
 }
+
+/// Change ticks (#1870), on values settled in a column — where every game value lives.
+mod change_ticks {
+    use super::*;
+    use kooch_core::change_tick::{advance, now};
+
+    fn settled(count: u32) -> ComponentRegistry {
+        let mut registry = ComponentRegistry::new();
+        let id = registry.register_cpu::<Position>();
+        for index in 0..count {
+            registry
+                .get_cpu_mut::<Position>()
+                .unwrap()
+                .insert(entity(index), Position { x: 0.0, y: 0.0 });
+            assert!(registry.settle(entity(index), &[id]).row.is_some());
+        }
+        registry
+    }
+
+    #[test]
+    fn only_the_written_row_changed() {
+        let mut registry = settled(3);
+        let since = advance();
+        advance();
+        registry
+            .get_cpu_mut::<Position>()
+            .unwrap()
+            .get_mut(entity(1))
+            .unwrap()
+            .x = 1.0;
+
+        let view = registry.get_cpu::<Position>().unwrap();
+        let changed: Vec<Entity> = view.iter_changed(since).map(|(e, _)| *e).collect();
+        assert_eq!(changed, vec![entity(1)]);
+        assert_eq!(view.iter_changed(now()).count(), 0);
+    }
+
+    #[test]
+    fn reading_through_mut_marks_nothing() {
+        let mut registry = settled(3);
+        let since = advance();
+        advance();
+        let mut total = 0.0;
+        for (_, value) in registry.get_cpu_mut::<Position>().unwrap().iter_mut() {
+            total += value.x;
+        }
+        assert_eq!(total, 0.0);
+        let view = registry.get_cpu::<Position>().unwrap();
+        assert_eq!(view.iter_changed(since).count(), 0);
+    }
+}
