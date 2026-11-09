@@ -6,6 +6,9 @@ struct Screen {
     // Seconds since the pass was made: only a `kind: ui` shader reads it.
     time: f32,
     _pad: f32,
+    // Layout pixel at the target's top-left: a view of part of a larger canvas (the UI Builder).
+    offset: vec2<f32>,
+    _pad2: vec2<f32>,
 }
 
 @group(0) @binding(0) var<uniform> screen: Screen;
@@ -159,7 +162,7 @@ fn vs_ui(@builtin(vertex_index) vertex: u32, quad: Instance) -> Varyings {
     }
     out.straight = straight;
     // y flipped: pixels descend, clip space climbs.
-    let ndc = pixel.xy / screen.size * 2.0 - pixel.z;
+    let ndc = (pixel.xy - screen.offset * pixel.z) / screen.size * 2.0 - pixel.z;
     out.position = vec4<f32>(ndc.x, -ndc.y, 0.0, pixel.z);
     out.half_size = quad.size * 0.5;
     out.local = (corner - 0.5) * quad.size;

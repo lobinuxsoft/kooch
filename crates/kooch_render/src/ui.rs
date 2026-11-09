@@ -34,10 +34,14 @@ pub struct UiPass {
     mirrors_capacity: u64,
     started: std::time::Instant,
     vectors: vector::UiVectors,
+    offset: [f32; 2],
 }
 
+mod buffers;
 mod materials;
 mod vector;
+
+use buffers::{curves_buffer, instance_buffer, masks_buffer, mirrors_buffer, values_buffer};
 
 use materials::UiMaterials;
 pub use materials::validate_ui;
@@ -147,7 +151,7 @@ impl UiPass {
         let pipeline = pipeline(device, &pipeline_layout, format, &module, "fs_ui");
         let screen = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ui_screen"),
-            size: 16,
+            size: 32,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -192,7 +196,13 @@ impl UiPass {
             mirrors_capacity,
             started: std::time::Instant::now(),
             vectors,
+            offset: [0.0; 2],
         }
+    }
+
+    /// The layout pixel drawn at the target's top-left: a target showing part of a larger layout.
+    pub fn set_offset(&mut self, offset: [f32; 2]) {
+        self.offset = offset;
     }
 
     /// Uploads what changed and draws `list` over `target`, or over transparent black when `clear`.
@@ -260,6 +270,11 @@ impl UiPass {
             &self.screen,
             0,
             bytemuck::cast_slice(&[size.0 as f32, size.1 as f32, time, 0.0]),
+        );
+        queue.write_buffer(
+            &self.screen,
+            16,
+            bytemuck::cast_slice(&[self.offset[0], self.offset[1], 0.0, 0.0]),
         );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("ui"),
@@ -463,51 +478,6 @@ pub fn draw_frame(
     );
     resources.insert(pass);
     resources.insert(list);
-}
-
-fn instance_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ui_instances"),
-        size: capacity * size_of::<UiQuad>() as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
-
-fn values_buffer(device: &wgpu::Device, blocks: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ui_values"),
-        size: blocks * MAX_PARAM_SCALARS as u64 * size_of::<f32>() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
-
-fn masks_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ui_masks"),
-        size: count * size_of::<UiMask>() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
-
-fn curves_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ui_curves"),
-        size: count * size_of::<UiCurve>() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
-
-fn mirrors_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ui_mirrors"),
-        size: count * size_of::<UiMirror>() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
 }
 
 fn atlas_and_bind(
