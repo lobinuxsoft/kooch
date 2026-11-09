@@ -1,12 +1,14 @@
-//! The vector atlas (#1865): every resident SVG drawn by Vello into one texture the quads sample,
-//! redrawn whole only when what is resident changes. Without the `vello` feature it stays 1×1.
+//! The vector atlas (#1865): SVGs and text drawn by Vello into one texture the quads sample. Each
+//! new entry is drawn alone and copied into its slot (#1880): Vello's buffers are fixed, and the
+//! whole atlas in one scene overflows them into a blank texture. Without `vello` it stays 1×1.
 
 use kooch_ecs::UiDrawList;
 #[cfg(feature = "vello")]
 use kooch_ecs::UiVector;
 
 pub(super) struct UiVectors {
-    /// Keeps its texture alive.
+    #[cfg_attr(not(feature = "vello"), allow(dead_code))]
+    texture: wgpu::Texture,
     view: wgpu::TextureView,
     #[cfg(feature = "vello")]
     side: u32,
@@ -16,8 +18,10 @@ pub(super) struct UiVectors {
 
 impl UiVectors {
     pub(super) fn new(device: &wgpu::Device) -> Self {
+        let texture = texture(device, 1);
         Self {
-            view: texture(device, 1),
+            view: texture.create_view(&Default::default()),
+            texture,
             #[cfg(feature = "vello")]
             side: 1,
             #[cfg(feature = "vello")]
@@ -50,12 +54,17 @@ impl UiVectors {
             self.vello.parse_texts(texts, fonts);
             let replaced = list.vector_side > 0 && list.vector_side != self.side;
             if replaced {
-                self.view = texture(device, list.vector_side);
+                let grown = texture(device, list.vector_side);
+                // Slots keep their place when the atlas grows: what is drawn is carried over.
+                match list.vector_side > self.side {
+                    true => copy_into(device, queue, &self.texture, &grown, self.side),
+                    false => self.vello.forget(),
+                }
+                self.view = grown.create_view(&Default::default());
+                self.texture = grown;
                 self.side = list.vector_side;
-                self.vello.forget();
             }
-            self.vello
-                .draw(device, queue, &self.view, self.side, &list.vectors);
+            self.vello.draw(device, queue, &self.texture, &list.vectors);
             replaced
         }
     }
@@ -68,7 +77,7 @@ mod drawn {
     use std::sync::{Mutex, PoisonError};
 
     use kooch_ecs::{UiFontSource, UiVectorSource, UiVectorText};
-    use vello_svg::vello::kurbo::{Affine, Rect};
+    use vello_svg::vello::kurbo::Affine;
     use vello_svg::vello::peniko::{Blob, Color, Fill, FontData};
     use vello_svg::vello::{
         AaConfig, AaSupport, Glyph, RenderParams, Renderer, RendererOptions, Scene,
@@ -91,9 +100,8 @@ mod drawn {
         /// Every font a text used, kept: a later text may use one sent long before.
         fonts: HashMap<u64, Blob<u8>>,
         scene: Scene,
-        /// What the texture holds; `None` until it holds the list, or while a file is missing so
-        /// its arrival redraws.
-        drawn: Option<Vec<UiVector>>,
+        /// The slot each entry was drawn into; one missing or moved is drawn.
+        drawn: HashMap<u64, [u32; 4]>,
     }
 
     impl Drawn {
@@ -158,23 +166,24 @@ mod drawn {
         }
 
         pub(super) fn forget(&mut self) {
-            self.drawn = None;
+            self.drawn.clear();
         }
 
         pub(super) fn draw(
             &mut self,
             device: &wgpu::Device,
             queue: &wgpu::Queue,
-            view: &wgpu::TextureView,
-            side: u32,
+            atlas: &wgpu::Texture,
             vectors: &[UiVector],
         ) {
-            if vectors.is_empty() || self.drawn.as_deref() == Some(vectors) {
+            let stale = |vector: &&UiVector| self.drawn.get(&vector.key) != Some(&vector.rect);
+            if !vectors.iter().any(|vector| stale(&vector)) {
                 return;
             }
             profiling::scope!("ui: vello");
-            self.fragments
-                .retain(|key, _| vectors.iter().any(|vector| vector.key == *key));
+            let resident = |key: &u64| vectors.iter().any(|vector| vector.key == *key);
+            self.fragments.retain(|key, _| resident(key));
+            self.drawn.retain(|key, _| resident(key));
             let renderer = match &mut self.renderer {
                 Some(renderer) => renderer,
                 slot => match Renderer::new(device, options()) {
@@ -185,41 +194,43 @@ mod drawn {
                     }
                 },
             };
-            self.scene.reset();
-            let mut complete = true;
+            let renderer = renderer.get_mut().unwrap_or_else(PoisonError::into_inner);
             for vector in vectors {
+                if self.drawn.get(&vector.key) == Some(&vector.rect) {
+                    continue;
+                }
+                // Not arrived yet: drawn the frame it does.
                 let Some(fragment) = self.fragments.get(&vector.key) else {
-                    complete = false;
                     continue;
                 };
-                let [x0, y0, x1, y1] = vector.rect.map(f64::from);
+                let [x0, y0, x1, y1] = vector.rect;
+                let (w, h) = (x1 - x0, y1 - y0);
                 let scale = [
-                    (x1 - x0) / fragment.size[0].max(f64::EPSILON),
-                    (y1 - y0) / fragment.size[1].max(f64::EPSILON),
+                    f64::from(w) / fragment.size[0].max(f64::EPSILON),
+                    f64::from(h) / fragment.size[1].max(f64::EPSILON),
                 ];
-                // Cut to its slot: a path past the view box would land in a neighbour.
-                let slot = Rect::new(x0, y0, x1, y1);
-                self.scene
-                    .push_clip_layer(Fill::NonZero, Affine::IDENTITY, &slot);
+                // One texel of margin, drawn empty: a reused slot loses what was around it.
+                self.scene.reset();
                 let place =
-                    Affine::translate((x0, y0)) * Affine::scale_non_uniform(scale[0], scale[1]);
+                    Affine::translate((1.0, 1.0)) * Affine::scale_non_uniform(scale[0], scale[1]);
                 self.scene.append(&fragment.scene, Some(place));
-                self.scene.pop_layer();
+                let scratch = super::scratch(device, w + 2, h + 2);
+                let params = RenderParams {
+                    base_color: Color::TRANSPARENT,
+                    width: w + 2,
+                    height: h + 2,
+                    antialiasing_method: AaConfig::Area,
+                };
+                let view = scratch.create_view(&Default::default());
+                if let Err(error) =
+                    renderer.render_to_texture(device, queue, &self.scene, &view, &params)
+                {
+                    tracing::warn!("UI vector not drawn: {error}");
+                    continue;
+                }
+                super::copy_slot(device, queue, &scratch, atlas, [x0 - 1, y0 - 1]);
+                self.drawn.insert(vector.key, vector.rect);
             }
-            let params = RenderParams {
-                base_color: Color::TRANSPARENT,
-                width: side,
-                height: side,
-                antialiasing_method: AaConfig::Area,
-            };
-            let renderer = renderer.get_mut().unwrap_or_else(PoisonError::into_inner);
-            if let Err(error) =
-                renderer.render_to_texture(device, queue, &self.scene, view, &params)
-            {
-                tracing::warn!("UI vectors not drawn: {error}");
-                return;
-            }
-            self.drawn = complete.then(|| vectors.to_vec());
         }
     }
 
@@ -239,21 +250,78 @@ mod drawn {
     }
 }
 
-/// Rgba8Unorm, the one storage format Vello writes; straight alpha, as the image atlas is.
-fn texture(device: &wgpu::Device, side: u32) -> wgpu::TextureView {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+/// Rgba8Unorm, straight alpha, as the image atlas is. Copied into, and out of when it grows.
+fn texture(device: &wgpu::Device, side: u32) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
         label: Some("ui_vectors"),
-        size: wgpu::Extent3d {
-            width: side,
-            height: side,
-            depth_or_array_layers: 1,
-        },
+        size: extent(side, side),
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
-    });
-    texture.create_view(&Default::default())
+    })
+}
+
+/// Where Vello draws one entry: Rgba8Unorm is the one storage format it writes.
+#[cfg(feature = "vello")]
+fn scratch(device: &wgpu::Device, w: u32, h: u32) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("ui_vector_scratch"),
+        size: extent(w, h),
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
+}
+
+/// All of `from` into `to` at `at`.
+#[cfg(feature = "vello")]
+fn copy_slot(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    from: &wgpu::Texture,
+    to: &wgpu::Texture,
+    [x, y]: [u32; 2],
+) {
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_texture_to_texture(
+        from.as_image_copy(),
+        wgpu::TexelCopyTextureInfo {
+            texture: to,
+            mip_level: 0,
+            origin: wgpu::Origin3d { x, y, z: 0 },
+            aspect: wgpu::TextureAspect::All,
+        },
+        from.size(),
+    );
+    queue.submit([encoder.finish()]);
+}
+
+/// The top-left `side`×`side` of `from` into `to`.
+#[cfg(feature = "vello")]
+fn copy_into(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    from: &wgpu::Texture,
+    to: &wgpu::Texture,
+    side: u32,
+) {
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_texture_to_texture(from.as_image_copy(), to.as_image_copy(), extent(side, side));
+    queue.submit([encoder.finish()]);
+}
+
+fn extent(width: u32, height: u32) -> wgpu::Extent3d {
+    wgpu::Extent3d {
+        width,
+        height,
+        depth_or_array_layers: 1,
+    }
 }
