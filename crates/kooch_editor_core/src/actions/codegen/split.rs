@@ -8,7 +8,7 @@ use crate::project::{generate_editor_rs, sanitize_crate_name};
 /// loses the editor from.
 const FEATURES: &str = r#"[features]
 default = ["game"]
-game = ["kooch/physics", "kooch/gravity", "kooch/camera", "kooch/audio"]
+game = ["kooch/physics", "kooch/gravity", "kooch/camera", "kooch/audio", "kooch/vello"]
 editor = [
     "game",
     "kooch/editor",
