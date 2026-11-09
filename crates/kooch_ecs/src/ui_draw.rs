@@ -166,6 +166,8 @@ pub struct UiGlyphRun {
     pub coords: Vec<i16>,
     /// Glyph id and its pen position.
     pub glyphs: Vec<(u32, [f32; 2])>,
+    /// Each glyph's direction as cos and sin, set along a curve; empty when the run is straight.
+    pub turns: Vec<[f32; 2]>,
 }
 
 /// A font file, sent once before the first text that uses it.

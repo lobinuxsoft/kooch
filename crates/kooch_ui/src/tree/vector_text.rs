@@ -8,6 +8,7 @@ use glam::Vec2;
 use kooch_ecs::{UiFontSource, UiGlyphRun, UiVectorText};
 
 use super::GlyphQuad;
+use super::text_path::TextPath;
 use crate::atlas::GlyphAtlas;
 
 /// The longest side a text slot is drawn at whole; past it, only what the view shows is drawn, or
@@ -46,34 +47,7 @@ pub(super) fn push_text(
     let at = place.origin * place.scale;
     let snapped = at.floor();
     let fraction = (at - snapped) * zoom;
-    let mut runs: Vec<(parley::FontData, UiGlyphRun)> = Vec::new();
-    let mut largest = 0.0_f32;
-    for line in layout.lines() {
-        for item in line.items() {
-            let parley::PositionedLayoutItem::GlyphRun(run) = item else {
-                continue;
-            };
-            let shaped = run.run();
-            let font = shaped.font();
-            let size = shaped.font_size() * factor;
-            largest = largest.max(size);
-            let glyphs = run
-                .positioned_glyphs()
-                .map(|glyph| (glyph.id, [glyph.x * factor, glyph.y * factor]))
-                .collect();
-            let coords = shaped.normalized_coords().iter().map(|c| c.to_bits());
-            runs.push((
-                font.clone(),
-                UiGlyphRun {
-                    font: font.data.id(),
-                    index: font.index,
-                    size,
-                    coords: coords.collect(),
-                    glyphs,
-                },
-            ));
-        }
-    }
+    let (mut runs, largest) = runs_of(layout, factor, |pen, _, _| (pen.into(), None));
     if runs.is_empty() {
         return;
     }
@@ -103,7 +77,117 @@ pub(super) fn push_text(
             size = Vec2::new(crop.size[0] as f32, crop.size[1] as f32);
         }
     }
-    let (w, h) = (size.x as u32, size.y as u32);
+    let slot = Slot {
+        min,
+        size,
+        zoom,
+        bent: false,
+    };
+    push_slot(runs, slot, place.node, atlas, out, held);
+}
+
+/// `layout` set along `path`, each glyph turned to the line where its middle lands.
+pub(super) fn push_bent(
+    layout: &parley::Layout<()>,
+    place: Place,
+    path: &TextPath,
+    atlas: &mut GlyphAtlas,
+    out: &mut Vec<GlyphQuad>,
+    held: &mut Vec<u64>,
+) {
+    let origin = place.origin * place.scale;
+    let (mut low, mut high) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+    let (mut runs, _) = runs_of(layout, place.scale, |pen, advance, size| {
+        let half = advance * 0.5;
+        let (middle, unit) = path.at(origin + pen + Vec2::new(half, 0.0));
+        // Ascender, descender and advance all fit in a glyph's em about its middle.
+        let reach = Vec2::splat(half.hypot(size) + 1.0);
+        low = low.min(middle - reach);
+        high = high.max(middle + reach);
+        ((middle - unit * half).into(), Some(unit.into()))
+    });
+    if runs.is_empty() {
+        return;
+    }
+    let min = low.floor();
+    let laid = high - min;
+    let zoom = place.zoom.min(LARGEST / laid.max_element().max(1.0));
+    for (_, run) in &mut runs {
+        run.size *= zoom;
+        for (_, at) in &mut run.glyphs {
+            *at = ((Vec2::from(*at) - min) * zoom).into();
+        }
+    }
+    let size = (laid * zoom).ceil();
+    let slot = Slot {
+        min,
+        size,
+        zoom,
+        bent: true,
+    };
+    push_slot(runs, slot, place.node, atlas, out, held);
+}
+
+/// Where a text slot lands: `min` in physical pixels, `size` in texels drawn `zoom` times larger.
+struct Slot {
+    min: Vec2,
+    size: Vec2,
+    zoom: f32,
+    bent: bool,
+}
+
+/// Each run of `layout`, its glyphs at what `place` makes of their pen position, advance and
+/// pixels per em, all `factor` times the layout's; and the largest pixels per em.
+fn runs_of(
+    layout: &parley::Layout<()>,
+    factor: f32,
+    mut place: impl FnMut(Vec2, f32, f32) -> ([f32; 2], Option<[f32; 2]>),
+) -> (Vec<(parley::FontData, UiGlyphRun)>, f32) {
+    let mut runs = Vec::new();
+    let mut largest = 0.0_f32;
+    for line in layout.lines() {
+        for item in line.items() {
+            let parley::PositionedLayoutItem::GlyphRun(run) = item else {
+                continue;
+            };
+            let shaped = run.run();
+            let font = shaped.font();
+            let size = shaped.font_size() * factor;
+            largest = largest.max(size);
+            let (mut glyphs, mut turns) = (Vec::new(), Vec::new());
+            for glyph in run.positioned_glyphs() {
+                let pen = Vec2::new(glyph.x, glyph.y) * factor;
+                let (at, turn) = place(pen, glyph.advance * factor, size);
+                glyphs.push((glyph.id, at));
+                turns.extend(turn);
+            }
+            let coords = shaped.normalized_coords().iter().map(|c| c.to_bits());
+            runs.push((
+                font.clone(),
+                UiGlyphRun {
+                    font: font.data.id(),
+                    index: font.index,
+                    size,
+                    coords: coords.collect(),
+                    glyphs,
+                    turns,
+                },
+            ));
+        }
+    }
+    (runs, largest)
+}
+
+/// Holds the slot of `runs` and pushes the quad that shows it.
+fn push_slot(
+    runs: Vec<(parley::FontData, UiGlyphRun)>,
+    slot: Slot,
+    node: u32,
+    atlas: &mut GlyphAtlas,
+    out: &mut Vec<GlyphQuad>,
+    held: &mut Vec<u64>,
+) {
+    let (w, h) = (slot.size.x as u32, slot.size.y as u32);
     let key = key_of(&runs, [w, h]);
     let mut fonts: Vec<UiFontSource> = Vec::new();
     for (font, _) in &runs {
@@ -126,12 +210,13 @@ pub(super) fn push_text(
     held.push(key);
     let [x0, y0, x1, y1] = image.rect;
     out.push(GlyphQuad {
-        min: min.into(),
-        size: (size / zoom).into(),
+        min: slot.min.into(),
+        size: (slot.size / slot.zoom).into(),
         uv_min: [x0 as u16, y0 as u16],
         uv_size: [(x1 - x0) as u16, (y1 - y0) as u16],
-        node: place.node,
+        node,
         vector: true,
+        bent: slot.bent,
     });
 }
 
@@ -143,6 +228,9 @@ fn key_of(runs: &[(parley::FontData, UiGlyphRun)], size: [u32; 2]) -> u64 {
         (run.font, run.index, run.size.to_bits(), &run.coords).hash(&mut hasher);
         for (glyph, at) in &run.glyphs {
             (glyph, at[0].to_bits(), at[1].to_bits()).hash(&mut hasher);
+        }
+        for turn in &run.turns {
+            turn.map(f32::to_bits).hash(&mut hasher);
         }
     }
     hasher.finish()

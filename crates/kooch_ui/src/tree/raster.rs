@@ -29,6 +29,8 @@ impl UiTree {
                     continue;
                 }
                 let zoom = self.zoom_of(UiNode(index as u32));
+                #[cfg(feature = "vello")]
+                let path = self.text_path(UiNode(index as u32), scale);
                 let Some(text) = self.text[index].as_mut() else {
                     continue;
                 };
@@ -43,8 +45,13 @@ impl UiTree {
                         node: index as u32,
                         view: self.view,
                     };
-                    let held = &mut self.held_texts.1;
-                    super::vector_text::push_text(layout, place, atlas, &mut self.glyphs, held);
+                    let (held, out) = (&mut self.held_texts.1, &mut self.glyphs);
+                    match &path {
+                        Some(path) => {
+                            super::vector_text::push_bent(layout, place, path, atlas, out, held)
+                        }
+                        None => super::vector_text::push_text(layout, place, atlas, out, held),
+                    }
                 }
                 #[cfg(not(feature = "vello"))]
                 {
@@ -73,8 +80,9 @@ impl UiTree {
         true
     }
 
-    /// A fingerprint of every text node's zoom and the view: a `scale` animation redraws the text
-    /// at its size, a pan the part shown. Always 0 without `vello`, whose glyphs stay as laid.
+    /// A fingerprint of every text node's zoom, curve and the view: a `scale` animation redraws
+    /// the text at its size, a reshaped curve resets its glyphs, a pan redraws the part shown.
+    /// Always 0 without `vello`, whose glyphs stay as laid.
     fn text_zooms(&self) -> u64 {
         if !cfg!(feature = "vello") {
             return 0;
@@ -85,9 +93,12 @@ impl UiTree {
             .hash(&mut hasher);
         for (index, text) in self.text.iter().enumerate() {
             if text.is_some() {
-                self.zoom_of(UiNode(index as u32))
-                    .to_bits()
-                    .hash(&mut hasher);
+                let node = UiNode(index as u32);
+                self.zoom_of(node).to_bits().hash(&mut hasher);
+                let line = self.bent_by(node).and_then(|curved| self.line(curved));
+                for point in line.iter().flatten() {
+                    point.to_array().map(f32::to_bits).hash(&mut hasher);
+                }
             }
         }
         hasher.finish()
@@ -146,6 +157,7 @@ fn push_glyphs(
                     uv_size: slot.size,
                     node,
                     vector: false,
+                    bent: false,
                 });
             }
         }

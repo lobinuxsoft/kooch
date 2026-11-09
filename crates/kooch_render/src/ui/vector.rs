@@ -76,7 +76,7 @@ mod drawn {
     use std::num::NonZeroUsize;
     use std::sync::{Mutex, PoisonError};
 
-    use kooch_ecs::{UiFontSource, UiVectorSource, UiVectorText};
+    use kooch_ecs::{UiFontSource, UiGlyphRun, UiVectorSource, UiVectorText};
     use vello_svg::vello::kurbo::Affine;
     use vello_svg::vello::peniko::{Blob, Color, Fill, FontData};
     use vello_svg::vello::{
@@ -147,6 +147,10 @@ mod drawn {
                         continue;
                     };
                     let font = FontData::new(blob.clone(), run.index);
+                    if !run.turns.is_empty() {
+                        draw_turned(&mut scene, &font, run);
+                        continue;
+                    }
                     let glyphs = run.glyphs.iter().map(|&(id, [x, y])| Glyph { id, x, y });
                     scene
                         .draw_glyphs(&font)
@@ -238,6 +242,20 @@ mod drawn {
                 super::copy_slot(device, queue, &scratch, atlas, [x0 - 1, y0 - 1]);
                 self.drawn.insert(vector.key, vector.rect);
             }
+        }
+    }
+
+    /// One glyph at a time, each turned about its pen position: text set along a curve.
+    fn draw_turned(scene: &mut Scene, font: &FontData, run: &UiGlyphRun) {
+        for (&(id, [x, y]), &[cos, sin]) in run.glyphs.iter().zip(&run.turns) {
+            let turn = [cos, sin, -sin, cos, x, y].map(f64::from);
+            scene
+                .draw_glyphs(font)
+                .font_size(run.size)
+                .normalized_coords(&run.coords)
+                .transform(Affine::new(turn))
+                .brush(Color::WHITE)
+                .draw(Fill::NonZero, std::iter::once(Glyph { id, x: 0.0, y: 0.0 }));
         }
     }
 

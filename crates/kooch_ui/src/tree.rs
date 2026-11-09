@@ -32,6 +32,8 @@ pub struct GlyphQuad {
     pub node: u32,
     /// A whole text node drawn by Vello, sampled from the vector atlas (#1880).
     pub vector: bool,
+    /// Its glyphs already set along the curve around it: the quad is not bent again.
+    pub bent: bool,
 }
 
 /// How a node is painted. Colours are sRGB, as a colour picker gives them: the frame they are
@@ -507,6 +509,8 @@ mod raster;
 mod scroll;
 #[cfg(test)]
 mod tests;
+#[cfg(feature = "vello")]
+mod text_path;
 pub(crate) mod transforms;
 #[cfg(feature = "vello")]
 mod vector_text;

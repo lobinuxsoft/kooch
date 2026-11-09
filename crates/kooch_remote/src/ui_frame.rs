@@ -52,19 +52,30 @@ pub struct UiFrame {
 }
 
 /// A [`UiVectorText`] on the wire.
+/// A [`UiGlyphRun`] on the wire.
+pub type WireRun = (u64, u32, f32, Vec<i16>, Vec<(u32, [f32; 2])>, Vec<[f32; 2]>);
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WireText {
     pub key: u64,
     pub size: [f32; 2],
-    /// Font, face, pixels per em, coordinates, glyphs.
-    pub runs: Vec<(u64, u32, f32, Vec<i16>, Vec<(u32, [f32; 2])>)>,
+    /// Font, face, pixels per em, coordinates, glyphs, their turns.
+    pub runs: Vec<WireRun>,
 }
 
 impl From<&UiVectorText> for WireText {
     fn from(text: &UiVectorText) -> Self {
         let runs = text.runs.iter().map(|run| {
             let coords = run.coords.clone();
-            (run.font, run.index, run.size, coords, run.glyphs.clone())
+            let turns = run.turns.clone();
+            (
+                run.font,
+                run.index,
+                run.size,
+                coords,
+                run.glyphs.clone(),
+                turns,
+            )
         });
         Self {
             key: text.key,
@@ -79,12 +90,13 @@ impl From<WireText> for UiVectorText {
         let runs = wire
             .runs
             .into_iter()
-            .map(|(font, index, size, coords, glyphs)| UiGlyphRun {
+            .map(|(font, index, size, coords, glyphs, turns)| UiGlyphRun {
                 font,
                 index,
                 size,
                 coords,
                 glyphs,
+                turns,
             });
         Self {
             key: wire.key,

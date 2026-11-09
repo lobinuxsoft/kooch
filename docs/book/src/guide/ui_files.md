@@ -360,6 +360,11 @@ the font file (no font asset to make), at the pixels it covers after its `scale`
 does not change costs nothing; one that changes, or animates its `scale`, is drawn again that
 frame. Without `vello`, text stays sharp at its laid-out size and stretches under `scale`.
 
+Inside a curve, each glyph is set on the line and turned to it, the way text on a path is in a
+vector editor, so a tight bend keeps every letter's shape. A rotate, flip, clip or mask inside the
+curve sends the label back to bending as one piece. Rotation elsewhere turns the drawn label
+without drawing it again: it does not change how many pixels a glyph covers.
+
 Past 2048 pixels on its longer side, an SVG (without `-kooch-slice`) or a label is drawn only
 where the view shows it, at its own pixels: the UI Builder's deep zoom stays sharp. With a
 `scale` it is drawn at 2048 and stretched past that.

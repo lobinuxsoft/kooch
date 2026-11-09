@@ -230,8 +230,12 @@ fn push_tree(
                 }
             }
         }
+        let mut set = list.quads.len()..list.quads.len();
         while next < glyphs.len() && glyphs[next].node == index {
             let glyph = glyphs[next];
+            if glyph.bent {
+                set.end = list.quads.len() + 1;
+            }
             list.quads.push(UiQuad {
                 min: glyph.min,
                 size: glyph.size,
@@ -252,6 +256,10 @@ fn push_tree(
             quad.mask = own;
             quad.curve = curve;
             quad.mirror = own_turn.index;
+        }
+        // Glyphs already set along the curve: bent again they would turn twice.
+        for quad in list.quads.get_mut(set).into_iter().flatten() {
+            quad.curve = 0;
         }
     }
 }
