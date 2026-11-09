@@ -79,7 +79,10 @@ fn upload(atlas: &mut GlyphAtlas, list: &mut UiDrawList) {
     list.vector_side = atlas.vector_side();
     list.vectors = atlas.vectors();
     // Appended, as the glyph upload is grown: the renderer takes them when it draws.
-    list.vector_sources.extend(atlas.take_sources());
+    let (sources, texts, fonts) = atlas.take_sources();
+    list.vector_sources.extend(sources);
+    list.vector_texts.extend(texts);
+    list.vector_fonts.extend(fonts);
     // Grown over one not uploaded yet, not replacing it: a frame the renderer skipped would
     // otherwise lose its glyphs.
     if let Some(dirty) = atlas.take_dirty() {
@@ -169,7 +172,7 @@ fn push_tree(
             .image(node)
             .zip(tree.rect(node))
             .and_then(|(image, rect)| {
-                let shown = crate::images::shown_size(rect.size, scale);
+                let shown = crate::images::shown_size(rect.size * tree.zoom_of(node), scale);
                 Some((image, atlas.image(image.guid, shown)?))
             });
         let plain = shaded.is_none();
@@ -221,7 +224,10 @@ fn push_tree(
                 color: paint.text,
                 uv_min: [glyph.uv_min[0] as u32, glyph.uv_min[1] as u32],
                 uv_size: [glyph.uv_size[0] as u32, glyph.uv_size[1] as u32],
-                flags: QUAD_GLYPH,
+                flags: match glyph.vector {
+                    true => QUAD_IMAGE | QUAD_VECTOR,
+                    false => QUAD_GLYPH,
+                },
                 ..UiQuad::default()
             });
             next += 1;
@@ -250,7 +256,7 @@ fn push_masks(
         .mask(node)
         .zip(tree.rect(node))
         .and_then(|(mask, rect)| {
-            let shown = crate::images::shown_size(rect.size, scale);
+            let shown = crate::images::shown_size(rect.size * tree.zoom_of(node), scale);
             Some((mask, atlas.image(mask.guid, shown)?))
         });
     let fill_from = tree.fill_from(node);

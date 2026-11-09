@@ -90,9 +90,11 @@ fn want(tree: &UiTree, scale: f32, wanted: &mut Wanted) {
         let Some(guid) = guid else {
             continue;
         };
-        let shown = tree
-            .rect(UiNode(index as u32))
-            .map_or([0, 0], |rect| shown_size(rect.size, scale));
+        let shown = tree.rect(UiNode(index as u32)).map_or([0, 0], |rect| {
+            // At the size its transform shows it, so a zoomed SVG is not stretched (#1880).
+            let zoom = tree.zoom_of(UiNode(index as u32));
+            shown_size(rect.size * zoom, scale)
+        });
         wanted.entry(guid).or_default().insert(size_class(shown));
     }
 }

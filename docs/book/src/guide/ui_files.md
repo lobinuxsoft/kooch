@@ -342,8 +342,8 @@ Saving the PNG shows the change without Play. A node's own image is not clipped 
 **SVG.** An `.svg` is drawn at the size it shows on screen, so an icon stays sharp on a handheld
 and on a 4K monitor alike. It is drawn once per size class (16, 32, 64… up to 2048 pixels on its
 longer side), and each node uses the class just above its size, so the same icon at 24 and at 480
-pixels is two drawings. A transform does not redraw it: to animate one, lay the node out at its
-largest size and animate `scale` below 1. A
+pixels is two drawings. The size counts `scale` on the node and its ancestors, so a node scaled
+4× is drawn with 4× the pixels instead of stretched; rotation and perspective are not counted. A
 `-kooch-slice` on an SVG is in the file's own units. Text inside an SVG and images embedded in it
 are not drawn: convert text to paths before exporting. As a material texture, an SVG is drawn once
 at the size it declares.
@@ -354,6 +354,11 @@ texture of their own. The size classes stay the same; what changes is that a new
 file costs a GPU pass instead of a CPU raster, and nothing is redrawn while the set on screen
 stays the same. In a profile it is the `ui: vello` scope. Without the feature, nothing of Vello
 is in the build.
+
+With `vello`, text is drawn by Vello too: each label is one drawing of its glyphs, straight from
+the font file (no font asset to make), at the pixels it covers after its `scale`. A label that
+does not change costs nothing; one that changes, or animates its `scale`, is drawn again that
+frame. Without `vello`, text stays sharp at its laid-out size and stretches under `scale`.
 
 **Masks.** `overflow: hidden` on a node with `border-radius` cuts its children to the rounded shape.
 `-kooch-mask` cuts by the alpha of an image, stretched to the node's box, which is how a bar fill

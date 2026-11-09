@@ -66,8 +66,9 @@ fn a_row_splits_the_canvas() {
 }
 
 /// Accents, ñ and a dash: the text is measured, pushes its sibling, and its glyphs reach the atlas
-/// once per scale.
+/// once per scale. With `vello` there are no glyphs in the atlas: `a_redrawn_text_frees_its_slot`.
 #[test]
+#[cfg(not(feature = "vello"))]
 fn text_is_measured_and_rasterized() {
     let mut fonts = UiFonts::default();
     let mut atlas = GlyphAtlas::default();
@@ -134,4 +135,22 @@ fn fira_code_shapes_ligatures() {
     let apart = ids("= >", &mut fonts);
     assert_eq!(joined.len(), 2);
     assert_ne!(joined[1], apart[2]);
+}
+
+/// A text drawn again at another size gives its old vector slot back (#1880).
+#[test]
+#[cfg(feature = "vello")]
+fn a_redrawn_text_frees_its_slot() {
+    let mut fonts = UiFonts::default();
+    let mut atlas = GlyphAtlas::default();
+    let mut tree = UiTree::new(Style::default());
+    let label = tree.push(UiTree::ROOT, Style::default()).unwrap();
+    tree.set_text(label, "Yaguareté", 32.0);
+    tree.layout(screen(canvas(glam::UVec2::new(1920, 1080))), &mut fonts);
+
+    assert!(tree.rasterize(1.0, &mut fonts, &mut atlas));
+    assert!(tree.glyphs().iter().all(|glyph| glyph.vector));
+    assert!(tree.rasterize(2.0, &mut fonts, &mut atlas));
+
+    assert_eq!(atlas.vectors().len(), 1);
 }

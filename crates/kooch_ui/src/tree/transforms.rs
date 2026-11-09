@@ -82,6 +82,23 @@ impl UiTree {
         own.copied().unwrap_or(UiTransform::NONE)
     }
 
+    /// How much `node` is magnified on screen by its own and its ancestors' `scale`, so a vector
+    /// is drawn with the pixels it will cover (#1880). Rotation and perspective are not counted.
+    pub fn zoom_of(&self, node: UiNode) -> f32 {
+        let mut zoom = 1.0_f32;
+        let mut at = Some(node);
+        // A tree's parents always have lower indices, so this ends.
+        while let Some(current) = at {
+            let [x, y] = self.transform_of(current).scale;
+            zoom *= x.abs().max(y.abs());
+            at = self.parent(current);
+        }
+        match zoom.is_finite() && zoom > 0.0 {
+            true => zoom,
+            false => 1.0,
+        }
+    }
+
     /// `node`'s transform as a matrix in canvas units; `None` when it does not move.
     pub fn turn_of(&self, node: UiNode) -> Option<Mat3> {
         let transform = self.transform_of(node);

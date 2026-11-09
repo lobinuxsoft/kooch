@@ -141,6 +141,36 @@ pub struct UiVectorSource {
     pub svg: Arc<[u8]>,
 }
 
+/// A text node's glyphs behind a [`UiVector`] (#1880), drawn white in a slot of `size` texels.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiVectorText {
+    pub key: u64,
+    pub size: [f32; 2],
+    pub runs: Vec<UiGlyphRun>,
+}
+
+/// Glyphs of one font at one size, positioned in the slot's texels.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiGlyphRun {
+    /// A [`UiFontSource::id`].
+    pub font: u64,
+    /// The face in a collection.
+    pub index: u32,
+    /// Pixels per em.
+    pub size: f32,
+    /// Variable-font coordinates, normalized 2.14.
+    pub coords: Vec<i16>,
+    /// Glyph id and its pen position.
+    pub glyphs: Vec<(u32, [f32; 2])>,
+}
+
+/// A font file, sent once before the first text that uses it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiFontSource {
+    pub id: u64,
+    pub data: Arc<[u8]>,
+}
+
 /// This frame's UI, back to front.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct UiDrawList {
@@ -161,4 +191,7 @@ pub struct UiDrawList {
     pub vectors: Vec<UiVector>,
     /// Files not handed over yet; the renderer takes them, as it takes `atlas_upload`.
     pub vector_sources: Vec<UiVectorSource>,
+    /// Text not handed over yet, as `vector_sources`.
+    pub vector_texts: Vec<UiVectorText>,
+    pub vector_fonts: Vec<UiFontSource>,
 }

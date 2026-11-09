@@ -30,6 +30,8 @@ pub struct GlyphQuad {
     pub uv_min: [u16; 2],
     pub uv_size: [u16; 2],
     pub node: u32,
+    /// A whole text node drawn by Vello, sampled from the vector atlas (#1880).
+    pub vector: bool,
 }
 
 /// How a node is painted. Colours are sRGB, as a colour picker gives them: the frame they are
@@ -103,8 +105,10 @@ pub struct UiTree {
     font_share: Vec<Option<f32>>,
     text: Vec<Option<Text>>,
     glyphs: Vec<GlyphQuad>,
-    /// Physical pixels per canvas unit and atlas generation the glyphs were built for.
-    rastered: Option<(f32, u32)>,
+    /// Physical pixels per canvas unit, atlas generation and text zooms the glyphs were built for.
+    rastered: Option<(f32, u32, u64)>,
+    /// The vector atlas's text slots this tree holds, and the generation they were taken in.
+    held_texts: (u32, Vec<u64>),
     /// Size the rects were computed for; `None` once anything changed.
     laid_out: Option<Vec2>,
     /// A scroll moved rects that taffy's layout still holds: they are placed again, not laid out.
@@ -156,6 +160,7 @@ impl UiTree {
             text: Vec::new(),
             glyphs: Vec::new(),
             rastered: None,
+            held_texts: (0, Vec::new()),
             laid_out: None,
             moved: false,
             origin: None,
@@ -500,3 +505,5 @@ mod scroll;
 #[cfg(test)]
 mod tests;
 pub(crate) mod transforms;
+#[cfg(feature = "vello")]
+mod vector_text;

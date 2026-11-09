@@ -37,14 +37,17 @@ impl UiVectors {
         list: &mut UiDrawList,
     ) -> bool {
         let sources = std::mem::take(&mut list.vector_sources);
+        let texts = std::mem::take(&mut list.vector_texts);
+        let fonts = std::mem::take(&mut list.vector_fonts);
         #[cfg(not(feature = "vello"))]
         {
-            let _ = (device, queue, sources);
+            let _ = (device, queue, sources, texts, fonts);
             false
         }
         #[cfg(feature = "vello")]
         {
             self.vello.parse(sources);
+            self.vello.parse_texts(texts, fonts);
             let replaced = list.vector_side > 0 && list.vector_side != self.side;
             if replaced {
                 self.view = texture(device, list.vector_side);
@@ -64,10 +67,12 @@ mod drawn {
     use std::num::NonZeroUsize;
     use std::sync::{Mutex, PoisonError};
 
-    use kooch_ecs::UiVectorSource;
+    use kooch_ecs::{UiFontSource, UiVectorSource, UiVectorText};
     use vello_svg::vello::kurbo::{Affine, Rect};
-    use vello_svg::vello::peniko::{Color, Fill};
-    use vello_svg::vello::{AaConfig, AaSupport, RenderParams, Renderer, RendererOptions, Scene};
+    use vello_svg::vello::peniko::{Blob, Color, Fill, FontData};
+    use vello_svg::vello::{
+        AaConfig, AaSupport, Glyph, RenderParams, Renderer, RendererOptions, Scene,
+    };
 
     use super::UiVector;
 
@@ -83,6 +88,8 @@ mod drawn {
         /// mutex only because it is not `Sync` and resources must be; `get_mut` never locks.
         renderer: Option<Mutex<Renderer>>,
         fragments: HashMap<u64, Fragment>,
+        /// Every font a text used, kept: a later text may use one sent long before.
+        fonts: HashMap<u64, Blob<u8>>,
         scene: Scene,
         /// What the texture holds; `None` until it holds the list, or while a file is missing so
         /// its arrival redraws.
@@ -111,6 +118,42 @@ mod drawn {
                     size: [f64::from(size.width()), f64::from(size.height())],
                 };
                 self.fragments.insert(source.key, fragment);
+            }
+        }
+
+        /// Encodes each new text's glyph runs, white: the quad tints them with the text colour.
+        pub(super) fn parse_texts(&mut self, texts: Vec<UiVectorText>, fonts: Vec<UiFontSource>) {
+            for font in fonts {
+                self.fonts
+                    .entry(font.id)
+                    .or_insert_with(|| Blob::new(std::sync::Arc::new(font.data)));
+            }
+            for text in texts {
+                if self.fragments.contains_key(&text.key) {
+                    continue;
+                }
+                let mut scene = Scene::new();
+                for run in &text.runs {
+                    let Some(blob) = self.fonts.get(&run.font) else {
+                        tracing::warn!("UI text not drawn: its font never arrived");
+                        continue;
+                    };
+                    let font = FontData::new(blob.clone(), run.index);
+                    let glyphs = run.glyphs.iter().map(|&(id, [x, y])| Glyph { id, x, y });
+                    scene
+                        .draw_glyphs(&font)
+                        .font_size(run.size)
+                        .normalized_coords(&run.coords)
+                        // As swash did: small text keeps its stems on whole pixels.
+                        .hint(true)
+                        .brush(Color::WHITE)
+                        .draw(Fill::NonZero, glyphs);
+                }
+                let fragment = Fragment {
+                    scene,
+                    size: text.size.map(f64::from),
+                };
+                self.fragments.insert(text.key, fragment);
             }
         }
 
