@@ -79,6 +79,8 @@ pub struct UiTree {
     hidden: Vec<(UiNode, taffy::Display)>,
     /// Hidden itself or under a hidden ancestor, per node; set by the layout.
     culled: Vec<bool>,
+    /// The physical pixels on screen, `[x0, y0, x1, y1]`; `None` draws vectors whole (#1880).
+    pub(crate) view: Option<[f32; 4]>,
     /// Toggles and sliders, sparse.
     pub(crate) controls: Vec<crate::controls::Control>,
     /// The node `autofocus` names: it takes focus each time the document appears.
@@ -139,6 +141,7 @@ impl UiTree {
             disabled: Vec::new(),
             hidden: Vec::new(),
             culled: Vec::new(),
+            view: None,
             controls: Vec::new(),
             autofocus: None,
             shown: false,

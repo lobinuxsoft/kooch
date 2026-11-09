@@ -210,10 +210,25 @@ fn push_tree(
                 ..UiQuad::default()
             });
         }
-        if let Some((image, packed)) = image.filter(|_| plain) {
-            let min = (rect.min * scale).round();
-            let max = ((rect.min + rect.size) * scale).round();
-            push_image(image, packed, min, max, scale, clip, &mut list.quads);
+        let min = (rect.min * scale).round();
+        let max = ((rect.min + rect.size) * scale).round();
+        let cropped = image
+            .filter(|(image, _)| plain && image.slice == [0.0; 4])
+            .and_then(|(image, _)| {
+                let crop = crate::crops::crop_of(tree, node, scale)?;
+                Some((image, crop, atlas.crop(image.guid, crop)))
+            });
+        match cropped {
+            // Off the view: nothing of it is drawn.
+            Some((_, crop, _)) if crop.size.contains(&0) => {}
+            Some((image, crop, Some(packed))) => {
+                push_crop(image, packed, crop, min, clip, &mut list.quads);
+            }
+            _ => {
+                if let Some((image, packed)) = image.filter(|_| plain) {
+                    push_image(image, packed, min, max, scale, clip, &mut list.quads);
+                }
+            }
         }
         while next < glyphs.len() && glyphs[next].node == index {
             let glyph = glyphs[next];
@@ -455,6 +470,28 @@ fn push_thumb(
             ..UiQuad::default()
         });
     }
+}
+
+/// One quad over the part of the node `crop` holds, at its own pixels (#1880).
+fn push_crop(
+    image: UiImage,
+    packed: AtlasImage,
+    crop: crate::crops::Crop,
+    min: Vec2,
+    clip: [f32; 4],
+    out: &mut Vec<UiQuad>,
+) {
+    let [u0, v0, u1, v1] = packed.rect;
+    out.push(UiQuad {
+        min: [min.x + crop.from[0] as f32, min.y + crop.from[1] as f32],
+        size: crop.size.map(|v| v as f32),
+        clip,
+        color: image.tint,
+        uv_min: [u0, v0],
+        uv_size: [u1 - u0, v1 - v0],
+        flags: image_flags(packed),
+        ..UiQuad::default()
+    });
 }
 
 /// Which texture the quad samples.

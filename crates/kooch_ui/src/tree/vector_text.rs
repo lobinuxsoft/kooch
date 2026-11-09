@@ -10,7 +10,8 @@ use kooch_ecs::{UiFontSource, UiGlyphRun, UiVectorText};
 use super::GlyphQuad;
 use crate::atlas::GlyphAtlas;
 
-/// The longest side a text slot is drawn at; a larger zoom is stretched past it.
+/// The longest side a text slot is drawn at whole; past it, only what the view shows is drawn, or
+/// with a transform or no view, it is stretched.
 const LARGEST: f32 = 2048.0;
 
 /// Where a text node is drawn: its first line's top-left in canvas units, physical pixels per
@@ -20,6 +21,8 @@ pub(super) struct Place {
     pub scale: f32,
     pub zoom: f32,
     pub node: u32,
+    /// The physical pixels on screen, which crop a text too large to draw whole.
+    pub view: Option<[f32; 4]>,
 }
 
 /// Holds the slot of `layout` drawn at `place`, and pushes the quad that shows it.
@@ -31,7 +34,13 @@ pub(super) fn push_text(
     held: &mut Vec<u64>,
 ) {
     let laid = Vec2::new(layout.full_width().max(layout.width()), layout.height()) * place.scale;
-    let zoom = place.zoom.min(LARGEST / laid.max_element().max(1.0));
+    let cropped = place
+        .view
+        .filter(|_| (place.zoom - 1.0).abs() < 1e-3 && laid.max_element() > LARGEST);
+    let zoom = match cropped {
+        Some(_) => place.zoom,
+        None => place.zoom.min(LARGEST / laid.max_element().max(1.0)),
+    };
     let factor = place.scale * zoom;
     // Whole pixels for the quad, the fraction moved into the glyphs: at zoom 1 they land as laid.
     let at = place.origin * place.scale;
@@ -76,7 +85,24 @@ pub(super) fn push_text(
             *at = [at[0] + shift.x, at[1] + shift.y];
         }
     }
-    let size = (laid * zoom + fraction + Vec2::splat(2.0 * pad)).ceil();
+    let mut size = (laid * zoom + fraction + Vec2::splat(2.0 * pad)).ceil();
+    let mut min = snapped - Vec2::splat(pad) / zoom;
+    if let Some(view) = cropped {
+        let whole = [min.x, min.y, min.x + size.x, min.y + size.y];
+        if let Some(crop) = crate::crops::crop_in(whole, view, 1.0) {
+            if crop.size.contains(&0) {
+                return;
+            }
+            let from = Vec2::new(crop.from[0] as f32, crop.from[1] as f32);
+            for (_, run) in &mut runs {
+                for (_, at) in &mut run.glyphs {
+                    *at = [at[0] - from.x, at[1] - from.y];
+                }
+            }
+            min += from;
+            size = Vec2::new(crop.size[0] as f32, crop.size[1] as f32);
+        }
+    }
     let (w, h) = (size.x as u32, size.y as u32);
     let key = key_of(&runs, [w, h]);
     let mut fonts: Vec<UiFontSource> = Vec::new();
@@ -100,7 +126,7 @@ pub(super) fn push_text(
     held.push(key);
     let [x0, y0, x1, y1] = image.rect;
     out.push(GlyphQuad {
-        min: (snapped - Vec2::splat(pad) / zoom).into(),
+        min: min.into(),
         size: (size / zoom).into(),
         uv_min: [x0 as u16, y0 as u16],
         uv_size: [(x1 - x0) as u16, (y1 - y0) as u16],

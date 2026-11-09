@@ -126,15 +126,19 @@ pub struct UiMaterial {
     pub params: [u32; 2],
 }
 
-/// An SVG Vello draws into the vector atlas (#1865): `key` names it across frames.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// An SVG or a text Vello draws into the vector atlas (#1865): `key` names it across frames.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UiVector {
     pub key: u64,
     /// Its texels, `[x0, y0, x1, y1]`.
     pub rect: [u32; 4],
+    /// The [`UiVectorSource`] or [`UiVectorText`] drawn: one file serves every size.
+    pub source: u64,
+    /// `[full w, full h, from x, from y]` when only part is drawn (#1880); zero draws it whole.
+    pub crop: [f32; 4],
 }
 
-/// The file behind a [`UiVector`], sent once when it is first packed or changes.
+/// The file behind a [`UiVector::source`], sent with each new slot; parsed once per key.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UiVectorSource {
     pub key: u64,

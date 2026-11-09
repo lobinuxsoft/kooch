@@ -228,6 +228,12 @@ impl UiBuilder {
                     Err(error) => self.error = Some(error),
                 }
             }
+            // What the panel shows: a vector past the largest size is drawn only there.
+            let [x, y] = region.offset;
+            let view = [x, y, x + size.0 as f32, y + size.1 as f32];
+            if let Some(tree) = self.tree.as_mut() {
+                tree.set_view(Some(view));
+            }
             // The canvas draws with its own atlas, which the game's `load_images` never fills.
             if let Some(tree) = self.tree.as_ref() {
                 let scale = canvas_pixels.1.max(1) as f32 / CANVAS_HEIGHT;

@@ -37,11 +37,11 @@ pub struct UiFrame {
     pub atlas_side: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upload: Option<UiUpload>,
-    /// The vector atlas (#1865): its side, `(key, rect)` per resident SVG, and each file once.
+    /// The vector atlas (#1865): its side, `(key, rect, source, crop)` per slot, each file once.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub vector_side: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub vectors: Vec<(u64, [u32; 4])>,
+    pub vectors: Vec<(u64, [u32; 4], u64, [f32; 4])>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vector_sources: Vec<(u64, String)>,
     /// Text slots' glyphs (#1880), and each font file once, base64.
@@ -177,7 +177,11 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
                 texels: STANDARD.encode(&upload.texels),
             }),
             vector_side: list.vector_side,
-            vectors: list.vectors.iter().map(|v| (v.key, v.rect)).collect(),
+            vectors: list
+                .vectors
+                .iter()
+                .map(|v| (v.key, v.rect, v.source, v.crop))
+                .collect(),
             vector_sources: sources
                 .iter()
                 .map(|source| (source.key, STANDARD.encode(&source.svg)))
@@ -264,7 +268,12 @@ impl UiReceiver {
         self.vectors = frame
             .vectors
             .iter()
-            .map(|&(key, rect)| UiVector { key, rect })
+            .map(|&(key, rect, source, crop)| UiVector {
+                key,
+                rect,
+                source,
+                crop,
+            })
             .collect();
         for (key, svg) in frame.vector_sources {
             match STANDARD.decode(&svg) {
@@ -287,7 +296,7 @@ impl UiReceiver {
             }
         }
         let vectors = &self.vectors;
-        let resident = |key: u64| vectors.iter().any(|vector| vector.key == key);
+        let resident = |key: u64| vectors.iter().any(|vector| vector.source == key);
         self.vector_sources.retain(|source| resident(source.key));
         self.vector_texts.retain(|text| resident(text.key));
         if frame.atlas_side != self.side {

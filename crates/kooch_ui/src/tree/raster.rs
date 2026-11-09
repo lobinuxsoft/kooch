@@ -41,6 +41,7 @@ impl UiTree {
                         scale,
                         zoom,
                         node: index as u32,
+                        view: self.view,
                     };
                     let held = &mut self.held_texts.1;
                     super::vector_text::push_text(layout, place, atlas, &mut self.glyphs, held);
@@ -72,13 +73,16 @@ impl UiTree {
         true
     }
 
-    /// A fingerprint of every text node's zoom: a `scale` animation redraws the text at its size.
-    /// Always 0 without `vello`, whose glyphs stay at the laid-out size.
+    /// A fingerprint of every text node's zoom and the view: a `scale` animation redraws the text
+    /// at its size, a pan the part shown. Always 0 without `vello`, whose glyphs stay as laid.
     fn text_zooms(&self) -> u64 {
         if !cfg!(feature = "vello") {
             return 0;
         }
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.view
+            .map(|view| view.map(f32::to_bits))
+            .hash(&mut hasher);
         for (index, text) in self.text.iter().enumerate() {
             if text.is_some() {
                 self.zoom_of(UiNode(index as u32))

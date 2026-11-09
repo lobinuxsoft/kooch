@@ -181,8 +181,9 @@ mod drawn {
                 return;
             }
             profiling::scope!("ui: vello");
+            let drawing = |key: &u64| vectors.iter().any(|vector| vector.source == *key);
+            self.fragments.retain(|key, _| drawing(key));
             let resident = |key: &u64| vectors.iter().any(|vector| vector.key == *key);
-            self.fragments.retain(|key, _| resident(key));
             self.drawn.retain(|key, _| resident(key));
             let renderer = match &mut self.renderer {
                 Some(renderer) => renderer,
@@ -200,19 +201,25 @@ mod drawn {
                     continue;
                 }
                 // Not arrived yet: drawn the frame it does.
-                let Some(fragment) = self.fragments.get(&vector.key) else {
+                let Some(fragment) = self.fragments.get(&vector.source) else {
                     continue;
                 };
                 let [x0, y0, x1, y1] = vector.rect;
                 let (w, h) = (x1 - x0, y1 - y0);
+                // A crop draws the whole at its full size, moved so its part lands in the slot.
+                let [full_w, full_h, from_x, from_y] = vector.crop.map(f64::from);
+                let (whole, from) = match full_w > 0.0 {
+                    true => ([full_w, full_h], [from_x, from_y]),
+                    false => ([f64::from(w), f64::from(h)], [0.0, 0.0]),
+                };
                 let scale = [
-                    f64::from(w) / fragment.size[0].max(f64::EPSILON),
-                    f64::from(h) / fragment.size[1].max(f64::EPSILON),
+                    whole[0] / fragment.size[0].max(f64::EPSILON),
+                    whole[1] / fragment.size[1].max(f64::EPSILON),
                 ];
                 // One texel of margin, drawn empty: a reused slot loses what was around it.
                 self.scene.reset();
-                let place =
-                    Affine::translate((1.0, 1.0)) * Affine::scale_non_uniform(scale[0], scale[1]);
+                let place = Affine::translate((1.0 - from[0], 1.0 - from[1]))
+                    * Affine::scale_non_uniform(scale[0], scale[1]);
                 self.scene.append(&fragment.scene, Some(place));
                 let scratch = super::scratch(device, w + 2, h + 2);
                 let params = RenderParams {

@@ -360,6 +360,10 @@ the font file (no font asset to make), at the pixels it covers after its `scale`
 does not change costs nothing; one that changes, or animates its `scale`, is drawn again that
 frame. Without `vello`, text stays sharp at its laid-out size and stretches under `scale`.
 
+Past 2048 pixels on its longer side, an SVG (without `-kooch-slice`) or a label is drawn only
+where the view shows it, at its own pixels: the UI Builder's deep zoom stays sharp. With a
+`scale` it is drawn at 2048 and stretched past that.
+
 **Masks.** `overflow: hidden` on a node with `border-radius` cuts its children to the rounded shape.
 `-kooch-mask` cuts by the alpha of an image, stretched to the node's box, which is how a bar fill
 follows a curve: the bar has the mask, and the fill grows inside it. Masks nest up to 16 deep, and
