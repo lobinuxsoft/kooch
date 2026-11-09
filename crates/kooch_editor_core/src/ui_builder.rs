@@ -50,8 +50,12 @@ pub(crate) struct UiBuilder {
     pub pan: Option<egui::Vec2>,
     pub focus_requested: bool,
     pub texture: Option<egui::TextureId>,
-    /// Pixels the panel shows the canvas at; `None` while the tab is not drawn.
-    pub request: Option<(u32, u32)>,
+    /// The part of the canvas the panel shows; `None` while the tab is not drawn.
+    pub request: Option<CanvasRegion>,
+    /// The part the list was built for.
+    shown: Option<CanvasRegion>,
+    /// The part the target holds, where the panel paints it: a frame behind `shown` on a resize.
+    pub painted: Option<CanvasRegion>,
     /// The file as edited, written only on save.
     markup: Markup,
     /// Differs from the file on disk.
@@ -89,6 +93,17 @@ pub(crate) struct UiBuilder {
     texts: Vec<(u32, String)>,
 }
 
+/// What of the canvas is drawn, in its pixels at the current zoom: only what the panel shows, at the
+/// pixels it is shown at, so a deep zoom draws vectors and text sharp instead of magnifying.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CanvasRegion {
+    /// The whole canvas.
+    pub canvas: (u32, u32),
+    /// Top-left of the part shown.
+    pub offset: [f32; 2],
+    pub size: (u32, u32),
+}
+
 /// One undo step: the markup before it, and what to call it.
 pub(crate) struct Step {
     pub before: String,
@@ -104,7 +119,7 @@ impl UiBuilder {
 
     /// Before the UI: the target takes the size the panel asked for last frame.
     pub(crate) fn prepare(&mut self, gpu: &GpuContext, renderer: &mut egui_wgpu::Renderer) {
-        if let Some(size) = self.request.take() {
+        if let Some(CanvasRegion { size, .. }) = self.request.take() {
             match self.target.as_mut() {
                 Some(target) => {
                     target.request_size(size);
@@ -149,7 +164,9 @@ impl UiBuilder {
 
     /// Over transparent black: the panel's checkerboard shows through.
     pub(crate) fn render(&mut self, gpu: &GpuContext) {
-        let (Some(target), Some(drawn)) = (self.target.as_ref(), self.drawn) else {
+        let (Some(target), Some(drawn), Some(shown)) =
+            (self.target.as_ref(), self.drawn, self.shown)
+        else {
             return;
         };
         if target.size() != drawn {
@@ -158,6 +175,7 @@ impl UiBuilder {
         let pass = self
             .pass
             .get_or_insert_with(|| UiPass::new(gpu.device(), gpu.format()));
+        pass.set_offset(shown.offset);
         let mut encoder = gpu
             .device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -173,12 +191,14 @@ impl UiBuilder {
             true,
         );
         gpu.queue().submit(Some(encoder.finish()));
+        self.painted = Some(shown);
     }
 
     fn update(&mut self, resources: &mut Resources) {
-        let Some(size) = self.request else {
+        let Some(region) = self.request else {
             return;
         };
+        let (size, canvas_pixels) = (region.size, region.canvas);
         let mut server = resources.remove::<AssetServer>();
         if let Some(database) = resources.get::<AssetDatabase>() {
             self.reread(database);
@@ -208,9 +228,15 @@ impl UiBuilder {
                     Err(error) => self.error = Some(error),
                 }
             }
+            // What the panel shows: a vector past the largest size is drawn only there.
+            let [x, y] = region.offset;
+            let view = [x, y, x + size.0 as f32, y + size.1 as f32];
+            if let Some(tree) = self.tree.as_mut() {
+                tree.set_view(Some(view));
+            }
             // The canvas draws with its own atlas, which the game's `load_images` never fills.
             if let Some(tree) = self.tree.as_ref() {
-                let scale = size.1.max(1) as f32 / CANVAS_HEIGHT;
+                let scale = canvas_pixels.1.max(1) as f32 / CANVAS_HEIGHT;
                 kooch_ui::load_tree_images(tree, scale, database, server.as_mut(), &mut self.atlas);
                 kooch_ui::load_tree_shaders(tree, database, server.as_mut(), &mut self.shaders);
             }
@@ -243,9 +269,9 @@ impl UiBuilder {
             },
             fonts,
         );
-        let scale = size.1.max(1) as f32 / CANVAS_HEIGHT;
+        let scale = canvas_pixels.1.max(1) as f32 / CANVAS_HEIGHT;
         tree.rasterize(scale, fonts, &mut self.atlas);
-        let physical = glam::UVec2::new(size.0, size.1);
+        let physical = glam::UVec2::new(canvas_pixels.0, canvas_pixels.1);
         kooch_ui::draw_tree(
             tree,
             &mut self.atlas,
@@ -255,6 +281,7 @@ impl UiBuilder {
             &mut self.list,
         );
         self.drawn = Some(size);
+        self.shown = Some(region);
     }
 }
 
@@ -309,6 +336,8 @@ pub(crate) fn open(resources: &mut Resources, path: &Path) {
         focus_requested: true,
         texture: None,
         request: None,
+        shown: None,
+        painted: None,
         markup,
         dirty: false,
         edited: true,

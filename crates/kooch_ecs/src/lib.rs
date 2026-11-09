@@ -88,5 +88,6 @@ pub use streamed::StreamedComponents;
 pub use transform::Transform;
 pub use ui_draw::{
     AtlasUpload, CURVE_POINTS, MASK_VECTOR, QUAD_GLYPH, QUAD_IMAGE, QUAD_VECTOR, UiCurve,
-    UiDrawList, UiMask, UiMaterial, UiMirror, UiParam, UiQuad, UiShader, UiVector, UiVectorSource,
+    UiDrawList, UiFontSource, UiGlyphRun, UiMask, UiMaterial, UiMirror, UiParam, UiQuad, UiShader,
+    UiVector, UiVectorSource, UiVectorText,
 };

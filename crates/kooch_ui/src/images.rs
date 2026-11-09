@@ -11,6 +11,7 @@ use kooch_core::resource::Resources;
 use kooch_ecs::ViewSize;
 
 use crate::atlas::{TOP_CLASS, class_side, size_class};
+use crate::crops::Crop;
 use crate::documents::{path_of, read_bytes, stamp};
 use crate::layout::CANVAS_HEIGHT;
 use crate::{GlyphAtlas, UiNode, UiTree, UiTrees};
@@ -42,7 +43,7 @@ impl UiTree {
 pub fn load_images(resources: &mut Resources) {
     let physical = resources.get::<ViewSize>().copied().unwrap_or_default().0;
     let scale = physical.y.max(1) as f32 / CANVAS_HEIGHT;
-    let mut wanted = Wanted::new();
+    let mut wanted = Wanted::default();
     if let Some(trees) = resources.get::<UiTrees>() {
         trees.for_each(|tree| want(tree, scale, &mut wanted));
     }
@@ -71,29 +72,61 @@ pub fn load_tree_images(
     server: Option<&mut AssetServer>,
     atlas: &mut GlyphAtlas,
 ) {
-    let mut wanted = Wanted::new();
+    let mut wanted = Wanted::default();
     want(tree, scale, &mut wanted);
     pack(wanted, scale, database, server, atlas);
 }
 
-/// Each image wanted, and the size classes nodes show it at; 0 for a node not laid out yet.
-type Wanted = HashMap<Guid, HashSet<u8>>;
+/// Each image wanted, and the size classes nodes show it at; 0 for a node not laid out yet. A node
+/// past the largest class wants a crop instead (#1880).
+#[derive(Default)]
+struct Wanted {
+    classes: HashMap<Guid, HashSet<u8>>,
+    crops: HashSet<(Guid, Crop)>,
+}
+
+impl Wanted {
+    fn is_empty(&self) -> bool {
+        self.classes.is_empty()
+    }
+}
 
 /// Every image `tree` needs in the atlas, painted or cutting by its alpha.
 fn want(tree: &UiTree, scale: f32, wanted: &mut Wanted) {
-    let images = tree.image.iter().map(|image| image.map(|image| image.guid));
+    let images = tree
+        .image
+        .iter()
+        .map(|image| image.map(|image| (image.guid, image.slice)));
     let cuts = tree
         .mask
         .iter()
-        .map(|cut| cut.image.map(|image| image.guid));
-    for (index, guid) in images.enumerate().chain(cuts.enumerate()) {
-        let Some(guid) = guid else {
+        .map(|cut| cut.image.map(|image| (image.guid, [1.0; 4])));
+    for (index, wants) in images.enumerate().chain(cuts.enumerate()) {
+        let Some((guid, slice)) = wants else {
             continue;
         };
-        let shown = tree
-            .rect(UiNode(index as u32))
-            .map_or([0, 0], |rect| shown_size(rect.size, scale));
-        wanted.entry(guid).or_default().insert(size_class(shown));
+        // A sliced image keeps its corners from the whole drawing, so it is never cropped.
+        let crop = (slice == [0.0; 4])
+            .then(|| crate::crops::crop_of(tree, UiNode(index as u32), scale))
+            .flatten();
+        if let Some(crop) = crop {
+            // Listed with no class: a raster packs class 0 whatever it is asked, an SVG only the crop.
+            wanted.classes.entry(guid).or_default();
+            if crop.size[0] > 0 && crop.size[1] > 0 {
+                wanted.crops.insert((guid, crop));
+            }
+            continue;
+        }
+        let shown = tree.rect(UiNode(index as u32)).map_or([0, 0], |rect| {
+            // At the size its transform shows it, so a zoomed SVG is not stretched (#1880).
+            let zoom = tree.zoom_of(UiNode(index as u32));
+            shown_size(rect.size * zoom, scale)
+        });
+        wanted
+            .classes
+            .entry(guid)
+            .or_default()
+            .insert(size_class(shown));
     }
 }
 
@@ -113,7 +146,13 @@ fn pack(
     mut server: Option<&mut AssetServer>,
     atlas: &mut GlyphAtlas,
 ) {
-    for (guid, classes) in wanted {
+    for (&guid, classes) in &wanted.classes {
+        let crops: Vec<Crop> = wanted
+            .crops
+            .iter()
+            .filter(|(of, _)| *of == guid)
+            .map(|(_, crop)| *crop)
+            .collect();
         let modified = stamp(database, guid, None, &[]);
         let path = match path_of(database, guid) {
             Ok(path) => path,
@@ -124,14 +163,23 @@ fn pack(
         };
         let vector = kooch_core::svg::is_svg(&path);
         let classes: Vec<u8> = match vector {
-            true => classes.into_iter().collect(),
+            true => classes.iter().copied().collect(),
             false => vec![0],
+        };
+        let crops: Vec<Crop> = match vector {
+            true => crops
+                .into_iter()
+                .filter(|&crop| {
+                    atlas.crop(guid, crop).map(|image| image.modified) != Some(modified)
+                })
+                .collect(),
+            false => Vec::new(),
         };
         let stale: Vec<u8> = classes
             .into_iter()
             .filter(|&class| atlas.packed(guid, class) != Some(modified))
             .collect();
-        if stale.is_empty() {
+        if stale.is_empty() && crops.is_empty() {
             continue;
         }
         let bytes = match read_bytes(server.as_deref_mut(), &path) {
@@ -156,6 +204,14 @@ fn pack(
                     }
                 }
             }
+            for crop in crops {
+                if atlas
+                    .insert_crop(guid, crop, modified, svg.clone())
+                    .is_none()
+                {
+                    tracing::warn!("UI image {guid} does not fit the vector atlas");
+                }
+            }
             continue;
         }
         for class in stale {
@@ -173,6 +229,7 @@ fn pack(
             }
         }
     }
+    atlas.keep_crops(&wanted.crops);
 }
 
 type Decoded = (Vec<u8>, (u32, u32), [f32; 2]);

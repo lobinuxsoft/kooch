@@ -8,6 +8,7 @@ mod cascade;
 #[cfg(test)]
 mod cascade_tests;
 mod controls;
+mod crops;
 mod document;
 mod documents;
 mod draw;

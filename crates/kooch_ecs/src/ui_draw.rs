@@ -126,19 +126,55 @@ pub struct UiMaterial {
     pub params: [u32; 2],
 }
 
-/// An SVG Vello draws into the vector atlas (#1865): `key` names it across frames.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// An SVG or a text Vello draws into the vector atlas (#1865): `key` names it across frames.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UiVector {
     pub key: u64,
     /// Its texels, `[x0, y0, x1, y1]`.
     pub rect: [u32; 4],
+    /// The [`UiVectorSource`] or [`UiVectorText`] drawn: one file serves every size.
+    pub source: u64,
+    /// `[full w, full h, from x, from y]` when only part is drawn (#1880); zero draws it whole.
+    pub crop: [f32; 4],
 }
 
-/// The file behind a [`UiVector`], sent once when it is first packed or changes.
+/// The file behind a [`UiVector::source`], sent with each new slot; parsed once per key.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UiVectorSource {
     pub key: u64,
     pub svg: Arc<[u8]>,
+}
+
+/// A text node's glyphs behind a [`UiVector`] (#1880), drawn white in a slot of `size` texels.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiVectorText {
+    pub key: u64,
+    pub size: [f32; 2],
+    pub runs: Vec<UiGlyphRun>,
+}
+
+/// Glyphs of one font at one size, positioned in the slot's texels.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiGlyphRun {
+    /// A [`UiFontSource::id`].
+    pub font: u64,
+    /// The face in a collection.
+    pub index: u32,
+    /// Pixels per em.
+    pub size: f32,
+    /// Variable-font coordinates, normalized 2.14.
+    pub coords: Vec<i16>,
+    /// Glyph id and its pen position.
+    pub glyphs: Vec<(u32, [f32; 2])>,
+    /// Each glyph's direction as cos and sin, set along a curve; empty when the run is straight.
+    pub turns: Vec<[f32; 2]>,
+}
+
+/// A font file, sent once before the first text that uses it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiFontSource {
+    pub id: u64,
+    pub data: Arc<[u8]>,
 }
 
 /// This frame's UI, back to front.
@@ -161,4 +197,7 @@ pub struct UiDrawList {
     pub vectors: Vec<UiVector>,
     /// Files not handed over yet; the renderer takes them, as it takes `atlas_upload`.
     pub vector_sources: Vec<UiVectorSource>,
+    /// Text not handed over yet, as `vector_sources`.
+    pub vector_texts: Vec<UiVectorText>,
+    pub vector_fonts: Vec<UiFontSource>,
 }

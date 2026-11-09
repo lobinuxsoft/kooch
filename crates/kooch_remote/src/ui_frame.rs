@@ -6,8 +6,8 @@ use base64::engine::general_purpose::STANDARD;
 use kooch_core::Guid;
 use kooch_core::resource::Resources;
 use kooch_ecs::{
-    AtlasUpload, UiCurve, UiDrawList, UiMask, UiMaterial, UiMirror, UiParam, UiQuad, UiShader,
-    UiVector, UiVectorSource,
+    AtlasUpload, UiCurve, UiDrawList, UiFontSource, UiGlyphRun, UiMask, UiMaterial, UiMirror,
+    UiParam, UiQuad, UiShader, UiVector, UiVectorSource, UiVectorText,
 };
 use serde::{Deserialize, Serialize};
 
@@ -37,13 +37,73 @@ pub struct UiFrame {
     pub atlas_side: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upload: Option<UiUpload>,
-    /// The vector atlas (#1865): its side, `(key, rect)` per resident SVG, and each file once.
+    /// The vector atlas (#1865): its side, `(key, rect, source, crop)` per slot, each file once.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub vector_side: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub vectors: Vec<(u64, [u32; 4])>,
+    pub vectors: Vec<(u64, [u32; 4], u64, [f32; 4])>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vector_sources: Vec<(u64, String)>,
+    /// Text slots' glyphs (#1880), and each font file once, base64.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vector_texts: Vec<WireText>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vector_fonts: Vec<(u64, String)>,
+}
+
+/// A [`UiVectorText`] on the wire.
+/// A [`UiGlyphRun`] on the wire.
+pub type WireRun = (u64, u32, f32, Vec<i16>, Vec<(u32, [f32; 2])>, Vec<[f32; 2]>);
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WireText {
+    pub key: u64,
+    pub size: [f32; 2],
+    /// Font, face, pixels per em, coordinates, glyphs, their turns.
+    pub runs: Vec<WireRun>,
+}
+
+impl From<&UiVectorText> for WireText {
+    fn from(text: &UiVectorText) -> Self {
+        let runs = text.runs.iter().map(|run| {
+            let coords = run.coords.clone();
+            let turns = run.turns.clone();
+            (
+                run.font,
+                run.index,
+                run.size,
+                coords,
+                run.glyphs.clone(),
+                turns,
+            )
+        });
+        Self {
+            key: text.key,
+            size: text.size,
+            runs: runs.collect(),
+        }
+    }
+}
+
+impl From<WireText> for UiVectorText {
+    fn from(wire: WireText) -> Self {
+        let runs = wire
+            .runs
+            .into_iter()
+            .map(|(font, index, size, coords, glyphs, turns)| UiGlyphRun {
+                font,
+                index,
+                size,
+                coords,
+                glyphs,
+                turns,
+            });
+        Self {
+            key: wire.key,
+            size: wire.size,
+            runs: runs.collect(),
+        }
+    }
 }
 
 fn is_zero(value: &u32) -> bool {
@@ -77,6 +137,8 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
     let frame = resources.get_mut::<UiDrawList>().and_then(|list| {
         let upload = list.atlas_upload.take();
         let sources = std::mem::take(&mut list.vector_sources);
+        let texts = std::mem::take(&mut list.vector_texts);
+        let fonts = std::mem::take(&mut list.vector_fonts);
         let shaders = (sent.shaders != list.shaders).then(|| {
             list.shaders
                 .iter()
@@ -85,6 +147,7 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
         });
         if upload.is_none()
             && sources.is_empty()
+            && texts.is_empty()
             && shaders.is_none()
             && sent.vectors == list.vectors
             && sent.quads == list.quads
@@ -126,10 +189,19 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
                 texels: STANDARD.encode(&upload.texels),
             }),
             vector_side: list.vector_side,
-            vectors: list.vectors.iter().map(|v| (v.key, v.rect)).collect(),
+            vectors: list
+                .vectors
+                .iter()
+                .map(|v| (v.key, v.rect, v.source, v.crop))
+                .collect(),
             vector_sources: sources
                 .iter()
                 .map(|source| (source.key, STANDARD.encode(&source.svg)))
+                .collect(),
+            vector_texts: texts.iter().map(WireText::from).collect(),
+            vector_fonts: fonts
+                .iter()
+                .map(|font| (font.id, STANDARD.encode(&font.data)))
                 .collect(),
         })
     });
@@ -157,6 +229,9 @@ pub struct UiReceiver {
     /// Every file still resident, handed over each time: the renderer parses only keys it lacks,
     /// and a list it skipped loses nothing.
     vector_sources: Vec<UiVectorSource>,
+    vector_texts: Vec<UiVectorText>,
+    /// Every font received: a later text may use one sent long before.
+    vector_fonts: Vec<UiFontSource>,
 }
 
 impl UiReceiver {
@@ -205,7 +280,12 @@ impl UiReceiver {
         self.vectors = frame
             .vectors
             .iter()
-            .map(|&(key, rect)| UiVector { key, rect })
+            .map(|&(key, rect, source, crop)| UiVector {
+                key,
+                rect,
+                source,
+                crop,
+            })
             .collect();
         for (key, svg) in frame.vector_sources {
             match STANDARD.decode(&svg) {
@@ -216,9 +296,21 @@ impl UiReceiver {
                 Err(_) => tracing::warn!("the project sent a UI vector this editor cannot read"),
             }
         }
+        self.vector_texts
+            .extend(frame.vector_texts.into_iter().map(UiVectorText::from));
+        for (id, data) in frame.vector_fonts {
+            match STANDARD.decode(&data) {
+                Ok(data) => self.vector_fonts.push(UiFontSource {
+                    id,
+                    data: data.into(),
+                }),
+                Err(_) => tracing::warn!("the project sent a UI font this editor cannot read"),
+            }
+        }
         let vectors = &self.vectors;
-        self.vector_sources
-            .retain(|source| vectors.iter().any(|vector| vector.key == source.key));
+        let resident = |key: u64| vectors.iter().any(|vector| vector.source == key);
+        self.vector_sources.retain(|source| resident(source.key));
+        self.vector_texts.retain(|text| resident(text.key));
         if frame.atlas_side != self.side {
             self.side = frame.atlas_side;
             self.atlas = vec![0; (self.side * self.side * 4) as usize];
@@ -259,6 +351,8 @@ impl UiReceiver {
             vector_side: self.vector_side,
             vectors: self.vectors.clone(),
             vector_sources: self.vector_sources.clone(),
+            vector_texts: self.vector_texts.clone(),
+            vector_fonts: self.vector_fonts.clone(),
         })
     }
 

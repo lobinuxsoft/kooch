@@ -1,13 +1,10 @@
 //! A document's nodes: taffy owns structure and layout, the parallel arrays own the rest. A
 //! [`UiNode`] indexes all of them, so nothing outside needs taffy's slotmap keys.
 
-use std::hash::{Hash, Hasher};
-
 use glam::Vec2;
 use kooch_core::Guid;
 use taffy::{AvailableSpace, NodeId, Size, Style, TaffyTree};
 
-use crate::atlas::{GlyphAtlas, GlyphKey, subpixel};
 use crate::materials::{NodeParam, ParamBind};
 use crate::text::{Text, UiFonts, measure};
 use crate::text_binds::TextBind;
@@ -33,6 +30,10 @@ pub struct GlyphQuad {
     pub uv_min: [u16; 2],
     pub uv_size: [u16; 2],
     pub node: u32,
+    /// A whole text node drawn by Vello, sampled from the vector atlas (#1880).
+    pub vector: bool,
+    /// Its glyphs already set along the curve around it: the quad is not bent again.
+    pub bent: bool,
 }
 
 /// How a node is painted. Colours are sRGB, as a colour picker gives them: the frame they are
@@ -80,6 +81,8 @@ pub struct UiTree {
     hidden: Vec<(UiNode, taffy::Display)>,
     /// Hidden itself or under a hidden ancestor, per node; set by the layout.
     culled: Vec<bool>,
+    /// The physical pixels on screen, `[x0, y0, x1, y1]`; `None` draws vectors whole (#1880).
+    pub(crate) view: Option<[f32; 4]>,
     /// Toggles and sliders, sparse.
     pub(crate) controls: Vec<crate::controls::Control>,
     /// The node `autofocus` names: it takes focus each time the document appears.
@@ -106,8 +109,10 @@ pub struct UiTree {
     font_share: Vec<Option<f32>>,
     text: Vec<Option<Text>>,
     glyphs: Vec<GlyphQuad>,
-    /// Physical pixels per canvas unit and atlas generation the glyphs were built for.
-    rastered: Option<(f32, u32)>,
+    /// Physical pixels per canvas unit, atlas generation and text zooms the glyphs were built for.
+    rastered: Option<(f32, u32, u64)>,
+    /// The vector atlas's text slots this tree holds, and the generation they were taken in.
+    held_texts: (u32, Vec<u64>),
     /// Size the rects were computed for; `None` once anything changed.
     laid_out: Option<Vec2>,
     /// A scroll moved rects that taffy's layout still holds: they are placed again, not laid out.
@@ -138,6 +143,7 @@ impl UiTree {
             disabled: Vec::new(),
             hidden: Vec::new(),
             culled: Vec::new(),
+            view: None,
             controls: Vec::new(),
             autofocus: None,
             shown: false,
@@ -159,6 +165,7 @@ impl UiTree {
             text: Vec::new(),
             glyphs: Vec::new(),
             rastered: None,
+            held_texts: (0, Vec::new()),
             laid_out: None,
             moved: false,
             origin: None,
@@ -373,44 +380,6 @@ impl UiTree {
         }
     }
 
-    /// Rebuilds the glyph quads when the layout, the scale or the atlas changed. `scale` is
-    /// physical pixels per canvas unit. Returns whether it ran.
-    pub fn rasterize(&mut self, scale: f32, fonts: &mut UiFonts, atlas: &mut GlyphAtlas) -> bool {
-        if self.rastered == Some((scale, atlas.generation())) {
-            return false;
-        }
-        // Twice at most: a full atlas clears itself mid-pass, and what was built before points at
-        // space it gave away.
-        for _ in 0..2 {
-            let generation = atlas.generation();
-            self.glyphs.clear();
-            for index in 0..self.text.len() {
-                if self.culled[index] || self.clipped(UiNode(index as u32)) {
-                    continue;
-                }
-                let Some(text) = self.text[index].as_mut() else {
-                    continue;
-                };
-                let origin = text.origin;
-                let layout = text.shaped(fonts);
-                push_glyphs(
-                    layout,
-                    origin,
-                    scale,
-                    index as u32,
-                    &mut fonts.scale,
-                    atlas,
-                    &mut self.glyphs,
-                );
-            }
-            if atlas.generation() == generation {
-                self.rastered = Some((scale, generation));
-                return true;
-            }
-        }
-        true
-    }
-
     /// Fill colour, sRGB. The border's width is the layout's (`Style::border`).
     pub fn set_background(&mut self, node: UiNode, rgba: [f32; 4]) {
         if let Some(paint) = self.paint.get_mut(node.0 as usize) {
@@ -521,62 +490,6 @@ impl UiTree {
     }
 }
 
-fn push_glyphs(
-    layout: &parley::Layout<()>,
-    origin: Vec2,
-    scale: f32,
-    node: u32,
-    context: &mut swash::scale::ScaleContext,
-    atlas: &mut GlyphAtlas,
-    out: &mut Vec<GlyphQuad>,
-) {
-    for line in layout.lines() {
-        for item in line.items() {
-            let parley::PositionedLayoutItem::GlyphRun(run) = item else {
-                continue;
-            };
-            let shaped = run.run();
-            let font = shaped.font();
-            let Some(font_ref) = swash::FontRef::from_index(font.data.data(), font.index as usize)
-            else {
-                continue;
-            };
-            let coords: Vec<i16> = shaped
-                .normalized_coords()
-                .iter()
-                .map(|coord| coord.to_bits())
-                .collect();
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            coords.hash(&mut hasher);
-            let coords_hash = hasher.finish();
-            let size = (shaped.font_size() * scale * 64.0).round() as u32;
-            for glyph in run.positioned_glyphs() {
-                let x = (origin.x + glyph.x) * scale;
-                let y = ((origin.y + glyph.y) * scale).round();
-                let (pixel, bin) = subpixel(x);
-                let key = GlyphKey {
-                    font: font.data.id(),
-                    index: font.index,
-                    glyph: glyph.id as u16,
-                    size,
-                    subpixel: bin,
-                    coords: coords_hash,
-                };
-                let Some(slot) = atlas.glyph(context, font_ref, &coords, key) else {
-                    continue;
-                };
-                out.push(GlyphQuad {
-                    min: [pixel + slot.left as f32, y - slot.top as f32],
-                    size: [slot.size[0] as f32, slot.size[1] as f32],
-                    uv_min: slot.min,
-                    uv_size: slot.size,
-                    node,
-                });
-            }
-        }
-    }
-}
-
 /// One axis of the available space as a cache key: content-sized axes get sentinels no size takes.
 fn space_key(space: AvailableSpace) -> f32 {
     match space {
@@ -592,7 +505,12 @@ pub(crate) mod flips;
 mod instances;
 pub(crate) mod masks;
 mod query;
+mod raster;
 mod scroll;
 #[cfg(test)]
 mod tests;
+#[cfg(feature = "vello")]
+mod text_path;
 pub(crate) mod transforms;
+#[cfg(feature = "vello")]
+mod vector_text;

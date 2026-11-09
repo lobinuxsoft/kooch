@@ -23,7 +23,7 @@ impl UiTree {
     }
 
     /// `node` and the nodes above it, nearest first.
-    fn upwards(&self, node: UiNode) -> impl Iterator<Item = UiNode> + '_ {
+    pub(super) fn upwards(&self, node: UiNode) -> impl Iterator<Item = UiNode> + '_ {
         std::iter::successors(Some(node), |&at| self.parent(at))
     }
 
