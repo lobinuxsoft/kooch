@@ -247,7 +247,7 @@ impl UiPass {
                 },
             );
         }
-        if self.vectors.prepare(device, queue, list) {
+        if self.vectors.prepare(device, queue, encoder, list) {
             self.bind = bind_group(device, &self.layout, self.buffers(), &self.atlas);
         }
         if list.quads.is_empty() && !clear {

@@ -1,6 +1,8 @@
-//! The vector atlas (#1865): SVGs and text drawn by Vello into one texture the quads sample. Each
-//! new entry is drawn alone and copied into its slot (#1880): Vello's buffers are fixed, and the
-//! whole atlas in one scene overflows them into a blank texture. Without `vello` it stays 1×1.
+//! The vector atlas (#1865): SVGs and text drawn by Vello into one texture the quads sample. New
+//! entries are packed into a kept scratch texture, drawn in one Vello pass per scratch and copied
+//! into their slots on the frame's encoder (#1880). Vello's buffers are fixed: the whole atlas in
+//! one scene overflows them into a blank texture, so a pass covers one scratch at most.
+//! Without `vello` it stays 1×1.
 
 use kooch_ecs::UiDrawList;
 #[cfg(feature = "vello")]
@@ -38,6 +40,7 @@ impl UiVectors {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
         list: &mut UiDrawList,
     ) -> bool {
         let sources = std::mem::take(&mut list.vector_sources);
@@ -45,7 +48,7 @@ impl UiVectors {
         let fonts = std::mem::take(&mut list.vector_fonts);
         #[cfg(not(feature = "vello"))]
         {
-            let _ = (device, queue, sources, texts, fonts);
+            let _ = (device, queue, encoder, sources, texts, fonts);
             false
         }
         #[cfg(feature = "vello")]
@@ -57,14 +60,15 @@ impl UiVectors {
                 let grown = texture(device, list.vector_side);
                 // Slots keep their place when the atlas grows: what is drawn is carried over.
                 match list.vector_side > self.side {
-                    true => copy_into(device, queue, &self.texture, &grown, self.side),
+                    true => copy_into(encoder, &self.texture, &grown, self.side),
                     false => self.vello.forget(),
                 }
                 self.view = grown.create_view(&Default::default());
                 self.texture = grown;
                 self.side = list.vector_side;
             }
-            self.vello.draw(device, queue, &self.texture, &list.vectors);
+            self.vello
+                .draw(device, queue, encoder, &self.texture, &list.vectors);
             replaced
         }
     }
@@ -77,7 +81,7 @@ mod drawn {
     use std::sync::{Mutex, PoisonError};
 
     use kooch_ecs::{UiFontSource, UiGlyphRun, UiVectorSource, UiVectorText};
-    use vello_svg::vello::kurbo::Affine;
+    use vello_svg::vello::kurbo::{Affine, Rect};
     use vello_svg::vello::peniko::{Blob, Color, Fill, FontData};
     use vello_svg::vello::{
         AaConfig, AaSupport, Glyph, RenderParams, Renderer, RendererOptions, Scene,
@@ -102,6 +106,8 @@ mod drawn {
         scene: Scene,
         /// The slot each entry was drawn into; one missing or moved is drawn.
         drawn: HashMap<u64, [u32; 4]>,
+        /// Kept between frames: one per pass a frame needed so far.
+        scratches: Vec<wgpu::Texture>,
     }
 
     impl Drawn {
@@ -177,11 +183,14 @@ mod drawn {
             &mut self,
             device: &wgpu::Device,
             queue: &wgpu::Queue,
+            encoder: &mut wgpu::CommandEncoder,
             atlas: &wgpu::Texture,
             vectors: &[UiVector],
         ) {
-            let stale = |vector: &&UiVector| self.drawn.get(&vector.key) != Some(&vector.rect);
-            if !vectors.iter().any(|vector| stale(&vector)) {
+            let stale = |drawn: &HashMap<u64, [u32; 4]>, vector: &UiVector| {
+                drawn.get(&vector.key) != Some(&vector.rect)
+            };
+            if !vectors.iter().any(|vector| stale(&self.drawn, vector)) {
                 return;
             }
             profiling::scope!("ui: vello");
@@ -200,49 +209,121 @@ mod drawn {
                 },
             };
             let renderer = renderer.get_mut().unwrap_or_else(PoisonError::into_inner);
-            for vector in vectors {
-                if self.drawn.get(&vector.key) == Some(&vector.rect) {
-                    continue;
+            // Not arrived yet: drawn the frame it does.
+            let mut pending: Vec<&UiVector> = vectors
+                .iter()
+                .filter(|v| stale(&self.drawn, v) && self.fragments.contains_key(&v.source))
+                .collect();
+            pending
+                .sort_unstable_by_key(|vector| std::cmp::Reverse(vector.rect[3] - vector.rect[1]));
+            for batch in 0.. {
+                let (shelved, used) = shelve(&mut pending);
+                if shelved.is_empty() {
+                    break;
                 }
-                // Not arrived yet: drawn the frame it does.
-                let Some(fragment) = self.fragments.get(&vector.source) else {
-                    continue;
-                };
-                let [x0, y0, x1, y1] = vector.rect;
-                let (w, h) = (x1 - x0, y1 - y0);
-                // A crop draws the whole at its full size, moved so its part lands in the slot.
-                let [full_w, full_h, from_x, from_y] = vector.crop.map(f64::from);
-                let (whole, from) = match full_w > 0.0 {
-                    true => ([full_w, full_h], [from_x, from_y]),
-                    false => ([f64::from(w), f64::from(h)], [0.0, 0.0]),
-                };
-                let scale = [
-                    whole[0] / fragment.size[0].max(f64::EPSILON),
-                    whole[1] / fragment.size[1].max(f64::EPSILON),
-                ];
-                // One texel of margin, drawn empty: a reused slot loses what was around it.
                 self.scene.reset();
-                let place = Affine::translate((1.0 - from[0], 1.0 - from[1]))
-                    * Affine::scale_non_uniform(scale[0], scale[1]);
-                self.scene.append(&fragment.scene, Some(place));
-                let scratch = super::scratch(device, w + 2, h + 2);
+                for &(vector, at) in &shelved {
+                    let Some(fragment) = self.fragments.get(&vector.source) else {
+                        continue;
+                    };
+                    place(&mut self.scene, fragment, vector, at);
+                }
+                let own;
+                let scratch = match used[0] <= SCRATCH && used[1] <= SCRATCH {
+                    true => {
+                        while self.scratches.len() <= batch {
+                            self.scratches
+                                .push(super::scratch(device, SCRATCH, SCRATCH));
+                        }
+                        &self.scratches[batch]
+                    }
+                    false => {
+                        own = super::scratch(device, used[0], used[1]);
+                        &own
+                    }
+                };
                 let params = RenderParams {
                     base_color: Color::TRANSPARENT,
-                    width: w + 2,
-                    height: h + 2,
+                    width: used[0],
+                    height: used[1],
                     antialiasing_method: AaConfig::Area,
                 };
                 let view = scratch.create_view(&Default::default());
                 if let Err(error) =
                     renderer.render_to_texture(device, queue, &self.scene, &view, &params)
                 {
-                    tracing::warn!("UI vector not drawn: {error}");
+                    tracing::warn!("UI vectors not drawn: {error}");
                     continue;
                 }
-                super::copy_slot(device, queue, &scratch, atlas, [x0 - 1, y0 - 1]);
-                self.drawn.insert(vector.key, vector.rect);
+                // Recorded after Vello's submit, so they read what it drew.
+                for (vector, at) in shelved {
+                    let [x0, y0, x1, y1] = vector.rect;
+                    let size = [x1 - x0 + 2, y1 - y0 + 2];
+                    super::copy_slot(encoder, scratch, atlas, at, [x0 - 1, y0 - 1], size);
+                    self.drawn.insert(vector.key, vector.rect);
+                }
             }
         }
+    }
+
+    /// Side of each kept scratch texture: a pass over it stays well inside Vello's buffers.
+    const SCRATCH: u32 = 1024;
+
+    /// Takes from `pending`, tallest first, what fits one scratch in rows, with the corner each
+    /// lands at and the extent used. One larger than a scratch goes alone, at its own size.
+    fn shelve<'a>(pending: &mut Vec<&'a UiVector>) -> (Vec<(&'a UiVector, [u32; 2])>, [u32; 2]) {
+        let cell = |vector: &UiVector| {
+            let [x0, y0, x1, y1] = vector.rect;
+            [x1 - x0 + 2, y1 - y0 + 2]
+        };
+        if let Some(index) = pending
+            .iter()
+            .position(|v| cell(v).iter().any(|&s| s > SCRATCH))
+        {
+            let vector = pending.remove(index);
+            return (vec![(vector, [0, 0])], cell(vector));
+        }
+        let (mut shelved, mut left) = (Vec::new(), Vec::new());
+        let ([mut x, mut y], mut row, mut used) = ([0, 0], 0, [0, 0]);
+        for vector in pending.drain(..) {
+            let [w, h] = cell(vector);
+            if x + w > SCRATCH {
+                (x, y, row) = (0, y + row, 0);
+            }
+            if y + h > SCRATCH {
+                left.push(vector);
+                continue;
+            }
+            shelved.push((vector, [x, y]));
+            used = [used[0].max(x + w), used[1].max(y + h)];
+            (x, row) = (x + w, row.max(h));
+        }
+        *pending = left;
+        (shelved, used)
+    }
+
+    /// `vector`'s drawing with its cell's corner at `at`, cut to its slot so nothing reaches a
+    /// neighbour. A crop draws the whole at its full size, moved so its part lands in the slot.
+    fn place(scene: &mut Scene, fragment: &Fragment, vector: &UiVector, at: [u32; 2]) {
+        let [x0, y0, x1, y1] = vector.rect;
+        let (w, h) = (f64::from(x1 - x0), f64::from(y1 - y0));
+        let [full_w, full_h, from_x, from_y] = vector.crop.map(f64::from);
+        let (whole, from) = match full_w > 0.0 {
+            true => ([full_w, full_h], [from_x, from_y]),
+            false => ([w, h], [0.0, 0.0]),
+        };
+        let scale = [
+            whole[0] / fragment.size[0].max(f64::EPSILON),
+            whole[1] / fragment.size[1].max(f64::EPSILON),
+        ];
+        // One texel of margin, left empty: the filter reads past the slot's edge.
+        let corner = [f64::from(at[0]) + 1.0, f64::from(at[1]) + 1.0];
+        let slot = Rect::new(corner[0], corner[1], corner[0] + w, corner[1] + h);
+        scene.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &slot);
+        let moved = Affine::translate((corner[0] - from[0], corner[1] - from[1]))
+            * Affine::scale_non_uniform(scale[0], scale[1]);
+        scene.append(&fragment.scene, Some(moved));
+        scene.pop_layer();
     }
 
     /// One glyph at a time, each turned about its pen position: text set along a curve.
@@ -291,7 +372,7 @@ fn texture(device: &wgpu::Device, side: u32) -> wgpu::Texture {
     })
 }
 
-/// Where Vello draws one entry: Rgba8Unorm is the one storage format it writes.
+/// Where Vello draws a pass: Rgba8Unorm is the one storage format it writes.
 #[cfg(feature = "vello")]
 fn scratch(device: &wgpu::Device, w: u32, h: u32) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
@@ -306,41 +387,39 @@ fn scratch(device: &wgpu::Device, w: u32, h: u32) -> wgpu::Texture {
     })
 }
 
-/// All of `from` into `to` at `at`.
+/// `size` texels of `from` at `at` into `to` at `into`.
 #[cfg(feature = "vello")]
 fn copy_slot(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    encoder: &mut wgpu::CommandEncoder,
     from: &wgpu::Texture,
     to: &wgpu::Texture,
     [x, y]: [u32; 2],
+    [to_x, to_y]: [u32; 2],
+    [w, h]: [u32; 2],
 ) {
-    let mut encoder = device.create_command_encoder(&Default::default());
+    let origin = |x, y| wgpu::Origin3d { x, y, z: 0 };
     encoder.copy_texture_to_texture(
-        from.as_image_copy(),
         wgpu::TexelCopyTextureInfo {
-            texture: to,
-            mip_level: 0,
-            origin: wgpu::Origin3d { x, y, z: 0 },
-            aspect: wgpu::TextureAspect::All,
+            origin: origin(x, y),
+            ..from.as_image_copy()
         },
-        from.size(),
+        wgpu::TexelCopyTextureInfo {
+            origin: origin(to_x, to_y),
+            ..to.as_image_copy()
+        },
+        extent(w, h),
     );
-    queue.submit([encoder.finish()]);
 }
 
 /// The top-left `side`×`side` of `from` into `to`.
 #[cfg(feature = "vello")]
 fn copy_into(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    encoder: &mut wgpu::CommandEncoder,
     from: &wgpu::Texture,
     to: &wgpu::Texture,
     side: u32,
 ) {
-    let mut encoder = device.create_command_encoder(&Default::default());
     encoder.copy_texture_to_texture(from.as_image_copy(), to.as_image_copy(), extent(side, side));
-    queue.submit([encoder.finish()]);
 }
 
 fn extent(width: u32, height: u32) -> wgpu::Extent3d {
