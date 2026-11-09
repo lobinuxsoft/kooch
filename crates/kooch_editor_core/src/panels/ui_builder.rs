@@ -187,8 +187,12 @@ fn canvas(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEnt
     checker(&painter, canvas, canvas.intersect(rect));
     if let (Some(texture), Some(painted)) = (builder.texture, builder.painted) {
         let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-        let size = egui::vec2(painted.size.0 as f32, painted.size.1 as f32) / ppp;
-        let at = canvas.min + egui::Vec2::from(painted.offset) / ppp;
+        // As fractions of the canvas it was drawn for: mid-zoom the texture is a frame behind,
+        // and in pixels it would land shifted and at the old size until the next one.
+        let drawn = egui::vec2(painted.canvas.0 as f32, painted.canvas.1 as f32);
+        let part = egui::vec2(painted.size.0 as f32, painted.size.1 as f32) / drawn;
+        let size = part * canvas.size();
+        let at = canvas.min + egui::Vec2::from(painted.offset) / drawn * canvas.size();
         painter.image(
             texture,
             egui::Rect::from_min_size(at, size),
