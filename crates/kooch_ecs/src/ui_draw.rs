@@ -10,6 +10,11 @@ use kooch_core::Guid;
 pub const QUAD_GLYPH: u32 = 1;
 /// A quad samples an image from the atlas, filtered, tinted by `color` (#1708).
 pub const QUAD_IMAGE: u32 = 2;
+/// With [`QUAD_IMAGE`]: the texels are in the vector atlas Vello draws, not the glyph atlas (#1865).
+/// 4 is `QUAD_CURVED`, which `ui.wgsl` sets itself.
+pub const QUAD_VECTOR: u32 = 8;
+/// In [`UiMask::luminance`]: the mask image's texels are in the vector atlas.
+pub const MASK_VECTOR: u32 = 2;
 /// Evenly spaced points in a [`UiCurve`]; `ui.wgsl` holds the same number.
 pub const CURVE_POINTS: usize = 128;
 
@@ -63,7 +68,8 @@ pub struct UiMask {
     /// The atlas texels whose alpha cuts too; a zero size is the shape alone.
     pub uv_min: [u32; 2],
     pub uv_size: [u32; 2],
-    /// 1 when the image cuts by how bright it is too, not by its alpha alone.
+    /// Bit 1: the image cuts by how bright it is too, not by its alpha alone. [`MASK_VECTOR`]: its
+    /// texels are in the vector atlas.
     pub luminance: u32,
     /// Where a fill starts, as an index in `-kooch-fill-from`'s words; 0 cuts no fill (#1829).
     pub fill_from: u32,
@@ -120,6 +126,21 @@ pub struct UiMaterial {
     pub params: [u32; 2],
 }
 
+/// An SVG Vello draws into the vector atlas (#1865): `key` names it across frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UiVector {
+    pub key: u64,
+    /// Its texels, `[x0, y0, x1, y1]`.
+    pub rect: [u32; 4],
+}
+
+/// The file behind a [`UiVector`], sent once when it is first packed or changes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiVectorSource {
+    pub key: u64,
+    pub svg: Arc<[u8]>,
+}
+
 /// This frame's UI, back to front.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct UiDrawList {
@@ -134,4 +155,10 @@ pub struct UiDrawList {
     pub atlas_side: u32,
     /// What to write into the atlas before drawing; `None` when nothing changed.
     pub atlas_upload: Option<AtlasUpload>,
+    /// Side of the square vector atlas; 0 while no SVG is packed there.
+    pub vector_side: u32,
+    /// Every SVG resident in the vector atlas. The renderer redraws it when this changes.
+    pub vectors: Vec<UiVector>,
+    /// Files not handed over yet; the renderer takes them, as it takes `atlas_upload`.
+    pub vector_sources: Vec<UiVectorSource>,
 }

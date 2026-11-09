@@ -16,6 +16,8 @@ struct UiInput {
     // What `surface_params` takes.
     material_id: u32,
     image: bool,
+    // Drawn by Vello rather than packed as texels (#1865).
+    vector: bool,
     atlas_min: vec2<f32>,
     atlas_size: vec2<f32>,
 }
@@ -25,6 +27,5 @@ fn sample_image(input: UiInput, uv: vec2<f32>) -> vec4<f32> {
     if !input.image {
         return vec4<f32>(1.0);
     }
-    let side = vec2<f32>(textureDimensions(atlas));
-    return textureSampleLevel(atlas, images, (input.atlas_min + uv * input.atlas_size) / side, 0.0);
+    return ui_sample(input.vector, input.atlas_min + uv * input.atlas_size);
 }

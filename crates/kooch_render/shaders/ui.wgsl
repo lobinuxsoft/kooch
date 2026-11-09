@@ -11,6 +11,16 @@ struct Screen {
 @group(0) @binding(0) var<uniform> screen: Screen;
 @group(0) @binding(1) var atlas: texture_2d<f32>;
 @group(0) @binding(2) var images: sampler;
+// SVGs, drawn by Vello (#1865); 1×1 and never sampled when nothing is vector.
+@group(0) @binding(7) var vectors: texture_2d<f32>;
+
+// The image atlas or the vector one, at `uv` in texels.
+fn ui_sample(vector: bool, uv: vec2<f32>) -> vec4<f32> {
+    if vector {
+        return textureSampleLevel(vectors, images, uv / vec2<f32>(textureDimensions(vectors)), 0.0);
+    }
+    return textureSampleLevel(atlas, images, uv / vec2<f32>(textureDimensions(atlas)), 0.0);
+}
 
 struct UiMask {
     min: vec2<f32>,
@@ -62,6 +72,10 @@ const QUAD_GLYPH: u32 = 1u;
 const QUAD_IMAGE: u32 = 2u;
 // Set here, not by the list: a glyph at an angle cannot be read texel by texel.
 const QUAD_CURVED: u32 = 4u;
+const QUAD_VECTOR: u32 = 8u;
+// `UiMask.luminance` bits: cut by brightness, and sampled from the vector atlas.
+const MASK_LUMINANCE: u32 = 1u;
+const MASK_VECTOR: u32 = 2u;
 
 struct Instance {
     @location(0) min: vec2<f32>,
@@ -206,9 +220,8 @@ fn ui_mask_coverage(p: vec2<f32>, first: u32) -> f32 {
             let span = vec2<f32>(mask.uv_size);
             // Half a texel in: the filter would read the atlas neighbour past the edge.
             let texel = clamp((local + half) / mask.size * span, vec2<f32>(0.5), span - 0.5);
-            let side = vec2<f32>(textureDimensions(atlas));
-            let uv = (vec2<f32>(mask.uv_min) + texel) / side;
-            let cut = textureSampleLevel(atlas, images, uv, 0.0);
+            let vector = (mask.luminance & MASK_VECTOR) != 0u;
+            let cut = ui_sample(vector, vec2<f32>(mask.uv_min) + texel);
             coverage *= cut.a;
             let bright = dot(cut.rgb, vec3<f32>(0.2125, 0.7154, 0.0721));
             if mask.fill_from == UI_FILL_IMAGE {
@@ -216,7 +229,7 @@ fn ui_mask_coverage(p: vec2<f32>, first: u32) -> f32 {
                 // darker edge would fill first, a thin line ahead of the bar.
                 let order = bright / max(cut.a, 0.004);
                 coverage *= ui_filled(order, mask.fill, UI_FILL_SOFT);
-            } else if mask.luminance != 0u {
+            } else if (mask.luminance & MASK_LUMINANCE) != 0u {
                 coverage *= bright;
             }
         }
@@ -237,8 +250,7 @@ fn fs_ui(in: Varyings) -> @location(0) vec4<f32> {
 fn ui_quad_color(in: Varyings) -> vec4<f32> {
     let flags = in.material_flags.y;
     if (flags & QUAD_IMAGE) != 0u {
-        let side = vec2<f32>(textureDimensions(atlas));
-        let texel = textureSampleLevel(atlas, images, in.uv / side, 0.0) * in.color;
+        let texel = ui_sample((flags & QUAD_VECTOR) != 0u, in.uv) * in.color;
         return vec4<f32>(texel.rgb * texel.a, texel.a);
     }
     if (flags & QUAD_GLYPH) != 0u {

@@ -4,8 +4,8 @@ use glam::{Mat3, Vec2};
 use kooch_core::resource::Resources;
 use kooch_ecs::query::Query;
 use kooch_ecs::{
-    AtlasUpload, Entity, QUAD_GLYPH, QUAD_IMAGE, UiCurve, UiDrawList, UiMask, UiMaterial, UiMirror,
-    UiParam, UiQuad, UiShader, ViewSize,
+    AtlasUpload, Entity, MASK_VECTOR, QUAD_GLYPH, QUAD_IMAGE, QUAD_VECTOR, UiCurve, UiDrawList,
+    UiMask, UiMaterial, UiMirror, UiParam, UiQuad, UiShader, ViewSize,
 };
 
 use crate::layout::CANVAS_HEIGHT;
@@ -76,6 +76,10 @@ fn clear(list: &mut UiDrawList) {
 
 fn upload(atlas: &mut GlyphAtlas, list: &mut UiDrawList) {
     list.atlas_side = atlas.side();
+    list.vector_side = atlas.vector_side();
+    list.vectors = atlas.vectors();
+    // Appended, as the glyph upload is grown: the renderer takes them when it draws.
+    list.vector_sources.extend(atlas.take_sources());
     // Grown over one not uploaded yet, not replacing it: a frame the renderer skipped would
     // otherwise lose its glyphs.
     if let Some(dirty) = atlas.take_dirty() {
@@ -184,7 +188,7 @@ fn push_tree(
                 border: (border * scale).round(),
                 uv_min: [u0, v0],
                 uv_size: [u1 - u0, v1 - v0],
-                flags: if image.is_some() { QUAD_IMAGE } else { 0 },
+                flags: image.map_or(0, |(_, packed)| image_flags(packed)),
                 ..UiQuad::default()
             };
             push_material(tree, node, shader, quad, list);
@@ -263,7 +267,9 @@ fn push_masks(
             parent: around,
             uv_min: [x0, y0],
             uv_size: [x1 - x0, y1 - y0],
-            luminance: image.is_some_and(|(mask, _)| mask.luminance).into(),
+            luminance: image.map_or(0, |(mask, packed)| {
+                u32::from(mask.luminance) | if packed.vector { MASK_VECTOR } else { 0 }
+            }),
             fill_from,
             fill: tree.param(node, "fill").map_or(1.0, |value| value[0]),
             pad: 0.0,
@@ -445,6 +451,14 @@ fn push_thumb(
     }
 }
 
+/// Which texture the quad samples.
+fn image_flags(packed: AtlasImage) -> u32 {
+    match packed.vector {
+        true => QUAD_IMAGE | QUAD_VECTOR,
+        false => QUAD_IMAGE,
+    }
+}
+
 /// Nine quads when sliced, so the corners keep their size and the middle stretches; one when not.
 /// A slice wider than the rect is squeezed to fit, as CSS's `border-image` does. The slice is in
 /// the file's units, which `density` turns into texels.
@@ -481,7 +495,7 @@ fn push_image(
                 color: image.tint,
                 uv_min: [us[column], vs[row]],
                 uv_size: [us[column + 1] - us[column], vs[row + 1] - vs[row]],
-                flags: QUAD_IMAGE,
+                flags: image_flags(packed),
                 ..UiQuad::default()
             });
         }

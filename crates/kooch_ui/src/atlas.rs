@@ -11,6 +11,8 @@ use swash::FontRef;
 use swash::scale::{Render, Source, StrikeWith};
 use swash::zeno::{Format, Vector};
 
+mod vectors;
+
 /// Fractions of a pixel a glyph's x is snapped to: four is where more stops being visible.
 const SUBPIXEL: f32 = 4.0;
 
@@ -68,6 +70,8 @@ pub struct AtlasImage {
     pub modified: SystemTime,
     /// Texels per unit of the file, per axis: 1 for a PNG; an SVG is drawn at the size it shows.
     pub density: [f32; 2],
+    /// Drawn by Vello into the vector atlas, not the RGBA8 one (#1865).
+    pub vector: bool,
 }
 
 /// The atlas: RGBA8 pixels, what is where, and what changed since the last upload.
@@ -83,6 +87,7 @@ pub struct GlyphAtlas {
     dirty: Option<[u32; 4]>,
     /// Bumped when a full atlas is cleared: every quad built before points at freed space.
     generation: u32,
+    vectors: vectors::VectorSlots,
 }
 
 impl Default for GlyphAtlas {
@@ -101,6 +106,7 @@ impl GlyphAtlas {
             images: HashMap::new(),
             dirty: None,
             generation: 0,
+            vectors: vectors::VectorSlots::default(),
         }
     }
 
@@ -185,13 +191,17 @@ impl GlyphAtlas {
         self.images
             .get(&(guid, class))
             .map(|(_, image)| image.modified)
+            .or_else(|| self.vectors.get(guid, class).map(|image| image.modified))
     }
 
     /// What draws `guid` at `shown` physical pixels: its own size class, its only raster, or the
     /// nearest class packed so far.
     pub fn image(&self, guid: Guid, shown: [u32; 2]) -> Option<AtlasImage> {
         let class = size_class(shown);
-        let get = |class: u8| self.images.get(&(guid, class)).map(|(_, image)| *image);
+        let get = |class: u8| {
+            let raster = self.images.get(&(guid, class)).map(|(_, image)| *image);
+            raster.or_else(|| self.vectors.get(guid, class))
+        };
         get(class).or_else(|| get(0)).or_else(|| {
             let above = class.saturating_add(1)..=TOP_CLASS;
             above.chain((1..class).rev()).find_map(get)
@@ -230,6 +240,7 @@ impl GlyphAtlas {
             rect: [x0 + 1, y0 + 1, x0 + 1 + w, y0 + 1 + h],
             modified,
             density,
+            vector: false,
         };
         self.images.insert((guid, class), (slot.id, image));
         Some(image)

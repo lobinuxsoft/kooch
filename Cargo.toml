@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/egui_snarl",
+    "crates/vello_svg",
     "crates/kooch_core",
     "crates/kooch_ecs",
     "crates/kooch_plugin_api",
@@ -66,6 +67,9 @@ sha2 = "0.11"
 zeroize = { version = "1.9", features = ["derive"] }
 # GPU
 wgpu = "30"
+# Vector UI (#1865). `vello_svg` is an in-tree fork until upstream reaches vello 0.11.
+vello = { version = "0.11", default-features = false, features = ["wgpu"] }
+vello_svg = { path = "crates/vello_svg" }
 # NVIDIA DLSS through wgpu's Vulkan HAL (#536). Optional everywhere and
 # off by default: its build script links `libnvsdk_ngx` statically and
 # runs bindgen over NVIDIA's headers, so a build with this feature on
@@ -296,6 +300,8 @@ remote = ["dep:kooch_remote"]
 blockmesh = ["dep:kooch_blockmesh", "render", "physics"]
 # In-game UI documents (#96).
 ui = ["dep:kooch_ui"]
+# UI SVGs drawn on the GPU by Vello instead of rasterized per size (#1865).
+vello = ["ui", "render", "kooch_ui/vello", "kooch_render/vello"]
 editor = ["dep:kooch_editor_core"]
 # NVIDIA DLSS (#536). A GAME turns this on; the engine never defaults to
 # it. Requires `DLSS_SDK` and `VULKAN_SDK` at build time and moves the

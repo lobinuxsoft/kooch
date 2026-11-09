@@ -141,6 +141,23 @@ fn pack(
                 continue;
             }
         };
+        #[cfg(feature = "vello")]
+        if vector {
+            let svg: std::sync::Arc<[u8]> = bytes.into();
+            for class in stale {
+                let inserted = fitted(&svg, class, scale).map(|(size, density)| {
+                    atlas.insert_vector((guid, class), modified, size, density, svg.clone())
+                });
+                match inserted {
+                    Ok(Some(_)) => {}
+                    Ok(None) => tracing::warn!("UI image {guid} does not fit the vector atlas"),
+                    Err(error) => {
+                        tracing::warn!("UI image not loaded: {}: {error}", path.display())
+                    }
+                }
+            }
+            continue;
+        }
         for class in stale {
             let decoded = match vector {
                 true => raster(&bytes, class, scale),
@@ -170,6 +187,17 @@ fn decode(bytes: &[u8]) -> Result<Decoded, String> {
 
 /// An SVG whose longer side fills `class`; with no class yet, at its own size on screen.
 fn raster(bytes: &[u8], class: u8, scale: f32) -> Result<Decoded, String> {
+    let (size, _) = fitted(bytes, class, scale)?;
+    let raster = kooch_core::svg::rasterize(bytes, Some(size))?;
+    let density = [
+        raster.width as f32 / raster.own.0,
+        raster.height as f32 / raster.own.1,
+    ];
+    Ok((raster.rgba, (raster.width, raster.height), density))
+}
+
+/// The texels an SVG of `class` takes, and texels per unit of the file.
+fn fitted(bytes: &[u8], class: u8, scale: f32) -> Result<((u32, u32), [f32; 2]), String> {
     let (w, h) = kooch_core::svg::intrinsic_size(bytes)?;
     let longer = match class {
         0 => (w.max(h) * scale).ceil(),
@@ -180,10 +208,9 @@ fn raster(bytes: &[u8], class: u8, scale: f32) -> Result<Decoded, String> {
         (w * fit).round().max(1.0) as u32,
         (h * fit).round().max(1.0) as u32,
     );
-    let raster = kooch_core::svg::rasterize(bytes, Some(size))?;
     let density = [
-        raster.width as f32 / raster.own.0,
-        raster.height as f32 / raster.own.1,
+        size.0 as f32 / w.max(f32::EPSILON),
+        size.1 as f32 / h.max(f32::EPSILON),
     ];
-    Ok((raster.rgba, (raster.width, raster.height), density))
+    Ok((size, density))
 }

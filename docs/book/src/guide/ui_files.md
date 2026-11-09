@@ -348,6 +348,13 @@ largest size and animate `scale` below 1. A
 are not drawn: convert text to paths before exporting. As a material texture, an SVG is drawn once
 at the size it declares.
 
+With the `vello` feature on (`features = ["vello"]` on `kooch`; the editor always has it), SVGs are
+drawn on the GPU by [Vello](https://github.com/linebender/vello) instead of on the CPU, into a
+texture of their own. The size classes stay the same; what changes is that a new size or a changed
+file costs a GPU pass instead of a CPU raster, and nothing is redrawn while the set on screen
+stays the same. In a profile it is the `ui: vello` scope. Without the feature, nothing of Vello
+is in the build.
+
 **Masks.** `overflow: hidden` on a node with `border-radius` cuts its children to the rounded shape.
 `-kooch-mask` cuts by the alpha of an image, stretched to the node's box, which is how a bar fill
 follows a curve: the bar has the mask, and the fill grows inside it. Masks nest up to 16 deep, and
