@@ -25,3 +25,7 @@ roxmltree.workspace = true
 xmlem.workspace = true
 tracing.workspace = true
 strfmt.workspace = true
+
+[features]
+# SVGs are drawn by Vello on the GPU (#1865) instead of rasterized here with resvg.
+vello = []

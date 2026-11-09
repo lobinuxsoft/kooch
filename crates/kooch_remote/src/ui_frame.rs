@@ -7,6 +7,7 @@ use kooch_core::Guid;
 use kooch_core::resource::Resources;
 use kooch_ecs::{
     AtlasUpload, UiCurve, UiDrawList, UiMask, UiMaterial, UiMirror, UiParam, UiQuad, UiShader,
+    UiVector, UiVectorSource,
 };
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +37,17 @@ pub struct UiFrame {
     pub atlas_side: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upload: Option<UiUpload>,
+    /// The vector atlas (#1865): its side, `(key, rect)` per resident SVG, and each file once.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub vector_side: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vectors: Vec<(u64, [u32; 4])>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vector_sources: Vec<(u64, String)>,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 /// An [`AtlasUpload`] on the wire.
@@ -55,6 +67,7 @@ struct SentUi {
     materials: Vec<UiMaterial>,
     params: Vec<UiParam>,
     shaders: Vec<UiShader>,
+    vectors: Vec<UiVector>,
 }
 
 /// This frame's UI when it changed since the last reply. Takes the atlas upload: the editor keeps
@@ -63,6 +76,7 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
     let mut sent = resources.remove::<SentUi>().unwrap_or_default();
     let frame = resources.get_mut::<UiDrawList>().and_then(|list| {
         let upload = list.atlas_upload.take();
+        let sources = std::mem::take(&mut list.vector_sources);
         let shaders = (sent.shaders != list.shaders).then(|| {
             list.shaders
                 .iter()
@@ -70,7 +84,9 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
                 .collect()
         });
         if upload.is_none()
+            && sources.is_empty()
             && shaders.is_none()
+            && sent.vectors == list.vectors
             && sent.quads == list.quads
             && sent.masks == list.masks
             && sent.curves == list.curves
@@ -87,6 +103,7 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
         sent.materials.clone_from(&list.materials);
         sent.params.clone_from(&list.params);
         sent.shaders.clone_from(&list.shaders);
+        sent.vectors.clone_from(&list.vectors);
         Some(UiFrame {
             quads: STANDARD.encode(bytemuck::cast_slice::<UiQuad, u8>(&list.quads)),
             masks: STANDARD.encode(bytemuck::cast_slice::<UiMask, u8>(&list.masks)),
@@ -108,6 +125,12 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
                 rect: upload.rect,
                 texels: STANDARD.encode(&upload.texels),
             }),
+            vector_side: list.vector_side,
+            vectors: list.vectors.iter().map(|v| (v.key, v.rect)).collect(),
+            vector_sources: sources
+                .iter()
+                .map(|source| (source.key, STANDARD.encode(&source.svg)))
+                .collect(),
         })
     });
     resources.insert(sent);
@@ -129,6 +152,11 @@ pub struct UiReceiver {
     atlas: Vec<u8>,
     dirty: Option<[u32; 4]>,
     fresh: bool,
+    vector_side: u32,
+    vectors: Vec<UiVector>,
+    /// Every file still resident, handed over each time: the renderer parses only keys it lacks,
+    /// and a list it skipped loses nothing.
+    vector_sources: Vec<UiVectorSource>,
 }
 
 impl UiReceiver {
@@ -173,6 +201,24 @@ impl UiReceiver {
                 .collect();
         }
         self.fresh = true;
+        self.vector_side = frame.vector_side;
+        self.vectors = frame
+            .vectors
+            .iter()
+            .map(|&(key, rect)| UiVector { key, rect })
+            .collect();
+        for (key, svg) in frame.vector_sources {
+            match STANDARD.decode(&svg) {
+                Ok(svg) => self.vector_sources.push(UiVectorSource {
+                    key,
+                    svg: svg.into(),
+                }),
+                Err(_) => tracing::warn!("the project sent a UI vector this editor cannot read"),
+            }
+        }
+        let vectors = &self.vectors;
+        self.vector_sources
+            .retain(|source| vectors.iter().any(|vector| vector.key == source.key));
         if frame.atlas_side != self.side {
             self.side = frame.atlas_side;
             self.atlas = vec![0; (self.side * self.side * 4) as usize];
@@ -210,6 +256,9 @@ impl UiReceiver {
                 rect,
                 texels: region(&self.atlas, self.side, rect),
             }),
+            vector_side: self.vector_side,
+            vectors: self.vectors.clone(),
+            vector_sources: self.vector_sources.clone(),
         })
     }
 

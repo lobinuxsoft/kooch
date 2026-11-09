@@ -33,9 +33,11 @@ pub struct UiPass {
     mirrors: wgpu::Buffer,
     mirrors_capacity: u64,
     started: std::time::Instant,
+    vectors: vector::UiVectors,
 }
 
 mod materials;
+mod vector;
 
 use materials::UiMaterials;
 pub use materials::validate_ui;
@@ -125,6 +127,16 @@ impl UiPass {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -147,12 +159,14 @@ impl UiPass {
         let curves = curves_buffer(device, curves_capacity);
         let mirrors_capacity = 4;
         let mirrors = mirrors_buffer(device, mirrors_capacity);
+        let vectors = vector::UiVectors::new(device);
         let buffers = Buffers {
             screen: &screen,
             values: &values,
             masks: &masks,
             curves: &curves,
             mirrors: &mirrors,
+            vectors: vectors.view(),
         };
         let (atlas, bind) = atlas_and_bind(device, &layout, buffers, 1);
         let capacity = 256;
@@ -177,6 +191,7 @@ impl UiPass {
             mirrors,
             mirrors_capacity,
             started: std::time::Instant::now(),
+            vectors,
         }
     }
 
@@ -221,6 +236,9 @@ impl UiPass {
                     depth_or_array_layers: 1,
                 },
             );
+        }
+        if self.vectors.prepare(device, queue, list) {
+            self.bind = bind_group(device, &self.layout, self.buffers(), &self.atlas);
         }
         if list.quads.is_empty() && !clear {
             return;
@@ -297,6 +315,7 @@ impl UiPass {
             masks: &self.masks,
             curves: &self.curves,
             mirrors: &self.mirrors,
+            vectors: self.vectors.view(),
         }
     }
 
@@ -366,7 +385,7 @@ fn draw_quads(pass: &mut wgpu::RenderPass<'_>, quads: &[UiQuad], range: Range<u3
     }
 }
 
-/// What the bind group names besides the atlas.
+/// What the bind group names besides the glyph and image atlas.
 #[derive(Clone, Copy)]
 struct Buffers<'a> {
     screen: &'a wgpu::Buffer,
@@ -374,6 +393,7 @@ struct Buffers<'a> {
     masks: &'a wgpu::Buffer,
     curves: &'a wgpu::Buffer,
     mirrors: &'a wgpu::Buffer,
+    vectors: &'a wgpu::TextureView,
 }
 
 /// The pipeline every UI draw shares but for its fragment entry.
@@ -559,6 +579,10 @@ fn bind_group(
             wgpu::BindGroupEntry {
                 binding: 6,
                 resource: buffers.mirrors.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: wgpu::BindingResource::TextureView(buffers.vectors),
             },
         ],
     })
