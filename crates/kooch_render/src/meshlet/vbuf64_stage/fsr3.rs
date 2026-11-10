@@ -247,6 +247,8 @@ fn pipeline(
 }
 
 pub(super) struct Fsr3 {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     prepare_inputs: wgpu::ComputePipeline,
     clear_reconstructed: wgpu::ComputePipeline,
     prepare_inputs_bgl: wgpu::BindGroupLayout,

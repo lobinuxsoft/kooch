@@ -34,12 +34,8 @@ impl MeshletCull {
             "dispatch_scene_pool_atomic called with an empty pool",
         );
 
-        let params_binding = self.stage_params(queue, cull_params);
-        queue.write_buffer(
-            &self.scene_params_buffer,
-            0,
-            bytemuck::bytes_of(scene_params),
-        );
+        let params = self.stage_params(queue, cull_params);
+        self.stage_scene(queue, scene_params);
         encoder.clear_buffer(&self.visible_count, 0, None);
         // Reset group_max_err to 0 (= 0.0 f32 via bitcast). Pass 1
         // atomicMaxes only positive pixel errors so 0 is a valid
@@ -55,82 +51,7 @@ impl MeshletCull {
         // stale frame N-1 totals would compound otherwise. 16-byte clear is essentially free.
         encoder.clear_buffer(&self.stage_counters, 0, None);
 
-        // Bind groups shared by both passes.
-        let cull_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_cull_scene_pool_atomic_cull_bg"),
-            layout: &pipelines.cull_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(params_binding.clone()),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: pool.meshlets.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.visible_meshlets.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.visible_count.as_entire_binding(),
-                },
-            ],
-        });
-        let pool_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_cull_scene_pool_atomic_pool_bg"),
-            layout: &pipelines.pool_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: pool.mesh_descriptors.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: pool.meshlets.as_entire_binding(),
-                },
-            ],
-        });
-        let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_cull_scene_pool_atomic_scene_bg"),
-            layout: &pipelines.scene_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: scene.instance_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.scene_params_buffer.as_entire_binding(),
-                },
-            ],
-        });
-        let group_err_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_group_err_bg"),
-            layout: &pipelines.group_err_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self.group_max_err.as_entire_binding(),
-            }],
-        });
-        // Group(4) cull debug buffers (#454.4 + #454.6). Bound for both passes because the pipeline
-        // layout is shared; the lod-compute entry never references either global so the binding is
-        // a no-op there beyond the table write.
-        let debug_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_cull_debug_bg"),
-            layout: &pipelines.debug_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.reject_reasons.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.stage_counters.as_entire_binding(),
-                },
-            ],
-        });
+        let binds = self.binds(pipelines, device, pool, scene);
 
         let (groups_x, groups_y) = tiled_workgroups(total_threads, 64);
 
@@ -140,11 +61,11 @@ impl MeshletCull {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&pipelines.pipeline_lod_compute_group_max_err);
-            pass.set_bind_group(0, &cull_bg, &[]);
-            pass.set_bind_group(1, &pool_bg, &[]);
-            pass.set_bind_group(2, &scene_bg, &[]);
-            pass.set_bind_group(3, &group_err_bg, &[]);
-            pass.set_bind_group(4, &debug_bg, &[]);
+            pass.set_bind_group(0, &binds.cull, &[params]);
+            pass.set_bind_group(1, &binds.pool, &[]);
+            pass.set_bind_group(2, &binds.scene, &[]);
+            pass.set_bind_group(3, &binds.group_err, &[]);
+            pass.set_bind_group(4, &binds.debug, &[]);
             self.dispatch_gated(&mut pass, (groups_x, groups_y));
         }
         {
@@ -153,11 +74,11 @@ impl MeshletCull {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&pipelines.pipeline_cull_scene_pool_atomic);
-            pass.set_bind_group(0, &cull_bg, &[]);
-            pass.set_bind_group(1, &pool_bg, &[]);
-            pass.set_bind_group(2, &scene_bg, &[]);
-            pass.set_bind_group(3, &group_err_bg, &[]);
-            pass.set_bind_group(4, &debug_bg, &[]);
+            pass.set_bind_group(0, &binds.cull, &[params]);
+            pass.set_bind_group(1, &binds.pool, &[]);
+            pass.set_bind_group(2, &binds.scene, &[]);
+            pass.set_bind_group(3, &binds.group_err, &[]);
+            pass.set_bind_group(4, &binds.debug, &[]);
             self.dispatch_gated(&mut pass, (groups_x, groups_y));
         }
 

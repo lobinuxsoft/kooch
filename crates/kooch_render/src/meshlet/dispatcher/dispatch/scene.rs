@@ -28,15 +28,11 @@ impl MeshletCull {
             self.capacity,
         );
 
-        let params_binding = self.stage_params(queue, cull_params);
-        queue.write_buffer(
-            &self.scene_params_buffer,
-            0,
-            bytemuck::bytes_of(scene_params),
-        );
+        let params = self.stage_params(queue, cull_params);
+        self.stage_scene(queue, scene_params);
         encoder.clear_buffer(&self.visible_count, 0, None);
 
-        let cull_bg = self.build_cull_bg(pipelines, device, mesh, params_binding);
+        let cull_bg = self.build_cull_bg(pipelines, device, mesh);
         let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet_cull_scene_bg"),
             layout: &pipelines.scene_bgl,
@@ -58,7 +54,7 @@ impl MeshletCull {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&pipelines.pipeline_scene);
-            pass.set_bind_group(0, &cull_bg, &[]);
+            pass.set_bind_group(0, &cull_bg, &[params]);
             pass.set_bind_group(2, &scene_bg, &[]);
             let (groups_x, groups_y) = tiled_workgroups(total_threads, 64);
             pass.dispatch_workgroups(groups_x, groups_y, 1);

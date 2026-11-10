@@ -13,6 +13,8 @@ struct ClearUbo {
 }
 
 pub(super) struct DensityClear {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     pipeline: wgpu::ComputePipeline,
     bgl: wgpu::BindGroupLayout,
     uniform_buffer: wgpu::Buffer,
@@ -72,6 +74,7 @@ impl DensityClear {
         });
 
         Self {
+            kept: Default::default(),
             pipeline,
             bgl,
             uniform_buffer,
@@ -95,20 +98,23 @@ impl DensityClear {
             }),
         );
 
-        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_density_clear_bg"),
-            layout: &self.bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(density_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.uniform_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("meshlet_density_clear_bg"),
+                layout: &self.bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(density_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.uniform_buffer.as_entire_binding(),
+                    },
+                ],
+            },
+        );
 
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("meshlet_density_clear_pass"),

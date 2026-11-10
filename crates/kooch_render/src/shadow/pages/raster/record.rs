@@ -111,23 +111,6 @@ impl PageRasterizer {
             );
         }
         close(track, cull_query, encoder);
-        // The bucket uniforms for the expansion's lamp dispatches —
-        // constant values, cheap to restate per view.
-        for (slot, lamp) in lamps.iter().enumerate().take(lamp_slots) {
-            if lamp.kind == LIGHT_KIND_DIRECTIONAL {
-                continue;
-            }
-            let bucket = levels + slot as u32;
-            queue.write_buffer(
-                &self.levels,
-                bucket as u64 * self.level_stride,
-                bytemuck::bytes_of(&ExpandLevel {
-                    level: bucket,
-                    _pad: [0; 3],
-                }),
-            );
-        }
-
         // Per view, all of it: the page list, the pair list and the dispatch arguments describe
         // THIS camera's clipmap and nothing else. The table, the pool and the atlas are the shared
         // things, and none of them is cleared here.
@@ -143,8 +126,11 @@ impl PageRasterizer {
             scene_params.instance_count * scene_params.meshlets_per_mesh
         };
         let (gx, gy) = kooch_core::gpu::tiled_workgroups(full_threads, 64);
-        let full: Vec<u32> = (0..levels).flat_map(|_| [gx, gy, 1]).collect();
-        queue.write_buffer(&self.gate_full, 0, bytemuck::cast_slice(&full));
+        if self.gate_shape != Some((gx, gy)) {
+            self.gate_shape = Some((gx, gy));
+            let full: Vec<u32> = (0..levels).flat_map(|_| [gx, gy, 1]).collect();
+            queue.write_buffer(&self.gate_full, 0, bytemuck::cast_slice(&full));
+        }
         let gate_base = buckets as u64 * 12;
         encoder.copy_buffer_to_buffer(
             &self.gate_full,
@@ -216,14 +202,6 @@ impl PageRasterizer {
         {
             profiling::scope!("cull: clipmap levels");
             for level in 0..levels {
-                queue.write_buffer(
-                    &self.levels,
-                    level as u64 * self.level_stride,
-                    bytemuck::bytes_of(&ExpandLevel {
-                        level,
-                        _pad: [0; 3],
-                    }),
-                );
                 let clip = self.level_clip(level, eye, sun);
                 let params = CullParams::shadow(
                     clip,

@@ -88,6 +88,8 @@ pub(super) struct ScreenUbo {
 /// Owns the deferred-shading compute pipelines (single-mesh + scene)
 /// and their UBOs.
 pub struct MeshletDeferredShader {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     pub(super) pipeline: wgpu::ComputePipeline,
     pub(super) pipeline_scene: wgpu::ComputePipeline,
     /// `pipeline_scene` with the debug views concatenated in (#743).
@@ -236,6 +238,7 @@ impl MeshletDeferredShader {
         let pipeline_scene = build_scene_pipeline(device, &pipeline_layout_scene, &shader);
 
         Self {
+            kept: Default::default(),
             pipeline,
             pipeline_scene,
             pipeline_scene_debug: std::sync::OnceLock::new(),
@@ -300,40 +303,43 @@ impl MeshletDeferredShader {
             }),
         );
 
-        let shading_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_deferred_shading_bg"),
-            layout: &self.shading_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.camera_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.model_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.screen_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(vbuf_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(color_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: DEFERRED_CONTACT_UBO_BINDING,
-                    resource: self.contact_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: DEFERRED_CONTACT_DEPTH_BINDING,
-                    resource: wgpu::BindingResource::TextureView(depth_sample_view),
-                },
-            ],
-        });
+        let shading_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("meshlet_deferred_shading_bg"),
+                layout: &self.shading_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.camera_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.model_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.screen_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(vbuf_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(color_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: DEFERRED_CONTACT_UBO_BINDING,
+                        resource: self.contact_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: DEFERRED_CONTACT_DEPTH_BINDING,
+                        resource: wgpu::BindingResource::TextureView(depth_sample_view),
+                    },
+                ],
+            },
+        );
 
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("meshlet_deferred_pass"),

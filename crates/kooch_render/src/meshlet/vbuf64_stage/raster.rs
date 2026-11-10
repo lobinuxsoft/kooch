@@ -13,6 +13,8 @@ use super::CameraUbo;
 const SHADER_SOURCE: &str = include_str!("../../../shaders/meshlet_vbuf64.wgsl");
 
 pub(super) struct Vbuf64Rasterizer {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     pipeline: wgpu::RenderPipeline,
     visible_bgl: wgpu::BindGroupLayout,
     instances_bgl: wgpu::BindGroupLayout,
@@ -177,6 +179,7 @@ impl Vbuf64Rasterizer {
         });
 
         Self {
+            kept: Default::default(),
             pipeline,
             visible_bgl,
             instances_bgl,
@@ -219,44 +222,56 @@ impl Vbuf64Rasterizer {
         let mode_flag = [density_mode, 0u32, 0u32, 0u32];
         queue.write_buffer(&self.density_enable_buffer, 0, bytes_of(&mode_flag));
 
-        let visible_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_vbuf64_visible_bg"),
-            layout: &self.visible_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: cull.visible_meshlets_buffer().as_entire_binding(),
-            }],
-        });
-        let instances_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_vbuf64_instances_bg"),
-            layout: &self.instances_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: scene.instance_buffer().as_entire_binding(),
-            }],
-        });
-        let vbuf_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_vbuf64_target_bg"),
-            layout: &self.vbuf_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(vbuf64_view),
-            }],
-        });
-        let density_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_vbuf64_density_bg"),
-            layout: &self.density_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
+        let visible_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("meshlet_vbuf64_visible_bg"),
+                layout: &self.visible_bgl,
+                entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(density_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.density_enable_buffer.as_entire_binding(),
-                },
-            ],
-        });
+                    resource: cull.visible_meshlets_buffer().as_entire_binding(),
+                }],
+            },
+        );
+        let instances_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("meshlet_vbuf64_instances_bg"),
+                layout: &self.instances_bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: scene.instance_buffer().as_entire_binding(),
+                }],
+            },
+        );
+        let vbuf_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("meshlet_vbuf64_target_bg"),
+                layout: &self.vbuf_bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(vbuf64_view),
+                }],
+            },
+        );
+        let density_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("meshlet_vbuf64_density_bg"),
+                layout: &self.density_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(density_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.density_enable_buffer.as_entire_binding(),
+                    },
+                ],
+            },
+        );
 
         let depth_load = if clear_depth {
             wgpu::LoadOp::Clear(0.0)
