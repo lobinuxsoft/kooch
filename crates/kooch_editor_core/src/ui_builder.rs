@@ -287,10 +287,17 @@ impl UiBuilder {
 
 /// Opens `path` in the Builder, wearing the sheet a document in the scene gives it.
 pub(crate) fn open(resources: &mut Resources, path: &Path) {
-    let Some(source) = resources
-        .get::<AssetDatabase>()
-        .and_then(|database| database.guid_for(path))
-    else {
+    let known = |resources: &Resources| {
+        resources
+            .get::<AssetDatabase>()
+            .and_then(|database| database.guid_for(path))
+    };
+    // A file copied in from outside the editor is unknown until a rescan.
+    let source = known(resources).or_else(|| {
+        crate::actions::asset_ops::rescan_now(resources);
+        known(resources)
+    });
+    let Some(source) = source else {
         tracing::error!(file = %path.display(), "not a known asset; cannot open it in the UI Builder");
         return;
     };

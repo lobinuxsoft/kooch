@@ -100,7 +100,14 @@ pub(super) fn draw(
     let built: Option<Built> = ui.data(|data| data.get_temp(id));
     let disk = match built.as_ref().map(|built| built.disk) {
         Some((hash, at)) if now - at < RESCAN => (hash, at),
-        _ => (walked(inputs.roots), now),
+        last => {
+            let hash = walked(inputs.roots);
+            // A file listed but not in the database cannot be opened, so the database follows.
+            if last.is_some_and(|(before, _)| before != hash) {
+                actions.push(EditorAction::RescanAssets);
+            }
+            (hash, now)
+        }
     };
     let stamp = stamp(inputs, disk.0);
     let kept = built
