@@ -22,6 +22,8 @@ pub fn sharpness_of(percent: u32) -> f32 {
 }
 
 pub(super) struct Sharpen {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     pipeline: wgpu::RenderPipeline,
     bgl: wgpu::BindGroupLayout,
     ubo: wgpu::Buffer,
@@ -104,6 +106,7 @@ impl Sharpen {
 
         let (ldr, ldr_view) = create_ldr(device, output);
         Self {
+            kept: Default::default(),
             pipeline,
             bgl,
             ubo,
@@ -141,20 +144,23 @@ impl Sharpen {
             }),
         );
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("rcas_bind_group"),
-            layout: &self.bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.ldr_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.ubo.as_entire_binding(),
-                },
-            ],
-        });
+        let bind_group = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("rcas_bind_group"),
+                layout: &self.bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&self.ldr_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.ubo.as_entire_binding(),
+                    },
+                ],
+            },
+        );
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("rcas_pass"),

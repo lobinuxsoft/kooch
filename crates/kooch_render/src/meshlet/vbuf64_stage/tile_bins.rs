@@ -68,6 +68,8 @@ pub(super) struct Binned {
 }
 
 pub(super) struct TileBins {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     classify: wgpu::ComputePipeline,
     count: wgpu::ComputePipeline,
     scan: wgpu::ComputePipeline,
@@ -152,6 +154,7 @@ impl TileBins {
         };
         use wgpu::BufferUsages as U;
         Self {
+            kept: Default::default(),
             classify: pipeline("cs_classify"),
             count: pipeline("cs_count"),
             scan: pipeline("cs_scan"),
@@ -249,11 +252,14 @@ impl TileBins {
                 resource,
             })
             .collect();
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("material_tile_bins_bg"),
-            layout: &self.bgl,
-            entries: &entries,
-        });
+        let bind_group = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("material_tile_bins_bg"),
+                layout: &self.bgl,
+                entries: &entries,
+            },
+        );
 
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("material_tile_bins"),

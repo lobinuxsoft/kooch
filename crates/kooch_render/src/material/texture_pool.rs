@@ -15,6 +15,8 @@ pub const NO_ANISOTROPY: u16 = 1;
 
 /// GPU texture registry + per-material bind group factory.
 pub struct MaterialTexturePool {
+    /// Each material slot's texture group, kept between frames (#1869).
+    kept: kooch_core::gpu::KeptGroups,
     textures: HashMap<Guid, GpuTexture>,
     fallback_white: GpuTexture,
     fallback_black: GpuTexture,
@@ -51,6 +53,7 @@ impl MaterialTexturePool {
         let bgl = Self::bind_group_layout(device);
 
         Self {
+            kept: Default::default(),
             asked: HashMap::new(),
             frame: 0,
             textures: HashMap::new(),
@@ -204,26 +207,32 @@ impl MaterialTexturePool {
     pub fn material_bind_group(
         &self,
         device: &wgpu::Device,
+        // Which material slot this is: each keeps its own group (#1869).
+        material: u32,
         slots: &[TextureRef; MAX_PARAM_TEXTURES as usize],
     ) -> wgpu::BindGroup {
         let texture = |binding: u32, slot: TextureRef| wgpu::BindGroupEntry {
             binding,
             resource: wgpu::BindingResource::TextureView(self.view_or_fallback(slot)),
         };
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("material_texture_bg"),
-            layout: &self.bgl,
-            entries: &[
-                texture(0, slots[0]),
-                texture(1, slots[1]),
-                texture(2, slots[2]),
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-                texture(4, slots[3]),
-            ],
-        })
+        self.kept.get_at(
+            device,
+            material,
+            &wgpu::BindGroupDescriptor {
+                label: Some("material_texture_bg"),
+                layout: &self.bgl,
+                entries: &[
+                    texture(0, slots[0]),
+                    texture(1, slots[1]),
+                    texture(2, slots[2]),
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    texture(4, slots[3]),
+                ],
+            },
+        )
     }
 
     /// The per-material bind group layout, for pipeline construction.

@@ -81,6 +81,8 @@ impl MaskedDraw<'_> {
 /// The masked bins' pipelines, their table and the frame they draw in. Shared by every view; each
 /// view bins its own cull into its [`MaskedBins`].
 pub struct MaskedRaster {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     target: MaskedTarget,
     depth_format: wgpu::TextureFormat,
     layouts: Layouts,
@@ -112,6 +114,7 @@ impl MaskedRaster {
         let align = device.limits().min_uniform_buffer_offset_alignment as u64;
         let screen_stride = (std::mem::size_of::<Screen>() as u64).next_multiple_of(align);
         Self {
+            kept: Default::default(),
             target,
             depth_format,
             layouts: Layouts::new(device, target, meshlet_bgl),

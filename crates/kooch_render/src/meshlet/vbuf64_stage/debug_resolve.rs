@@ -27,6 +27,8 @@ pub(super) fn is_colorize_mode(debug_mode: u32) -> bool {
 }
 
 pub(super) struct DebugResolve {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     pipeline: wgpu::RenderPipeline,
     /// The same pass blended over a finished image, for the views that draw on top of the scene.
     overlay: wgpu::RenderPipeline,
@@ -138,6 +140,7 @@ impl DebugResolve {
         });
 
         Self {
+            kept: Default::default(),
             pipeline,
             overlay,
             bgl,
@@ -173,28 +176,31 @@ impl DebugResolve {
             }),
         );
 
-        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_debug_resolve_bg"),
-            layout: &self.bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(vbuf_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.screen_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(density_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: cull.visible_meshlets_buffer().as_entire_binding(),
-                },
-            ],
-        });
+        let bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("meshlet_debug_resolve_bg"),
+                layout: &self.bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(vbuf_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.screen_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(density_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: cull.visible_meshlets_buffer().as_entire_binding(),
+                    },
+                ],
+            },
+        );
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("meshlet_debug_resolve_pass"),

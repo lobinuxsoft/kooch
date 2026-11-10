@@ -185,6 +185,8 @@ pub struct PageRasterizer {
     visible_counts: wgpu::Buffer,
     levels: wgpu::Buffer,
     level_stride: u64,
+    /// The sun culls' full dispatch last written to `gate_full`, which changes with the scene only.
+    gate_shape: Option<(u32, u32)>,
     /// One generation per bucket owner per view — the sun's levels (snapped centre, direction, the
     /// eye's height along the sun's axis), then the lamps (transform, range, cone). The compaction
     /// caches a page whose stamp matches. Never zero.

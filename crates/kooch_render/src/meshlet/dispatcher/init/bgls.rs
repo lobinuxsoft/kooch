@@ -61,7 +61,7 @@ pub(super) fn build_cull_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
+                    has_dynamic_offset: true,
                     min_binding_size: NonZeroU64::new(std::mem::size_of::<CullParams>() as u64),
                 },
                 count: None,

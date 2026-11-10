@@ -61,11 +61,11 @@ fn material_bind_group_builds_with_and_without_textures() {
         slots
     };
     // All-fallback (no maps) must build against the same layout.
-    let _bg_none = pool.material_bind_group(&device, &slots(None));
+    let _bg_none = pool.material_bind_group(&device, 0, &slots(None));
     // Mixed: real albedo, fallbacks elsewhere.
-    let _bg_mixed = pool.material_bind_group(&device, &slots(Some(albedo)));
+    let _bg_mixed = pool.material_bind_group(&device, 0, &slots(Some(albedo)));
     // Unregistered GUID silently falls back.
-    let _bg_missing = pool.material_bind_group(&device, &slots(Some(Guid::new_v4())));
+    let _bg_missing = pool.material_bind_group(&device, 0, &slots(Some(Guid::new_v4())));
 }
 
 /// A texture nothing is drawing with is dropped, but only after it has stopped being asked for

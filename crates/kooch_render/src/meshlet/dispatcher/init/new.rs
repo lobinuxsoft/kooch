@@ -160,6 +160,8 @@ impl MeshletCull {
             vertex_count_per_instance,
             params_stride,
             params_cursor: std::sync::atomic::AtomicU32::new(0),
+            binds: std::sync::Mutex::new(None),
+            scene_written: std::sync::Mutex::new(None),
         }
     }
 }

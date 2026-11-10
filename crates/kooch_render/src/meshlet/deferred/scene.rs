@@ -72,54 +72,60 @@ impl MeshletDeferredShader {
         );
         queue.write_buffer(&self.contact_buffer, 0, bytes_of(contact));
 
-        let shading_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_deferred_scene_shading_bg"),
-            layout: &self.shading_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.camera_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.model_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.screen_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(vbuf_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(color_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: DEFERRED_CONTACT_UBO_BINDING,
-                    resource: self.contact_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: DEFERRED_CONTACT_DEPTH_BINDING,
-                    resource: wgpu::BindingResource::TextureView(depth_sample_view),
-                },
-            ],
-        });
-        let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_deferred_scene_bg"),
-            layout: &self.scene_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: cull.visible_meshlets_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: scene.instance_buffer().as_entire_binding(),
-                },
-            ],
-        });
+        let shading_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("meshlet_deferred_scene_shading_bg"),
+                layout: &self.shading_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.camera_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.model_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.screen_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(vbuf_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(color_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: DEFERRED_CONTACT_UBO_BINDING,
+                        resource: self.contact_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: DEFERRED_CONTACT_DEPTH_BINDING,
+                        resource: wgpu::BindingResource::TextureView(depth_sample_view),
+                    },
+                ],
+            },
+        );
+        let scene_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("meshlet_deferred_scene_bg"),
+                layout: &self.scene_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: cull.visible_meshlets_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: scene.instance_buffer().as_entire_binding(),
+                    },
+                ],
+            },
+        );
 
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("meshlet_deferred_scene_pass"),

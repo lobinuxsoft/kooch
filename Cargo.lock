@@ -1294,14 +1294,14 @@ dependencies = [
 
 [[package]]
 name = "example_plugin"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "kooch_plugin_api",
 ]
 
 [[package]]
 name = "example_post_process"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "kooch_plugin_api",
  "kooch_plugin_render",
@@ -2317,7 +2317,7 @@ dependencies = [
 
 [[package]]
 name = "kooch"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2349,7 +2349,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_audio"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "glam 0.33.12",
  "kira",
@@ -2360,7 +2360,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_blockmesh"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "glam 0.33.12",
  "kooch_core",
@@ -2375,7 +2375,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_camera"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "glam 0.33.12",
  "kooch_core",
@@ -2388,7 +2388,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_character"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "glam 0.33.12",
  "kooch_core",
@@ -2400,7 +2400,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_core"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "bytemuck",
  "dlss_wgpu",
@@ -2429,7 +2429,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_ecs"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2446,7 +2446,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_ecs_macros"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2455,7 +2455,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_editor"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "kooch_core",
  "kooch_ecs",
@@ -2468,7 +2468,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_editor_core"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2519,7 +2519,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_gizmos"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2532,7 +2532,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_gizmos_handles"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "glam 0.33.12",
  "kooch_gizmos",
@@ -2540,7 +2540,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_gravity"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2553,7 +2553,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_input"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "gilrs",
  "glam 0.33.12",
@@ -2569,7 +2569,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_lighting"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2583,7 +2583,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_pack"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "aes-gcm",
  "hkdf",
@@ -2595,7 +2595,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_physics"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "glam 0.33.12",
  "kooch_core",
@@ -2609,11 +2609,11 @@ dependencies = [
 
 [[package]]
 name = "kooch_plugin_api"
-version = "0.98.174"
+version = "0.98.175"
 
 [[package]]
 name = "kooch_plugin_render"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "kooch_plugin_api",
  "wgpu",
@@ -2621,7 +2621,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_remote"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "base64 0.23.1",
  "bytemuck",
@@ -2636,7 +2636,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_render"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "base64 0.23.1",
  "bytemuck",
@@ -2666,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_ui"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "cssparser",
  "cssparser-color",
@@ -2689,7 +2689,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_window"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "image",
  "kooch_core",
@@ -2700,7 +2700,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_world"
-version = "0.98.174"
+version = "0.98.175"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",

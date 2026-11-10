@@ -1,5 +1,7 @@
 //! A hierarchical page pyramid over the sun's clipmap (#1022).
 
+use std::sync::{Mutex, PoisonError};
+
 use super::PageConfig;
 use crate::shadow::pages::ClipmapConfig;
 
@@ -25,13 +27,21 @@ pub struct PagePyramid {
     /// The whole chain, read with an explicit level by the reduce.
     whole: wgpu::TextureView,
     seed_layout: wgpu::BindGroupLayout,
-    reduce_layout: wgpu::BindGroupLayout,
     shape_layout: wgpu::BindGroupLayout,
     seed: wgpu::ComputePipeline,
     reduce: wgpu::ComputePipeline,
     side: u32,
     levels: u32,
+    /// Mip `n`'s reduce group at `n - 1`: they bind only this pyramid's own views (#1869).
+    reduces: Vec<wgpu::BindGroup>,
+    /// Each view's base and its per-mip shape groups, kept rather than rebuilt per frame.
+    shapes: Mutex<Vec<(u32, Vec<wgpu::BindGroup>)>>,
+    /// The seed group and the table halves it was built over.
+    seeded: Mutex<Option<(wgpu::Buffer, wgpu::Buffer, wgpu::BindGroup)>>,
 }
+
+/// Bases kept at once: one per view, so past this the scene's views changed and the list starts over.
+const KEPT_BASES: usize = 8;
 
 impl PagePyramid {
     /// How many mips a `side x side` grid reduces to, counting mip 0.
@@ -59,7 +69,7 @@ impl PagePyramid {
                 | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let mips = (0..mip_count)
+        let mips: Vec<wgpu::TextureView> = (0..mip_count)
             .map(|mip| {
                 texture.create_view(&wgpu::TextureViewDescriptor {
                     label: Some("page_pyramid_mip"),
@@ -171,18 +181,45 @@ impl PagePyramid {
         };
         let seed = pipeline("seed_pages", &seed_layout);
         let reduce = pipeline("reduce_mip", &reduce_layout);
+        let reduces = (1..mip_count as usize)
+            .map(|mip| {
+                let below = texture.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("page_pyramid_below"),
+                    dimension: Some(wgpu::TextureViewDimension::D2Array),
+                    base_mip_level: mip as u32 - 1,
+                    mip_level_count: Some(1),
+                    ..Default::default()
+                });
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("page_pyramid_reduce"),
+                    layout: &reduce_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&below),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&mips[mip]),
+                        },
+                    ],
+                })
+            })
+            .collect();
 
         Self {
             texture,
             mips,
             whole,
             seed_layout,
-            reduce_layout,
             shape_layout,
             seed,
             reduce,
             side,
             levels,
+            reduces,
+            shapes: Mutex::new(Vec::new()),
+            seeded: Mutex::new(None),
         }
     }
 
@@ -215,31 +252,91 @@ impl PagePyramid {
         base: u32,
     ) {
         let groups = |extent: u32| extent.div_ceil(GROUP).max(1);
-
-        // 🔴 A uniform buffer PER MIP, and the mip is inside it.
-        let shape_for = |mip: u32, side: u32| {
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("page_pyramid_shape"),
-                size: 16,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
+        let shapes = self.shapes_at(device, queue, base);
+        let seed_group = self.seed_group(device, table, work);
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("page_pyramid_seed"),
+                timestamp_writes: None,
             });
-            queue.write_buffer(
-                &buffer,
-                0,
-                bytemuck::cast_slice(&[side, self.levels, base, mip]),
-            );
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("page_pyramid_shape"),
-                layout: &self.shape_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buffer.as_entire_binding(),
-                }],
+            pass.set_pipeline(&self.seed);
+            pass.set_bind_group(0, &shapes[0], &[]);
+            pass.set_bind_group(1, &seed_group, &[]);
+            pass.dispatch_workgroups(groups(self.side), groups(self.side), self.levels);
+        }
+        for (mip, (shape, reduce)) in shapes.iter().zip(&self.reduces).enumerate() {
+            let side = (self.side >> (mip + 1)).max(1);
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("page_pyramid_reduce"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.reduce);
+            pass.set_bind_group(0, shape, &[]);
+            pass.set_bind_group(1, reduce, &[]);
+            pass.dispatch_workgroups(groups(side), groups(side), self.levels);
+        }
+    }
+
+    /// The per-mip shape groups of `base`, written once.
+    ///
+    /// 🔴 A uniform buffer PER MIP, and the mip is inside it: the passes share one encoder, and a
+    /// `write_buffer` between them is ordered against the queue, so all would read the last.
+    fn shapes_at(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        base: u32,
+    ) -> Vec<wgpu::BindGroup> {
+        let mut kept = self.shapes.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((_, shapes)) = kept.iter().find(|(at, _)| *at == base) {
+            return shapes.clone();
+        }
+        let shapes: Vec<wgpu::BindGroup> = (0..self.mips.len() as u32)
+            .map(|mip| {
+                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("page_pyramid_shape"),
+                    size: 16,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                let side = (self.side >> mip).max(1);
+                queue.write_buffer(
+                    &buffer,
+                    0,
+                    bytemuck::cast_slice(&[side, self.levels, base, mip]),
+                );
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("page_pyramid_shape"),
+                    layout: &self.shape_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                })
             })
-        };
-        let shape_group = shape_for(0, self.side);
-        let seed_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            .collect();
+        if kept.len() >= KEPT_BASES {
+            kept.clear();
+        }
+        kept.push((base, shapes.clone()));
+        shapes
+    }
+
+    /// The seed group over `table` and `work`, rebuilt only when either was replaced.
+    fn seed_group(
+        &self,
+        device: &wgpu::Device,
+        table: &wgpu::Buffer,
+        work: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        let mut kept = self.seeded.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((at_table, at_work, group)) = kept.as_ref()
+            && at_table == table
+            && at_work == work
+        {
+            return group.clone();
+        }
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("page_pyramid_seed"),
             layout: &self.seed_layout,
             entries: &[
@@ -257,53 +354,8 @@ impl PagePyramid {
                 },
             ],
         });
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("page_pyramid_seed"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.seed);
-            pass.set_bind_group(0, &shape_group, &[]);
-            pass.set_bind_group(1, &seed_group, &[]);
-            pass.dispatch_workgroups(groups(self.side), groups(self.side), self.levels);
-        }
-
-        // ⚠️ The uniform is ONE buffer and the passes are recorded into one encoder, so a
-        // `write_buffer` per mip inside this loop would be overwritten before any of them ran —
-        // `queue.write_buffer` is ordered against the queue, not against the encoder.
-        for mip in 1..self.mips.len() as u32 {
-            let side = (self.side >> mip).max(1);
-            let shape_group = shape_for(mip, side);
-            let below = self.texture.create_view(&wgpu::TextureViewDescriptor {
-                label: Some("page_pyramid_below"),
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                base_mip_level: mip - 1,
-                mip_level_count: Some(1),
-                ..Default::default()
-            });
-            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("page_pyramid_reduce"),
-                layout: &self.reduce_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&below),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&self.mips[mip as usize]),
-                    },
-                ],
-            });
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("page_pyramid_reduce"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.reduce);
-            pass.set_bind_group(0, &shape_group, &[]);
-            pass.set_bind_group(1, &group, &[]);
-            pass.dispatch_workgroups(groups(side), groups(side), self.levels);
-        }
+        *kept = Some((table.clone(), work.clone(), group.clone()));
+        group
     }
 }
 

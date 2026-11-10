@@ -26,6 +26,8 @@ struct MotionUbo {
 }
 
 pub(super) struct MotionVectors {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     pipeline: wgpu::RenderPipeline,
     bgl: wgpu::BindGroupLayout,
     // 🔴 Its own group 0 rather than the shading pass's. That one also carries the colour target,
@@ -185,6 +187,7 @@ impl MotionVectors {
 
         let (texture, view) = create_target(device, size);
         Self {
+            kept: Default::default(),
             pipeline,
             bgl,
             frame_bgl,
@@ -270,52 +273,61 @@ impl MotionVectors {
             }),
         );
 
-        let frame_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("motion_vectors_frame_bg"),
-            layout: &self.frame_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(vbuf_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.camera_ubo.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.screen_ubo.as_entire_binding(),
-                },
-            ],
-        });
-        let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("motion_vectors_scene_bg"),
-            layout: &self.scene_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: visible_meshlets.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: instances.as_entire_binding(),
-                },
-            ],
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("motion_vectors_bind_group"),
-            layout: &self.bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: previous_transforms.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.ubo.as_entire_binding(),
-                },
-            ],
-        });
+        let frame_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("motion_vectors_frame_bg"),
+                layout: &self.frame_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(vbuf_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.camera_ubo.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.screen_ubo.as_entire_binding(),
+                    },
+                ],
+            },
+        );
+        let scene_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("motion_vectors_scene_bg"),
+                layout: &self.scene_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: visible_meshlets.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: instances.as_entire_binding(),
+                    },
+                ],
+            },
+        );
+        let bind_group = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("motion_vectors_bind_group"),
+                layout: &self.bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: previous_transforms.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.ubo.as_entire_binding(),
+                    },
+                ],
+            },
+        );
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

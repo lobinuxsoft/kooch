@@ -89,6 +89,8 @@ fn build_pipeline(
 }
 
 pub(super) struct ComputeShading {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     pipeline: wgpu::ComputePipeline,
     /// The same pipeline with the debug views concatenated in (#743). Built on the frame somebody
     /// first opens one, for the reasons `MaterialTwoPass` documents at length: a shipped game
@@ -242,6 +244,7 @@ impl ComputeShading {
         });
 
         Self {
+            kept: Default::default(),
             pipeline,
             pipeline_debug: std::sync::OnceLock::new(),
             layout,
@@ -380,76 +383,88 @@ impl ComputeShading {
             parent,
         );
 
-        let frame_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("compute_shading_frame_bg"),
-            layout: &self.frame_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(vbuf_view),
+        let frame_bg =
+            self.kept.get(
+                device,
+                &wgpu::BindGroupDescriptor {
+                    label: Some("compute_shading_frame_bg"),
+                    layout: &self.frame_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(vbuf_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: self.camera_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &self.screen_buffer,
+                                offset: 0,
+                                size: std::num::NonZeroU64::new(
+                                    std::mem::size_of::<ScreenUbo>() as u64
+                                ),
+                            }),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: MATERIAL_PASS_CONTACT_UBO_BINDING,
+                            resource: self.contact_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: MATERIAL_PASS_CONTACT_DEPTH_BINDING,
+                            resource: wgpu::BindingResource::TextureView(depth_sample_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: COLOR_OUT_BINDING,
+                            resource: wgpu::BindingResource::TextureView(color_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: SHADED_IDS_BINDING,
+                            resource: wgpu::BindingResource::TextureView(ids_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: TILE_BINS_BINDING,
+                            resource: binned.bins.as_entire_binding(),
+                        },
+                    ],
                 },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.camera_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.screen_buffer,
-                        offset: 0,
-                        size: std::num::NonZeroU64::new(std::mem::size_of::<ScreenUbo>() as u64),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: MATERIAL_PASS_CONTACT_UBO_BINDING,
-                    resource: self.contact_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: MATERIAL_PASS_CONTACT_DEPTH_BINDING,
-                    resource: wgpu::BindingResource::TextureView(depth_sample_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: COLOR_OUT_BINDING,
-                    resource: wgpu::BindingResource::TextureView(color_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: SHADED_IDS_BINDING,
-                    resource: wgpu::BindingResource::TextureView(ids_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: TILE_BINS_BINDING,
-                    resource: binned.bins.as_entire_binding(),
-                },
-            ],
-        });
-        let materials_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("compute_shading_materials_bg"),
-            layout: &self.materials_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: material_pipeline.pool().buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: material_pipeline.pool().values().as_entire_binding(),
-                },
-            ],
-        });
-        let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("compute_shading_scene_bg"),
-            layout: &self.scene_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: cull.visible_meshlets_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: scene.instance_buffer().as_entire_binding(),
-                },
-            ],
-        });
+            );
+        let materials_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("compute_shading_materials_bg"),
+                layout: &self.materials_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: material_pipeline.pool().buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: material_pipeline.pool().values().as_entire_binding(),
+                    },
+                ],
+            },
+        );
+        let scene_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("compute_shading_scene_bg"),
+                layout: &self.scene_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: cull.visible_meshlets_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: scene.instance_buffer().as_entire_binding(),
+                    },
+                ],
+            },
+        );
 
         let texture_pool = material_pipeline.texture_pool();
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -462,7 +477,7 @@ impl ComputeShading {
         pass.set_bind_group(5, lights_bg, &[]);
         for slot in slots {
             let refs = material_pipeline.slot_texture_refs(slot);
-            let texture_bg = texture_pool.material_bind_group(device, &refs);
+            let texture_bg = texture_pool.material_bind_group(device, slot, &refs);
             let offset = (slot as u64 * self.screen_stride) as u32;
             pass.set_bind_group(0, &frame_bg, &[offset]);
             pass.set_bind_group(4, &texture_bg, &[]);

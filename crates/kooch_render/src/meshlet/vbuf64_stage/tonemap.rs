@@ -20,6 +20,8 @@ struct TonemapUbo {
 /// Owns the HDR target the shading writes and the pipeline that resolves
 /// it.
 pub(super) struct Tonemap {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     pipeline: wgpu::RenderPipeline,
     bgl: wgpu::BindGroupLayout,
     ubo: wgpu::Buffer,
@@ -103,6 +105,7 @@ impl Tonemap {
 
         let (hdr, hdr_view) = create_hdr(device, size);
         Self {
+            kept: Default::default(),
             pipeline,
             bgl,
             ubo,
@@ -145,20 +148,23 @@ impl Tonemap {
             }),
         );
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("tonemap_bind_group"),
-            layout: &self.bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(source),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.ubo.as_entire_binding(),
-                },
-            ],
-        });
+        let bind_group = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("tonemap_bind_group"),
+                layout: &self.bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(source),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.ubo.as_entire_binding(),
+                    },
+                ],
+            },
+        );
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("tonemap_pass"),

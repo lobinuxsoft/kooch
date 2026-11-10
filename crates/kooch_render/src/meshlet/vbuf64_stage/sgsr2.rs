@@ -164,6 +164,8 @@ pub(super) struct UpscaleInputs<'a> {
 }
 
 pub(super) struct Sgsr2 {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     convert_pipeline: wgpu::RenderPipeline,
     convert_bgl: wgpu::BindGroupLayout,
     convert_ubo: wgpu::Buffer,
@@ -334,6 +336,7 @@ impl Sgsr2 {
 
         let (convert_view, output_textures, output_views) = create_targets(device, render, output);
         Self {
+            kept: Default::default(),
             convert_pipeline,
             convert_bgl,
             convert_ubo: ubo(
@@ -426,58 +429,64 @@ impl Sgsr2 {
             }),
         );
 
-        let convert_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("sgsr2_convert_bg"),
-            layout: &self.convert_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(inputs.depth),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(inputs.motion),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.point),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.convert_ubo.as_entire_binding(),
-                },
-            ],
-        });
-        let upscale_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("sgsr2_upscale_bg"),
-            layout: &self.upscale_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.upscale_ubo.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&self.output_views[previous]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&self.convert_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(inputs.color),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Sampler(&self.linear),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::Sampler(&self.point),
-                },
-            ],
-        });
+        let convert_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("sgsr2_convert_bg"),
+                layout: &self.convert_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(inputs.depth),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(inputs.motion),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.point),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: self.convert_ubo.as_entire_binding(),
+                    },
+                ],
+            },
+        );
+        let upscale_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("sgsr2_upscale_bg"),
+                layout: &self.upscale_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.upscale_ubo.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&self.output_views[previous]),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&self.convert_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(inputs.color),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::Sampler(&self.linear),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::Sampler(&self.point),
+                    },
+                ],
+            },
+        );
 
         let mut pass = |label: &'static str,
                         view: &wgpu::TextureView,

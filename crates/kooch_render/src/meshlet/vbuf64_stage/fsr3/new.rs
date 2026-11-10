@@ -104,6 +104,7 @@ impl Fsr3 {
         );
 
         Self {
+            kept: Default::default(),
             prepare_inputs: pipeline(
                 device,
                 "fsr3_prepare_inputs",
