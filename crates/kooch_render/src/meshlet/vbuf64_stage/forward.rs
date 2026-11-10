@@ -343,7 +343,7 @@ impl SortedPass {
                 continue;
             };
             let refs = frame.materials.slot_texture_refs(run.material);
-            let textures = texture_pool.material_bind_group(device, &refs);
+            let textures = texture_pool.material_bind_group(device, run.material, &refs);
             pass.set_pipeline(&pipeline);
             let offset = (run.material as u64 * uniforms.screen_stride) as u32;
             pass.set_bind_group(0, &frame_bg, &[offset]);

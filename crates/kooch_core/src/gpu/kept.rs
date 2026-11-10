@@ -57,9 +57,11 @@ struct Slot {
     groups: Vec<Kept>,
 }
 
-/// The bind groups built through it, by label and slot, and what each bound. A slot keeps what its
-/// last two calls returned, so a ping-pong history finds both sides, and anything older is let go
-/// the call after its successor is bound.
+/// Calls a group survives unused: a pass binding a set per material, or a ping-pong history, finds
+/// each again, and a replaced resource is let go this many calls after its successor is bound.
+const WINDOW: u64 = 16;
+
+/// The bind groups built through it, by label and slot, and what each bound.
 #[derive(Default)]
 pub struct KeptGroups(Mutex<HashMap<(u64, u32), Slot>>);
 
@@ -85,7 +87,7 @@ impl KeptGroups {
         let slot = kept.entry((label_key(descriptor.label), slot)).or_default();
         slot.calls += 1;
         let calls = slot.calls;
-        slot.groups.retain(|kept| calls - kept.used <= 2);
+        slot.groups.retain(|kept| calls - kept.used <= WINDOW);
         if let Some(found) = slot.groups.iter_mut().find(|kept| same(kept, descriptor)) {
             found.used = calls;
             return found.group.clone();

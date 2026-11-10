@@ -221,7 +221,11 @@ impl LayeredPass {
         );
         let texture_pool = frame.materials.texture_pool();
         let textures = |material: u32| {
-            texture_pool.material_bind_group(device, &frame.materials.slot_texture_refs(material))
+            texture_pool.material_bind_group(
+                device,
+                material,
+                &frame.materials.slot_texture_refs(material),
+            )
         };
         let offset = |material: u32| (material as u64 * uniforms.screen_stride) as u32;
         let first = list.runs[0].material;

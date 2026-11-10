@@ -133,9 +133,11 @@ pub fn mask(
         layout: &empty_bgl,
         entries: &[],
     });
-    let textures_bg = materials
-        .texture_pool()
-        .material_bind_group(device, &materials.slot_texture_refs(slot));
+    let textures_bg = materials.texture_pool().material_bind_group(
+        device,
+        slot,
+        &materials.slot_texture_refs(slot),
+    );
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("alpha_trim_mask"),

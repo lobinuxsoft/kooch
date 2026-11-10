@@ -522,7 +522,7 @@ impl MaterialTwoPass {
         let texture_pool = material_pipeline.texture_pool();
         for (i, slot) in slots.enumerate() {
             let refs = material_pipeline.slot_texture_refs(slot);
-            let texture_bg = texture_pool.material_bind_group(device, &refs);
+            let texture_bg = texture_pool.material_bind_group(device, slot, &refs);
             let shader = material_pipeline.slot_surface(slot).map(|(guid, _)| guid);
             let query = scopes.map(|s| match parent {
                 Some(p) => s.begin_child(crate::meshlet::shader_scope(shader), encoder, p),

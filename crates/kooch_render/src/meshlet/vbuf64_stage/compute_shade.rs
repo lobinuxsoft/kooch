@@ -477,7 +477,7 @@ impl ComputeShading {
         pass.set_bind_group(5, lights_bg, &[]);
         for slot in slots {
             let refs = material_pipeline.slot_texture_refs(slot);
-            let texture_bg = texture_pool.material_bind_group(device, &refs);
+            let texture_bg = texture_pool.material_bind_group(device, slot, &refs);
             let offset = (slot as u64 * self.screen_stride) as u32;
             pass.set_bind_group(0, &frame_bg, &[offset]);
             pass.set_bind_group(4, &texture_bg, &[]);

@@ -198,7 +198,8 @@ impl MaskedRaster {
             let offset = (bin as u64 * self.screen_stride) as u32;
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &frame_bg, &[offset]);
-            let group = textures.material_bind_group(device, &materials.slot_texture_refs(*slot));
+            let group =
+                textures.material_bind_group(device, *slot, &materials.slot_texture_refs(*slot));
             pass.set_bind_group(4, &group, &[]);
             pass.draw_indirect(&bins.args, bin as u64 * ARGS_BYTES);
         }
