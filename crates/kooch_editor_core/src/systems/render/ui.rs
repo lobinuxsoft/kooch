@@ -74,6 +74,8 @@ pub(super) struct ViewportUi<'a> {
     pub(super) game_clicked: &'a mut bool,
     pub(super) ui_builder: Option<&'a mut crate::ui_builder::UiBuilder>,
     pub(super) ui_panels: Option<&'a mut crate::ui_panel::UiPanels>,
+    /// The Image view's image, and whether it was just opened (#1792).
+    pub(super) open_image: Option<(&'a crate::image_view::OpenImage, bool)>,
 }
 
 /// Runs the egui UI for one frame. Produces the tessellation input and the
@@ -170,6 +172,7 @@ pub(super) fn run_editor_ui(
         shader_costs,
         ui_builder,
         ui_panels,
+        open_image,
     } = viewport;
 
     // `run_ui` rather than `run`: egui 0.35 hands the closure a root `Ui`
@@ -288,6 +291,9 @@ pub(super) fn run_editor_ui(
                     .is_some_and(|builder| std::mem::take(&mut builder.focus_requested)),
                 &mut actions,
             );
+            if open_image.is_some_and(|(_, focus)| focus) {
+                super::focus::show_image_view(ui, &mut overlay.dock_state, &overlay.windows);
+            }
 
             let mut tab_viewer = EditorTabViewer {
                 game_resolution: &mut overlay.game_resolution,
@@ -351,6 +357,7 @@ pub(super) fn run_editor_ui(
                 open_shader_graph: open_shader_graph.as_deref_mut(),
                 ui_builder: ui_builder.as_deref_mut(),
                 ui_panels: ui_panels.as_deref_mut(),
+                open_image: open_image.map(|(open, _)| open),
                 current_folder: &mut current_folder,
                 clipboard_has_entities: toolbar.clipboard_has_entities,
                 engine_assets_root,

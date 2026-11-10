@@ -20,8 +20,9 @@ use crate::{GlyphAtlas, UiNode, UiTree, UiTrees};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UiImage {
     pub guid: Guid,
-    /// Image texels, top-right-bottom-left. Drawn one canvas unit per texel.
-    pub slice: [f32; 4],
+    /// Image texels, top-right-bottom-left. Drawn one canvas unit per texel. `None`: the image's
+    /// own, read from its `.meta` when packed.
+    pub slice: Option<[f32; 4]>,
     pub tint: [f32; 4],
 }
 
@@ -37,6 +38,13 @@ impl UiTree {
     }
 }
 
+impl UiImage {
+    /// The slice it is drawn with: its own, or the image's as `atlas` last read it.
+    pub fn slice_in(&self, atlas: &GlyphAtlas) -> [f32; 4] {
+        self.slice.unwrap_or_else(|| atlas.slice(self.guid))
+    }
+}
+
 /// Packs every image a tree shows that the atlas lacks, or holds at an older mtime: editing the
 /// PNG shows without Play. A stat per image per frame, no read. An SVG is drawn once per size
 /// class it shows at, so each node filters it down at most twice.
@@ -44,8 +52,9 @@ pub fn load_images(resources: &mut Resources) {
     let physical = resources.get::<ViewSize>().copied().unwrap_or_default().0;
     let scale = physical.y.max(1) as f32 / CANVAS_HEIGHT;
     let mut wanted = Wanted::default();
-    if let Some(trees) = resources.get::<UiTrees>() {
-        trees.for_each(|tree| want(tree, scale, &mut wanted));
+    if let (Some(trees), Some(atlas)) = (resources.get::<UiTrees>(), resources.get::<GlyphAtlas>())
+    {
+        trees.for_each(|tree| want(tree, scale, atlas, &mut wanted));
     }
     if wanted.is_empty() {
         return;
@@ -73,7 +82,7 @@ pub fn load_tree_images(
     atlas: &mut GlyphAtlas,
 ) {
     let mut wanted = Wanted::default();
-    want(tree, scale, &mut wanted);
+    want(tree, scale, atlas, &mut wanted);
     pack(wanted, scale, database, server, atlas);
 }
 
@@ -92,11 +101,11 @@ impl Wanted {
 }
 
 /// Every image `tree` needs in the atlas, painted or cutting by its alpha.
-fn want(tree: &UiTree, scale: f32, wanted: &mut Wanted) {
+fn want(tree: &UiTree, scale: f32, atlas: &GlyphAtlas, wanted: &mut Wanted) {
     let images = tree
         .image
         .iter()
-        .map(|image| image.map(|image| (image.guid, image.slice)));
+        .map(|image| image.map(|image| (image.guid, image.slice_in(atlas))));
     let cuts = tree
         .mask
         .iter()
@@ -153,7 +162,6 @@ fn pack(
             .filter(|(of, _)| *of == guid)
             .map(|(_, crop)| *crop)
             .collect();
-        let modified = stamp(database, guid, None, &[]);
         let path = match path_of(database, guid) {
             Ok(path) => path,
             Err(error) => {
@@ -161,6 +169,9 @@ fn pack(
                 continue;
             }
         };
+        // The `.meta` counts: a slice edited in the Image view repacks with it.
+        let meta = kooch_core::asset_meta::meta_path_for(&path);
+        let modified = stamp(database, guid, None, std::slice::from_ref(&meta));
         let vector = kooch_core::svg::is_svg(&path);
         let classes: Vec<u8> = match vector {
             true => classes.iter().copied().collect(),
@@ -182,6 +193,7 @@ fn pack(
         if stale.is_empty() && crops.is_empty() {
             continue;
         }
+        atlas.set_slice(guid, meta_slice(&path));
         let bytes = match read_bytes(server.as_deref_mut(), &path) {
             Ok(bytes) => bytes,
             Err(error) => {
@@ -230,6 +242,21 @@ fn pack(
         }
     }
     atlas.keep_crops(&wanted.crops);
+}
+
+/// The `[import] slice` of the image at `path`, zero when it has none.
+fn meta_slice(path: &std::path::Path) -> [f32; 4] {
+    let read = || -> Option<[f32; 4]> {
+        let meta = kooch_core::asset_meta::read_meta(path).ok()?;
+        let sides = meta.import?.get("slice")?.as_array()?.clone();
+        let sides: Vec<f32> = sides
+            .iter()
+            .filter_map(|side| side.as_integer())
+            .map(|side| side as f32)
+            .collect();
+        sides.try_into().ok()
+    };
+    read().unwrap_or([0.0; 4])
 }
 
 type Decoded = (Vec<u8>, (u32, u32), [f32; 2]);

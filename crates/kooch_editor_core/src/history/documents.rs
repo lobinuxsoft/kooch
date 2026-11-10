@@ -28,6 +28,8 @@ pub(crate) enum DocumentState {
     ),
     /// The UI Builder's markup, as it would be saved.
     Ui(String),
+    /// An image's 9-slice, top-right-bottom-left texels.
+    ImageSlice([u16; 4]),
 }
 
 /// One step: what the document was, and what to call putting it back.
@@ -197,6 +199,8 @@ fn capture(resources: &mut Resources, document: &Document) -> Option<DocumentSta
             (open.path == *path).then(|| DocumentState::InputMap(open.map.clone()))
         }
         Document::Asset(guid) => capture_asset(resources, *guid),
+        Document::Image(guid) => crate::image_view::path_of(resources, *guid)
+            .map(|path| DocumentState::ImageSlice(crate::image_view::import_of(&path).slice)),
         Document::ShaderGraph(path) => {
             let open = resources.get::<crate::state::OpenShaderGraph>()?;
             (open.path == *path)
@@ -260,6 +264,9 @@ fn restore(resources: &mut Resources, document: &Document, state: DocumentState)
                 // Put back in memory only: the file is still the user's to save.
                 open.dirty = true;
             }
+        }
+        (Document::Image(guid), DocumentState::ImageSlice(slice)) => {
+            crate::image_view::write_slice(resources, *guid, slice);
         }
         (Document::UiDocument(path), DocumentState::Ui(text)) => {
             if let Some(open) = resources.get_mut::<crate::ui_builder::UiBuilder>()

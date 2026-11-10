@@ -213,7 +213,7 @@ fn push_tree(
         let min = (rect.min * scale).round();
         let max = ((rect.min + rect.size) * scale).round();
         let cropped = image
-            .filter(|(image, _)| plain && image.slice == [0.0; 4])
+            .filter(|(image, _)| plain && image.slice_in(atlas) == [0.0; 4])
             .and_then(|(image, _)| {
                 let crop = crate::crops::crop_of(tree, node, scale)?;
                 Some((image, crop, atlas.crop(image.guid, crop)))
@@ -226,6 +226,10 @@ fn push_tree(
             }
             _ => {
                 if let Some((image, packed)) = image.filter(|_| plain) {
+                    let image = UiImage {
+                        slice: Some(image.slice_in(atlas)),
+                        ..image
+                    };
                     push_image(image, packed, min, max, scale, clip, &mut list.quads);
                 }
             }
@@ -524,7 +528,7 @@ fn push_image(
 ) {
     let [u0, v0, u1, v1] = packed.rect;
     let [dx, dy] = packed.density.map(|d| d.max(f32::EPSILON));
-    let [top, right, bottom, left] = image.slice.map(|edge| edge.max(0.0));
+    let [top, right, bottom, left] = image.slice.unwrap_or_default().map(|edge| edge.max(0.0));
     let (left, right) = squeeze(left, right, (u1 - u0) as f32 / dx);
     let (top, bottom) = squeeze(top, bottom, (v1 - v0) as f32 / dy);
     let (screen_left, screen_right) = squeeze(left * scale, right * scale, max.x - min.x);

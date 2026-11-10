@@ -88,6 +88,8 @@ pub struct GlyphAtlas {
     /// Bumped when a full atlas is cleared: every quad built before points at freed space.
     generation: u32,
     vectors: vectors::VectorSlots,
+    /// Each image's own slice, read from its `.meta` when packed.
+    slices: HashMap<Guid, [f32; 4]>,
 }
 
 impl Default for GlyphAtlas {
@@ -107,7 +109,17 @@ impl GlyphAtlas {
             dirty: None,
             generation: 0,
             vectors: vectors::VectorSlots::default(),
+            slices: HashMap::new(),
         }
+    }
+
+    /// The slice `guid`'s `.meta` gave it, zero until it is packed.
+    pub fn slice(&self, guid: Guid) -> [f32; 4] {
+        self.slices.get(&guid).copied().unwrap_or_default()
+    }
+
+    pub(crate) fn set_slice(&mut self, guid: Guid, slice: [f32; 4]) {
+        self.slices.insert(guid, slice);
     }
 
     pub fn side(&self) -> u32 {

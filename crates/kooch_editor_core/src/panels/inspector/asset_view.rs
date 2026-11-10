@@ -174,7 +174,7 @@ pub(crate) fn draw_asset_inspector(
                 layer_labels,
             ),
             Some(AssetDetail::Mesh(info)) => draw_mesh_import(ui, entry.guid, info, actions),
-            Some(AssetDetail::Image(info)) => draw_image_import(ui, entry.guid, info, actions),
+            Some(AssetDetail::Image(info)) => draw_image_import(ui, entry, info, actions),
             Some(AssetDetail::Reflected {
                 type_name,
                 fields,
@@ -336,10 +336,11 @@ const BAKE_FACES_ID: egui::Id = egui::Id::NULL;
 
 fn draw_image_import(
     ui: &mut egui::Ui,
-    guid: Guid,
+    entry: &AssetCatalogEntry,
     info: &ImageImportInfo,
     actions: &mut Vec<EditorAction>,
 ) {
+    let guid = entry.guid;
     ui.weak("Import settings");
     let mut import = info.import;
     egui::Grid::new("image_import")
@@ -354,6 +355,22 @@ fn draw_image_import(
                  lookup table — where the smaller copies are memory spent to make a 1:1 \
                  sample blurrier.",
             );
+            ui.end_row();
+
+            ui.label("9-slice");
+            ui.horizontal(|ui| {
+                let [top, right, bottom, left] = info.import.slice;
+                ui.label(format!("{top} {right} {bottom} {left} px"))
+                    .on_hover_text("Top, right, bottom, left: what every use of the image keeps.");
+                let edit = ui
+                    .button("Edit…")
+                    .on_hover_text("Opens the image with a guide per side.");
+                if edit.clicked() {
+                    actions.push(EditorAction::OpenImageView {
+                        path: entry.path.clone(),
+                    });
+                }
+            });
             ui.end_row();
 
             kv(ui, "Size", &format!("{} × {}", info.width, info.height));

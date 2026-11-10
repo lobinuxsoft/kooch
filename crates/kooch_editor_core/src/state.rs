@@ -53,6 +53,8 @@ pub(crate) enum EditorTab {
     UiBuilder,
     /// A project's own panel: a `.kxml` under its `assets/editor/` (#1791).
     Project(kooch_core::Guid),
+    /// An image's 9-slice, over the image (#1792).
+    ImageView,
 }
 
 /// The `.shgraph` open in the Shader Graph panel, as its graph.
@@ -117,6 +119,7 @@ pub(crate) const ALL_TABS: &[EditorTab] = &[
     EditorTab::Performance,
     EditorTab::Systems,
     EditorTab::UiBuilder,
+    EditorTab::ImageView,
 ];
 
 impl EditorTab {
@@ -135,6 +138,7 @@ impl EditorTab {
             Self::AssetBrowser => format!("{} Assets", crate::icons::FOLDER_OPEN),
             Self::InputMap => format!("{} Input Map", crate::icons::SLIDERS),
             Self::UiBuilder => format!("{} UI Builder", crate::icons::SLIDERS),
+            Self::ImageView => format!("{} Image", crate::icons::SLIDERS),
             Self::ShaderGraph => format!("{} Shader Graph", crate::icons::TREE_STRUCTURE),
             Self::Console => format!("{} Console", crate::icons::TERMINAL),
             Self::Build => format!("{} Build", crate::icons::PACKAGE),

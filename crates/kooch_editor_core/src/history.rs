@@ -30,6 +30,8 @@ pub(crate) enum Document {
     ShaderGraph(PathBuf),
     /// The `.kxml` open in the UI Builder, keyed by file for the same reason.
     UiDocument(PathBuf),
+    /// An image's 9-slice, in its `.meta` (#1792).
+    Image(Guid),
 }
 
 /// What kind of document an asset guid names.
@@ -46,6 +48,7 @@ pub(crate) fn resolve(
     input_map: Option<&Path>,
     shader_graph: Option<&Path>,
     ui_document: Option<&Path>,
+    image: Option<Guid>,
 ) -> Option<Document> {
     match focused_tab? {
         // The two panels that show the scene. A selected asset does not
@@ -64,6 +67,7 @@ pub(crate) fn resolve(
             shader_graph.map(|path| Document::ShaderGraph(path.to_path_buf()))
         }
         EditorTab::UiBuilder => ui_document.map(|path| Document::UiDocument(path.to_path_buf())),
+        EditorTab::ImageView => image.map(Document::Image),
         _ => None,
     }
 }
@@ -84,6 +88,7 @@ impl Document {
             Document::InputMap(_) => "this input map",
             Document::ShaderGraph(_) => "this shader graph",
             Document::UiDocument(_) => "this UI document",
+            Document::Image(_) => "this image's 9-slice",
         }
     }
 }

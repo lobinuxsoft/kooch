@@ -97,6 +97,9 @@ pub(super) fn toolbar_info(
             .map(|open| open.path.clone())
             .as_deref(),
         ui_document,
+        resources
+            .get::<crate::image_view::OpenImage>()
+            .map(|open| open.guid),
     );
     let (can_undo, can_redo, undo_desc, redo_desc) = match document.as_ref() {
         // A document of its own, with a history of its own.

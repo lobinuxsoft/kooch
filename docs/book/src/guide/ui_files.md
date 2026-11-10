@@ -321,7 +321,7 @@ base sheet under every document's own gives all of them a look, which the docume
 | `background-image` | `url("button.png")` relative to the file writing it (the `.kcss`, or the `.kxml` for an inline `style`), PNG, JPEG or SVG; `none`. An engine image is written as if it sat in the project's `assets/`, where a build puts it: `url("../textures/prototype/dark/dark_texture_01.png")` from `assets/ui/` |
 | `-kooch-mask` | `url("shape.png")`, as `background-image`; `none`. Its alpha cuts the node and its children |
 | `-kooch-mask-mode` | `alpha`, or `luminance`: black cuts too, for an image with no transparency |
-| `-kooch-slice` | length, one to four: image texels kept unstretched at each edge |
+| `-kooch-slice` | length, one to four: image texels kept unstretched at each edge. Overrides the image's own |
 | `-kooch-tint` | colour that multiplies the image |
 | `-kooch-material` | a path to a shader with `kind: ui`, relative to the file writing it, as `background-image` |
 | `-kooch-param-<name>` | a value for what the material declares: one to four numbers, or a colour. The name in lower case |
@@ -334,6 +334,18 @@ the edges and middle stretch. A state rule can swap it, which is how a button ge
 .button        { background-image: url("button.png"); -kooch-slice: 12px; }
 .button:hover  { background-image: url("button_hover.png"); }
 .button:active { background-image: url("button_press.png"); }
+```
+
+**9-slice on the image.** An image keeps its own slice in its `.meta`, so every node that shows it
+is sliced the same without a rule saying so. Double-click the image in the Asset Browser (or press
+**Edit…** beside *9-slice* in its Inspector) to open the **Image** view: drag the four guides over
+the image, or type each side; *Linked* moves them together. The drag is saved on release, as one
+Ctrl+Z step. `-kooch-slice` in a sheet still wins over it, and `-kooch-slice: 0` turns it off.
+
+```toml
+# button.png.meta
+[import]
+slice = [12, 12, 12, 12]   # top, right, bottom, left, in texels
 ```
 
 Saving the PNG shows the change without Play. A node's own image is not clipped to its
