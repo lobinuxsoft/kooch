@@ -111,6 +111,7 @@ impl EditorAction {
             | Self::SetLayerPair { .. }
             | Self::ImportAssets { .. }
             | Self::CreateFolder { .. }
+            | Self::RescanAssets
             | Self::CreateMaterial { .. }
             | Self::RenameAsset { .. }
             | Self::RenameFolder { .. }
@@ -215,6 +216,7 @@ impl EditorAction {
             | Self::SetLayerPair { .. }
             | Self::ImportAssets { .. }
             | Self::CreateFolder { .. }
+            | Self::RescanAssets
             | Self::CreateMaterial { .. }
             | Self::RenameAsset { .. }
             | Self::RenameFolder { .. }

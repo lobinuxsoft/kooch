@@ -346,6 +346,8 @@ pub(crate) enum EditorAction {
         name: String,
         index: usize,
     },
+    /// Re-read the project's `assets/`: a file arrived from outside the editor.
+    RescanAssets,
     /// Create an empty folder `<parent>/<name>`.
     CreateFolder {
         parent: PathBuf,
