@@ -46,15 +46,25 @@ struct Kept {
     layout: wgpu::BindGroupLayout,
     entries: Vec<(u32, Bound)>,
     group: wgpu::BindGroup,
+    /// The call to its key that last returned it.
+    used: u64,
 }
 
-/// The bind groups built through it, one per label and slot, and what each bound. One per slot,
-/// so a replaced resource is let go the frame its successor is bound.
+/// One label and slot's groups, with how many times it was asked for.
 #[derive(Default)]
-pub struct KeptGroups(Mutex<HashMap<(u64, u32), Kept>>);
+struct Slot {
+    calls: u64,
+    groups: Vec<Kept>,
+}
+
+/// The bind groups built through it, by label and slot, and what each bound. A slot keeps what its
+/// last two calls returned, so a ping-pong history finds both sides, and anything older is let go
+/// the call after its successor is bound.
+#[derive(Default)]
+pub struct KeptGroups(Mutex<HashMap<(u64, u32), Slot>>);
 
 impl KeptGroups {
-    /// The group `descriptor` describes: the kept one when it binds the same resources, a new one
+    /// The group `descriptor` describes: a kept one when it binds the same resources, a new one
     /// otherwise.
     pub fn get(
         &self,
@@ -72,10 +82,12 @@ impl KeptGroups {
         descriptor: &wgpu::BindGroupDescriptor<'_>,
     ) -> wgpu::BindGroup {
         let mut kept = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        let key = (label_key(descriptor.label), slot);
-        if let Some(found) = kept.get(&key)
-            && same(found, descriptor)
-        {
+        let slot = kept.entry((label_key(descriptor.label), slot)).or_default();
+        slot.calls += 1;
+        let calls = slot.calls;
+        slot.groups.retain(|kept| calls - kept.used <= 2);
+        if let Some(found) = slot.groups.iter_mut().find(|kept| same(kept, descriptor)) {
+            found.used = calls;
             return found.group.clone();
         }
         let group = device.create_bind_group(descriptor);
@@ -84,22 +96,13 @@ impl KeptGroups {
             .iter()
             .map(|entry| Some((entry.binding, Bound::of(&entry.resource)?)))
             .collect();
-        match entries {
-            Some(entries) => {
-                let layout = descriptor.layout.clone();
-                let group = group.clone();
-                kept.insert(
-                    key,
-                    Kept {
-                        layout,
-                        entries,
-                        group,
-                    },
-                );
-            }
-            None => {
-                kept.remove(&key);
-            }
+        if let Some(entries) = entries {
+            slot.groups.push(Kept {
+                layout: descriptor.layout.clone(),
+                entries,
+                group: group.clone(),
+                used: calls,
+            });
         }
         group
     }
