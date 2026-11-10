@@ -73,6 +73,7 @@ const _: () = assert!(
      and every stage will report one number with no children"
 );
 
+pub(crate) mod image_view;
 pub(crate) mod shortcuts;
 pub(crate) mod spline_edit;
 pub(crate) mod state;

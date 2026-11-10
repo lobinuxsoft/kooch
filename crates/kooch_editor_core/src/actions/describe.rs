@@ -112,6 +112,8 @@ impl EditorAction {
             | Self::ImportAssets { .. }
             | Self::CreateFolder { .. }
             | Self::RescanAssets
+            | Self::OpenImageView { .. }
+            | Self::SetImageSlice { .. }
             | Self::CreateMaterial { .. }
             | Self::RenameAsset { .. }
             | Self::RenameFolder { .. }
@@ -217,6 +219,8 @@ impl EditorAction {
             | Self::ImportAssets { .. }
             | Self::CreateFolder { .. }
             | Self::RescanAssets
+            | Self::OpenImageView { .. }
+            | Self::SetImageSlice { .. }
             | Self::CreateMaterial { .. }
             | Self::RenameAsset { .. }
             | Self::RenameFolder { .. }

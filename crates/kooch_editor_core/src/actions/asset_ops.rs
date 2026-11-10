@@ -29,6 +29,10 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
         } => create_data_asset(resources, folder, name, *index),
         EditorAction::CreateFolder { parent, name } => create_folder(parent, name),
         EditorAction::RescanAssets => force_rescan(resources),
+        EditorAction::OpenImageView { path } => crate::image_view::open(resources, path),
+        EditorAction::SetImageSlice { guid, slice } => {
+            crate::image_view::set_slice(resources, *guid, *slice)
+        }
         EditorAction::CreateMaterial {
             folder,
             name,

@@ -27,7 +27,8 @@ pub struct ResolvedStyle {
     pub curve: Option<crate::UiPath>,
     pub flip: u32,
     pub transform: crate::UiTransform,
-    pub slice: [f32; 4],
+    /// `None`: the image's own, from its `.meta`.
+    pub slice: Option<[f32; 4]>,
     pub tint: Option<[f32; 4]>,
 }
 
@@ -104,7 +105,7 @@ impl ResolvedStyle {
             Declaration::Translate(by) => self.transform.translate = *by,
             Declaration::TransformOrigin(origin) => self.transform.origin = *origin,
             Declaration::Perspective(distance) => self.transform.perspective = *distance,
-            Declaration::Slice(slice) => self.slice = *slice,
+            Declaration::Slice(slice) => self.slice = Some(*slice),
             Declaration::Tint(rgba) => self.tint = Some(*rgba),
         }
     }

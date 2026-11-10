@@ -26,12 +26,23 @@ use super::asset::{Image, ImageFormat};
 pub struct ImageImport {
     /// Whether the upload builds the mip chain.
     pub mipmaps: bool,
+    /// Texels each edge keeps unstretched when the UI draws it, top-right-bottom-left (#1792).
+    /// Every use of the image slices by it; `-kooch-slice` overrides it.
+    #[serde(skip_serializing_if = "is_unsliced")]
+    pub slice: [u16; 4],
 }
 
 impl Default for ImageImport {
     fn default() -> Self {
-        Self { mipmaps: true }
+        Self {
+            mipmaps: true,
+            slice: [0; 4],
+        }
     }
+}
+
+fn is_unsliced(slice: &[u16; 4]) -> bool {
+    *slice == [0; 4]
 }
 
 /// Configurable PNG/JPEG loader.
