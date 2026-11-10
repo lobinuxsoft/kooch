@@ -2,8 +2,11 @@
 //! per-material bind group the two-pass material shader consumes.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::time::Instant;
 
 use kooch_core::Guid;
+use kooch_core::gif::GifFrames;
 
 use super::TextureDefault;
 use super::shader::MAX_PARAM_TEXTURES;
@@ -31,6 +34,8 @@ pub struct MaterialTexturePool {
     /// Owned here because it caches a render pipeline per format, and
     /// this is the one place textures are uploaded from.
     mipmapper: Mipmapper,
+    /// Each animated texture's frames, when it started and the frame it shows (#1793).
+    playing: HashMap<Guid, (Arc<GifFrames>, Instant, usize)>,
 }
 
 impl MaterialTexturePool {
@@ -61,6 +66,7 @@ impl MaterialTexturePool {
             fallback_black,
             fallback_normal,
             mipmapper: Mipmapper::new(device),
+            playing: HashMap::new(),
             sampler,
             anisotropy: NO_ANISOTROPY,
             bgl,
@@ -125,6 +131,31 @@ impl MaterialTexturePool {
     ) {
         let texture = GpuTexture::upload_with(device, queue, image, &mut self.mipmapper);
         self.textures.insert(guid, texture);
+        match &image.animation {
+            Some(frames) => self
+                .playing
+                .insert(guid, (frames.clone(), Instant::now(), 0)),
+            None => self.playing.remove(&guid),
+        };
+    }
+
+    /// Writes the frame due into each animated texture whose frame changed, and its mips again.
+    pub fn advance(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        for (guid, (frames, start, shown)) in &mut self.playing {
+            let due = frames.due(start.elapsed());
+            let (Some(texture), Some(frame)) = (self.textures.get(guid), frames.frames.get(due))
+            else {
+                continue;
+            };
+            if due == *shown {
+                continue;
+            }
+            *shown = due;
+            texture.write_level0(queue, frame);
+            if texture.texture.mip_level_count() > 1 {
+                self.mipmapper.generate(device, queue, &texture.texture);
+            }
+        }
     }
 
     /// Records this frame's ask and drops whatever has gone unasked for `max_age` frames.
@@ -149,12 +180,14 @@ impl MaterialTexturePool {
         for guid in &stale {
             self.textures.remove(guid);
             self.asked.remove(guid);
+            self.playing.remove(guid);
         }
         stale
     }
 
     /// Drops the texture for `guid`, so the next sync uploads it again.
     pub fn evict(&mut self, guid: Guid) -> bool {
+        self.playing.remove(&guid);
         self.textures.remove(&guid).is_some()
     }
 

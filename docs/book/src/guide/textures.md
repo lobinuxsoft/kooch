@@ -4,6 +4,10 @@ A texture reaches the GPU through three files: the image itself, the
 `.meta` sidecar beside it, and the material that names its GUID. This
 page is about the middle one.
 
+A `.gif` is a texture too, and an animated one plays on the mesh by itself, looping: each new
+frame is written over the texture and its mips are built again. Keep it small, since every frame
+is held in memory decoded.
+
 ## Import settings
 
 The sidecar carries the asset's identity and how it is imported:

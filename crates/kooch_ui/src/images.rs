@@ -226,6 +226,26 @@ fn pack(
             }
             continue;
         }
+        // An animated GIF packs its first frame and plays the rest in place.
+        let animation = match kooch_core::gif::is_gif(&path) {
+            true => kooch_core::gif::decode(&bytes).unwrap_or_else(|error| {
+                tracing::warn!("UI image not animated: {}: {error}", path.display());
+                None
+            }),
+            false => None,
+        };
+        if let Some(frames) = animation {
+            let first = frames.frames.first().map(Vec::as_slice).unwrap_or_default();
+            if atlas
+                .insert_image((guid, 0), modified, frames.size, first, [1.0; 2])
+                .is_none()
+            {
+                tracing::warn!("UI image {guid} does not fit the atlas");
+            }
+            atlas.set_animation(guid, Some(std::sync::Arc::new(frames)));
+            continue;
+        }
+        atlas.set_animation(guid, None);
         for class in stale {
             let decoded = match vector {
                 true => raster(&bytes, class, scale),
@@ -241,6 +261,7 @@ fn pack(
             }
         }
     }
+    atlas.advance(wanted.classes.keys().copied());
     atlas.keep_crops(&wanted.crops);
 }
 

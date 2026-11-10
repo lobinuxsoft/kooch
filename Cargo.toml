@@ -159,7 +159,7 @@ gltf = { version = "1.4", default-features = false, features = ["import", "utils
 base64 = "0.23"
 # Image decoding — PNG + JPEG only for PR-1; HDR/EXR/KTX2 follow up when
 # IBL / compressed pipelines arrive
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
 # Meshlet generation — Arseny Kapoulkine's meshoptimizer Rust bindings.
 # Industry standard, used by Bevy 0.16 virtual_geometry, UE5 Nanite-pipeline,
 # every meshlet-based renderer.

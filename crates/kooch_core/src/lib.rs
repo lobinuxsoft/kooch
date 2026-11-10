@@ -80,6 +80,7 @@ pub mod schedule;
 /// Whether this build carries a profiling scope per system.
 pub const CPU_SCOPES: bool = cfg!(feature = "cpu-profiler");
 
+pub mod gif;
 pub mod shader_uses;
 pub mod stage;
 pub mod svg;
