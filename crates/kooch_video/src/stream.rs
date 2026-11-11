@@ -64,7 +64,7 @@ impl<B: AsRef<[u8]>> Stream<B> {
             }
             let scale = self.scale;
             let ready = &mut self.ready;
-            let mut show = |planes: Planes<'_>| convert(planes, scale).map(|p| ready.push_back(p));
+            let mut show = |planes: Planes| convert(planes, scale).map(|p| ready.push_back(p));
             let more = self
                 .file
                 .next_frame(&mut self.frame)
@@ -74,21 +74,22 @@ impl<B: AsRef<[u8]>> Stream<B> {
                 self.decoder.drain(&mut show)?;
             } else if self.frame.track == self.track {
                 let at = i64::try_from(self.frame.timestamp).unwrap_or(i64::MAX);
-                self.decoder.decode(&self.frame.data, at, &mut show)?;
+                let unit = std::mem::take(&mut self.frame.data);
+                self.decoder.decode(unit, at, &mut show)?;
             }
         }
     }
 }
 
-fn convert(planes: Planes<'_>, scale: u64) -> Result<Picture, String> {
+fn convert(planes: Planes, scale: u64) -> Result<Picture, String> {
     let (width, height) = planes.size;
     let mut rgba = vec![0; width as usize * height as usize * 4];
     let image = YuvPlanarImage {
-        y_plane: planes.y,
+        y_plane: &planes.y,
         y_stride: planes.y_stride,
-        u_plane: planes.u,
+        u_plane: &planes.u,
         u_stride: planes.uv_stride,
-        v_plane: planes.v,
+        v_plane: &planes.v,
         v_stride: planes.uv_stride,
         width,
         height,

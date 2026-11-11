@@ -1,7 +1,7 @@
 //! A video playing in a loop: frames decoded a few ahead on their own thread, taken when due.
 
-use std::sync::{Arc, Mutex, PoisonError};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use crate::stream::{Picture, Stream};
@@ -39,7 +39,10 @@ impl Player {
     /// The newest frame due by now, when one came due since the last call.
     pub fn due(&mut self) -> Option<Picture> {
         let now = self.start.elapsed();
-        let frames = self.frames.get_mut().unwrap_or_else(PoisonError::into_inner);
+        let frames = self
+            .frames
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner);
         let mut shown = None;
         loop {
             let next = match self.pending.take() {

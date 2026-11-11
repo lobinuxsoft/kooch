@@ -2,7 +2,7 @@
 
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex};
 
 use kooch_remote::protocol::{ComponentSchema, EntityId, EntitySnapshot};
@@ -114,7 +114,7 @@ impl RemoteSession {
         // mirrored a dead session's world in silence.
         let socket = unique_socket_name();
 
-        let mut cmd = Command::new("cargo");
+        let mut cmd = crate::cargo_args::cargo();
         cmd.arg("run").arg("--manifest-path").arg(manifest_path);
         // The remote server lives behind the project's `editor` feature, in a binary a game build
         // does not produce (#558). Named explicitly because the default `--bin` is the game, and

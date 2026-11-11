@@ -1,4 +1,4 @@
-//! Video (#1793): a WebM's AV1 track decoded by `rav1d` and converted to RGBA8 on its own thread,
+//! Video (#1793): a WebM's AV1 track decoded by dav1d and converted to RGBA8 on its own thread,
 //! so the UI atlas and a material texture take a frame the way they take a GIF's.
 
 mod av1;

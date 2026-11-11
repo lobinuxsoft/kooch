@@ -8,6 +8,14 @@ use std::process::Command;
 /// Matches the `[features]` block `generate_cargo_toml` writes.
 pub(crate) const AUTHORING: &str = "editor";
 
+/// `cargo`, with what every project build needs in its environment.
+pub(crate) fn cargo() -> Command {
+    let mut cmd = Command::new("cargo");
+    // dav1d is built from source and linked statically (#1793), never taken from the system.
+    cmd.env("SYSTEM_DEPS_DAV1D_BUILD_INTERNAL", "always");
+    cmd
+}
+
 /// Adds the authoring feature to `cmd`.
 pub(crate) fn authoring(cmd: &mut Command) -> &mut Command {
     // The speed flags ride with the feature flag for the reason named at
