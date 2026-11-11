@@ -10,6 +10,7 @@ pub mod registry;
 pub mod storage_id;
 pub(crate) mod traits;
 pub mod view;
+pub mod written;
 
 pub use dynamic_types::{DynamicField, DynamicType, DynamicTypeRegistry};
 pub use locations::Locations;
@@ -18,6 +19,7 @@ pub use registry::{ComponentRegistry, Settled};
 pub use storage_id::StorageId;
 pub use traits::Component;
 pub use view::{ComponentView, ComponentViewMut, Mut};
+pub use written::{fix_written, last_run, written_since};
 
 use kooch_core::resource::Resources;
 

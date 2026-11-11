@@ -73,6 +73,10 @@ pub(crate) fn publish_display_modes_system(resources: &mut Resources) {
     resources.insert(modes);
 }
 
+/// The mode and size last put on the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Applied(WindowMode, Option<Resolution>, bool);
+
 /// Puts [`WindowMode`] and [`Resolution`] on the window when they differ from what it has. 🔴 Absent
 /// means no opinion; comparing first avoids a compositor round trip every frame.
 /// Runs in `Stage::Last`, after the settings are published, so a change lands the same frame.
@@ -81,6 +85,14 @@ pub(crate) fn apply_window_mode_system(resources: &mut Resources) {
         return;
     };
     let wanted_size = resources.get::<Resolution>().copied();
+    // 🔴 Applied once per change: an `Exclusive` request used to set fullscreen again every frame.
+    // The modes count: an exclusive request made before they are listed falls back to borderless.
+    let listed = resources.contains::<DisplayModes>();
+    let applied = Applied(asked, wanted_size, listed);
+    if resources.get::<Applied>() == Some(&applied) || !resources.contains::<WindowHandle>() {
+        return;
+    }
+    resources.insert(applied);
     let supported = resources
         .get::<DisplayModes>()
         .is_none_or(|modes| modes.exclusive);
