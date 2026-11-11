@@ -43,6 +43,13 @@ pub const VULKAN_HEADERS: Requirement = Requirement {
     hint: "https://vulkan.lunarg.com/sdk/home — set VULKAN_SDK to where it lands",
 };
 
+/// The assembler `rav1d` builds its AV1 decoder's assembly with (#1793).
+pub const NASM: Requirement = Requirement {
+    name: "nasm",
+    why: "video plays through rav1d, whose fast AV1 decoder is assembly that nasm builds",
+    hint: "https://www.nasm.us",
+};
+
 /// How this machine installs things.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Installer {
@@ -108,6 +115,8 @@ impl Installer {
             }
             (Self::Apt, "mingw-w64 toolchain") => Some("gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64"),
             (Self::Pacman, "mingw-w64 toolchain") => Some("mingw-w64-gcc"),
+            (Self::RpmOstree | Self::Dnf | Self::Pacman | Self::Apt, "nasm") => Some("nasm"),
+            (Self::Winget, "nasm") => Some("NASM.NASM"),
             (Self::RpmOstree | Self::Dnf | Self::Pacman, "zig") => Some("zig"),
             (Self::RpmOstree | Self::Dnf | Self::Pacman, "mold (faster linker)") => Some("mold"),
             (Self::Apt, "mold (faster linker)") => Some("mold"),
@@ -242,6 +251,7 @@ pub struct Probes {
     /// answer would refuse a build that works.
     pub c_compiler: bool,
     pub pkg_config: bool,
+    pub nasm: bool,
     /// Not required. Absent means slower, never broken.
     pub mold: bool,
     /// Not required, like everything below: an export needs them, opening a project does not.
@@ -267,6 +277,7 @@ impl Probes {
             c_compiler: !cfg!(target_os = "linux")
                 || (ran("cc", &["--version"]) && ran("c++", &["--version"])),
             pkg_config: !cfg!(target_os = "linux") || ran("pkg-config", &["--version"]),
+            nasm: ran("nasm", &["-v"]),
             mold: ran("mold", &["--version"]),
             // The same tools `build::compile` refuses an export without.
             mingw: !cfg!(target_os = "linux")
@@ -316,6 +327,9 @@ pub fn missing_from(probes: Probes) -> Vec<Requirement> {
     }
     if !probes.vulkan_headers {
         missing.push(VULKAN_HEADERS);
+    }
+    if !probes.nasm {
+        missing.push(NASM);
     }
     missing
 }
