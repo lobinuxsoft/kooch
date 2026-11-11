@@ -351,6 +351,11 @@ slice = [12, 12, 12, 12]   # top, right, bottom, left, in texels
 Saving the PNG shows the change without Play. A node's own image is not clipped to its
 `border-radius`: to round a picture, put it inside a node with `overflow: hidden`.
 
+**Animated GIF.** A `.gif` is a `background-image` like any other, and loops on its own
+(`url("spin.gif")`), in the game, in the UI Builder and in the editor's Play. Its frames are decoded
+once and kept in memory as RGBA, so a long or large GIF costs width × height × 4 bytes per frame:
+keep them short and small. A frame delay under 20 ms plays at 100 ms, as browsers do.
+
 **SVG.** An `.svg` is drawn at the size it shows on screen, so an icon stays sharp on a handheld
 and on a 4K monitor alike. It is drawn once per size class (16, 32, 64… up to 2048 pixels on its
 longer side), and each node uses the class just above its size, so the same icon at 24 and at 480

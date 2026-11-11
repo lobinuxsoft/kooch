@@ -81,7 +81,7 @@ impl Default for ImageLoader {
 
 impl AssetLoader<Image> for ImageLoader {
     fn extensions(&self) -> &[&'static str] {
-        &["png", "jpg", "jpeg", "svg"]
+        &["png", "jpg", "jpeg", "svg", "gif"]
     }
 
     fn load(&self, bytes: &[u8], ctx: &mut LoadContext<'_>) -> AssetResult<Image> {
@@ -99,7 +99,13 @@ impl AssetLoader<Image> for ImageLoader {
             (rgba.into_raw(), width, height)
         };
         let import: ImageImport = ctx.import();
-        let image = Image::from_rgba8(rgba, width, height, self.format);
+        let mut image = Image::from_rgba8(rgba, width, height, self.format);
+        // A GIF's first frame is the texture; the pool plays the rest over it.
+        if kooch_core::gif::is_gif(ctx.path) {
+            image.animation = kooch_core::gif::decode(bytes)
+                .map_err(|e| AssetError::Loader(e.into()))?
+                .map(std::sync::Arc::new);
+        }
         Ok(if import.mipmaps {
             image
         } else {

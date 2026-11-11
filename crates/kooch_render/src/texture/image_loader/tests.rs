@@ -18,7 +18,7 @@ fn build_test_png() -> Vec<u8> {
 #[test]
 fn extensions_includes_png_and_jpeg_variants() {
     let loader = ImageLoader::default();
-    assert_eq!(loader.extensions(), &["png", "jpg", "jpeg"]);
+    assert_eq!(loader.extensions(), &["png", "jpg", "jpeg", "svg", "gif"]);
 }
 
 #[test]
