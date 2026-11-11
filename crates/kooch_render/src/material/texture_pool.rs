@@ -36,6 +36,8 @@ pub struct MaterialTexturePool {
     mipmapper: Mipmapper,
     /// Each animated texture's frames, when it started and the frame it shows (#1793).
     playing: HashMap<Guid, (Arc<GifFrames>, Instant, usize)>,
+    /// Each video texture's player.
+    videos: HashMap<Guid, kooch_video::Player>,
 }
 
 impl MaterialTexturePool {
@@ -67,6 +69,7 @@ impl MaterialTexturePool {
             fallback_normal,
             mipmapper: Mipmapper::new(device),
             playing: HashMap::new(),
+            videos: HashMap::new(),
             sampler,
             anisotropy: NO_ANISOTROPY,
             bgl,
@@ -137,9 +140,16 @@ impl MaterialTexturePool {
                 .insert(guid, (frames.clone(), Instant::now(), 0)),
             None => self.playing.remove(&guid),
         };
+        match &image.video {
+            Some(bytes) => self
+                .videos
+                .insert(guid, kooch_video::Player::start(bytes.clone())),
+            None => self.videos.remove(&guid),
+        };
     }
 
-    /// Writes the frame due into each animated texture whose frame changed, and its mips again.
+    /// Writes the frame due into each animated or video texture whose frame changed, and its mips
+    /// again.
     pub fn advance(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         for (guid, (frames, start, shown)) in &mut self.playing {
             let due = frames.due(start.elapsed());
@@ -152,6 +162,15 @@ impl MaterialTexturePool {
             }
             *shown = due;
             texture.write_level0(queue, frame);
+            if texture.texture.mip_level_count() > 1 {
+                self.mipmapper.generate(device, queue, &texture.texture);
+            }
+        }
+        for (guid, player) in &mut self.videos {
+            let (Some(texture), Some(picture)) = (self.textures.get(guid), player.due()) else {
+                continue;
+            };
+            texture.write_level0(queue, &picture.rgba);
             if texture.texture.mip_level_count() > 1 {
                 self.mipmapper.generate(device, queue, &texture.texture);
             }
@@ -181,6 +200,7 @@ impl MaterialTexturePool {
             self.textures.remove(guid);
             self.asked.remove(guid);
             self.playing.remove(guid);
+            self.videos.remove(guid);
         }
         stale
     }
@@ -188,6 +208,7 @@ impl MaterialTexturePool {
     /// Drops the texture for `guid`, so the next sync uploads it again.
     pub fn evict(&mut self, guid: Guid) -> bool {
         self.playing.remove(&guid);
+        self.videos.remove(&guid);
         self.textures.remove(&guid).is_some()
     }
 

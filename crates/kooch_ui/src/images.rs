@@ -246,6 +246,23 @@ fn pack(
             continue;
         }
         atlas.set_animation(guid, None);
+        // A video packs its first frame and plays from the start in place.
+        if kooch_video::is_video(&path) {
+            match kooch_video::first_frame(&bytes) {
+                Ok(first) => {
+                    if atlas
+                        .insert_image((guid, 0), modified, first.size, &first.rgba, [1.0; 2])
+                        .is_none()
+                    {
+                        tracing::warn!("UI video {guid} does not fit the atlas");
+                    }
+                    atlas.set_video(guid, Some(kooch_video::Player::start(bytes.into())));
+                }
+                Err(error) => tracing::warn!("UI video not loaded: {}: {error}", path.display()),
+            }
+            continue;
+        }
+        atlas.set_video(guid, None);
         for class in stale {
             let decoded = match vector {
                 true => raster(&bytes, class, scale),

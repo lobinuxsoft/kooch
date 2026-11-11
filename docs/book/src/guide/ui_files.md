@@ -356,6 +356,12 @@ Saving the PNG shows the change without Play. A node's own image is not clipped 
 once and kept in memory as RGBA, so a long or large GIF costs width × height × 4 bytes per frame:
 keep them short and small. A frame delay under 20 ms plays at 100 ms, as browsers do.
 
+**Video.** A `.webm` (AV1, 8-bit 4:2:0) is a `background-image` too (`url("intro.webm")`) and
+loops from its first frame. It is decoded on its own thread a couple of frames ahead, and each new
+frame is written into the atlas, so it has to fit there: up to 2048 pixels on its longer side. It
+has no sound and no play, pause or seek yet. In the editor's Play every frame crosses from the game
+to the editor, so a large video costs more there than in the game.
+
 **SVG.** An `.svg` is drawn at the size it shows on screen, so an icon stays sharp on a handheld
 and on a 4K monitor alike. It is drawn once per size class (16, 32, 64… up to 2048 pixels on its
 longer side), and each node uses the class just above its size, so the same icon at 24 and at 480

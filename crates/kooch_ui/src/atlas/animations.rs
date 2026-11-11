@@ -1,5 +1,5 @@
-//! Animated images (#1793): the frame due rewritten into the image's slot in place, so its quads
-//! never change and only that region is uploaded.
+//! Animated images and videos (#1793): the frame due rewritten into the image's slot in place, so
+//! its quads never change and only that region is uploaded.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,15 +16,18 @@ struct Animation {
     shown: usize,
 }
 
-/// Each animated image the atlas holds, by asset.
+/// Each animated image and video the atlas holds, by asset.
 #[derive(Default)]
-pub(crate) struct Animations(HashMap<Guid, Animation>);
+pub(crate) struct Animations {
+    gifs: HashMap<Guid, Animation>,
+    videos: HashMap<Guid, kooch_video::Player>,
+}
 
 impl GlyphAtlas {
     /// Plays `frames` in `guid`'s slot from its first frame; `None` stops it.
     pub(crate) fn set_animation(&mut self, guid: Guid, frames: Option<Arc<GifFrames>>) {
         match frames {
-            Some(frames) => self.animations.0.insert(
+            Some(frames) => self.animations.gifs.insert(
                 guid,
                 Animation {
                     frames,
@@ -32,7 +35,15 @@ impl GlyphAtlas {
                     shown: 0,
                 },
             ),
-            None => self.animations.0.remove(&guid),
+            None => self.animations.gifs.remove(&guid),
+        };
+    }
+
+    /// Plays `player` in `guid`'s slot; `None` stops it.
+    pub(crate) fn set_video(&mut self, guid: Guid, player: Option<kooch_video::Player>) {
+        match player {
+            Some(player) => self.animations.videos.insert(guid, player),
+            None => self.animations.videos.remove(&guid),
         };
     }
 
@@ -41,7 +52,17 @@ impl GlyphAtlas {
         // Lifted out so a frame can be written without copying it.
         let mut animations = std::mem::take(&mut self.animations);
         for guid in shown {
-            let Some(animation) = animations.0.get_mut(&guid) else {
+            if let Some(player) = animations.videos.get_mut(&guid) {
+                let (Some(&(_, image)), Some(picture)) =
+                    (self.images.get(&(guid, 0)), player.due())
+                else {
+                    continue;
+                };
+                let corner = [image.rect[0] - 1, image.rect[1] - 1];
+                self.blit(corner, picture.size, &picture.rgba);
+                continue;
+            }
+            let Some(animation) = animations.gifs.get_mut(&guid) else {
                 continue;
             };
             let due = animation.frames.due(animation.start.elapsed());

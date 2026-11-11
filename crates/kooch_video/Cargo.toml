@@ -1,0 +1,20 @@
+[package]
+name = "kooch_video"
+description = "WebM video: AV1 frames decoded on their own thread, played by the clock (#1793)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# AV1 decode: the pure-Rust port of dav1d (BSD-2), so no system library ships with a game. Its asm
+# needs `nasm` to build (preflight checks it). 8-bit only: what the import step encodes.
+rav1d = { version = "1.1", default-features = false, features = ["asm", "bitdepth_8"] }
+# WebM is Matroska; pure Rust, Zlib/MIT/Apache.
+matroska-demuxer = "0.8"
+# YUV 4:2:0 to RGBA with SIMD, BSD-3/Apache.
+yuv = "0.8"
+# rav1d reports its errors as negated errno values.
+libc = "0.2"
+tracing.workspace = true

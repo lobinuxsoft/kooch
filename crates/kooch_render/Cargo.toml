@@ -12,6 +12,8 @@ authors.workspace = true
 naga = { version = "30", features = ["wgsl-in"] }
 kooch_core.workspace = true
 kooch_ecs.workspace = true
+# Video textures (#1793).
+kooch_video.workspace = true
 # Inti — the shading model and its GPU light records. A renderer
 # without one paints normals.
 kooch_lighting.workspace = true
