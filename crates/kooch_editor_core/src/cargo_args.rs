@@ -12,7 +12,10 @@ pub(crate) const AUTHORING: &str = "editor";
 pub(crate) fn cargo() -> Command {
     let mut cmd = Command::new("cargo");
     // dav1d is built from source and linked statically (#1793), never taken from the system.
+    // `static` too: otherwise it asks for `-ldav1d` and only ld/mold fall back to the `.a`; zig's
+    // linker, which the release build uses, does not.
     cmd.env("SYSTEM_DEPS_DAV1D_BUILD_INTERNAL", "always");
+    cmd.env("SYSTEM_DEPS_DAV1D_LINK", "static");
     cmd
 }
 
