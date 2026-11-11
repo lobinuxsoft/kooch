@@ -338,22 +338,17 @@ mod tests;
 /// still here, hidden, and this is what empties it — the same shape as the vcam's damping switch
 /// (#1333), and the alternative is every authored composer silently taking the default.
 pub fn migrate_soft_time(resources: &mut kooch_core::resource::Resources) {
-    let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
-        return;
-    };
-    let Some(mut storage) = registry.get_cpu_mut::<RotationComposer>() else {
-        return;
-    };
-    for (&entity, mut framing) in storage.iter_mut() {
-        if framing.was_soft_time <= 0.0 {
-            continue;
-        }
-        framing.damping = Vec2::splat(framing.was_soft_time);
-        framing.was_soft_time = 0.0;
-        tracing::info!(
-            target: "kooch_camera",
-            entity = entity.index(),
-            "a framing's soft_time became a damping on both axes",
-        );
-    }
+    kooch_ecs::component::fix_written::<RotationComposer>(
+        resources,
+        |framing| framing.was_soft_time > 0.0,
+        |entity, framing| {
+            framing.damping = Vec2::splat(framing.was_soft_time);
+            framing.was_soft_time = 0.0;
+            tracing::info!(
+                target: "kooch_camera",
+                entity = entity.index(),
+                "a framing's soft_time became a damping on both axes",
+            );
+        },
+    );
 }

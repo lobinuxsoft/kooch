@@ -156,7 +156,7 @@ pub fn reconcile_world_gravity_for_test(resources: &mut Resources) {
 }
 
 pub(super) fn reconcile_world_gravity(resources: &mut Resources) {
-    let has_sources = !collect_sources(resources).is_empty();
+    let has_sources = super::collect::any_source(resources);
     let Some(world) = resources.get_mut::<kooch_physics::plugin::PhysicsWorld>() else {
         return;
     };

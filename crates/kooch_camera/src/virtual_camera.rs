@@ -232,26 +232,21 @@ pub(crate) fn settled(dt: f32, time: f32) -> f32 {
 /// number and the brain needs one. Silently dropping it would change how a scene cuts with nothing
 /// on screen to explain it, so the number is logged and the author moves it (#1339).
 pub fn report_moved_blends(resources: &mut kooch_core::resource::Resources) {
-    let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
-        return;
-    };
-    let Some(mut storage) = registry.get_cpu_mut::<VirtualCamera>() else {
-        return;
-    };
-    for (&entity, mut vcam) in storage.iter_mut() {
-        if vcam.blend_duration < 0.0 {
-            continue;
-        }
-        tracing::info!(
-            target: "kooch_camera",
-            entity = entity.index(),
-            blend_duration = vcam.blend_duration,
-            "a virtual camera's blend is the brain's now; set it on the camera that carries the \
-             CameraBrain",
-        );
-        // Negative marks it said: a blend is never negative, so nothing an author can type is lost.
-        vcam.blend_duration = -1.0;
-    }
+    kooch_ecs::component::fix_written::<VirtualCamera>(
+        resources,
+        |vcam| vcam.blend_duration >= 0.0,
+        |entity, vcam| {
+            tracing::info!(
+                target: "kooch_camera",
+                entity = entity.index(),
+                blend_duration = vcam.blend_duration,
+                "a virtual camera's blend is the brain's now; set it on the camera that carries \
+                 the CameraBrain",
+            );
+            // Negative marks it said: a blend is never negative, so nothing typed is lost.
+            vcam.blend_duration = -1.0;
+        },
+    );
 }
 
 impl Default for VirtualCamera {
@@ -597,6 +592,7 @@ mod tests;
 /// always had them. Left alone, the fields would stop showing and stop being read on the same load —
 /// an offset tuned for an hour, gone with nothing said.
 pub fn migrate_bodies(resources: &mut kooch_core::resource::Resources) {
+    let since = kooch_ecs::component::last_run(resources);
     let Some(registry) = resources.get::<kooch_ecs::component::ComponentRegistry>() else {
         return;
     };
@@ -606,7 +602,7 @@ pub fn migrate_bodies(resources: &mut kooch_core::resource::Resources) {
     // 🔴 An alias maps a name inside a type; a field that moved to another component is not covered,
     // so the old ones are still here, hidden, and this is what empties them (#1391).
     let moved: Vec<_> = vcams
-        .iter()
+        .iter_changed(since)
         .filter(|(_, vcam)| {
             vcam.was_follow != FOLLOW_NONE
                 || vcam.was_look_at != LOOK_AT_NONE

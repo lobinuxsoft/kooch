@@ -288,10 +288,23 @@ fn report_once(registered: usize, already_loaded: usize) {
     }
 }
 
+/// The asset changes the actions were last loaded at.
+struct LoadedAt(u64);
+
 /// Loads every `.inputaction` the project has, since game-defined components holding guids cannot
 /// be asked what they need; each loads once.
 pub fn load_input_actions(resources: &mut kooch_core::resource::Resources) {
     use kooch_core::assets::Assets;
+
+    // An action is reloaded when the editor rewrites it, which moves the asset changes.
+    let changes = kooch_core::asset_database::changes(resources);
+    if resources
+        .get::<LoadedAt>()
+        .is_some_and(|seen| seen.0 == changes)
+    {
+        return;
+    }
+    resources.insert(LoadedAt(changes));
 
     let wanted: Vec<(kooch_core::Guid, std::path::PathBuf, std::time::SystemTime)> = {
         let Some(database) = resources.get::<kooch_core::asset_database::AssetDatabase>() else {

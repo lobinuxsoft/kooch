@@ -149,6 +149,14 @@ crate::register_asset!(LayerNames, LayerNamesLoader);
 /// Publishes the project's layer names, or the defaults when it has none. Every consumer reads the
 /// resource, so a project without a `.layers` file still shows named boxes.
 pub fn publish_layer_names_system(resources: &mut crate::resource::Resources) {
+    let changes = crate::asset_database::changes(resources);
+    if resources
+        .get::<PublishedAt>()
+        .is_some_and(|seen| seen.0 == changes)
+    {
+        return;
+    }
+    resources.insert(PublishedAt(changes));
     let guid = resources
         .get::<crate::asset_database::AssetDatabase>()
         .and_then(|db| {
@@ -163,6 +171,9 @@ pub fn publish_layer_names_system(resources: &mut crate::resource::Resources) {
         resources.insert(names);
     }
 }
+
+/// The asset changes the names were last published at.
+struct PublishedAt(u64);
 
 /// The names in the file `guid` points at.
 fn load(resources: &mut crate::resource::Resources, guid: crate::Guid) -> Option<LayerNames> {

@@ -91,14 +91,10 @@ pub fn physics_sync_system(resources: &mut Resources) {
 /// 🔴 Without this, an author ticking boxes in the Inspector edits a field the legacy one outranks:
 /// the edit lands in the scene, changes nothing, and says nothing (#1320).
 pub fn migrate_collider_layers(resources: &mut Resources) {
-    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
-        return;
-    };
-    let Some(mut storage) = registry.get_cpu_mut::<Collider>() else {
-        return;
-    };
-    for (&entity, mut collider) in storage.iter_mut() {
-        if collider.layer != 0 || collider.collision_memberships != u32::MAX {
+    kooch_ecs::component::fix_written::<Collider>(
+        resources,
+        |collider| collider.layer != 0 || collider.collision_memberships != u32::MAX,
+        |entity, collider| {
             let was = (collider.layer, collider.collision_memberships);
             collider.layers = collider.layer_mask();
             collider.layer = 0;
@@ -113,8 +109,8 @@ pub fn migrate_collider_layers(resources: &mut Resources) {
                 layers = collider.layers,
                 "a collider's layers were migrated from an older field",
             );
-        }
-    }
+        },
+    );
 }
 
 /// The storages one body's authored intent is read from, fetched once per sync.
