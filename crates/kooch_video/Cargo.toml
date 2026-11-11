@@ -9,8 +9,9 @@ authors.workspace = true
 
 [dependencies]
 # AV1 decode: the pure-Rust port of dav1d (BSD-2), so no system library ships with a game. Its asm
-# needs `nasm` to build (preflight checks it). 8-bit only: what the import step encodes.
-rav1d = { version = "1.1", default-features = false, features = ["asm", "bitdepth_8"] }
+# needs `nasm` to build (preflight checks it). Both bit depths: with 8-bit alone, 1.1 still
+# references the 16-bit film-grain asm and fails to link.
+rav1d = { version = "1.1", default-features = false, features = ["asm", "bitdepth_8", "bitdepth_16"] }
 # WebM is Matroska; pure Rust, Zlib/MIT/Apache.
 matroska-demuxer = "0.8"
 # YUV 4:2:0 to RGBA with SIMD, BSD-3/Apache.
