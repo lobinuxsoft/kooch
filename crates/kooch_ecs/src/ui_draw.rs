@@ -177,6 +177,22 @@ pub struct UiFontSource {
     pub data: Arc<[u8]>,
 }
 
+/// A video playing in a slot of the RGBA8 atlas (#1793): the renderer decodes it and draws each
+/// frame there on the GPU, so the atlas upload carries only its first frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UiVideo {
+    pub key: u64,
+    /// The slot's texels with their one-texel border, `[x0, y0, x1, y1]`.
+    pub rect: [u32; 4],
+}
+
+/// The WebM behind a [`UiVideo`], sent with each new one; a renderer plays each key once.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiVideoSource {
+    pub key: u64,
+    pub data: Arc<[u8]>,
+}
+
 /// This frame's UI, back to front.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct UiDrawList {
@@ -200,4 +216,8 @@ pub struct UiDrawList {
     /// Text not handed over yet, as `vector_sources`.
     pub vector_texts: Vec<UiVectorText>,
     pub vector_fonts: Vec<UiFontSource>,
+    /// Every video shown this frame.
+    pub videos: Vec<UiVideo>,
+    /// Files not handed over yet, as `vector_sources`.
+    pub video_sources: Vec<UiVideoSource>,
 }

@@ -7,7 +7,7 @@ use kooch_core::Guid;
 use kooch_core::resource::Resources;
 use kooch_ecs::{
     AtlasUpload, UiCurve, UiDrawList, UiFontSource, UiGlyphRun, UiMask, UiMaterial, UiMirror,
-    UiParam, UiQuad, UiShader, UiVector, UiVectorSource, UiVectorText,
+    UiParam, UiQuad, UiShader, UiVector, UiVectorSource, UiVectorText, UiVideo, UiVideoSource,
 };
 use serde::{Deserialize, Serialize};
 
@@ -49,6 +49,12 @@ pub struct UiFrame {
     pub vector_texts: Vec<WireText>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vector_fonts: Vec<(u64, String)>,
+    /// Videos shown, `(key, slot)`, and each WebM once, base64 (#1793): the editor plays them
+    /// itself, so no frame crosses the wire.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub videos: Vec<(u64, [u32; 4])>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub video_sources: Vec<(u64, String)>,
 }
 
 /// A [`UiVectorText`] on the wire.
@@ -128,6 +134,7 @@ struct SentUi {
     params: Vec<UiParam>,
     shaders: Vec<UiShader>,
     vectors: Vec<UiVector>,
+    videos: Vec<UiVideo>,
 }
 
 /// This frame's UI when it changed since the last reply. Takes the atlas upload: the editor keeps
@@ -136,6 +143,7 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
     let mut sent = resources.remove::<SentUi>().unwrap_or_default();
     let frame = resources.get_mut::<UiDrawList>().and_then(|list| {
         let upload = list.atlas_upload.take();
+        let videos = std::mem::take(&mut list.video_sources);
         let sources = std::mem::take(&mut list.vector_sources);
         let texts = std::mem::take(&mut list.vector_texts);
         let fonts = std::mem::take(&mut list.vector_fonts);
@@ -148,7 +156,9 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
         if upload.is_none()
             && sources.is_empty()
             && texts.is_empty()
+            && videos.is_empty()
             && shaders.is_none()
+            && sent.videos == list.videos
             && sent.vectors == list.vectors
             && sent.quads == list.quads
             && sent.masks == list.masks
@@ -167,6 +177,7 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
         sent.params.clone_from(&list.params);
         sent.shaders.clone_from(&list.shaders);
         sent.vectors.clone_from(&list.vectors);
+        sent.videos.clone_from(&list.videos);
         Some(UiFrame {
             quads: STANDARD.encode(bytemuck::cast_slice::<UiQuad, u8>(&list.quads)),
             masks: STANDARD.encode(bytemuck::cast_slice::<UiMask, u8>(&list.masks)),
@@ -203,6 +214,15 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
                 .iter()
                 .map(|font| (font.id, STANDARD.encode(&font.data)))
                 .collect(),
+            videos: list
+                .videos
+                .iter()
+                .map(|video| (video.key, video.rect))
+                .collect(),
+            video_sources: videos
+                .iter()
+                .map(|video| (video.key, STANDARD.encode(&video.data)))
+                .collect(),
         })
     });
     resources.insert(sent);
@@ -232,6 +252,9 @@ pub struct UiReceiver {
     vector_texts: Vec<UiVectorText>,
     /// Every font received: a later text may use one sent long before.
     vector_fonts: Vec<UiFontSource>,
+    videos: Vec<UiVideo>,
+    /// Every video still shown, handed over each time as `vector_sources`.
+    video_sources: Vec<UiVideoSource>,
 }
 
 impl UiReceiver {
@@ -311,6 +334,23 @@ impl UiReceiver {
         let resident = |key: u64| vectors.iter().any(|vector| vector.source == key);
         self.vector_sources.retain(|source| resident(source.key));
         self.vector_texts.retain(|text| resident(text.key));
+        self.videos = frame
+            .videos
+            .iter()
+            .map(|&(key, rect)| UiVideo { key, rect })
+            .collect();
+        for (key, data) in frame.video_sources {
+            match STANDARD.decode(&data) {
+                Ok(data) => self.video_sources.push(UiVideoSource {
+                    key,
+                    data: data.into(),
+                }),
+                Err(_) => tracing::warn!("the project sent a UI video this editor cannot read"),
+            }
+        }
+        let videos = &self.videos;
+        self.video_sources
+            .retain(|source| videos.iter().any(|video| video.key == source.key));
         if frame.atlas_side != self.side {
             self.side = frame.atlas_side;
             self.atlas = vec![0; (self.side * self.side * 4) as usize];
@@ -353,6 +393,8 @@ impl UiReceiver {
             vector_sources: self.vector_sources.clone(),
             vector_texts: self.vector_texts.clone(),
             vector_fonts: self.vector_fonts.clone(),
+            videos: self.videos.clone(),
+            video_sources: self.video_sources.clone(),
         })
     }
 

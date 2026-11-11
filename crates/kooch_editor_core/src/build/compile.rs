@@ -311,7 +311,7 @@ pub fn cargo_command(
     crate_name: &str,
 ) -> Command {
     let floor = preset.glibc_floor(platform);
-    let mut command = Command::new("cargo");
+    let mut command = crate::cargo_args::cargo();
     // `zigbuild` is a cargo subcommand, so everything after it is the
     // ordinary `build` invocation — only the linker changes.
     command

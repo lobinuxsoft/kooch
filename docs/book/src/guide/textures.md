@@ -8,6 +8,10 @@ A `.gif` is a texture too, and an animated one plays on the mesh by itself, loop
 frame is written over the texture and its mips are built again. Keep it small, since every frame
 is held in memory decoded.
 
+A `.webm` video (AV1, 8-bit 4:2:0) is a texture the same way: it plays on the mesh from its first
+frame, looping, decoded a couple of frames ahead on its own thread. Only the compressed file stays
+in memory. It has no sound yet.
+
 ## Import settings
 
 The sidecar carries the asset's identity and how it is imported:

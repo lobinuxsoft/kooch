@@ -83,6 +83,9 @@ fn upload(atlas: &mut GlyphAtlas, list: &mut UiDrawList) {
     list.vector_sources.extend(sources);
     list.vector_texts.extend(texts);
     list.vector_fonts.extend(fonts);
+    let (videos, video_sources) = atlas.take_videos();
+    list.videos = videos;
+    list.video_sources.extend(video_sources);
     // Grown over one not uploaded yet, not replacing it: a frame the renderer skipped would
     // otherwise lose its glyphs.
     if let Some(dirty) = atlas.take_dirty() {

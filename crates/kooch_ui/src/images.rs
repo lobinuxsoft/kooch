@@ -246,6 +246,26 @@ fn pack(
             continue;
         }
         atlas.set_animation(guid, None);
+        // A video packs its first frame and plays from the start in place.
+        if kooch_video::is_video(&path) {
+            let first =
+                kooch_video::first_frame(&bytes).and_then(|first| Ok((first.rgba()?, first.size)));
+            match first {
+                Ok((rgba, size)) => {
+                    if atlas
+                        .insert_image((guid, 0), modified, size, &rgba, [1.0; 2])
+                        .is_none()
+                    {
+                        tracing::warn!("UI video {guid} does not fit the atlas");
+                    }
+                    let key = video_key(guid, modified);
+                    atlas.set_video(guid, Some((key, bytes.into())));
+                }
+                Err(error) => tracing::warn!("UI video not loaded: {}: {error}", path.display()),
+            }
+            continue;
+        }
+        atlas.set_video(guid, None);
         for class in stale {
             let decoded = match vector {
                 true => raster(&bytes, class, scale),
@@ -318,4 +338,12 @@ fn fitted(bytes: &[u8], class: u8, scale: f32) -> Result<((u32, u32), [f32; 2]),
         size.1 as f32 / h.max(f32::EPSILON),
     ];
     Ok((size, density))
+}
+
+/// A video's name to the renderer: a file saved again plays as a new one.
+fn video_key(guid: Guid, modified: std::time::SystemTime) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (guid, modified).hash(&mut hasher);
+    hasher.finish()
 }

@@ -81,7 +81,7 @@ impl Default for ImageLoader {
 
 impl AssetLoader<Image> for ImageLoader {
     fn extensions(&self) -> &[&'static str] {
-        &["png", "jpg", "jpeg", "svg", "gif"]
+        &["png", "jpg", "jpeg", "svg", "gif", "webm"]
     }
 
     fn load(&self, bytes: &[u8], ctx: &mut LoadContext<'_>) -> AssetResult<Image> {
@@ -90,6 +90,11 @@ impl AssetLoader<Image> for ImageLoader {
             let raster = kooch_core::svg::rasterize(bytes, None)
                 .map_err(|e| AssetError::Loader(e.into()))?;
             (raster.rgba, raster.width, raster.height)
+        } else if kooch_video::is_video(ctx.path) {
+            let first = kooch_video::first_frame(bytes)
+                .and_then(|first| Ok((first.rgba()?, first.size)))
+                .map_err(|e| AssetError::Loader(e.into()))?;
+            (first.0, first.1.0, first.1.1)
         } else {
             let dynamic = image::load_from_memory(bytes)
                 .map_err(|e| AssetError::Loader(Box::new(ImageDecodeError(e))))?;
@@ -105,6 +110,10 @@ impl AssetLoader<Image> for ImageLoader {
             image.animation = kooch_core::gif::decode(bytes)
                 .map_err(|e| AssetError::Loader(e.into()))?
                 .map(std::sync::Arc::new);
+        }
+        // A video's first frame likewise; the pool plays it from the start over it.
+        if kooch_video::is_video(ctx.path) {
+            image.video = Some(bytes.into());
         }
         Ok(if import.mipmaps {
             image

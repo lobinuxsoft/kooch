@@ -13,6 +13,7 @@ members = [
     "crates/kooch_render",
     "crates/kooch_blockmesh",
     "crates/kooch_ui",
+    "crates/kooch_video",
     "crates/kooch_gizmos",
     "crates/kooch_gizmos_handles",
     "crates/kooch_physics",
@@ -31,7 +32,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.98.179"
+version = "0.98.180"
 edition = "2024"
 license = "LicenseRef-Proprietary"
 repository = "https://github.com/lobinuxsoft/kooch"
@@ -209,6 +210,7 @@ kooch_lighting = { path = "crates/kooch_lighting" }
 kooch_render = { path = "crates/kooch_render" }
 kooch_blockmesh = { path = "crates/kooch_blockmesh" }
 kooch_ui = { path = "crates/kooch_ui" }
+kooch_video = { path = "crates/kooch_video" }
 kooch_gizmos = { path = "crates/kooch_gizmos" }
 kooch_gizmos_handles = { path = "crates/kooch_gizmos_handles" }
 kooch_physics = { path = "crates/kooch_physics" }

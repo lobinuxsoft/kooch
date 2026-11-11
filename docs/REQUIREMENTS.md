@@ -37,7 +37,9 @@ that does.
 | **D-Bus headers** | `libdbus-sys` ← `audio_thread_priority` ← `cpal` ← `kira` — realtime audio thread via RealtimeKit | `pkg-config --exists dbus-1` | `dbus-devel` | `libdbus-1-dev` | `dbus` | — |
 | **A C/C++ compiler** | `metis-sys` and `zstd-sys` build C, `meshopt` builds C++ | `cc --version` and `c++ --version` | `gcc gcc-c++` | `build-essential` | `base-devel` | MSVC |
 | **Vulkan headers** | `dlss_wgpu`'s build script | the header file itself | `vulkan-headers` | `libvulkan-dev` | `vulkan-headers` | Vulkan SDK |
-| **nasm** | `rav1d`'s assembly — AV1 video (#1793) | `nasm -v` | `nasm` | `nasm` | `nasm` | `winget install NASM.NASM` |
+| **nasm** | dav1d's assembly — AV1 video (#1793) | `nasm -v` | `nasm` | `nasm` | `nasm` | `winget install NASM.NASM` |
+| **meson** | `dav1d-sys` builds dav1d from source as a static library (#1793); its first build clones dav1d with `git` | `meson --version` | `meson` | `meson` | `meson` | `winget install mesonbuild.meson` |
+| **ninja** | what meson runs to compile dav1d | `ninja --version` | `ninja-build` | `ninja-build` | `ninja` | `winget install Ninja-build.Ninja` |
 
 **The Vulkan probe is a file test, not `pkg-config --exists vulkan`.**
 That query answers for the *loader*, which is on every machine that runs

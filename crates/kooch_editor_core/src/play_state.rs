@@ -2,7 +2,7 @@
 
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex};
 
 // ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ impl PlayState {
             out.clear();
         }
 
-        let mut cmd = Command::new("cargo");
+        let mut cmd = crate::cargo_args::cargo();
         cmd.arg("run")
             .arg("--manifest-path")
             .arg(manifest_path)

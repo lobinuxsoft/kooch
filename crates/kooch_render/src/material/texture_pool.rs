@@ -12,6 +12,7 @@ use super::TextureDefault;
 use super::shader::MAX_PARAM_TEXTURES;
 use super::values::TextureRef;
 use crate::texture::{GpuTexture, Image, ImageFormat, Mipmapper};
+use crate::video::{VideoConverter, VideoPlanes, VideoTarget};
 
 /// The hardware minimum, which means the feature is off.
 pub const NO_ANISOTROPY: u16 = 1;
@@ -36,6 +37,9 @@ pub struct MaterialTexturePool {
     mipmapper: Mipmapper,
     /// Each animated texture's frames, when it started and the frame it shows (#1793).
     playing: HashMap<Guid, (Arc<GifFrames>, Instant, usize)>,
+    /// Each video texture's player and its last frame's planes.
+    videos: HashMap<Guid, (kooch_video::Player, Option<VideoPlanes>)>,
+    converter: VideoConverter,
 }
 
 impl MaterialTexturePool {
@@ -67,6 +71,8 @@ impl MaterialTexturePool {
             fallback_normal,
             mipmapper: Mipmapper::new(device),
             playing: HashMap::new(),
+            videos: HashMap::new(),
+            converter: VideoConverter::new(device),
             sampler,
             anisotropy: NO_ANISOTROPY,
             bgl,
@@ -137,9 +143,16 @@ impl MaterialTexturePool {
                 .insert(guid, (frames.clone(), Instant::now(), 0)),
             None => self.playing.remove(&guid),
         };
+        match &image.video {
+            Some(bytes) => self
+                .videos
+                .insert(guid, (kooch_video::Player::start(bytes.clone()), None)),
+            None => self.videos.remove(&guid),
+        };
     }
 
-    /// Writes the frame due into each animated texture whose frame changed, and its mips again.
+    /// Writes the frame due into each animated or video texture whose frame changed, and its mips
+    /// again.
     pub fn advance(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         for (guid, (frames, start, shown)) in &mut self.playing {
             let due = frames.due(start.elapsed());
@@ -153,6 +166,40 @@ impl MaterialTexturePool {
             *shown = due;
             texture.write_level0(queue, frame);
             if texture.texture.mip_level_count() > 1 {
+                self.mipmapper.generate(device, queue, &texture.texture);
+            }
+        }
+        let mut encoder = None;
+        let mut drawn = Vec::new();
+        for (guid, (player, planes)) in &mut self.videos {
+            let (Some(texture), Some(picture)) = (self.textures.get(guid), player.due()) else {
+                continue;
+            };
+            self.converter.upload(device, queue, planes, &picture);
+            let Some(planes) = planes.as_ref() else {
+                continue;
+            };
+            let encoder = encoder.get_or_insert_with(|| {
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("material_videos"),
+                })
+            });
+            let target = VideoTarget {
+                texture: &texture.texture,
+                origin: [0, 0],
+                border: false,
+            };
+            self.converter.draw(device, queue, encoder, planes, target);
+            drawn.push(*guid);
+        }
+        // Level 0 is written before the mips are made from it.
+        if let Some(encoder) = encoder {
+            queue.submit([encoder.finish()]);
+        }
+        for guid in drawn {
+            if let Some(texture) = self.textures.get(&guid)
+                && texture.texture.mip_level_count() > 1
+            {
                 self.mipmapper.generate(device, queue, &texture.texture);
             }
         }
@@ -181,6 +228,7 @@ impl MaterialTexturePool {
             self.textures.remove(guid);
             self.asked.remove(guid);
             self.playing.remove(guid);
+            self.videos.remove(guid);
         }
         stale
     }
@@ -188,6 +236,7 @@ impl MaterialTexturePool {
     /// Drops the texture for `guid`, so the next sync uploads it again.
     pub fn evict(&mut self, guid: Guid) -> bool {
         self.playing.remove(&guid);
+        self.videos.remove(&guid);
         self.textures.remove(&guid).is_some()
     }
 

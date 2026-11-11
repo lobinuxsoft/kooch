@@ -12,8 +12,8 @@ use crate::{Entry, FORMAT_VERSION, NONCE_LEN, PackError, PackKey, ZSTD_LEVEL};
 
 /// Extensions whose contents are already compressed. Running zstd over
 /// them costs time to make the result very slightly larger.
-const ALREADY_COMPRESSED: [&str; 10] = [
-    "png", "jpg", "jpeg", "gif", "webp", "ktx2", "basis", "ogg", "mp3", "kpack",
+const ALREADY_COMPRESSED: [&str; 11] = [
+    "png", "jpg", "jpeg", "gif", "webm", "webp", "ktx2", "basis", "ogg", "mp3", "kpack",
 ];
 
 /// Writes a `.kpack`, consumed by [`finish`](Self::finish) so a pack cannot be left without its

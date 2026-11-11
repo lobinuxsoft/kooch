@@ -132,7 +132,9 @@ pub(super) fn asset_filter_for(
     } else if n.contains("texture") || n.contains("image") {
         Some((
             "Texture",
-            &["png", "jpg", "jpeg", "svg", "gif", "ktx2", "exr", "hdr"],
+            &[
+                "png", "jpg", "jpeg", "svg", "gif", "webm", "ktx2", "exr", "hdr",
+            ],
         ))
     } else if n.contains("audio") || n.contains("sound") {
         Some(("Audio", &["ogg", "wav", "flac"]))
