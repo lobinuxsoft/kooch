@@ -1,4 +1,4 @@
-//! A WebM's AV1 track, frame by frame as RGBA8, each with when it shows from the start.
+//! A WebM's AV1 track, frame by frame as 8-bit 4:2:0 planes, each with when it shows from the start.
 
 use std::collections::VecDeque;
 use std::io::Cursor;
@@ -7,16 +7,60 @@ use std::time::Duration;
 use matroska_demuxer::{Frame, MatroskaFile, TrackType};
 use yuv::{YuvPlanarImage, YuvRange, YuvStandardMatrix};
 
-use crate::av1::{Decoder, Planes};
+use crate::av1::{Decoder, Plane, Planes};
 
 /// Tile threads per video: enough for 1080p in real time, leaving the game its cores.
 const THREADS: u32 = 4;
 
-/// One frame, RGBA8 row by row.
+/// One frame as the decoder left it: the GPU converts it, so it is never copied on the CPU.
 pub struct Picture {
-    pub rgba: Vec<u8>,
+    pub y: Plane,
+    pub u: Plane,
+    pub v: Plane,
+    /// Bytes per row of `y`, and of `u` and `v`.
+    pub y_stride: u32,
+    pub uv_stride: u32,
     pub size: (u32, u32),
+    /// Full 0–255 levels rather than the 16–235 of video.
+    pub full_range: bool,
     pub at: Duration,
+}
+
+impl Picture {
+    /// The chroma planes' size: half the frame's, rounded up.
+    pub fn chroma(&self) -> (u32, u32) {
+        (self.size.0.div_ceil(2), self.size.1.div_ceil(2))
+    }
+
+    /// RGBA8 row by row, on the CPU: for the still image shown before playing.
+    pub fn rgba(&self) -> Result<Vec<u8>, String> {
+        let (width, height) = self.size;
+        let mut rgba = vec![0; width as usize * height as usize * 4];
+        let image = YuvPlanarImage {
+            y_plane: &self.y,
+            y_stride: self.y_stride,
+            u_plane: &self.u,
+            u_stride: self.uv_stride,
+            v_plane: &self.v,
+            v_stride: self.uv_stride,
+            width,
+            height,
+        };
+        let range = match self.full_range {
+            true => YuvRange::Full,
+            false => YuvRange::Limited,
+        };
+        // BT.709: what an HD encode signals, and what the GPU conversion assumes too.
+        yuv::yuv420_to_rgba(
+            &image,
+            &mut rgba,
+            width * 4,
+            range,
+            YuvStandardMatrix::Bt709,
+        )
+        .map_err(|error| format!("failed to convert an AV1 picture: {error}"))?;
+        Ok(rgba)
+    }
 }
 
 pub(crate) struct Stream<B: AsRef<[u8]>> {
@@ -64,7 +108,10 @@ impl<B: AsRef<[u8]>> Stream<B> {
             }
             let scale = self.scale;
             let ready = &mut self.ready;
-            let mut show = |planes: Planes| convert(planes, scale).map(|p| ready.push_back(p));
+            let mut show = |planes: Planes| {
+                ready.push_back(timed(planes, scale));
+                Ok(())
+            };
             let more = self
                 .file
                 .next_frame(&mut self.frame)
@@ -81,36 +128,16 @@ impl<B: AsRef<[u8]>> Stream<B> {
     }
 }
 
-fn convert(planes: Planes, scale: u64) -> Result<Picture, String> {
-    let (width, height) = planes.size;
-    let mut rgba = vec![0; width as usize * height as usize * 4];
-    let image = YuvPlanarImage {
-        y_plane: &planes.y,
-        y_stride: planes.y_stride,
-        u_plane: &planes.u,
-        u_stride: planes.uv_stride,
-        v_plane: &planes.v,
-        v_stride: planes.uv_stride,
-        width,
-        height,
-    };
-    let range = match planes.full_range {
-        true => YuvRange::Full,
-        false => YuvRange::Limited,
-    };
-    // BT.709: what an HD encode signals, and the import step encodes HD.
-    yuv::yuv420_to_rgba(
-        &image,
-        &mut rgba,
-        width * 4,
-        range,
-        YuvStandardMatrix::Bt709,
-    )
-    .map_err(|error| format!("failed to convert an AV1 picture: {error}"))?;
+fn timed(planes: Planes, scale: u64) -> Picture {
     let ticks = u64::try_from(planes.at).unwrap_or(0);
-    Ok(Picture {
-        rgba,
+    Picture {
+        y: planes.y,
+        u: planes.u,
+        v: planes.v,
+        y_stride: planes.y_stride,
+        uv_stride: planes.uv_stride,
         size: planes.size,
+        full_range: planes.full_range,
         at: Duration::from_nanos(ticks.saturating_mul(scale)),
-    })
+    }
 }

@@ -91,9 +91,10 @@ impl AssetLoader<Image> for ImageLoader {
                 .map_err(|e| AssetError::Loader(e.into()))?;
             (raster.rgba, raster.width, raster.height)
         } else if kooch_video::is_video(ctx.path) {
-            let first =
-                kooch_video::first_frame(bytes).map_err(|e| AssetError::Loader(e.into()))?;
-            (first.rgba, first.size.0, first.size.1)
+            let first = kooch_video::first_frame(bytes)
+                .and_then(|first| Ok((first.rgba()?, first.size)))
+                .map_err(|e| AssetError::Loader(e.into()))?;
+            (first.0, first.1.0, first.1.1)
         } else {
             let dynamic = image::load_from_memory(bytes)
                 .map_err(|e| AssetError::Loader(Box::new(ImageDecodeError(e))))?;

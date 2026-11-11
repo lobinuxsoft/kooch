@@ -12,6 +12,7 @@ use super::TextureDefault;
 use super::shader::MAX_PARAM_TEXTURES;
 use super::values::TextureRef;
 use crate::texture::{GpuTexture, Image, ImageFormat, Mipmapper};
+use crate::video::{VideoConverter, VideoPlanes, VideoTarget};
 
 /// The hardware minimum, which means the feature is off.
 pub const NO_ANISOTROPY: u16 = 1;
@@ -36,8 +37,9 @@ pub struct MaterialTexturePool {
     mipmapper: Mipmapper,
     /// Each animated texture's frames, when it started and the frame it shows (#1793).
     playing: HashMap<Guid, (Arc<GifFrames>, Instant, usize)>,
-    /// Each video texture's player.
-    videos: HashMap<Guid, kooch_video::Player>,
+    /// Each video texture's player and its last frame's planes.
+    videos: HashMap<Guid, (kooch_video::Player, Option<VideoPlanes>)>,
+    converter: VideoConverter,
 }
 
 impl MaterialTexturePool {
@@ -70,6 +72,7 @@ impl MaterialTexturePool {
             mipmapper: Mipmapper::new(device),
             playing: HashMap::new(),
             videos: HashMap::new(),
+            converter: VideoConverter::new(device),
             sampler,
             anisotropy: NO_ANISOTROPY,
             bgl,
@@ -143,7 +146,7 @@ impl MaterialTexturePool {
         match &image.video {
             Some(bytes) => self
                 .videos
-                .insert(guid, kooch_video::Player::start(bytes.clone())),
+                .insert(guid, (kooch_video::Player::start(bytes.clone()), None)),
             None => self.videos.remove(&guid),
         };
     }
@@ -166,12 +169,37 @@ impl MaterialTexturePool {
                 self.mipmapper.generate(device, queue, &texture.texture);
             }
         }
-        for (guid, player) in &mut self.videos {
+        let mut encoder = None;
+        let mut drawn = Vec::new();
+        for (guid, (player, planes)) in &mut self.videos {
             let (Some(texture), Some(picture)) = (self.textures.get(guid), player.due()) else {
                 continue;
             };
-            texture.write_level0(queue, &picture.rgba);
-            if texture.texture.mip_level_count() > 1 {
+            self.converter.upload(device, queue, planes, &picture);
+            let Some(planes) = planes.as_ref() else {
+                continue;
+            };
+            let encoder = encoder.get_or_insert_with(|| {
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("material_videos"),
+                })
+            });
+            let target = VideoTarget {
+                texture: &texture.texture,
+                origin: [0, 0],
+                border: false,
+            };
+            self.converter.draw(device, queue, encoder, planes, target);
+            drawn.push(*guid);
+        }
+        // Level 0 is written before the mips are made from it.
+        if let Some(encoder) = encoder {
+            queue.submit([encoder.finish()]);
+        }
+        for guid in drawn {
+            if let Some(texture) = self.textures.get(&guid)
+                && texture.texture.mip_level_count() > 1
+            {
                 self.mipmapper.generate(device, queue, &texture.texture);
             }
         }

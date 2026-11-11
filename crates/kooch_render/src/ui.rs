@@ -34,12 +34,14 @@ pub struct UiPass {
     mirrors_capacity: u64,
     started: std::time::Instant,
     vectors: vector::UiVectors,
+    videos: video::UiVideos,
     offset: [f32; 2],
 }
 
 mod buffers;
 mod materials;
 mod vector;
+mod video;
 
 use buffers::{curves_buffer, instance_buffer, masks_buffer, mirrors_buffer, values_buffer};
 
@@ -196,6 +198,7 @@ impl UiPass {
             mirrors_capacity,
             started: std::time::Instant::now(),
             vectors,
+            videos: Default::default(),
             offset: [0.0; 2],
         }
     }
@@ -218,6 +221,7 @@ impl UiPass {
         list: &mut UiDrawList,
         clear: bool,
     ) {
+        let rewritten = list.atlas_upload.is_some() || list.atlas_side != self.atlas_side;
         if list.atlas_side != self.atlas_side && list.atlas_side > 0 {
             let buffers = self.buffers();
             let (atlas, bind) = atlas_and_bind(device, &self.layout, buffers, list.atlas_side);
@@ -247,6 +251,8 @@ impl UiPass {
                 },
             );
         }
+        self.videos
+            .prepare(device, queue, encoder, list, &self.atlas, rewritten);
         if self.vectors.prepare(device, queue, encoder, list) {
             self.bind = bind_group(device, &self.layout, self.buffers(), &self.atlas);
         }
@@ -498,7 +504,10 @@ fn atlas_and_bind(
         dimension: wgpu::TextureDimension::D2,
         // Not sRGB: the colours are display-space already, like the surface they land on.
         format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        // A video's frames are drawn into its slot (#1793).
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
     });
     let bind = bind_group(device, layout, buffers, &atlas);

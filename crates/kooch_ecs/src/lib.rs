@@ -89,5 +89,5 @@ pub use transform::Transform;
 pub use ui_draw::{
     AtlasUpload, CURVE_POINTS, MASK_VECTOR, QUAD_GLYPH, QUAD_IMAGE, QUAD_VECTOR, UiCurve,
     UiDrawList, UiFontSource, UiGlyphRun, UiMask, UiMaterial, UiMirror, UiParam, UiQuad, UiShader,
-    UiVector, UiVectorSource, UiVectorText,
+    UiVector, UiVectorSource, UiVectorText, UiVideo, UiVideoSource,
 };

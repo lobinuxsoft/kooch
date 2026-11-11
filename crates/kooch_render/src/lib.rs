@@ -17,6 +17,7 @@ pub mod sky;
 pub mod texture;
 pub mod ui;
 pub mod vbuf64;
+pub mod video;
 pub mod view_camera;
 
 /// Depth format shared by every renderer that writes into the editor's

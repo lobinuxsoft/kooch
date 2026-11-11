@@ -4,8 +4,10 @@
 use dav1d::pixel::YUVRange;
 use dav1d::{
     BitsPerComponent, Decoder as Dav1d, Error, PixelLayout, PlanarImageComponent as Component,
-    Plane, Settings,
+    Settings,
 };
+
+pub use dav1d::Plane;
 
 /// Sends retried after the decoder said it was full; it never needs more than one.
 const RETRIES: u32 = 8;

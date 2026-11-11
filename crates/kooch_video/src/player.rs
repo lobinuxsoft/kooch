@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crate::stream::{Picture, Stream};
 
-/// Frames decoded ahead of the clock: enough to ride out a slow one, few at 8 MB a 1080p frame.
+/// Frames decoded ahead of the clock: enough to ride out a slow one, few at 3 MB a 1080p frame.
 const AHEAD: usize = 2;
 /// The gap after the last frame when a video has a single one.
 const STEP: Duration = Duration::from_millis(33);
@@ -17,8 +17,6 @@ pub struct Player {
     start: Instant,
     /// A frame received and not due yet.
     pending: Option<Picture>,
-    /// PROBE(#1793): frames received but superseded before they were shown.
-    pub skipped: u32,
 }
 
 impl Player {
@@ -35,7 +33,6 @@ impl Player {
             frames: Mutex::new(frames),
             start: Instant::now(),
             pending: None,
-            skipped: 0,
         }
     }
 
@@ -59,9 +56,7 @@ impl Player {
                 self.pending = Some(next);
                 break;
             }
-            if shown.replace(next).is_some() {
-                self.skipped += 1;
-            }
+            shown = Some(next);
         }
         shown
     }
@@ -76,23 +71,8 @@ fn play(bytes: Arc<[u8]>, send: SyncSender<Picture>) {
             Err(error) => return tracing::warn!("video not played: {error}"),
         };
         let (mut last, mut step) = (None, STEP);
-        // PROBE(#1793): decode + convert time per second of wall clock.
-        let (mut probe_at, mut probe_n, mut probe_busy) = (Instant::now(), 0u32, Duration::ZERO);
         loop {
-            let began = Instant::now();
-            let next = stream.next();
-            probe_busy += began.elapsed();
-            probe_n += 1;
-            if probe_at.elapsed() >= Duration::from_secs(2) {
-                tracing::info!(
-                    target: "video_probe",
-                    frames = probe_n,
-                    busy_ms = probe_busy.as_millis() as u64,
-                    "decode thread (2 s)"
-                );
-                (probe_at, probe_n, probe_busy) = (Instant::now(), 0, Duration::ZERO);
-            }
-            match next {
+            match stream.next() {
                 Ok(Some(mut picture)) => {
                     if let Some(last) = last {
                         step = picture

@@ -1,5 +1,5 @@
-//! Video (#1793): a WebM's AV1 track decoded by dav1d and converted to RGBA8 on its own thread,
-//! so the UI atlas and a material texture take a frame the way they take a GIF's.
+//! Video (#1793): a WebM's AV1 track decoded by dav1d on its own thread, handed over as YUV planes
+//! for the GPU to convert where the frame lands.
 
 mod av1;
 mod player;
@@ -7,6 +7,7 @@ mod stream;
 
 use std::path::Path;
 
+pub use av1::Plane;
 pub use player::Player;
 pub use stream::Picture;
 

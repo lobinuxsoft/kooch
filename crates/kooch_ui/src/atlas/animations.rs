@@ -1,5 +1,6 @@
-//! Animated images and videos (#1793): the frame due rewritten into the image's slot in place, so
-//! its quads never change and only that region is uploaded.
+//! Animated images and videos (#1793). A GIF's frame due is rewritten into its slot in place, so its
+//! quads never change and only that region is uploaded; a video is only named, and the renderer
+//! draws its frames into the slot itself.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -7,6 +8,7 @@ use std::time::Instant;
 
 use kooch_core::Guid;
 use kooch_core::gif::GifFrames;
+use kooch_ecs::{UiVideo, UiVideoSource};
 
 use super::GlyphAtlas;
 
@@ -20,9 +22,12 @@ struct Animation {
 #[derive(Default)]
 pub(crate) struct Animations {
     gifs: HashMap<Guid, Animation>,
-    videos: HashMap<Guid, kooch_video::Player>,
-    /// PROBE(#1793): frames blitted, their bytes and time, since the last log.
-    probe: (u32, u64, std::time::Duration, Option<Instant>),
+    /// Each video's key and file.
+    videos: HashMap<Guid, (u64, Arc<[u8]>)>,
+    /// The videos last shown, and the keys the renderer was handed: a hidden one is stopped there,
+    /// so it is handed again when it shows.
+    shown: Vec<UiVideo>,
+    sent: Vec<u64>,
 }
 
 impl GlyphAtlas {
@@ -41,46 +46,50 @@ impl GlyphAtlas {
         };
     }
 
-    /// Plays `player` in `guid`'s slot; `None` stops it.
-    pub(crate) fn set_video(&mut self, guid: Guid, player: Option<kooch_video::Player>) {
-        match player {
-            Some(player) => self.animations.videos.insert(guid, player),
+    /// Plays `video`, a key and its WebM, in `guid`'s slot; `None` stops it.
+    pub(crate) fn set_video(&mut self, guid: Guid, video: Option<(u64, Arc<[u8]>)>) {
+        match video {
+            Some(video) => self.animations.videos.insert(guid, video),
             None => self.animations.videos.remove(&guid),
         };
+    }
+
+    /// The videos shown, and the files of those the renderer has not been handed yet.
+    pub(crate) fn take_videos(&mut self) -> (Vec<UiVideo>, Vec<UiVideoSource>) {
+        let animations = &mut self.animations;
+        let sources = animations
+            .shown
+            .iter()
+            .filter(|video| !animations.sent.contains(&video.key))
+            .filter_map(|video| {
+                let (_, data) = animations
+                    .videos
+                    .values()
+                    .find(|(key, _)| *key == video.key)?;
+                Some(UiVideoSource {
+                    key: video.key,
+                    data: data.clone(),
+                })
+            })
+            .collect();
+        animations.sent = animations.shown.iter().map(|video| video.key).collect();
+        (animations.shown.clone(), sources)
     }
 
     /// Writes the frame due into each of `shown`'s slots whose frame changed.
     pub(crate) fn advance(&mut self, shown: impl Iterator<Item = Guid>) {
         // Lifted out so a frame can be written without copying it.
         let mut animations = std::mem::take(&mut self.animations);
+        animations.shown.clear();
         for guid in shown {
-            if let Some(player) = animations.videos.get_mut(&guid) {
-                let (Some(&(_, image)), Some(picture)) =
-                    (self.images.get(&(guid, 0)), player.due())
-                else {
-                    continue;
-                };
-                let corner = [image.rect[0] - 1, image.rect[1] - 1];
-                let began = Instant::now();
-                self.blit(corner, picture.size, &picture.rgba);
-                let probe = &mut animations.probe;
-                probe.0 += 1;
-                probe.1 += picture.rgba.len() as u64;
-                probe.2 += began.elapsed();
-                let since = *probe.3.get_or_insert_with(Instant::now);
-                if since.elapsed().as_secs() >= 2 {
-                    tracing::info!(
-                        target: "video_probe",
-                        %guid,
-                        size = ?picture.size,
-                        blits = probe.0,
-                        mb = probe.1 / 1_000_000,
-                        blit_ms = probe.2.as_millis() as u64,
-                        skipped = player.skipped,
-                        "atlas (2 s)"
-                    );
-                    *probe = (0, 0, std::time::Duration::ZERO, Some(Instant::now()));
-                    player.skipped = 0;
+            if let Some(&(key, _)) = animations.videos.get(&guid) {
+                // The slot with its border: the renderer repeats the edge there too.
+                if let Some(&(_, image)) = self.images.get(&(guid, 0)) {
+                    let [x0, y0, x1, y1] = image.rect;
+                    animations.shown.push(UiVideo {
+                        key,
+                        rect: [x0 - 1, y0 - 1, x1 + 1, y1 + 1],
+                    });
                 }
                 continue;
             }
