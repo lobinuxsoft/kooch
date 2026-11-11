@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-11-01 — 🎯 **A UI Builder you can edit a menu in.** Its own canvas at a chosen resolution, the document tree, and an Inspector typed per element: attributes with real widgets, inline styles in Unity's categories, every asset picked from one searchable picker, classes as chips with the sheet rules that reach the element, and actions listed from what the project's `.kxml` send and its code reads. Hot reload restyles without rebuilding. Next: the Library (#280 8.2d), elements and templates dragged in.
+Last updated 2026-11-11 — 🎯 **The UI plays GIFs and video.** A `.gif` or an AV1 `.webm` is a `background-image` or a mesh texture, and video frames are converted on the GPU, so a 4K video runs on the OneXFly. The meshlet frame makes 1 bind group instead of 138 (#1869), and load-time systems stopped walking their storage every frame (#1882). Open: the heap grows while a video plays (#1891). Next: that leak, then sound and playback controls for video (#1793 phase 2b).
 
 
 ---
@@ -207,6 +207,33 @@ what the engine did before any of this existed, for the reason
 `settings.rs:510` argues at length: a serde default is not a
 recommendation, it is what an old file silently becomes. A project that
 wants these values sets them.
+
+---
+
+## 🎯 2026-11-11 — GIFs and video in the UI and on meshes, and a lighter frame
+
+**What the user gets:** drop a `.gif` or a `.webm` (AV1, 8-bit 4:2:0) where an image goes — a
+`background-image` or a material texture — and it plays, looping. Tested on the OneXFly with a
+3840×2160 video.
+
+- **GIF** (#1793 phase 1): frames decoded once and swapped in place, in the UI atlas and on meshes.
+- **Video** (#1793 phase 2a): `matroska-demuxer` + dav1d on its own thread. dav1d is built from
+  source and linked statically, so there is no system library to install or ship; it needs meson,
+  ninja and nasm, and the editor's preflight checks for them. Frames reach the GPU as YUV planes
+  (12 MB a 4K frame instead of 33 MB of RGBA) and a shader converts them where they land. In the
+  editor's Play the editor plays the video itself: the file crosses once, never a frame.
+- **The meshlet frame** (#1869): bind groups are kept while they bind the same resources,
+  138 → 1 a frame, `render_meshlets_system` 4.18 → 3.36 ms.
+- **Load-time systems** (#1882): they no longer walk their storage every frame.
+- **UI** (#1790, #1824, #1829, #1792, #1884): fill images, 9-slice set in the `.meta`, and files
+  added from outside the editor show up without reopening the project.
+
+**Decided:** dav1d, not rav1d. rav1d's assembly cannot be linked into a project's `.so`
+(memorysafety/rav1d#1322, unreleased).
+
+**Open:** while a video plays the heap grows about 3 MB/s and is only freed on exit (#1891).
+Sound and play/pause/seek are phase 2b; scaling the video down to the target resolution at import is
+phase 3.
 
 ---
 
