@@ -86,200 +86,215 @@ impl Fsr3 {
         let t = &self.targets;
         let texture = wgpu::BindingResource::TextureView;
 
-        let inputs_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("fsr3_prepare_inputs_bg"),
-            layout: &self.prepare_inputs_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.ubo.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: texture(inputs.depth),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: texture(inputs.motion),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: texture(inputs.color),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: texture(&t.reconstructed_depth.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: texture(&t.dilated.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: texture(&t.dilated_depth.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: texture(&t.current_luma.view),
-                },
-            ],
-        });
-        let reduce_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("fsr3_reduce_bg"),
-            layout: &self.reduce_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.ubo.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: texture(&t.dilated.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: texture(&t.farthest_mip1.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: texture(&t.new_locks.view),
-                },
-            ],
-        });
-        let reactivity_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("fsr3_reactivity_bg"),
-            layout: &self.reactivity_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.ubo.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: texture(&t.dilated.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: texture(&t.dilated_depth.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: texture(&t.reconstructed_depth.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: texture(&t.current_luma.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: texture(t.accumulation.view(previous)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::Sampler(&self.linear),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: texture(&t.reactive_masks.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: texture(t.accumulation.view(target)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 9,
-                    resource: texture(&t.new_locks.view),
-                },
-            ],
-        });
-        let instability_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("fsr3_instability_bg"),
-            layout: &self.instability_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.ubo.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: texture(&t.dilated.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: texture(&t.current_luma.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: texture(t.luma_history.view(previous)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: texture(&t.reactive_masks.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::Sampler(&self.linear),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: texture(t.luma_history.view(target)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: texture(&t.luma_instability.view),
-                },
-            ],
-        });
-        let accumulate_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("fsr3_accumulate_bg"),
-            layout: &self.accumulate_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.ubo.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: texture(inputs.color),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: texture(&t.dilated.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: texture(&t.reactive_masks.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: texture(&t.luma_instability.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: texture(&t.farthest_mip1.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: texture(t.history.view(previous)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: wgpu::BindingResource::Sampler(&self.linear),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: texture(&t.new_locks.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 9,
-                    resource: texture(t.history.view(target)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 10,
-                    resource: texture(&t.output.view),
-                },
-            ],
-        });
+        let inputs_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("fsr3_prepare_inputs_bg"),
+                layout: &self.prepare_inputs_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.ubo.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: texture(inputs.depth),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: texture(inputs.motion),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: texture(inputs.color),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: texture(&t.reconstructed_depth.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: texture(&t.dilated.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: texture(&t.dilated_depth.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: texture(&t.current_luma.view),
+                    },
+                ],
+            },
+        );
+        let reduce_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("fsr3_reduce_bg"),
+                layout: &self.reduce_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.ubo.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: texture(&t.dilated.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: texture(&t.farthest_mip1.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: texture(&t.new_locks.view),
+                    },
+                ],
+            },
+        );
+        let reactivity_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("fsr3_reactivity_bg"),
+                layout: &self.reactivity_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.ubo.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: texture(&t.dilated.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: texture(&t.dilated_depth.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: texture(&t.reconstructed_depth.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: texture(&t.current_luma.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: texture(t.accumulation.view(previous)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::Sampler(&self.linear),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: texture(&t.reactive_masks.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 8,
+                        resource: texture(t.accumulation.view(target)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 9,
+                        resource: texture(&t.new_locks.view),
+                    },
+                ],
+            },
+        );
+        let instability_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("fsr3_instability_bg"),
+                layout: &self.instability_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.ubo.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: texture(&t.dilated.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: texture(&t.current_luma.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: texture(t.luma_history.view(previous)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: texture(&t.reactive_masks.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::Sampler(&self.linear),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: texture(t.luma_history.view(target)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: texture(&t.luma_instability.view),
+                    },
+                ],
+            },
+        );
+        let accumulate_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("fsr3_accumulate_bg"),
+                layout: &self.accumulate_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.ubo.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: texture(inputs.color),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: texture(&t.dilated.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: texture(&t.reactive_masks.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: texture(&t.luma_instability.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: texture(&t.farthest_mip1.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: texture(t.history.view(previous)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: wgpu::BindingResource::Sampler(&self.linear),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 8,
+                        resource: texture(&t.new_locks.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 9,
+                        resource: texture(t.history.view(target)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 10,
+                        resource: texture(&t.output.view),
+                    },
+                ],
+            },
+        );
 
         let render_groups = groups(self.render_size);
         let half_groups = groups((self.render_size.0 / 2, self.render_size.1 / 2));

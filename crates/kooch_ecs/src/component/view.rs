@@ -77,6 +77,28 @@ impl<'a, T: Component> ComponentView<'a, T> {
     pub fn iter(&self) -> impl Iterator<Item = (&'a Entity, &'a T)> {
         rows(self.tables, self.id).chain(self.map.iter())
     }
+
+    /// The change tick of `entity`'s value (#1870); 0 when it has none.
+    pub fn changed_at(&self, entity: Entity) -> u64 {
+        if let Some((table, row)) = self.entity_at.get(entity)
+            && let Some(column) = self.tables.get(table).and_then(|held| held.column(self.id))
+        {
+            return column.changed_at(row.index());
+        }
+        self.map.changed_at(entity)
+    }
+
+    /// Every pair written after `since`: one `u64` compare per row of a contiguous array.
+    pub fn iter_changed(&self, since: u64) -> impl Iterator<Item = (&'a Entity, &'a T)> {
+        let map = self.map;
+        ticked_rows(self.tables, self.id)
+            .filter(move |(_, _, tick)| *tick > since)
+            .map(|(entity, value, _)| (entity, value))
+            .chain(
+                map.iter()
+                    .filter(move |(entity, _)| map.changed_at(**entity) > since),
+            )
+    }
 }
 
 /// A writable view of every value of one component type.
@@ -201,8 +223,9 @@ impl<T: Component> ComponentViewMut<'_, T> {
         rows(self.tables, self.id).chain(self.map.iter())
     }
 
-    /// Every `(entity, value)` pair, mutably.
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&Entity, &mut T)> {
+    /// Every `(entity, value)` pair, mutably. A row counts as written only when its [`Mut`] is
+    /// written through, so a loop that reads everything and changes a few marks only the few.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&Entity, Mut<'_, T>)> {
         *self.revision += 1;
         let id = self.id;
         let dense = self.tables.iter_mut().filter_map(move |table| {
@@ -210,10 +233,19 @@ impl<T: Component> ComponentViewMut<'_, T> {
             let column = table.column_mut(id)?;
             // SAFETY: `entities` and the column are distinct fields of the
             // table, and the column holds `T` with one item per row.
-            let values = unsafe { column.as_mut_slice::<T>() };
-            Some(unsafe { &*entities }.iter().zip(values))
+            let (values, ticks) = unsafe { column.as_mut_slice_ticked::<T>() };
+            Some(
+                unsafe { &*entities }
+                    .iter()
+                    .zip(values.iter_mut().zip(ticks))
+                    .map(|(entity, (value, tick))| (entity, Mut::new(value, Some(tick)))),
+            )
         });
-        dense.flatten().chain(self.map.iter_mut())
+        dense.flatten().chain(
+            self.map
+                .iter_mut()
+                .map(|(entity, value)| (entity, Mut::new(value, None))),
+        )
     }
 
     /// The column holding `entity`'s value, if it is in one.
@@ -249,4 +281,80 @@ fn rows<'a, T: Component>(
             )
         })
         .flatten()
+}
+
+/// Every `(entity, value, change tick)` held in a column, table by table.
+fn ticked_rows<'a, T: Component>(
+    tables: &'a Tables,
+    id: StorageId,
+) -> impl Iterator<Item = (&'a Entity, &'a T, u64)> {
+    tables
+        .iter()
+        .filter_map(move |table| {
+            let column = table.column(id)?;
+            // SAFETY: as `rows`.
+            let values = unsafe { column.as_slice::<T>() };
+            Some(
+                table
+                    .entities()
+                    .iter()
+                    .zip(values)
+                    .enumerate()
+                    .map(move |(row, (entity, value))| (entity, value, column.changed_at(row))),
+            )
+        })
+        .flatten()
+}
+
+/// A value handed out by [`ComponentViewMut::iter_mut`]: reading is free, writing stamps the row's
+/// change tick (#1870), the way Bevy's `Mut` does.
+pub struct Mut<'a, T> {
+    value: &'a mut T,
+    tick: Option<&'a std::sync::atomic::AtomicU64>,
+}
+
+impl<'a, T> Mut<'a, T> {
+    fn new(value: &'a mut T, tick: Option<&'a std::sync::atomic::AtomicU64>) -> Self {
+        Self { value, tick }
+    }
+
+    /// The value as a plain `&mut`, counted as a write.
+    pub fn into_inner(self) -> &'a mut T {
+        stamp(self.tick);
+        self.value
+    }
+
+    /// Writes `value` only when it differs, so recomputing an unchanged value marks nothing.
+    pub fn set_if_neq(&mut self, value: T)
+    where
+        T: PartialEq,
+    {
+        if *self.value != value {
+            stamp(self.tick);
+            *self.value = value;
+        }
+    }
+}
+
+impl<T> std::ops::Deref for Mut<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.value
+    }
+}
+
+impl<T> std::ops::DerefMut for Mut<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        stamp(self.tick);
+        self.value
+    }
+}
+
+fn stamp(tick: Option<&std::sync::atomic::AtomicU64>) {
+    if let Some(tick) = tick {
+        tick.store(
+            kooch_core::change_tick::now(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
 }

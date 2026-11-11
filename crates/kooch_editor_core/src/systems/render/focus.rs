@@ -6,6 +6,21 @@ use egui_dock::DockState;
 use crate::os_windows::OsWindows;
 use crate::state::{EditorTab, OpenInputMap, OpenShaderGraph};
 
+/// Shows the Image view, in a window of its own unless it is already showing (#1792).
+pub(super) fn show_image_view(ui: &egui::Ui, dock: &mut DockState<EditorTab>, windows: &OsWindows) {
+    if crate::os_windows::shown(dock, windows, EditorTab::ImageView) {
+        return;
+    }
+    let surface = dock.add_window(vec![EditorTab::ImageView]);
+    let screen = ui.max_rect();
+    let size = egui::vec2(screen.width() * 0.5, screen.height() * 0.6);
+    if let Some(window) = dock.get_window_state_mut(surface) {
+        window
+            .set_size(size)
+            .set_position(screen.center() - size / 2.0);
+    }
+}
+
 /// Opens the panel an asset was just opened in, unless it is already showing — in the dock or in a
 /// window of its own (#1196).
 pub(super) fn show_opened(

@@ -14,12 +14,20 @@ use super::scan::scan_recursive;
 pub struct AssetDatabase {
     pub(super) by_guid: HashMap<Guid, AssetEntry>,
     pub(super) by_path: HashMap<PathBuf, Guid>,
+    /// The change tick of the last change to what it holds (#1882): process-wide, so a database
+    /// opened in place of another never repeats a number.
+    revision: u64,
 }
 
 impl AssetDatabase {
     /// Constructs an empty database.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// When what it holds last changed, as a change tick.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Returns the entry for `guid`, or `None` if unknown.
@@ -72,9 +80,11 @@ impl AssetDatabase {
                 if let Some(existing) = self.by_guid.get_mut(&guid) {
                     if existing.type_name.is_none() && entry.type_name.is_some() {
                         existing.type_name = entry.type_name;
+                        self.revision = crate::change_tick::advance();
                     }
                     if entry.mtime > existing.mtime {
                         existing.mtime = entry.mtime;
+                        self.revision = crate::change_tick::advance();
                     }
                 }
                 return false;
@@ -84,6 +94,7 @@ impl AssetDatabase {
         }
         self.by_path.insert(entry.path.clone(), guid);
         self.by_guid.insert(guid, entry);
+        self.revision = crate::change_tick::advance();
         true
     }
 
@@ -91,6 +102,7 @@ impl AssetDatabase {
     pub fn remove_path(&mut self, path: &Path) -> Option<Guid> {
         let guid = self.by_path.remove(path)?;
         self.by_guid.remove(&guid);
+        self.revision = crate::change_tick::advance();
         Some(guid)
     }
 

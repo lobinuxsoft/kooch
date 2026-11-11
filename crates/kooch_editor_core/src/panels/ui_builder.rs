@@ -29,8 +29,6 @@ const MAX_ZOOM: f32 = 100.0;
 /// Points around a framed canvas.
 const FRAME_MARGIN: f32 = 20.0;
 const CHECKER: f32 = 16.0;
-/// Largest side the canvas renders at: past it a deep zoom magnifies instead of re-rendering.
-const MAX_SIDE: f32 = 4096.0;
 
 pub(crate) fn draw_ui_builder(
     ui: &mut egui::Ui,
@@ -187,9 +185,20 @@ fn canvas(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEnt
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, ui.visuals().extreme_bg_color);
     checker(&painter, canvas, canvas.intersect(rect));
-    if let Some(texture) = builder.texture {
+    if let (Some(texture), Some(painted)) = (builder.texture, builder.painted) {
         let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-        painter.image(texture, canvas, uv, egui::Color32::WHITE);
+        // As fractions of the canvas it was drawn for: mid-zoom the texture is a frame behind,
+        // and in pixels it would land shifted and at the old size until the next one.
+        let drawn = egui::vec2(painted.canvas.0 as f32, painted.canvas.1 as f32);
+        let part = egui::vec2(painted.size.0 as f32, painted.size.1 as f32) / drawn;
+        let size = part * canvas.size();
+        let at = canvas.min + egui::Vec2::from(painted.offset) / drawn * canvas.size();
+        painter.image(
+            texture,
+            egui::Rect::from_min_size(at, size),
+            uv,
+            egui::Color32::WHITE,
+        );
     }
     painter.rect_stroke(
         canvas,
@@ -242,13 +251,21 @@ fn canvas(ui: &mut egui::Ui, builder: &mut UiBuilder, catalog: &[AssetCatalogEnt
         );
     }
 
-    // Rendered at the size it is shown, so text stays sharp at any zoom, up to `MAX_SIDE`.
-    let pixels = resolution * builder.zoom;
-    let fit = (MAX_SIDE / pixels.max_elem()).min(1.0);
-    builder.request = Some((
-        (pixels.x * fit).round().max(1.0) as u32,
-        (pixels.y * fit).round().max(1.0) as u32,
-    ));
+    // Only what shows, at the pixels it shows at: a deep zoom draws vectors and text sharp.
+    let pixels = (resolution * builder.zoom).round();
+    let visible = canvas.intersect(rect);
+    let from = ((visible.min - canvas.min) * ppp)
+        .floor()
+        .max(egui::Vec2::ZERO);
+    let size = (visible.size() * ppp)
+        .ceil()
+        .min(pixels - from)
+        .max(egui::Vec2::splat(1.0));
+    builder.request = Some(crate::ui_builder::CanvasRegion {
+        canvas: (pixels.x.max(1.0) as u32, pixels.y.max(1.0) as u32),
+        offset: [from.x, from.y],
+        size: (size.x as u32, size.y as u32),
+    });
 }
 
 /// Fits the canvas in the panel with a margin, centred. Not snapped to a zoom step.

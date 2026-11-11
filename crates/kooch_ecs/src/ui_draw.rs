@@ -10,6 +10,11 @@ use kooch_core::Guid;
 pub const QUAD_GLYPH: u32 = 1;
 /// A quad samples an image from the atlas, filtered, tinted by `color` (#1708).
 pub const QUAD_IMAGE: u32 = 2;
+/// With [`QUAD_IMAGE`]: the texels are in the vector atlas Vello draws, not the glyph atlas (#1865).
+/// 4 is `QUAD_CURVED`, which `ui.wgsl` sets itself.
+pub const QUAD_VECTOR: u32 = 8;
+/// In [`UiMask::luminance`]: the mask image's texels are in the vector atlas.
+pub const MASK_VECTOR: u32 = 2;
 /// Evenly spaced points in a [`UiCurve`]; `ui.wgsl` holds the same number.
 pub const CURVE_POINTS: usize = 128;
 
@@ -63,7 +68,8 @@ pub struct UiMask {
     /// The atlas texels whose alpha cuts too; a zero size is the shape alone.
     pub uv_min: [u32; 2],
     pub uv_size: [u32; 2],
-    /// 1 when the image cuts by how bright it is too, not by its alpha alone.
+    /// Bit 1: the image cuts by how bright it is too, not by its alpha alone. [`MASK_VECTOR`]: its
+    /// texels are in the vector atlas.
     pub luminance: u32,
     /// Where a fill starts, as an index in `-kooch-fill-from`'s words; 0 cuts no fill (#1829).
     pub fill_from: u32,
@@ -120,6 +126,73 @@ pub struct UiMaterial {
     pub params: [u32; 2],
 }
 
+/// An SVG or a text Vello draws into the vector atlas (#1865): `key` names it across frames.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UiVector {
+    pub key: u64,
+    /// Its texels, `[x0, y0, x1, y1]`.
+    pub rect: [u32; 4],
+    /// The [`UiVectorSource`] or [`UiVectorText`] drawn: one file serves every size.
+    pub source: u64,
+    /// `[full w, full h, from x, from y]` when only part is drawn (#1880); zero draws it whole.
+    pub crop: [f32; 4],
+}
+
+/// The file behind a [`UiVector::source`], sent with each new slot; parsed once per key.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiVectorSource {
+    pub key: u64,
+    pub svg: Arc<[u8]>,
+}
+
+/// A text node's glyphs behind a [`UiVector`] (#1880), drawn white in a slot of `size` texels.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiVectorText {
+    pub key: u64,
+    pub size: [f32; 2],
+    pub runs: Vec<UiGlyphRun>,
+}
+
+/// Glyphs of one font at one size, positioned in the slot's texels.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiGlyphRun {
+    /// A [`UiFontSource::id`].
+    pub font: u64,
+    /// The face in a collection.
+    pub index: u32,
+    /// Pixels per em.
+    pub size: f32,
+    /// Variable-font coordinates, normalized 2.14.
+    pub coords: Vec<i16>,
+    /// Glyph id and its pen position.
+    pub glyphs: Vec<(u32, [f32; 2])>,
+    /// Each glyph's direction as cos and sin, set along a curve; empty when the run is straight.
+    pub turns: Vec<[f32; 2]>,
+}
+
+/// A font file, sent once before the first text that uses it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiFontSource {
+    pub id: u64,
+    pub data: Arc<[u8]>,
+}
+
+/// A video playing in a slot of the RGBA8 atlas (#1793): the renderer decodes it and draws each
+/// frame there on the GPU, so the atlas upload carries only its first frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UiVideo {
+    pub key: u64,
+    /// The slot's texels with their one-texel border, `[x0, y0, x1, y1]`.
+    pub rect: [u32; 4],
+}
+
+/// The WebM behind a [`UiVideo`], sent with each new one; a renderer plays each key once.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiVideoSource {
+    pub key: u64,
+    pub data: Arc<[u8]>,
+}
+
 /// This frame's UI, back to front.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct UiDrawList {
@@ -134,4 +207,17 @@ pub struct UiDrawList {
     pub atlas_side: u32,
     /// What to write into the atlas before drawing; `None` when nothing changed.
     pub atlas_upload: Option<AtlasUpload>,
+    /// Side of the square vector atlas; 0 while no SVG is packed there.
+    pub vector_side: u32,
+    /// Every SVG resident in the vector atlas. The renderer redraws it when this changes.
+    pub vectors: Vec<UiVector>,
+    /// Files not handed over yet; the renderer takes them, as it takes `atlas_upload`.
+    pub vector_sources: Vec<UiVectorSource>,
+    /// Text not handed over yet, as `vector_sources`.
+    pub vector_texts: Vec<UiVectorText>,
+    pub vector_fonts: Vec<UiFontSource>,
+    /// Every video shown this frame.
+    pub videos: Vec<UiVideo>,
+    /// Files not handed over yet, as `vector_sources`.
+    pub video_sources: Vec<UiVideoSource>,
 }

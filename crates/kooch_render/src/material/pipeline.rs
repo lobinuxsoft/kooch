@@ -526,6 +526,7 @@ impl MaterialPipeline {
             );
         }
 
+        self.texture_pool.advance(device, queue);
         // A re-import is a texture the pool must forget before it can
         // ask whether it has it. Drained rather than read, so one edit
         // costs one re-upload.

@@ -14,6 +14,8 @@ struct ClearUbo {
 }
 
 pub(super) struct Vbuf64Clear {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     pipeline: wgpu::ComputePipeline,
     bgl: wgpu::BindGroupLayout,
     uniform_buffer: wgpu::Buffer,
@@ -83,6 +85,7 @@ impl Vbuf64Clear {
         });
 
         Self {
+            kept: Default::default(),
             pipeline,
             bgl,
             uniform_buffer,
@@ -107,24 +110,27 @@ impl Vbuf64Clear {
             }),
         );
 
-        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_vbuf64_clear_bg"),
-            layout: &self.bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(vbuf64_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(hdr_view),
-                },
-            ],
-        });
+        let bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("meshlet_vbuf64_clear_bg"),
+                layout: &self.bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(vbuf64_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(hdr_view),
+                    },
+                ],
+            },
+        );
 
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("meshlet_vbuf64_clear_pass"),

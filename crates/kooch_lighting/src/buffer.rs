@@ -45,6 +45,7 @@ pub struct GpuLights {
     page_slots: Option<wgpu::Buffer>,
     page_work: Option<wgpu::Buffer>,
     page_atlas: Option<wgpu::TextureView>,
+    page_lamps: Option<wgpu::Buffer>,
     /// Bound when nothing pages: zeroed, so `sun.w` reads "no paging" rather than looking up an
     /// empty table.
     dummy_page_buffer: wgpu::Buffer,
@@ -92,7 +93,8 @@ impl GpuLights {
             && self.page_uniform_span == pages.uniform_span
             // 🔴 The table buffer is replaced when lights outgrow the address space; a stale bind
             // group reads freed memory.
-            && self.page_slots.as_ref().is_some_and(|b| b == pages.slots);
+            && self.page_slots.as_ref().is_some_and(|b| b == pages.slots)
+            && self.page_lamps.as_ref().is_some_and(|b| b == pages.lamps);
         if unchanged {
             return;
         }
@@ -101,6 +103,7 @@ impl GpuLights {
         self.page_slots = Some(pages.slots.clone());
         self.page_work = Some(pages.work.clone());
         self.page_atlas = Some(pages.atlas.clone());
+        self.page_lamps = Some(pages.lamps.clone());
         self.rebuild_bind_group(device);
     }
 
@@ -115,6 +118,7 @@ impl GpuLights {
         self.page_slots = None;
         self.page_work = None;
         self.page_atlas = None;
+        self.page_lamps = None;
         self.rebuild_bind_group(device);
     }
 
@@ -143,6 +147,7 @@ impl GpuLights {
                 slots: self.page_slots.as_ref().unwrap_or(&self.dummy_page_buffer),
                 work: self.page_work.as_ref().unwrap_or(&self.dummy_page_buffer),
                 atlas: self.page_atlas.as_ref().unwrap_or(&self.dummy_page_atlas),
+                lamps: self.page_lamps.as_ref().unwrap_or(&self.light_buffer),
             },
         );
     }
@@ -391,6 +396,8 @@ pub struct PageBinding<'a> {
     /// The table's other half: only the pages debug view reads it (#1579).
     pub work: &'a wgpu::Buffer,
     pub atlas: &'a wgpu::TextureView,
+    /// The lights at the pose each lamp's pages were drawn from (#1861), indexed like the lights.
+    pub lamps: &'a wgpu::Buffer,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -461,6 +468,10 @@ fn create_bind_group(
             wgpu::BindGroupEntry {
                 binding: 11,
                 resource: wgpu::BindingResource::TextureView(pages.atlas),
+            },
+            wgpu::BindGroupEntry {
+                binding: 13,
+                resource: pages.lamps.as_entire_binding(),
             },
         ],
     })

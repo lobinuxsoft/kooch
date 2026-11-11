@@ -30,7 +30,9 @@ tracing.workspace = true
 # Turning it off takes `--no-default-features`, which is loud enough that
 # whoever types it meant it. `the_editor_ships_with_its_profiler` is what
 # fails if it is turned off by accident.
-default = ["profiling"]
+default = ["profiling", "vello"]
 
 # See kooch_editor_core's feature of the same name.
 profiling = ["kooch_editor_core/profiling"]
+# Draws a project's vector UI (#1865), whichever way the project was built.
+vello = ["kooch_editor_core/vello"]

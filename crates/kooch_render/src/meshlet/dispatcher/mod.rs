@@ -116,6 +116,10 @@ pub struct MeshletCull {
     pub(super) params_stride: u64,
     /// Which slot the next dispatch writes. See [`Self::stage_params`].
     pub(super) params_cursor: std::sync::atomic::AtomicU32,
+    /// The scene-wide cull's bind groups, kept until a buffer they bind is replaced.
+    pub(super) binds: std::sync::Mutex<Option<std::sync::Arc<dispatch::CullBinds>>>,
+    /// What `scene_params_buffer` holds, so an unchanged scene is not written again.
+    pub(super) scene_written: std::sync::Mutex<Option<crate::meshlet::scene::SceneCullParams>>,
 }
 
 /// How many parameter sets `params_buffer` holds.
@@ -321,19 +325,37 @@ impl MeshletCull {
     }
 
     /// Puts one dispatch's [`CullParams`] somewhere the previous dispatch's copy is not, and hands
-    /// back the range to bind.
-    pub(super) fn stage_params(
-        &self,
-        queue: &wgpu::Queue,
-        params: &CullParams,
-    ) -> wgpu::BufferBinding<'_> {
+    /// back its offset: the dynamic offset of `cull_bgl`'s binding 0.
+    pub(super) fn stage_params(&self, queue: &wgpu::Queue, params: &CullParams) -> u32 {
         use std::sync::atomic::Ordering;
         let slot = self.params_cursor.fetch_add(1, Ordering::Relaxed) as u64 % PARAMS_RING;
         let offset = slot * self.params_stride;
         queue.write_buffer(&self.params_buffer, offset, bytemuck::bytes_of(params));
+        offset as u32
+    }
+
+    /// Writes `params` into `scene_params_buffer` unless it already holds them.
+    pub(super) fn stage_scene(
+        &self,
+        queue: &wgpu::Queue,
+        params: &crate::meshlet::scene::SceneCullParams,
+    ) {
+        let mut written = self
+            .scene_written
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if written.is_some_and(|was| bytemuck::bytes_of(&was) == bytemuck::bytes_of(params)) {
+            return;
+        }
+        *written = Some(*params);
+        queue.write_buffer(&self.scene_params_buffer, 0, bytemuck::bytes_of(params));
+    }
+
+    /// The ring slot at `offset`, for a layout that binds it statically (the Hi-Z path).
+    pub(super) fn params_at(&self, offset: u32) -> wgpu::BufferBinding<'_> {
         wgpu::BufferBinding {
             buffer: &self.params_buffer,
-            offset,
+            offset: offset as u64,
             size: std::num::NonZeroU64::new(std::mem::size_of::<CullParams>() as u64),
         }
     }
@@ -344,11 +366,7 @@ impl MeshletCull {
     pub(super) fn last_params(&self) -> wgpu::BufferBinding<'_> {
         use std::sync::atomic::Ordering;
         let written = self.params_cursor.load(Ordering::Relaxed).wrapping_sub(1);
-        wgpu::BufferBinding {
-            buffer: &self.params_buffer,
-            offset: (written as u64 % PARAMS_RING) * self.params_stride,
-            size: std::num::NonZeroU64::new(std::mem::size_of::<CullParams>() as u64),
-        }
+        self.params_at(((written as u64 % PARAMS_RING) * self.params_stride) as u32)
     }
 
     /// `wgpu::Buffer` holding the per-frame `SceneCullParams` UBO.

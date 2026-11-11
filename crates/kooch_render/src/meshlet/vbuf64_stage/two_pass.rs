@@ -80,6 +80,8 @@ pub(super) struct SharedLayouts<'a> {
 }
 
 pub(super) struct MaterialTwoPass {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     resolve_pipeline: wgpu::RenderPipeline,
     resolve_bgl: wgpu::BindGroupLayout,
     shading_pipeline: wgpu::RenderPipeline,
@@ -294,6 +296,7 @@ impl MaterialTwoPass {
         });
 
         Self {
+            kept: Default::default(),
             resolve_pipeline,
             resolve_bgl,
             shading_pipeline,
@@ -402,24 +405,27 @@ impl MaterialTwoPass {
         }
 
         // Pass 1: resolve material id into the depth target.
-        let resolve_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("resolve_material_depth_bg"),
-            layout: &self.resolve_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(vbuf_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: cull.visible_meshlets_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: scene.instance_buffer().as_entire_binding(),
-                },
-            ],
-        });
+        let resolve_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("resolve_material_depth_bg"),
+                layout: &self.resolve_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(vbuf_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: cull.visible_meshlets_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: scene.instance_buffer().as_entire_binding(),
+                    },
+                ],
+            },
+        );
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("resolve_material_depth_pass"),
@@ -442,69 +448,81 @@ impl MaterialTwoPass {
         }
 
         // Pass 2: per-material shading, depth-tested Equal.
-        let frame_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("material_two_pass_frame_bg"),
-            layout: &self.frame_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(vbuf_view),
+        let frame_bg =
+            self.kept.get(
+                device,
+                &wgpu::BindGroupDescriptor {
+                    label: Some("material_two_pass_frame_bg"),
+                    layout: &self.frame_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(vbuf_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: self.camera_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &self.screen_buffer,
+                                offset: 0,
+                                size: std::num::NonZeroU64::new(
+                                    std::mem::size_of::<ScreenUbo>() as u64
+                                ),
+                            }),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: MATERIAL_PASS_CONTACT_UBO_BINDING,
+                            resource: self.contact_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: MATERIAL_PASS_CONTACT_DEPTH_BINDING,
+                            resource: wgpu::BindingResource::TextureView(depth_sample_view),
+                        },
+                    ],
                 },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.camera_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.screen_buffer,
-                        offset: 0,
-                        size: std::num::NonZeroU64::new(std::mem::size_of::<ScreenUbo>() as u64),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: MATERIAL_PASS_CONTACT_UBO_BINDING,
-                    resource: self.contact_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: MATERIAL_PASS_CONTACT_DEPTH_BINDING,
-                    resource: wgpu::BindingResource::TextureView(depth_sample_view),
-                },
-            ],
-        });
-        let materials_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("material_two_pass_materials_bg"),
-            layout: &self.materials_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: material_pipeline.pool().buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: material_pipeline.pool().values().as_entire_binding(),
-                },
-            ],
-        });
-        let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("material_two_pass_scene_bg"),
-            layout: &self.scene_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: cull.visible_meshlets_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: scene.instance_buffer().as_entire_binding(),
-                },
-            ],
-        });
+            );
+        let materials_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("material_two_pass_materials_bg"),
+                layout: &self.materials_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: material_pipeline.pool().buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: material_pipeline.pool().values().as_entire_binding(),
+                    },
+                ],
+            },
+        );
+        let scene_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("material_two_pass_scene_bg"),
+                layout: &self.scene_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: cull.visible_meshlets_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: scene.instance_buffer().as_entire_binding(),
+                    },
+                ],
+            },
+        );
 
         let texture_pool = material_pipeline.texture_pool();
         for (i, slot) in slots.enumerate() {
             let refs = material_pipeline.slot_texture_refs(slot);
-            let texture_bg = texture_pool.material_bind_group(device, &refs);
+            let texture_bg = texture_pool.material_bind_group(device, slot, &refs);
             let shader = material_pipeline.slot_surface(slot).map(|(guid, _)| guid);
             let query = scopes.map(|s| match parent {
                 Some(p) => s.begin_child(crate::meshlet::shader_scope(shader), encoder, p),

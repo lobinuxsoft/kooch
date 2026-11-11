@@ -292,13 +292,17 @@ impl PageRasterizer {
                 usage: storage | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
-            levels: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("page_raster_levels"),
-                size: level_stride * buckets as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            // Each bucket's index at its stride: constant, so written here and never per frame.
+            levels: wgpu::util::DeviceExt::create_buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("page_raster_levels"),
+                    contents: &level_bytes(buckets, level_stride),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                },
+            ),
             level_stride,
+            gate_shape: None,
             gens: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("page_raster_gens"),
                 size: atlas_layers(pool) as u64 * buckets as u64 * 4,
@@ -373,4 +377,17 @@ impl PageRasterizer {
             pool,
         }
     }
+}
+
+/// Every bucket's [`ExpandLevel`], one per `stride` bytes.
+fn level_bytes(buckets: u32, stride: u64) -> Vec<u8> {
+    let mut bytes = vec![0u8; (stride * buckets as u64) as usize];
+    for (bucket, chunk) in bytes.chunks_exact_mut(stride as usize).enumerate() {
+        let level = ExpandLevel {
+            level: bucket as u32,
+            _pad: [0; 3],
+        };
+        chunk[..std::mem::size_of::<ExpandLevel>()].copy_from_slice(bytemuck::bytes_of(&level));
+    }
+    bytes
 }

@@ -26,12 +26,23 @@ use super::asset::{Image, ImageFormat};
 pub struct ImageImport {
     /// Whether the upload builds the mip chain.
     pub mipmaps: bool,
+    /// Texels each edge keeps unstretched when the UI draws it, top-right-bottom-left (#1792).
+    /// Every use of the image slices by it; `-kooch-slice` overrides it.
+    #[serde(skip_serializing_if = "is_unsliced")]
+    pub slice: [u16; 4],
 }
 
 impl Default for ImageImport {
     fn default() -> Self {
-        Self { mipmaps: true }
+        Self {
+            mipmaps: true,
+            slice: [0; 4],
+        }
     }
+}
+
+fn is_unsliced(slice: &[u16; 4]) -> bool {
+    *slice == [0; 4]
 }
 
 /// Configurable PNG/JPEG loader.
@@ -70,7 +81,7 @@ impl Default for ImageLoader {
 
 impl AssetLoader<Image> for ImageLoader {
     fn extensions(&self) -> &[&'static str] {
-        &["png", "jpg", "jpeg", "svg"]
+        &["png", "jpg", "jpeg", "svg", "gif", "webm"]
     }
 
     fn load(&self, bytes: &[u8], ctx: &mut LoadContext<'_>) -> AssetResult<Image> {
@@ -79,6 +90,11 @@ impl AssetLoader<Image> for ImageLoader {
             let raster = kooch_core::svg::rasterize(bytes, None)
                 .map_err(|e| AssetError::Loader(e.into()))?;
             (raster.rgba, raster.width, raster.height)
+        } else if kooch_video::is_video(ctx.path) {
+            let first = kooch_video::first_frame(bytes)
+                .and_then(|first| Ok((first.rgba()?, first.size)))
+                .map_err(|e| AssetError::Loader(e.into()))?;
+            (first.0, first.1.0, first.1.1)
         } else {
             let dynamic = image::load_from_memory(bytes)
                 .map_err(|e| AssetError::Loader(Box::new(ImageDecodeError(e))))?;
@@ -88,7 +104,17 @@ impl AssetLoader<Image> for ImageLoader {
             (rgba.into_raw(), width, height)
         };
         let import: ImageImport = ctx.import();
-        let image = Image::from_rgba8(rgba, width, height, self.format);
+        let mut image = Image::from_rgba8(rgba, width, height, self.format);
+        // A GIF's first frame is the texture; the pool plays the rest over it.
+        if kooch_core::gif::is_gif(ctx.path) {
+            image.animation = kooch_core::gif::decode(bytes)
+                .map_err(|e| AssetError::Loader(e.into()))?
+                .map(std::sync::Arc::new);
+        }
+        // A video's first frame likewise; the pool plays it from the start over it.
+        if kooch_video::is_video(ctx.path) {
+            image.video = Some(bytes.into());
+        }
         Ok(if import.mipmaps {
             image
         } else {

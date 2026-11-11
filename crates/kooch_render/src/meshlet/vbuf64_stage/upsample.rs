@@ -20,6 +20,8 @@ struct UpsampleUbo {
 }
 
 pub(super) struct ShadingUpsample {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     pipeline: wgpu::RenderPipeline,
     bgl: wgpu::BindGroupLayout,
     ubo: wgpu::Buffer,
@@ -123,6 +125,7 @@ impl ShadingUpsample {
         let (color_texture, color_view) = create_shaded_color(device, shaded_size);
         let (id_texture, id_view) = create_shaded_ids(device, shaded_size);
         Self {
+            kept: Default::default(),
             pipeline,
             bgl,
             ubo,
@@ -196,28 +199,31 @@ impl ShadingUpsample {
                 shaded_size: [self.shaded_size.0, self.shaded_size.1],
             }),
         );
-        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shading_upsample_bg"),
-            layout: &self.bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(vbuf_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&self.color_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&self.id_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.ubo.as_entire_binding(),
-                },
-            ],
-        });
+        let bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("shading_upsample_bg"),
+                layout: &self.bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(vbuf_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&self.color_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&self.id_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: self.ubo.as_entire_binding(),
+                    },
+                ],
+            },
+        );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("shading_upsample_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

@@ -414,6 +414,10 @@ pub(in crate::panels) fn open_action(path: &Path) -> EditorAction {
         EditorAction::OpenInputMap {
             path: path.to_path_buf(),
         }
+    } else if crate::image_view::is_image(path) {
+        EditorAction::OpenImageView {
+            path: path.to_path_buf(),
+        }
     } else {
         EditorAction::OpenInIde {
             file: path.to_path_buf(),

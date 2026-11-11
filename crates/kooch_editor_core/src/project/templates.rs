@@ -32,9 +32,10 @@ edition = "2024"
 # component and nothing ever falls. `gravity` is the same story one level
 # up — a `PointGravity` is authorable, draws its gizmo, and pulls on
 # nothing. `camera` is the third: a `VirtualCamera` that moves no camera.
+# `vello` is the UI, its SVGs drawn on the GPU so they stay sharp at any size.
 [features]
 default = ["game"]
-game = ["kooch/physics", "kooch/gravity", "kooch/camera", "kooch/audio"]
+game = ["kooch/physics", "kooch/gravity", "kooch/camera", "kooch/audio", "kooch/vello"]
 # `dynamic` is what lets the standalone editor load this project's
 # component types without compiling them; `remote` is how it drives them
 # over a local socket; `physics-debug-render` compiles the solver walk the

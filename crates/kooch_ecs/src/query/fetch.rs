@@ -234,6 +234,7 @@ impl<T: Send + Sync + 'static> WorldQuery for &mut T {
         {
             // SAFETY: the column was built for `T`, and the borrow tracker guarantees this query
             // holds the only access to this component this frame.
+            column.stamp(row.index());
             return unsafe { column.value_ptr::<T>(row.index()).map(|p| &mut *p) };
         }
         let storage = fetch.storage?;

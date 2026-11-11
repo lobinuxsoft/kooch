@@ -35,6 +35,32 @@ impl GpuTexture {
         texture
     }
 
+    /// Overwrites level 0 with `rgba`, the texture's size; a short buffer is ignored.
+    pub fn write_level0(&self, queue: &wgpu::Queue, rgba: &[u8]) {
+        let bytes_per_row = self.size.width * 4;
+        if rgba.len() < (bytes_per_row * self.size.height) as usize {
+            return;
+        }
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(self.size.height),
+            },
+            wgpu::Extent3d {
+                depth_or_array_layers: 1,
+                ..self.size
+            },
+        );
+    }
+
     fn allocate(device: &wgpu::Device, queue: &wgpu::Queue, image: &Image, levels: u32) -> Self {
         let size = wgpu::Extent3d {
             width: image.width,

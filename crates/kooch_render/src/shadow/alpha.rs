@@ -321,9 +321,11 @@ impl ShadowAlpha {
                     layer as u64 * self.screen_stride,
                     bytemuck::bytes_of(&BakeScreen::new(slot, time, ALPHA_SIDE as f32)),
                 );
-                let textures = materials
-                    .texture_pool()
-                    .material_bind_group(device, &materials.slot_texture_refs(slot));
+                let textures = materials.texture_pool().material_bind_group(
+                    device,
+                    slot,
+                    &materials.slot_texture_refs(slot),
+                );
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("shadow_alpha_bake"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {

@@ -57,6 +57,14 @@ pub fn prune_trees(resources: &mut Resources) {
     let stopped = resources
         .insert(WasPlaying(playing))
         .is_some_and(|was| was.0 && !playing);
+    // A tree loses its document only when something is removed or despawned.
+    let since = kooch_ecs::component::last_run(resources);
+    let removed = resources
+        .get::<kooch_ecs::component::ComponentRegistry>()
+        .is_none_or(|registry| registry.removed_at() > since);
+    if !stopped && !removed {
+        return;
+    }
     let mut documents = Vec::new();
     Query::<&UiDocument>::new(resources).for_each_entity(|entity, _| documents.push(entity));
     if let Some(trees) = resources.get_mut::<UiTrees>() {

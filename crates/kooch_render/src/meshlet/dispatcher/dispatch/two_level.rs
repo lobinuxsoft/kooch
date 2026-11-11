@@ -42,12 +42,8 @@ impl MeshletCull {
             self.chunk_capacity,
         );
 
-        let params_binding = self.stage_params(queue, cull_params);
-        queue.write_buffer(
-            &self.scene_params_buffer,
-            0,
-            bytemuck::bytes_of(scene_params),
-        );
+        let params = self.stage_params(queue, cull_params);
+        self.stage_scene(queue, scene_params);
         encoder.clear_buffer(&self.visible_count, 0, None);
         encoder.clear_buffer(&self.group_max_err, 0, None);
         if self.rejects {
@@ -57,95 +53,14 @@ impl MeshletCull {
         // 🔴 The chunk HEADER only.
         encoder.clear_buffer(&self.chunks, 0, Some(CHUNK_HEADER_WORDS * 4));
 
-        let cull_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_cull_chunked_cull_bg"),
-            layout: &pipelines.cull_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(params_binding.clone()),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: pool.meshlets.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.visible_meshlets.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.visible_count.as_entire_binding(),
-                },
-            ],
-        });
-        let pool_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_cull_chunked_pool_bg"),
-            layout: &pipelines.pool_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: pool.mesh_descriptors.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: pool.meshlets.as_entire_binding(),
-                },
-            ],
-        });
-        let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_cull_chunked_scene_bg"),
-            layout: &pipelines.scene_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: scene.instance_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.scene_params_buffer.as_entire_binding(),
-                },
-            ],
-        });
-        let chunked_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_cull_chunked_bg"),
-            layout: &pipelines.chunked_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.group_max_err.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: pool.mesh_bounds.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.chunks.as_entire_binding(),
-                },
-            ],
-        });
-        let debug_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_cull_chunked_debug_bg"),
-            layout: &pipelines.debug_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.reject_reasons.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.stage_counters.as_entire_binding(),
-                },
-            ],
-        });
+        let binds = self.binds(pipelines, device, pool, scene);
 
         let bind = |pass: &mut wgpu::ComputePass<'_>| {
-            pass.set_bind_group(0, &cull_bg, &[]);
-            pass.set_bind_group(1, &pool_bg, &[]);
-            pass.set_bind_group(2, &scene_bg, &[]);
-            pass.set_bind_group(3, &chunked_bg, &[]);
-            pass.set_bind_group(4, &debug_bg, &[]);
+            pass.set_bind_group(0, &binds.cull, &[params]);
+            pass.set_bind_group(1, &binds.pool, &[]);
+            pass.set_bind_group(2, &binds.scene, &[]);
+            pass.set_bind_group(3, &binds.chunked, &[]);
+            pass.set_bind_group(4, &binds.debug, &[]);
         };
 
         {

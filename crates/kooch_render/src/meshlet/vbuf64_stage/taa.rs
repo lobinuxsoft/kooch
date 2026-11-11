@@ -68,6 +68,8 @@ struct History {
 }
 
 pub(super) struct Taa {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     pipeline: wgpu::RenderPipeline,
     bgl: wgpu::BindGroupLayout,
     ubo: wgpu::Buffer,
@@ -198,6 +200,7 @@ impl Taa {
 
         let (color, color_views, reproject, reproject_views) = create_targets(device, size);
         Self {
+            kept: Default::default(),
             pipeline,
             bgl,
             ubo,
@@ -266,44 +269,49 @@ impl Taa {
             }),
         );
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("taa_bind_group"),
-            layout: &self.bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(current),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&self.color_views[previous]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&self.reproject_views[previous]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(motion),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(depth),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::Sampler(&self.nearest),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::Sampler(&self.linear),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: self.ubo.as_entire_binding(),
-                },
-            ],
-        });
+        let bind_group = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("taa_bind_group"),
+                layout: &self.bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(current),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&self.color_views[previous]),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(
+                            &self.reproject_views[previous],
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(motion),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(depth),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::Sampler(&self.nearest),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::Sampler(&self.linear),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: self.ubo.as_entire_binding(),
+                    },
+                ],
+            },
+        );
 
         {
             fn attachment(view: &wgpu::TextureView) -> Option<wgpu::RenderPassColorAttachment<'_>> {

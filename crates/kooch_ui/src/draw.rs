@@ -4,8 +4,8 @@ use glam::{Mat3, Vec2};
 use kooch_core::resource::Resources;
 use kooch_ecs::query::Query;
 use kooch_ecs::{
-    AtlasUpload, Entity, QUAD_GLYPH, QUAD_IMAGE, UiCurve, UiDrawList, UiMask, UiMaterial, UiMirror,
-    UiParam, UiQuad, UiShader, ViewSize,
+    AtlasUpload, Entity, MASK_VECTOR, QUAD_GLYPH, QUAD_IMAGE, QUAD_VECTOR, UiCurve, UiDrawList,
+    UiMask, UiMaterial, UiMirror, UiParam, UiQuad, UiShader, ViewSize,
 };
 
 use crate::layout::CANVAS_HEIGHT;
@@ -76,6 +76,16 @@ fn clear(list: &mut UiDrawList) {
 
 fn upload(atlas: &mut GlyphAtlas, list: &mut UiDrawList) {
     list.atlas_side = atlas.side();
+    list.vector_side = atlas.vector_side();
+    list.vectors = atlas.vectors();
+    // Appended, as the glyph upload is grown: the renderer takes them when it draws.
+    let (sources, texts, fonts) = atlas.take_sources();
+    list.vector_sources.extend(sources);
+    list.vector_texts.extend(texts);
+    list.vector_fonts.extend(fonts);
+    let (videos, video_sources) = atlas.take_videos();
+    list.videos = videos;
+    list.video_sources.extend(video_sources);
     // Grown over one not uploaded yet, not replacing it: a frame the renderer skipped would
     // otherwise lose its glyphs.
     if let Some(dirty) = atlas.take_dirty() {
@@ -165,7 +175,7 @@ fn push_tree(
             .image(node)
             .zip(tree.rect(node))
             .and_then(|(image, rect)| {
-                let shown = crate::images::shown_size(rect.size, scale);
+                let shown = crate::images::shown_size(rect.size * tree.zoom_of(node), scale);
                 Some((image, atlas.image(image.guid, shown)?))
             });
         let plain = shaded.is_none();
@@ -184,7 +194,7 @@ fn push_tree(
                 border: (border * scale).round(),
                 uv_min: [u0, v0],
                 uv_size: [u1 - u0, v1 - v0],
-                flags: if image.is_some() { QUAD_IMAGE } else { 0 },
+                flags: image.map_or(0, |(_, packed)| image_flags(packed)),
                 ..UiQuad::default()
             };
             push_material(tree, node, shader, quad, list);
@@ -203,13 +213,36 @@ fn push_tree(
                 ..UiQuad::default()
             });
         }
-        if let Some((image, packed)) = image.filter(|_| plain) {
-            let min = (rect.min * scale).round();
-            let max = ((rect.min + rect.size) * scale).round();
-            push_image(image, packed, min, max, scale, clip, &mut list.quads);
+        let min = (rect.min * scale).round();
+        let max = ((rect.min + rect.size) * scale).round();
+        let cropped = image
+            .filter(|(image, _)| plain && image.slice_in(atlas) == [0.0; 4])
+            .and_then(|(image, _)| {
+                let crop = crate::crops::crop_of(tree, node, scale)?;
+                Some((image, crop, atlas.crop(image.guid, crop)))
+            });
+        match cropped {
+            // Off the view: nothing of it is drawn.
+            Some((_, crop, _)) if crop.size.contains(&0) => {}
+            Some((image, crop, Some(packed))) => {
+                push_crop(image, packed, crop, min, clip, &mut list.quads);
+            }
+            _ => {
+                if let Some((image, packed)) = image.filter(|_| plain) {
+                    let image = UiImage {
+                        slice: Some(image.slice_in(atlas)),
+                        ..image
+                    };
+                    push_image(image, packed, min, max, scale, clip, &mut list.quads);
+                }
+            }
         }
+        let mut set = list.quads.len()..list.quads.len();
         while next < glyphs.len() && glyphs[next].node == index {
             let glyph = glyphs[next];
+            if glyph.bent {
+                set.end = list.quads.len() + 1;
+            }
             list.quads.push(UiQuad {
                 min: glyph.min,
                 size: glyph.size,
@@ -217,7 +250,10 @@ fn push_tree(
                 color: paint.text,
                 uv_min: [glyph.uv_min[0] as u32, glyph.uv_min[1] as u32],
                 uv_size: [glyph.uv_size[0] as u32, glyph.uv_size[1] as u32],
-                flags: QUAD_GLYPH,
+                flags: match glyph.vector {
+                    true => QUAD_IMAGE | QUAD_VECTOR,
+                    false => QUAD_GLYPH,
+                },
                 ..UiQuad::default()
             });
             next += 1;
@@ -227,6 +263,10 @@ fn push_tree(
             quad.mask = own;
             quad.curve = curve;
             quad.mirror = own_turn.index;
+        }
+        // Glyphs already set along the curve: bent again they would turn twice.
+        for quad in list.quads.get_mut(set).into_iter().flatten() {
+            quad.curve = 0;
         }
     }
 }
@@ -246,7 +286,7 @@ fn push_masks(
         .mask(node)
         .zip(tree.rect(node))
         .and_then(|(mask, rect)| {
-            let shown = crate::images::shown_size(rect.size, scale);
+            let shown = crate::images::shown_size(rect.size * tree.zoom_of(node), scale);
             Some((mask, atlas.image(mask.guid, shown)?))
         });
     let fill_from = tree.fill_from(node);
@@ -263,7 +303,9 @@ fn push_masks(
             parent: around,
             uv_min: [x0, y0],
             uv_size: [x1 - x0, y1 - y0],
-            luminance: image.is_some_and(|(mask, _)| mask.luminance).into(),
+            luminance: image.map_or(0, |(mask, packed)| {
+                u32::from(mask.luminance) | if packed.vector { MASK_VECTOR } else { 0 }
+            }),
             fill_from,
             fill: tree.param(node, "fill").map_or(1.0, |value| value[0]),
             pad: 0.0,
@@ -445,6 +487,36 @@ fn push_thumb(
     }
 }
 
+/// One quad over the part of the node `crop` holds, at its own pixels (#1880).
+fn push_crop(
+    image: UiImage,
+    packed: AtlasImage,
+    crop: crate::crops::Crop,
+    min: Vec2,
+    clip: [f32; 4],
+    out: &mut Vec<UiQuad>,
+) {
+    let [u0, v0, u1, v1] = packed.rect;
+    out.push(UiQuad {
+        min: [min.x + crop.from[0] as f32, min.y + crop.from[1] as f32],
+        size: crop.size.map(|v| v as f32),
+        clip,
+        color: image.tint,
+        uv_min: [u0, v0],
+        uv_size: [u1 - u0, v1 - v0],
+        flags: image_flags(packed),
+        ..UiQuad::default()
+    });
+}
+
+/// Which texture the quad samples.
+fn image_flags(packed: AtlasImage) -> u32 {
+    match packed.vector {
+        true => QUAD_IMAGE | QUAD_VECTOR,
+        false => QUAD_IMAGE,
+    }
+}
+
 /// Nine quads when sliced, so the corners keep their size and the middle stretches; one when not.
 /// A slice wider than the rect is squeezed to fit, as CSS's `border-image` does. The slice is in
 /// the file's units, which `density` turns into texels.
@@ -459,7 +531,7 @@ fn push_image(
 ) {
     let [u0, v0, u1, v1] = packed.rect;
     let [dx, dy] = packed.density.map(|d| d.max(f32::EPSILON));
-    let [top, right, bottom, left] = image.slice.map(|edge| edge.max(0.0));
+    let [top, right, bottom, left] = image.slice.unwrap_or_default().map(|edge| edge.max(0.0));
     let (left, right) = squeeze(left, right, (u1 - u0) as f32 / dx);
     let (top, bottom) = squeeze(top, bottom, (v1 - v0) as f32 / dy);
     let (screen_left, screen_right) = squeeze(left * scale, right * scale, max.x - min.x);
@@ -481,7 +553,7 @@ fn push_image(
                 color: image.tint,
                 uv_min: [us[column], vs[row]],
                 uv_size: [us[column + 1] - us[column], vs[row + 1] - vs[row]],
-                flags: QUAD_IMAGE,
+                flags: image_flags(packed),
                 ..UiQuad::default()
             });
         }

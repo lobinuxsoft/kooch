@@ -90,6 +90,17 @@ impl MeshletRenderStage {
                 marker.set_pool(device, settings.pool);
             }
         }
+        self.lamp_pace.update(
+            device,
+            queue,
+            self.lights.uploaded(),
+            eye,
+            page_frame(resources),
+        );
+        let lamps = self
+            .lamp_pace
+            .buffer()
+            .unwrap_or(self.lights.light_buffer());
         let marker = self.page_marker.get_or_insert_with(|| {
             let mut marker =
                 PageMarker::new(device, PageConfig::default(), ClipmapConfig::default());
@@ -138,6 +149,7 @@ impl MeshletRenderStage {
                 queue,
                 encoder,
                 &self.lights,
+                lamps,
                 &view.depth_sample_view,
                 clip_from_world.inverse(),
                 eye,
@@ -254,6 +266,11 @@ impl MeshletRenderStage {
             scene_params.group_capacity,
             scene_params.chunk_capacity,
         );
+        let lamps = &self
+            .lamp_pace
+            .buffer()
+            .unwrap_or(self.lights.light_buffer())
+            .clone();
         raster.record(
             device,
             queue,
@@ -269,8 +286,8 @@ impl MeshletRenderStage {
             eye,
             sun,
             sun_shadow_layers,
-            self.lights.uploaded(),
-            self.lights.light_buffer(),
+            self.lamp_pace.lamps(),
+            lamps,
             &self.moved_casters,
             lod_target,
             self.shadow_alpha.bind_group(),
@@ -287,6 +304,7 @@ impl MeshletRenderStage {
                 slots: page_pool.slots(),
                 work: page_pool.work(),
                 atlas: raster.atlas(),
+                lamps,
             },
         );
     }

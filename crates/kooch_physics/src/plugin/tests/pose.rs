@@ -127,3 +127,47 @@ fn a_parented_scale_multiplies() {
         other => panic!("a sphere became {other:?}"),
     }
 }
+
+/// After the first sync only bodies written since are re-read (#1868): a static body the author
+/// moves still reaches the solver, through the `GlobalTransform` propagation stamped.
+#[test]
+fn a_moved_body_is_reread() {
+    use kooch_core::change_tick::{SystemTick, advance};
+    let frame = |resources: &mut Resources, last_run: u64| {
+        let this_run = advance();
+        resources.insert(SystemTick { last_run, this_run });
+        pre_physics(resources);
+        advance();
+        this_run
+    };
+    let mut resources = world();
+    let still = KIND_STATIC;
+    let body = |kind| PhysicsBody {
+        kind,
+        mass: 0.0,
+        ..Default::default()
+    };
+    let moved = spawn_body(
+        &mut resources,
+        Transform::default(),
+        body(still),
+        Collider::default(),
+    );
+    let other = spawn_body(
+        &mut resources,
+        Transform::from_position(Vec3::X * 5.0),
+        body(still),
+        Collider::default(),
+    );
+    let last = frame(&mut resources, 0);
+
+    insert(
+        &mut resources,
+        moved,
+        Transform::from_position(Vec3::Y * 3.0),
+    );
+    frame(&mut resources, last);
+
+    assert_eq!(solver_position(&resources, moved), Vec3::Y * 3.0);
+    assert_eq!(solver_position(&resources, other), Vec3::X * 5.0);
+}

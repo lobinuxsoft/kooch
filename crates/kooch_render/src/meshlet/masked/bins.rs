@@ -83,19 +83,25 @@ impl MaskedRaster {
                 resource: buffer.as_entire_binding(),
             })
             .collect();
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("masked_bins_bg"),
-            layout: &self.layouts.bins,
-            entries: &entries,
-        });
-        let dispatch = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("masked_dispatch_bg"),
-            layout: &self.layouts.dispatch,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: bins.dispatch.as_entire_binding(),
-            }],
-        });
+        let group = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("masked_bins_bg"),
+                layout: &self.layouts.bins,
+                entries: &entries,
+            },
+        );
+        let dispatch = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("masked_dispatch_bg"),
+                layout: &self.layouts.dispatch,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: bins.dispatch.as_entire_binding(),
+                }],
+            },
+        );
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("masked_bins_prepare"),
@@ -154,27 +160,36 @@ impl MaskedRaster {
         if let Some(view) = vbuf64 {
             frame.push(entry(5, wgpu::BindingResource::TextureView(view)));
         }
-        let frame_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("masked_frame_bg"),
-            layout: &self.layouts.frame,
-            entries: &frame,
-        });
-        let materials_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("masked_materials_bg"),
-            layout: &self.layouts.materials,
-            entries: &[
-                entry(0, materials.pool().buffer().as_entire_binding()),
-                entry(1, materials.pool().values().as_entire_binding()),
-            ],
-        });
-        let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("masked_scene_bg"),
-            layout: &self.layouts.scene,
-            entries: &[
-                entry(0, cull.visible_meshlets_buffer().as_entire_binding()),
-                entry(1, scene.instance_buffer().as_entire_binding()),
-            ],
-        });
+        let frame_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("masked_frame_bg"),
+                layout: &self.layouts.frame,
+                entries: &frame,
+            },
+        );
+        let materials_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("masked_materials_bg"),
+                layout: &self.layouts.materials,
+                entries: &[
+                    entry(0, materials.pool().buffer().as_entire_binding()),
+                    entry(1, materials.pool().values().as_entire_binding()),
+                ],
+            },
+        );
+        let scene_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("masked_scene_bg"),
+                layout: &self.layouts.scene,
+                entries: &[
+                    entry(0, cull.visible_meshlets_buffer().as_entire_binding()),
+                    entry(1, scene.instance_buffer().as_entire_binding()),
+                ],
+            },
+        );
         pass.set_bind_group(1, meshlet_bg, &[]);
         pass.set_bind_group(2, &materials_bg, &[]);
         pass.set_bind_group(3, &scene_bg, &[]);
@@ -183,7 +198,8 @@ impl MaskedRaster {
             let offset = (bin as u64 * self.screen_stride) as u32;
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &frame_bg, &[offset]);
-            let group = textures.material_bind_group(device, &materials.slot_texture_refs(*slot));
+            let group =
+                textures.material_bind_group(device, *slot, &materials.slot_texture_refs(*slot));
             pass.set_bind_group(4, &group, &[]);
             pass.draw_indirect(&bins.args, bin as u64 * ARGS_BYTES);
         }

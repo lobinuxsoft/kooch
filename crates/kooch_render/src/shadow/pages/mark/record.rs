@@ -12,6 +12,8 @@ impl PageMarker {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         lights: &GpuLights,
+        // The lights as the pages see them (see `pace`); the grid above still clusters the real ones.
+        lamps: &wgpu::Buffer,
         depth: &wgpu::TextureView,
         world_from_clip: Mat4,
         eye: Vec3,
@@ -147,7 +149,7 @@ impl PageMarker {
                 buffer_entry(0, lights.clusters().view_uniform()),
                 buffer_entry(1, lights.clusters().cells()),
                 buffer_entry(2, lights.clusters().indices()),
-                buffer_entry(3, lights.light_buffer()),
+                buffer_entry(3, lamps),
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::TextureView(depth),

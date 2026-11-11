@@ -97,10 +97,13 @@ pub fn computed(style: &ResolvedStyle, property: &str) -> Option<String> {
             .curve
             .as_ref()
             .map_or_else(|| "none".to_owned(), crate::UiPath::written),
-        "-kooch-slice" => {
-            let [top, right, bottom, left] = style.slice.map(number);
-            format!("{top}px {right}px {bottom}px {left}px")
-        }
+        "-kooch-slice" => match style.slice {
+            Some(slice) => {
+                let [top, right, bottom, left] = slice.map(number);
+                format!("{top}px {right}px {bottom}px {left}px")
+            }
+            None => "image".to_owned(),
+        },
         _ => return None,
     })
 }

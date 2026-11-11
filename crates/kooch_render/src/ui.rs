@@ -33,9 +33,17 @@ pub struct UiPass {
     mirrors: wgpu::Buffer,
     mirrors_capacity: u64,
     started: std::time::Instant,
+    vectors: vector::UiVectors,
+    videos: video::UiVideos,
+    offset: [f32; 2],
 }
 
+mod buffers;
 mod materials;
+mod vector;
+mod video;
+
+use buffers::{curves_buffer, instance_buffer, masks_buffer, mirrors_buffer, values_buffer};
 
 use materials::UiMaterials;
 pub use materials::validate_ui;
@@ -125,6 +133,16 @@ impl UiPass {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -135,7 +153,7 @@ impl UiPass {
         let pipeline = pipeline(device, &pipeline_layout, format, &module, "fs_ui");
         let screen = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ui_screen"),
-            size: 16,
+            size: 32,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -147,12 +165,14 @@ impl UiPass {
         let curves = curves_buffer(device, curves_capacity);
         let mirrors_capacity = 4;
         let mirrors = mirrors_buffer(device, mirrors_capacity);
+        let vectors = vector::UiVectors::new(device);
         let buffers = Buffers {
             screen: &screen,
             values: &values,
             masks: &masks,
             curves: &curves,
             mirrors: &mirrors,
+            vectors: vectors.view(),
         };
         let (atlas, bind) = atlas_and_bind(device, &layout, buffers, 1);
         let capacity = 256;
@@ -177,7 +197,15 @@ impl UiPass {
             mirrors,
             mirrors_capacity,
             started: std::time::Instant::now(),
+            vectors,
+            videos: Default::default(),
+            offset: [0.0; 2],
         }
+    }
+
+    /// The layout pixel drawn at the target's top-left: a target showing part of a larger layout.
+    pub fn set_offset(&mut self, offset: [f32; 2]) {
+        self.offset = offset;
     }
 
     /// Uploads what changed and draws `list` over `target`, or over transparent black when `clear`.
@@ -193,6 +221,7 @@ impl UiPass {
         list: &mut UiDrawList,
         clear: bool,
     ) {
+        let rewritten = list.atlas_upload.is_some() || list.atlas_side != self.atlas_side;
         if list.atlas_side != self.atlas_side && list.atlas_side > 0 {
             let buffers = self.buffers();
             let (atlas, bind) = atlas_and_bind(device, &self.layout, buffers, list.atlas_side);
@@ -222,6 +251,11 @@ impl UiPass {
                 },
             );
         }
+        self.videos
+            .prepare(device, queue, encoder, list, &self.atlas, rewritten);
+        if self.vectors.prepare(device, queue, encoder, list) {
+            self.bind = bind_group(device, &self.layout, self.buffers(), &self.atlas);
+        }
         if list.quads.is_empty() && !clear {
             return;
         }
@@ -242,6 +276,11 @@ impl UiPass {
             &self.screen,
             0,
             bytemuck::cast_slice(&[size.0 as f32, size.1 as f32, time, 0.0]),
+        );
+        queue.write_buffer(
+            &self.screen,
+            16,
+            bytemuck::cast_slice(&[self.offset[0], self.offset[1], 0.0, 0.0]),
         );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("ui"),
@@ -297,6 +336,7 @@ impl UiPass {
             masks: &self.masks,
             curves: &self.curves,
             mirrors: &self.mirrors,
+            vectors: self.vectors.view(),
         }
     }
 
@@ -366,7 +406,7 @@ fn draw_quads(pass: &mut wgpu::RenderPass<'_>, quads: &[UiQuad], range: Range<u3
     }
 }
 
-/// What the bind group names besides the atlas.
+/// What the bind group names besides the glyph and image atlas.
 #[derive(Clone, Copy)]
 struct Buffers<'a> {
     screen: &'a wgpu::Buffer,
@@ -374,6 +414,7 @@ struct Buffers<'a> {
     masks: &'a wgpu::Buffer,
     curves: &'a wgpu::Buffer,
     mirrors: &'a wgpu::Buffer,
+    vectors: &'a wgpu::TextureView,
 }
 
 /// The pipeline every UI draw shares but for its fragment entry.
@@ -445,51 +486,6 @@ pub fn draw_frame(
     resources.insert(list);
 }
 
-fn instance_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ui_instances"),
-        size: capacity * size_of::<UiQuad>() as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
-
-fn values_buffer(device: &wgpu::Device, blocks: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ui_values"),
-        size: blocks * MAX_PARAM_SCALARS as u64 * size_of::<f32>() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
-
-fn masks_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ui_masks"),
-        size: count * size_of::<UiMask>() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
-
-fn curves_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ui_curves"),
-        size: count * size_of::<UiCurve>() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
-
-fn mirrors_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ui_mirrors"),
-        size: count * size_of::<UiMirror>() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
-
 fn atlas_and_bind(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
@@ -508,7 +504,10 @@ fn atlas_and_bind(
         dimension: wgpu::TextureDimension::D2,
         // Not sRGB: the colours are display-space already, like the surface they land on.
         format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        // A video's frames are drawn into its slot (#1793).
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
     });
     let bind = bind_group(device, layout, buffers, &atlas);
@@ -559,6 +558,10 @@ fn bind_group(
             wgpu::BindGroupEntry {
                 binding: 6,
                 resource: buffers.mirrors.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: wgpu::BindingResource::TextureView(buffers.vectors),
             },
         ],
     })

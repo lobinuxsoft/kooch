@@ -28,6 +28,11 @@ pub(super) fn handle_asset_op(action: &EditorAction, resources: &mut Resources) 
             index,
         } => create_data_asset(resources, folder, name, *index),
         EditorAction::CreateFolder { parent, name } => create_folder(parent, name),
+        EditorAction::RescanAssets => force_rescan(resources),
+        EditorAction::OpenImageView { path } => crate::image_view::open(resources, path),
+        EditorAction::SetImageSlice { guid, slice } => {
+            crate::image_view::set_slice(resources, *guid, *slice)
+        }
         EditorAction::CreateMaterial {
             folder,
             name,
@@ -320,6 +325,12 @@ pub(super) fn force_rescan(resources: &mut Resources) {
     if let Some(last) = resources.get_mut::<LastScannedProject>() {
         last.root = None;
     }
+}
+
+/// [`force_rescan`] run now rather than next frame, for a caller that needs the guid this frame.
+pub(crate) fn rescan_now(resources: &mut Resources) {
+    force_rescan(resources);
+    crate::systems::scan_project_assets_system(resources);
 }
 
 /// Returns a non-colliding path in `dir` for `name`, appending `_1`,

@@ -34,70 +34,11 @@ impl MeshletCull {
             "dispatch_scene_pool called with an empty pool",
         );
 
-        let params_binding = self.stage_params(queue, cull_params);
-        queue.write_buffer(
-            &self.scene_params_buffer,
-            0,
-            bytemuck::bytes_of(scene_params),
-        );
+        let params = self.stage_params(queue, cull_params);
+        self.stage_scene(queue, scene_params);
         encoder.clear_buffer(&self.visible_count, 0, None);
 
-        // The pool path leaves the single-mesh `descriptors` binding unbound at the WGSL level
-        // (Naga drops it from the entry's required set), but the BGL still requires a valid
-        // resource there.
-        let cull_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_cull_scene_pool_cull_bg"),
-            layout: &pipelines.cull_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(params_binding.clone()),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: pool.meshlets.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.visible_meshlets.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.visible_count.as_entire_binding(),
-                },
-            ],
-        });
-        // Two-entry bind group matching the cull-only pool BGL (the
-        // full GpuGlobalMeshPool::bind_group covers the rasterizer's
-        // 5-entry layout).
-        let pool_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_cull_scene_pool_pool_bg"),
-            layout: &pipelines.pool_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: pool.mesh_descriptors.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: pool.meshlets.as_entire_binding(),
-                },
-            ],
-        });
-        let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet_cull_scene_pool_scene_bg"),
-            layout: &pipelines.scene_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: scene.instance_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.scene_params_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let binds = self.binds(pipelines, device, pool, scene);
 
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -105,9 +46,9 @@ impl MeshletCull {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&pipelines.pipeline_scene_pool);
-            pass.set_bind_group(0, &cull_bg, &[]);
-            pass.set_bind_group(1, &pool_bg, &[]);
-            pass.set_bind_group(2, &scene_bg, &[]);
+            pass.set_bind_group(0, &binds.cull, &[params]);
+            pass.set_bind_group(1, &binds.pool, &[]);
+            pass.set_bind_group(2, &binds.scene, &[]);
             let (groups_x, groups_y) = tiled_workgroups(total_threads, 64);
             pass.dispatch_workgroups(groups_x, groups_y, 1);
         }

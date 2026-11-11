@@ -250,6 +250,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "av-data"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fca67ba5d317924c02180c576157afd54babe48a76ebc66ce6d34bb8ba08308e"
+dependencies = [
+ "byte-slice-cast",
+ "bytes",
+ "num-derive 0.4.2",
+ "num-rational",
+ "num-traits",
+]
+
+[[package]]
 name = "base64"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -357,6 +370,12 @@ name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
+
+[[package]]
+name = "byte-slice-cast"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7575182f7272186991736b70173b0ea045398f984bf5ebbb3804736ce1330c9d"
 
 [[package]]
 name = "bytemuck"
@@ -468,6 +487,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cfg-expr"
+version = "0.20.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ba9e9ec16c447027685b1f897b720e18e9a8afd00bd7332c483537e38086c9f"
+dependencies = [
+ "smallvec",
+ "target-lexicon",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -535,6 +564,12 @@ checksum = "2ec7c5eb7a16992b1904d76c517d170ab353b0e0b3d5a0c81a8a0cd1037893cf"
 dependencies = [
  "bytemuck",
 ]
+
+[[package]]
+name = "color_quant"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 
 [[package]]
 name = "combine"
@@ -817,6 +852,28 @@ name = "data-url"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
+
+[[package]]
+name = "dav1d"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ee89cb860616069c67520dcd66cacdb900b57c799f634a0eb6d91f6e2a82b61"
+dependencies = [
+ "av-data",
+ "bitflags 2.13.2",
+ "dav1d-sys",
+ "static_assertions",
+]
+
+[[package]]
+name = "dav1d-sys"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3c91aea6668645415331133ed6f8ddf0e7f40160cd97a12d59e68716a58704b"
+dependencies = [
+ "libc",
+ "system-deps",
+]
 
 [[package]]
 name = "dbus"
@@ -1294,14 +1351,14 @@ dependencies = [
 
 [[package]]
 name = "example_plugin"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "kooch_plugin_api",
 ]
 
 [[package]]
 name = "example_post_process"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "kooch_plugin_api",
  "kooch_plugin_render",
@@ -1485,6 +1542,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e"
 
 [[package]]
+name = "futures-intrusive"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d930c203dd0b6ff06e0201a4a2fe9149b43c684fd4420555b26d21b1a02956f"
+dependencies = [
+ "futures-core",
+ "lock_api",
+ "parking_lot",
+]
+
+[[package]]
 name = "futures-task"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1588,6 +1656,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2eecf2d5dc9b66b732b97707a0210906b1d30523eb773193ab777c0c84b3e8d5"
 dependencies = [
  "polyval",
+]
+
+[[package]]
+name = "gif"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee8cfcc411d9adbbaba82fb72661cc1bcca13e8bba98b364e62b2dba8f960159"
+dependencies = [
+ "color_quant",
+ "weezl",
 ]
 
 [[package]]
@@ -1784,6 +1862,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b17e70c989c36bad147b27a58d148c0741c51448aa5653436547323e524d0ab"
 dependencies = [
  "euclid",
+ "svg_fmt",
 ]
 
 [[package]]
@@ -2092,6 +2171,8 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "color_quant",
+ "gif",
  "moxcms",
  "num-traits",
  "png",
@@ -2305,7 +2386,7 @@ dependencies = [
 
 [[package]]
 name = "kooch"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2337,7 +2418,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_audio"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "glam 0.33.12",
  "kira",
@@ -2348,7 +2429,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_blockmesh"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "glam 0.33.12",
  "kooch_core",
@@ -2363,7 +2444,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_camera"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "glam 0.33.12",
  "kooch_core",
@@ -2376,7 +2457,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_character"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "glam 0.33.12",
  "kooch_core",
@@ -2388,12 +2469,13 @@ dependencies = [
 
 [[package]]
 name = "kooch_core"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "bytemuck",
  "dlss_wgpu",
  "encase",
  "glam 0.33.12",
+ "image",
  "inventory",
  "kooch_pack",
  "kooch_plugin_api",
@@ -2417,7 +2499,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_ecs"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2434,7 +2516,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_ecs_macros"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2443,7 +2525,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_editor"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "kooch_core",
  "kooch_ecs",
@@ -2456,7 +2538,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_editor_core"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2507,7 +2589,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_gizmos"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2520,7 +2602,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_gizmos_handles"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "glam 0.33.12",
  "kooch_gizmos",
@@ -2528,7 +2610,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_gravity"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2541,7 +2623,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_input"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "gilrs",
  "glam 0.33.12",
@@ -2557,7 +2639,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_lighting"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2571,7 +2653,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_pack"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "aes-gcm",
  "hkdf",
@@ -2583,24 +2665,25 @@ dependencies = [
 
 [[package]]
 name = "kooch_physics"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "glam 0.33.12",
  "kooch_core",
  "kooch_ecs",
  "kooch_physics",
  "rapier3d",
+ "rayon",
  "slotmap",
  "tracing",
 ]
 
 [[package]]
 name = "kooch_plugin_api"
-version = "0.98.168"
+version = "0.98.180"
 
 [[package]]
 name = "kooch_plugin_render"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "kooch_plugin_api",
  "wgpu",
@@ -2608,7 +2691,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_remote"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "base64 0.23.1",
  "bytemuck",
@@ -2623,7 +2706,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_render"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "base64 0.23.1",
  "bytemuck",
@@ -2636,6 +2719,7 @@ dependencies = [
  "kooch_core",
  "kooch_ecs",
  "kooch_lighting",
+ "kooch_video",
  "meshopt",
  "metis",
  "naga",
@@ -2647,12 +2731,13 @@ dependencies = [
  "slotmap",
  "tracing",
  "tracing-subscriber",
+ "vello_svg",
  "wgpu",
 ]
 
 [[package]]
 name = "kooch_ui"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "cssparser",
  "cssparser-color",
@@ -2663,6 +2748,7 @@ dependencies = [
  "kooch_core",
  "kooch_ecs",
  "kooch_input",
+ "kooch_video",
  "parley",
  "ron",
  "roxmltree",
@@ -2674,8 +2760,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kooch_video"
+version = "0.98.180"
+dependencies = [
+ "dav1d",
+ "matroska-demuxer",
+ "tracing",
+ "yuv",
+]
+
+[[package]]
 name = "kooch_window"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "image",
  "kooch_core",
@@ -2686,7 +2782,7 @@ dependencies = [
 
 [[package]]
 name = "kooch_world"
-version = "0.98.168"
+version = "0.98.180"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
@@ -2878,6 +2974,12 @@ dependencies = [
  "autocfg",
  "rawpointer",
 ]
+
+[[package]]
+name = "matroska-demuxer"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cbf36668475a45a46bf8710e927e7458b7c387e7c46ddb5457ae0c71cf5e817"
 
 [[package]]
 name = "memchr"
@@ -4905,6 +5007,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "svg_fmt"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0193cc4331cfd2f3d2011ef287590868599a2f33c3e69bc22c1a3d3acf9e02fb"
+
+[[package]]
 name = "svgtypes"
 version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5096,6 +5204,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "system-deps"
+version = "7.0.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "396a35feb67335377e0251fcbc1092fc85c484bd4e3a7a54319399da127796e7"
+dependencies = [
+ "cfg-expr",
+ "heck",
+ "pkg-config",
+ "toml",
+ "version-compare",
+]
+
+[[package]]
 name = "taffy"
 version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5106,6 +5227,12 @@ dependencies = [
  "slotmap",
  "smallvec",
 ]
+
+[[package]]
+name = "target-lexicon"
+version = "0.13.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
 name = "termcolor"
@@ -5733,6 +5860,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1bddf1187be692e79c5ffeab891132dfb0f236ed36a43c7ed39f1165ee20191"
 
 [[package]]
+name = "vello"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "913abde56cab6131b62c0cc69b1a93b671d3c34b3097beb3714fd1dc93be8115"
+dependencies = [
+ "bytemuck",
+ "futures-intrusive",
+ "log",
+ "peniko",
+ "png",
+ "skrifa",
+ "static_assertions",
+ "thiserror 2.0.21",
+ "vello_encoding",
+ "vello_shaders",
+ "wgpu",
+]
+
+[[package]]
 name = "vello_common"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5758,6 +5904,49 @@ dependencies = [
  "hashbrown 0.17.1",
  "vello_common",
 ]
+
+[[package]]
+name = "vello_encoding"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1fb9548d2b46b0f79137b5b1d208ecbd76d432f74e7a2ba838615d117f11532"
+dependencies = [
+ "bytemuck",
+ "guillotiere",
+ "peniko",
+ "skrifa",
+ "smallvec",
+]
+
+[[package]]
+name = "vello_shaders"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e653222cee49f2571729c3e4b0fa99bc4f826c6bb9487dbb88b825d552b3a27"
+dependencies = [
+ "bytemuck",
+ "log",
+ "naga",
+ "thiserror 2.0.21",
+ "vello_encoding",
+]
+
+[[package]]
+name = "vello_svg"
+version = "0.11.0"
+dependencies = [
+ "kurbo",
+ "peniko",
+ "thiserror 2.0.21",
+ "usvg",
+ "vello",
+]
+
+[[package]]
+name = "version-compare"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03c2856837ef78f57382f06b2b8563a2f512f7185d732608fd9176cb3b8edf0e"
 
 [[package]]
 name = "version_check"
@@ -6652,6 +6841,15 @@ dependencies = [
  "quote",
  "syn 3.0.9",
  "synstructure",
+]
+
+[[package]]
+name = "yuv"
+version = "0.8.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d109d1eacc7b034329873d2d848039b365c65ab7d751b19ee84e4921c62c607"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]

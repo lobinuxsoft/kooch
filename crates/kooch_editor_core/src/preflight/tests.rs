@@ -1,5 +1,6 @@
 use super::{
-    ALSA, C_COMPILER, DBUS, Installer, PKG_CONFIG, Probes, RUST, UDEV, VULKAN_HEADERS, missing_from,
+    ALSA, C_COMPILER, DBUS, Installer, NASM, PKG_CONFIG, Probes, RUST, UDEV, VULKAN_HEADERS,
+    missing_from,
 };
 
 /// 🔴 The case this project's own distribution hits: YaguareteOS reports
@@ -107,6 +108,9 @@ fn a_ready_machine_reports_nothing() {
             c_compiler: true,
             mold: true,
             pkg_config: true,
+            nasm: true,
+            meson: true,
+            ninja: true,
             mingw: true,
             windows_target: true,
             zig: true,
@@ -130,6 +134,9 @@ fn rust_is_reported_first() {
         c_compiler: false,
         mold: false,
         pkg_config: false,
+        nasm: false,
+        meson: false,
+        ninja: false,
         mingw: false,
         windows_target: false,
         zig: false,
@@ -144,7 +151,8 @@ fn rust_is_reported_first() {
             UDEV,
             DBUS,
             C_COMPILER,
-            VULKAN_HEADERS
+            VULKAN_HEADERS,
+            NASM
         ]
     );
 }

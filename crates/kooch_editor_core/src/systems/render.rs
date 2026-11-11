@@ -240,6 +240,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
         .unwrap_or_default();
 
     let open_input_map = resources.get::<crate::state::OpenInputMap>().cloned();
+    let image_focus = resources
+        .get_mut::<crate::image_view::OpenImage>()
+        .is_some_and(|open| std::mem::take(&mut open.focus_requested));
+    let open_image = resources.get::<crate::image_view::OpenImage>().cloned();
     // 🔴 Cloned: `egui-snarl` edits the graph while drawing it; put back after the frame.
     let mut open_shader_graph = resources.get::<crate::state::OpenShaderGraph>().cloned();
     // Resolved before the frame: loading the asset's contents needs mutable `Resources`.
@@ -321,6 +325,7 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
             game_clicked: &mut game_clicked,
             ui_builder: ui_builder.as_mut(),
             ui_panels: ui_panels.as_mut(),
+            open_image: open_image.as_ref().map(|open| (open, image_focus)),
             shader_costs: &shader_costs,
             input: &mut viewport_input,
             controller: &controller_snapshot,

@@ -27,6 +27,8 @@ const FAMILY: &[FontFamilyName<'static>] = &[
 pub struct UiFonts {
     pub(crate) font: FontContext,
     pub(crate) layout: LayoutContext<()>,
+    // With `vello`, text never reaches swash.
+    #[cfg_attr(feature = "vello", allow(dead_code))]
     pub(crate) scale: swash::scale::ScaleContext,
     /// The project's families and their files, as [`load_fonts`](crate::load_fonts) found them.
     pub(crate) families: Vec<(kooch_core::Guid, Box<str>)>,

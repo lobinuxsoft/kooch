@@ -61,6 +61,13 @@ error anywhere.
 A project with no `project.kooch` beside the binary still falls back to
 `assets/scenes/default.scene`, which is what every build did until now.
 
+## The window it opens
+
+The manifest's `window` block is the game's window: its title, and its `width` × `height` in
+**device pixels**. Under a scaling compositor a size in logical pixels is multiplied by the guessed
+scale, and gamescope on a handheld guessed 3.25, so a 1280×720 window rendered 4160×2340 and was
+scaled down. Borderless and windowed modes keep this size; fullscreen takes the monitor's.
+
 ## What travels, and what does not
 
 Only what the game reaches — and *reaches* is followed all the way

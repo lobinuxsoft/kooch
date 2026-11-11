@@ -172,6 +172,8 @@ impl ForwardPass {
 /// The fallback: each transparent instance far to near, blended as it lands. Two crossing objects,
 /// or a mesh seen through itself, can come out in the wrong order; back faces are culled.
 struct SortedPass {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     pipelines: ShaderPipelines<wgpu::RenderPipeline>,
     /// The raster's, which this pass tests against.
     depth_format: wgpu::TextureFormat,
@@ -216,6 +218,7 @@ impl SortedPass {
             immediate_size: 0,
         });
         Self {
+            kept: Default::default(),
             pipelines: ShaderPipelines::new(BLENDED),
             depth_format,
             layout,
@@ -233,64 +236,76 @@ impl SortedPass {
         let ForwardFrame {
             device, encoder, ..
         } = frame;
-        let frame_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("forward_frame_bg"),
-            layout: layouts.frame,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(frame.vbuf),
+        let frame_bg =
+            self.kept.get(
+                device,
+                &wgpu::BindGroupDescriptor {
+                    label: Some("forward_frame_bg"),
+                    layout: layouts.frame,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(frame.vbuf),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: uniforms.camera.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &uniforms.screen,
+                                offset: 0,
+                                size: std::num::NonZeroU64::new(
+                                    std::mem::size_of::<ScreenUbo>() as u64
+                                ),
+                            }),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: MATERIAL_PASS_CONTACT_UBO_BINDING,
+                            resource: uniforms.contact.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: MATERIAL_PASS_CONTACT_DEPTH_BINDING,
+                            resource: wgpu::BindingResource::TextureView(frame.depth_sample),
+                        },
+                    ],
                 },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: uniforms.camera.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &uniforms.screen,
-                        offset: 0,
-                        size: std::num::NonZeroU64::new(std::mem::size_of::<ScreenUbo>() as u64),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: MATERIAL_PASS_CONTACT_UBO_BINDING,
-                    resource: uniforms.contact.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: MATERIAL_PASS_CONTACT_DEPTH_BINDING,
-                    resource: wgpu::BindingResource::TextureView(frame.depth_sample),
-                },
-            ],
-        });
-        let materials_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("forward_materials_bg"),
-            layout: layouts.materials,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: frame.materials.pool().buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: frame.materials.pool().values().as_entire_binding(),
-                },
-            ],
-        });
-        let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("forward_scene_bg"),
-            layout: &self.scene_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniforms.list.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: frame.scene.instance_buffer().as_entire_binding(),
-                },
-            ],
-        });
+            );
+        let materials_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("forward_materials_bg"),
+                layout: layouts.materials,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: frame.materials.pool().buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: frame.materials.pool().values().as_entire_binding(),
+                    },
+                ],
+            },
+        );
+        let scene_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("forward_scene_bg"),
+                layout: &self.scene_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniforms.list.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: frame.scene.instance_buffer().as_entire_binding(),
+                    },
+                ],
+            },
+        );
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("forward_transparent"),
@@ -328,7 +343,7 @@ impl SortedPass {
                 continue;
             };
             let refs = frame.materials.slot_texture_refs(run.material);
-            let textures = texture_pool.material_bind_group(device, &refs);
+            let textures = texture_pool.material_bind_group(device, run.material, &refs);
             pass.set_pipeline(&pipeline);
             let offset = (run.material as u64 * uniforms.screen_stride) as u32;
             pass.set_bind_group(0, &frame_bg, &[offset]);

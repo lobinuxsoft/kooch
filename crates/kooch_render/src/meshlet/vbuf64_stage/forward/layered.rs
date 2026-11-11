@@ -44,6 +44,8 @@ struct Targets {
 }
 
 pub(super) struct LayeredPass {
+    /// Bind groups kept between frames (#1869).
+    pub(crate) kept: kooch_core::gpu::KeptGroups,
     layouts: Layouts,
     insert: wgpu::RenderPipeline,
     composite: wgpu::RenderPipeline,
@@ -74,6 +76,7 @@ impl LayeredPass {
         }
         let layouts = Layouts::new(device, meshlet_bgl);
         Some(Self {
+            kept: Default::default(),
             insert: pipelines::insert(device, &layouts, depth_format),
             composite: pipelines::composite(device, &layouts),
             args_pipeline: pipelines::args(device, &layouts),
@@ -162,51 +165,67 @@ impl LayeredPass {
         encoder.clear_buffer(&targets.layers, 0, None);
         encoder.clear_buffer(&self.overflow, 0, None);
 
-        let frame_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("transparent_frame_bg"),
-            layout: &self.layouts.frame,
-            entries: &[
-                entry(0, wgpu::BindingResource::TextureView(frame.vbuf)),
-                entry(1, uniforms.camera.as_entire_binding()),
-                entry(
-                    2,
-                    wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &uniforms.screen,
-                        offset: 0,
-                        size: std::num::NonZeroU64::new(std::mem::size_of::<ScreenUbo>() as u64),
-                    }),
-                ),
-                entry(
-                    crate::meshlet::MATERIAL_PASS_CONTACT_UBO_BINDING,
-                    uniforms.contact.as_entire_binding(),
-                ),
-                entry(
-                    crate::meshlet::MATERIAL_PASS_CONTACT_DEPTH_BINDING,
-                    wgpu::BindingResource::TextureView(frame.depth_sample),
-                ),
-                entry(LAYERS_BINDING, targets.layers.as_entire_binding()),
-                entry(OVERFLOW_BINDING, self.overflow.as_entire_binding()),
-            ],
-        });
-        let materials_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("transparent_materials_bg"),
-            layout: &self.layouts.materials,
-            entries: &[
-                entry(0, frame.materials.pool().buffer().as_entire_binding()),
-                entry(1, frame.materials.pool().values().as_entire_binding()),
-            ],
-        });
-        let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("transparent_scene_bg"),
-            layout: &self.layouts.scene,
-            entries: &[
-                entry(0, uniforms.list.as_entire_binding()),
-                entry(1, frame.scene.instance_buffer().as_entire_binding()),
-            ],
-        });
+        let frame_bg =
+            self.kept.get(
+                device,
+                &wgpu::BindGroupDescriptor {
+                    label: Some("transparent_frame_bg"),
+                    layout: &self.layouts.frame,
+                    entries: &[
+                        entry(0, wgpu::BindingResource::TextureView(frame.vbuf)),
+                        entry(1, uniforms.camera.as_entire_binding()),
+                        entry(
+                            2,
+                            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &uniforms.screen,
+                                offset: 0,
+                                size: std::num::NonZeroU64::new(
+                                    std::mem::size_of::<ScreenUbo>() as u64
+                                ),
+                            }),
+                        ),
+                        entry(
+                            crate::meshlet::MATERIAL_PASS_CONTACT_UBO_BINDING,
+                            uniforms.contact.as_entire_binding(),
+                        ),
+                        entry(
+                            crate::meshlet::MATERIAL_PASS_CONTACT_DEPTH_BINDING,
+                            wgpu::BindingResource::TextureView(frame.depth_sample),
+                        ),
+                        entry(LAYERS_BINDING, targets.layers.as_entire_binding()),
+                        entry(OVERFLOW_BINDING, self.overflow.as_entire_binding()),
+                    ],
+                },
+            );
+        let materials_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("transparent_materials_bg"),
+                layout: &self.layouts.materials,
+                entries: &[
+                    entry(0, frame.materials.pool().buffer().as_entire_binding()),
+                    entry(1, frame.materials.pool().values().as_entire_binding()),
+                ],
+            },
+        );
+        let scene_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("transparent_scene_bg"),
+                layout: &self.layouts.scene,
+                entries: &[
+                    entry(0, uniforms.list.as_entire_binding()),
+                    entry(1, frame.scene.instance_buffer().as_entire_binding()),
+                ],
+            },
+        );
         let texture_pool = frame.materials.texture_pool();
         let textures = |material: u32| {
-            texture_pool.material_bind_group(device, &frame.materials.slot_texture_refs(material))
+            texture_pool.material_bind_group(
+                device,
+                material,
+                &frame.materials.slot_texture_refs(material),
+            )
         };
         let offset = |material: u32| (material as u64 * uniforms.screen_stride) as u32;
         let first = list.runs[0].material;
@@ -261,14 +280,17 @@ impl LayeredPass {
 
         // 2. The tail's draws, emptied when no pixel overflowed.
         {
-            let args_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("transparent_args_bg"),
-                layout: &self.layouts.args,
-                entries: &[
-                    entry(0, self.overflow.as_entire_binding()),
-                    entry(1, self.args.as_entire_binding()),
-                ],
-            });
+            let args_bg = self.kept.get(
+                device,
+                &wgpu::BindGroupDescriptor {
+                    label: Some("transparent_args_bg"),
+                    layout: &self.layouts.args,
+                    entries: &[
+                        entry(0, self.overflow.as_entire_binding()),
+                        entry(1, self.args.as_entire_binding()),
+                    ],
+                },
+            );
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("transparent_args"),
                 timestamp_writes: None,
@@ -356,16 +378,19 @@ impl LayeredPass {
         }
 
         // 5. Layers front to back, then the tail, over the opaque radiance.
-        let composite_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("transparent_composite_bg"),
-            layout: &self.layouts.composite,
-            entries: &[
-                entry(0, targets.layers.as_entire_binding()),
-                entry(1, wgpu::BindingResource::TextureView(&targets.accum)),
-                entry(2, wgpu::BindingResource::TextureView(&targets.reveal)),
-                entry(3, self.composite_ubo.as_entire_binding()),
-            ],
-        });
+        let composite_bg = self.kept.get(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("transparent_composite_bg"),
+                layout: &self.layouts.composite,
+                entries: &[
+                    entry(0, targets.layers.as_entire_binding()),
+                    entry(1, wgpu::BindingResource::TextureView(&targets.accum)),
+                    entry(2, wgpu::BindingResource::TextureView(&targets.reveal)),
+                    entry(3, self.composite_ubo.as_entire_binding()),
+                ],
+            },
+        );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("transparent_composite"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

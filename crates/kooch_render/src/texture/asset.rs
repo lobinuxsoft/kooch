@@ -42,6 +42,10 @@ pub struct Image {
     pub format: ImageFormat,
     /// Whether the upload builds a mip chain (#481's prerequisite).
     pub mipmaps: bool,
+    /// An animated GIF's frames; `data` is the first (#1793).
+    pub animation: Option<std::sync::Arc<kooch_core::gif::GifFrames>>,
+    /// A video's WebM bytes; `data` is its first frame (#1793).
+    pub video: Option<std::sync::Arc<[u8]>>,
 }
 
 impl Image {
@@ -59,6 +63,8 @@ impl Image {
             height,
             format,
             mipmaps: true,
+            animation: None,
+            video: None,
         }
     }
 
@@ -81,6 +87,8 @@ impl Image {
             // saying so here keeps the fallbacks out of the mip path
             // entirely rather than relying on it to no-op.
             mipmaps: false,
+            animation: None,
+            video: None,
         }
     }
 

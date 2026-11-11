@@ -2,19 +2,25 @@
 //! per-material bind group the two-pass material shader consumes.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::time::Instant;
 
 use kooch_core::Guid;
+use kooch_core::gif::GifFrames;
 
 use super::TextureDefault;
 use super::shader::MAX_PARAM_TEXTURES;
 use super::values::TextureRef;
 use crate::texture::{GpuTexture, Image, ImageFormat, Mipmapper};
+use crate::video::{VideoConverter, VideoPlanes, VideoTarget};
 
 /// The hardware minimum, which means the feature is off.
 pub const NO_ANISOTROPY: u16 = 1;
 
 /// GPU texture registry + per-material bind group factory.
 pub struct MaterialTexturePool {
+    /// Each material slot's texture group, kept between frames (#1869).
+    kept: kooch_core::gpu::KeptGroups,
     textures: HashMap<Guid, GpuTexture>,
     fallback_white: GpuTexture,
     fallback_black: GpuTexture,
@@ -29,6 +35,11 @@ pub struct MaterialTexturePool {
     /// Owned here because it caches a render pipeline per format, and
     /// this is the one place textures are uploaded from.
     mipmapper: Mipmapper,
+    /// Each animated texture's frames, when it started and the frame it shows (#1793).
+    playing: HashMap<Guid, (Arc<GifFrames>, Instant, usize)>,
+    /// Each video texture's player and its last frame's planes.
+    videos: HashMap<Guid, (kooch_video::Player, Option<VideoPlanes>)>,
+    converter: VideoConverter,
 }
 
 impl MaterialTexturePool {
@@ -51,6 +62,7 @@ impl MaterialTexturePool {
         let bgl = Self::bind_group_layout(device);
 
         Self {
+            kept: Default::default(),
             asked: HashMap::new(),
             frame: 0,
             textures: HashMap::new(),
@@ -58,6 +70,9 @@ impl MaterialTexturePool {
             fallback_black,
             fallback_normal,
             mipmapper: Mipmapper::new(device),
+            playing: HashMap::new(),
+            videos: HashMap::new(),
+            converter: VideoConverter::new(device),
             sampler,
             anisotropy: NO_ANISOTROPY,
             bgl,
@@ -122,6 +137,72 @@ impl MaterialTexturePool {
     ) {
         let texture = GpuTexture::upload_with(device, queue, image, &mut self.mipmapper);
         self.textures.insert(guid, texture);
+        match &image.animation {
+            Some(frames) => self
+                .playing
+                .insert(guid, (frames.clone(), Instant::now(), 0)),
+            None => self.playing.remove(&guid),
+        };
+        match &image.video {
+            Some(bytes) => self
+                .videos
+                .insert(guid, (kooch_video::Player::start(bytes.clone()), None)),
+            None => self.videos.remove(&guid),
+        };
+    }
+
+    /// Writes the frame due into each animated or video texture whose frame changed, and its mips
+    /// again.
+    pub fn advance(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        for (guid, (frames, start, shown)) in &mut self.playing {
+            let due = frames.due(start.elapsed());
+            let (Some(texture), Some(frame)) = (self.textures.get(guid), frames.frames.get(due))
+            else {
+                continue;
+            };
+            if due == *shown {
+                continue;
+            }
+            *shown = due;
+            texture.write_level0(queue, frame);
+            if texture.texture.mip_level_count() > 1 {
+                self.mipmapper.generate(device, queue, &texture.texture);
+            }
+        }
+        let mut encoder = None;
+        let mut drawn = Vec::new();
+        for (guid, (player, planes)) in &mut self.videos {
+            let (Some(texture), Some(picture)) = (self.textures.get(guid), player.due()) else {
+                continue;
+            };
+            self.converter.upload(device, queue, planes, &picture);
+            let Some(planes) = planes.as_ref() else {
+                continue;
+            };
+            let encoder = encoder.get_or_insert_with(|| {
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("material_videos"),
+                })
+            });
+            let target = VideoTarget {
+                texture: &texture.texture,
+                origin: [0, 0],
+                border: false,
+            };
+            self.converter.draw(device, queue, encoder, planes, target);
+            drawn.push(*guid);
+        }
+        // Level 0 is written before the mips are made from it.
+        if let Some(encoder) = encoder {
+            queue.submit([encoder.finish()]);
+        }
+        for guid in drawn {
+            if let Some(texture) = self.textures.get(&guid)
+                && texture.texture.mip_level_count() > 1
+            {
+                self.mipmapper.generate(device, queue, &texture.texture);
+            }
+        }
     }
 
     /// Records this frame's ask and drops whatever has gone unasked for `max_age` frames.
@@ -146,12 +227,16 @@ impl MaterialTexturePool {
         for guid in &stale {
             self.textures.remove(guid);
             self.asked.remove(guid);
+            self.playing.remove(guid);
+            self.videos.remove(guid);
         }
         stale
     }
 
     /// Drops the texture for `guid`, so the next sync uploads it again.
     pub fn evict(&mut self, guid: Guid) -> bool {
+        self.playing.remove(&guid);
+        self.videos.remove(&guid);
         self.textures.remove(&guid).is_some()
     }
 
@@ -204,26 +289,32 @@ impl MaterialTexturePool {
     pub fn material_bind_group(
         &self,
         device: &wgpu::Device,
+        // Which material slot this is: each keeps its own group (#1869).
+        material: u32,
         slots: &[TextureRef; MAX_PARAM_TEXTURES as usize],
     ) -> wgpu::BindGroup {
         let texture = |binding: u32, slot: TextureRef| wgpu::BindGroupEntry {
             binding,
             resource: wgpu::BindingResource::TextureView(self.view_or_fallback(slot)),
         };
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("material_texture_bg"),
-            layout: &self.bgl,
-            entries: &[
-                texture(0, slots[0]),
-                texture(1, slots[1]),
-                texture(2, slots[2]),
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-                texture(4, slots[3]),
-            ],
-        })
+        self.kept.get_at(
+            device,
+            material,
+            &wgpu::BindGroupDescriptor {
+                label: Some("material_texture_bg"),
+                layout: &self.bgl,
+                entries: &[
+                    texture(0, slots[0]),
+                    texture(1, slots[1]),
+                    texture(2, slots[2]),
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    texture(4, slots[3]),
+                ],
+            },
+        )
     }
 
     /// The per-material bind group layout, for pipeline construction.

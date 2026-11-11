@@ -165,6 +165,20 @@ impl Field {
 }
 
 /// Reads every source in the world, in world space.
+/// Whether any gravity source exists, without collecting them.
+pub(crate) fn any_source(resources: &Resources) -> bool {
+    resources
+        .get::<ComponentRegistry>()
+        .is_some_and(|registry| {
+            let has = |len: Option<usize>| len.is_some_and(|len| len > 0);
+            has(registry.get_cpu::<GlobalGravity>().map(|s| s.len()))
+                || has(registry.get_cpu::<PointGravity>().map(|s| s.len()))
+                || has(registry.get_cpu::<AreaGravity>().map(|s| s.len()))
+                || has(registry.get_cpu::<BoxGravity>().map(|s| s.len()))
+                || has(registry.get_cpu::<PlaneGravity>().map(|s| s.len()))
+        })
+}
+
 pub(crate) fn collect_sources(resources: &Resources) -> Field {
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Field {

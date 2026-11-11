@@ -12,11 +12,14 @@ authors.workspace = true
 naga = { version = "30", features = ["wgsl-in"] }
 kooch_core.workspace = true
 kooch_ecs.workspace = true
+# Video textures (#1793).
+kooch_video.workspace = true
 # Inti — the shading model and its GPU light records. A renderer
 # without one paints normals.
 kooch_lighting.workspace = true
 wgpu.workspace = true
 dlss_wgpu = { workspace = true, optional = true }
+vello_svg = { workspace = true, optional = true }
 glam.workspace = true
 bytemuck.workspace = true
 tracing.workspace = true
@@ -50,6 +53,8 @@ contour = "0.13.1"
 # methods compile to nothing when the feature is off, so the render
 # code has one shape.
 gpu-profiler = ["kooch_core/gpu-profiler"]
+# UI SVGs drawn by Vello into the vector atlas (#1865), sharp at any size.
+vello = ["dep:vello_svg"]
 # NVIDIA DLSS (#536). Off by default and compile-time by construction:
 # `dlss_wgpu`'s build script links NVIDIA's static library, so a build
 # with this on needs `DLSS_SDK` and `VULKAN_SDK` set. With it off the

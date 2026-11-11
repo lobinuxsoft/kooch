@@ -348,6 +348,9 @@ fn gather_image(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
         // should be.
         import: kooch_render::texture::ImageImport {
             mipmaps: img.mipmaps,
+            // The slice is the UI's, not the texture's: only the `.meta` has it.
+            slice: crate::image_view::path_of(resources, guid)
+                .map_or([0; 4], |path| crate::image_view::import_of(&path).slice),
         },
         levels: kooch_render::texture::level_count(img.width, img.height),
     };
@@ -357,7 +360,7 @@ fn gather_image(guid: Guid, resources: &mut Resources) -> Option<AssetDetail> {
 /// Resolves `guid` to a typed handle through the `AssetServer`, loading the asset if it is not
 /// already resident. The server is removed and re-inserted around the call because `load_by_guid`
 /// needs mutable access to the whole `Resources`.
-fn load_handle<T: kooch_core::assets::Asset>(
+pub(crate) fn load_handle<T: kooch_core::assets::Asset>(
     guid: Guid,
     resources: &mut Resources,
 ) -> Option<kooch_core::assets::Handle<T>> {

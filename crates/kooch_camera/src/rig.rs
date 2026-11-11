@@ -143,6 +143,16 @@ impl Orphans {
 /// build, which has no Inspector. A component that does nothing and says nothing is the worst of
 /// both: it is tuned for hours and never read.
 pub fn report_orphans(resources: &mut Resources) {
+    let since = kooch_ecs::component::last_run(resources);
+    let quiet = since != 0
+        && resources
+            .get::<ComponentRegistry>()
+            .is_some_and(|registry| {
+                registry.removed_at() <= since && !rig_written(registry, since)
+            });
+    if quiet {
+        return;
+    }
     let mut found: Vec<(Entity, &'static str)> = Vec::new();
     if let Some(registry) = resources.get::<ComponentRegistry>() {
         let vcams = registry.get_cpu::<VirtualCamera>();
@@ -380,3 +390,30 @@ impl Horizons {
 
 #[cfg(test)]
 mod tests;
+
+/// Whether any component the report reads was written since `since`: what it says only changes
+/// when one was, or when one was removed.
+fn rig_written(registry: &ComponentRegistry, since: u64) -> bool {
+    use kooch_ecs::component::written_since;
+    let any = written_since::<VirtualCamera>(registry, since)
+        || written_since::<crate::CameraLookahead>(registry, since)
+        || written_since::<crate::RotationComposer>(registry, since)
+        || written_since::<crate::OrbitalFollow>(registry, since)
+        || written_since::<crate::ThirdPersonFollow>(registry, since)
+        || written_since::<crate::PositionComposer>(registry, since)
+        || written_since::<crate::Follow>(registry, since)
+        || written_since::<crate::HardLockToTarget>(registry, since)
+        || written_since::<crate::HardLookAt>(registry, since)
+        || written_since::<crate::PanTilt>(registry, since)
+        || written_since::<crate::RotateWithFollowTarget>(registry, since)
+        || written_since::<crate::orbit::CameraOrbit>(registry, since)
+        || written_since::<crate::CameraOffset>(registry, since)
+        || written_since::<crate::CameraRecomposer>(registry, since)
+        || written_since::<crate::ThirdPersonAim>(registry, since)
+        || written_since::<crate::when::CameraWhen>(registry, since);
+    #[cfg(feature = "input")]
+    let any = any
+        || written_since::<crate::orbit::input::OrbitInput>(registry, since)
+        || written_since::<crate::when::input::WhenInput>(registry, since);
+    any
+}

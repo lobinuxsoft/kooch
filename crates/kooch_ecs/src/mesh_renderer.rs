@@ -53,14 +53,10 @@ impl MeshRenderer {
 /// 🔴 Without this, an author ticking boxes in the Inspector edits a field the legacy one outranks:
 /// the edit lands in the scene, changes nothing, and says nothing (#1320).
 pub fn migrate_renderer_layers(resources: &mut kooch_core::resource::Resources) {
-    let Some(registry) = resources.get_mut::<crate::component::ComponentRegistry>() else {
-        return;
-    };
-    let Some(mut storage) = registry.get_cpu_mut::<MeshRenderer>() else {
-        return;
-    };
-    for (&entity, renderer) in storage.iter_mut() {
-        if renderer.layer != 0 {
+    crate::component::fix_written::<MeshRenderer>(
+        resources,
+        |renderer| renderer.layer != 0,
+        |entity, renderer| {
             let was = renderer.layer;
             renderer.layers = renderer.layer_mask();
             renderer.layer = 0;
@@ -71,8 +67,8 @@ pub fn migrate_renderer_layers(resources: &mut kooch_core::resource::Resources) 
                 layers = renderer.layers,
                 "a renderer's layers were migrated from an older field",
             );
-        }
-    }
+        },
+    );
 }
 
 impl Default for MeshRenderer {

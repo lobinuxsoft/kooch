@@ -346,6 +346,17 @@ pub(crate) enum EditorAction {
         name: String,
         index: usize,
     },
+    /// Open an image in the Image view, to edit its 9-slice (#1792).
+    OpenImageView {
+        path: PathBuf,
+    },
+    /// Save an image's 9-slice, top-right-bottom-left texels, into its `.meta`.
+    SetImageSlice {
+        guid: kooch_core::Guid,
+        slice: [u16; 4],
+    },
+    /// Re-read the project's `assets/`: a file arrived from outside the editor.
+    RescanAssets,
     /// Create an empty folder `<parent>/<name>`.
     CreateFolder {
         parent: PathBuf,

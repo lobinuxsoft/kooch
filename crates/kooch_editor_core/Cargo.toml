@@ -76,6 +76,8 @@ pollster.workspace = true
 log = "0.4"
 
 [features]
+# UI SVGs drawn by Vello (#1865), in the editor's own views and the Game View.
+vello = ["kooch_ui/vello", "kooch_render/vello"]
 # The in-editor profiler (#785). Off by default: with no backend
 # selected, every `profiling::scope!` in the engine expands to nothing,
 # so a build without this carries no instrumentation rather than

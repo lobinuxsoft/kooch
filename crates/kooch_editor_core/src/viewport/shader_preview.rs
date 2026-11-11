@@ -341,7 +341,7 @@ impl ShaderPreview {
         );
 
         let slots = self.write_defaults(queue, params, images);
-        let texture_bg = self.textures.material_bind_group(device, &slots);
+        let texture_bg = self.textures.material_bind_group(device, 0, &slots);
 
         let Some((_, pipeline)) = self.pipeline.as_ref() else {
             return;

@@ -36,12 +36,8 @@ impl MeshletCull {
             "dispatch_scene_pool_atomic_hi_z called with an empty pool",
         );
 
-        let params_binding = self.stage_params(queue, cull_params);
-        queue.write_buffer(
-            &self.scene_params_buffer,
-            0,
-            bytemuck::bytes_of(scene_params),
-        );
+        let params_binding = self.params_at(self.stage_params(queue, cull_params));
+        self.stage_scene(queue, scene_params);
         queue.write_buffer(&self.hi_z_params_buffer, 0, bytemuck::bytes_of(hi_z_params));
         encoder.clear_buffer(&self.visible_count, 0, None);
         encoder.clear_buffer(&self.culled_count, 0, None);

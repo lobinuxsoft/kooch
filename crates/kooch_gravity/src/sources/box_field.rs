@@ -143,26 +143,21 @@ impl BoxGravity {
 /// one number to three of the same number, so it cannot be misread — unlike a mask, which is how
 /// the last migration wrote a planet into thirty-one layers (#1320).
 pub fn migrate_box_range(resources: &mut kooch_core::resource::Resources) {
-    let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
-        return;
-    };
-    let Some(mut storage) = registry.get_cpu_mut::<BoxGravity>() else {
-        return;
-    };
-    for (&entity, field) in storage.iter_mut() {
-        if field.legacy_range == 0.0 {
-            continue;
-        }
-        let was = field.legacy_range;
-        field.range = Vec3::splat(was);
-        field.legacy_range = 0.0;
-        tracing::info!(
-            target: "kooch_gravity",
-            entity = entity.index(),
-            range = was,
-            "a box field's reach was migrated to one per axis",
-        );
-    }
+    kooch_ecs::component::fix_written::<BoxGravity>(
+        resources,
+        |field| field.legacy_range != 0.0,
+        |entity, field| {
+            let was = field.legacy_range;
+            field.range = Vec3::splat(was);
+            field.legacy_range = 0.0;
+            tracing::info!(
+                target: "kooch_gravity",
+                entity = entity.index(),
+                range = was,
+                "a box field's reach was migrated to one per axis",
+            );
+        },
+    );
 }
 
 #[cfg(test)]

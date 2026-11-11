@@ -405,6 +405,19 @@ knows — so it costs a frame of lag the first time a light needs a block, and t
 🔴 Nothing may put the old per-pixel hash back: it measured 10.4 ms against 0.884 ms for the whole
 shadow track.
 
+### Moving lamps redraw on a budget (#1861)
+
+A lamp that moves invalidates every page it owns, so a scene of spinning lamps redraws all their
+shadows every frame. A lamp small on screen (its `range` under half its distance to the camera)
+keeps the pose its pages were drawn from and redraws every second or fourth frame, staggered so
+lamps sharing an interval spread over it, as HDRP's shadow update budget does. Only the shadow
+lags: the light itself lights from where it is. A change other than the pose (range, kind) redraws
+at once. `KOOCH_LAMP_PACE=off` redraws every lamp every frame, to measure what the pacing saves.
+
+The page filter (`shadow_softness`) weighs its taps with a tent rather than a box (Castaño's PCF,
+as Unity and Bevy do), for softer penumbrae from the same taps. It gathers four depths per fetch
+inside a page and falls back to one load per tap only where its footprint crosses into a neighbour.
+
 ### Seeing what the shadow system did
 
 Three debug views, because "no light reaches this" and "something shadows

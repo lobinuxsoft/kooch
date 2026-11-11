@@ -38,7 +38,7 @@ pub fn eager_import_with(resources: &mut Resources, root: &Path) {
                 server.identify::<MeshletMesh>(path, resources);
                 counts.meshlet += 1;
             }
-            "png" | "jpg" | "jpeg" | "svg" => {
+            "png" | "jpg" | "jpeg" | "svg" | "gif" | "webm" => {
                 server.identify::<Image>(path, resources);
                 counts.image += 1;
             }

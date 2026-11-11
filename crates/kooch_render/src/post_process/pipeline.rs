@@ -222,7 +222,7 @@ impl Parts {
             ],
         });
         // The material's own textures, so a Texture node reads what the Inspector assigned.
-        let textures = textures.material_bind_group(device, slots);
+        let textures = textures.material_bind_group(device, u32::MAX, slots);
         [
             frame,
             self.empty_bg.clone(),

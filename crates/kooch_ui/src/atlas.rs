@@ -11,6 +11,9 @@ use swash::FontRef;
 use swash::scale::{Render, Source, StrikeWith};
 use swash::zeno::{Format, Vector};
 
+mod animations;
+mod vectors;
+
 /// Fractions of a pixel a glyph's x is snapped to: four is where more stops being visible.
 const SUBPIXEL: f32 = 4.0;
 
@@ -68,6 +71,8 @@ pub struct AtlasImage {
     pub modified: SystemTime,
     /// Texels per unit of the file, per axis: 1 for a PNG; an SVG is drawn at the size it shows.
     pub density: [f32; 2],
+    /// Drawn by Vello into the vector atlas, not the RGBA8 one (#1865).
+    pub vector: bool,
 }
 
 /// The atlas: RGBA8 pixels, what is where, and what changed since the last upload.
@@ -83,6 +88,10 @@ pub struct GlyphAtlas {
     dirty: Option<[u32; 4]>,
     /// Bumped when a full atlas is cleared: every quad built before points at freed space.
     generation: u32,
+    vectors: vectors::VectorSlots,
+    /// Each image's own slice, read from its `.meta` when packed.
+    slices: HashMap<Guid, [f32; 4]>,
+    animations: animations::Animations,
 }
 
 impl Default for GlyphAtlas {
@@ -101,7 +110,19 @@ impl GlyphAtlas {
             images: HashMap::new(),
             dirty: None,
             generation: 0,
+            vectors: vectors::VectorSlots::default(),
+            slices: HashMap::new(),
+            animations: animations::Animations::default(),
         }
+    }
+
+    /// The slice `guid`'s `.meta` gave it, zero until it is packed.
+    pub fn slice(&self, guid: Guid) -> [f32; 4] {
+        self.slices.get(&guid).copied().unwrap_or_default()
+    }
+
+    pub(crate) fn set_slice(&mut self, guid: Guid, slice: [f32; 4]) {
+        self.slices.insert(guid, slice);
     }
 
     pub fn side(&self) -> u32 {
@@ -185,13 +206,17 @@ impl GlyphAtlas {
         self.images
             .get(&(guid, class))
             .map(|(_, image)| image.modified)
+            .or_else(|| self.vectors.get(guid, class).map(|image| image.modified))
     }
 
     /// What draws `guid` at `shown` physical pixels: its own size class, its only raster, or the
     /// nearest class packed so far.
     pub fn image(&self, guid: Guid, shown: [u32; 2]) -> Option<AtlasImage> {
         let class = size_class(shown);
-        let get = |class: u8| self.images.get(&(guid, class)).map(|(_, image)| *image);
+        let get = |class: u8| {
+            let raster = self.images.get(&(guid, class)).map(|(_, image)| *image);
+            raster.or_else(|| self.vectors.get(guid, class))
+        };
         get(class).or_else(|| get(0)).or_else(|| {
             let above = class.saturating_add(1)..=TOP_CLASS;
             above.chain((1..class).rev()).find_map(get)
@@ -216,20 +241,12 @@ impl GlyphAtlas {
         }
         let slot = self.allocate(w + 2, h + 2)?;
         let (x0, y0) = (slot.rectangle.min.x as u32, slot.rectangle.min.y as u32);
-        for row in 0..h + 2 {
-            let from_row = row.saturating_sub(1).min(h - 1);
-            for column in 0..w + 2 {
-                let from_column = column.saturating_sub(1).min(w - 1);
-                let from = ((from_row * w + from_column) * 4) as usize;
-                let to = (((y0 + row) * self.side + x0 + column) * 4) as usize;
-                self.pixels[to..to + 4].copy_from_slice(&rgba[from..from + 4]);
-            }
-        }
-        self.grow_dirty([x0, y0, x0 + w + 2, y0 + h + 2]);
+        self.blit([x0, y0], (w, h), rgba);
         let image = AtlasImage {
             rect: [x0 + 1, y0 + 1, x0 + 1 + w, y0 + 1 + h],
             modified,
             density,
+            vector: false,
         };
         self.images.insert((guid, class), (slot.id, image));
         Some(image)
@@ -275,6 +292,25 @@ impl GlyphAtlas {
         self.pixels.fill(0);
         self.generation = self.generation.wrapping_add(1);
         self.dirty = Some([0, 0, self.side, self.side]);
+    }
+
+    /// Writes `rgba` into the slot at `[x0, y0]`, its edge repeated one texel out.
+    fn blit(&mut self, [x0, y0]: [u32; 2], (w, h): (u32, u32), rgba: &[u8]) {
+        if w == 0 || h == 0 || rgba.len() < (w * h * 4) as usize {
+            return;
+        }
+        for row in 0..h + 2 {
+            let from_row = row.saturating_sub(1).min(h - 1);
+            for column in 0..w + 2 {
+                let from_column = column.saturating_sub(1).min(w - 1);
+                let from = ((from_row * w + from_column) * 4) as usize;
+                let to = (((y0 + row) * self.side + x0 + column) * 4) as usize;
+                if let Some(texel) = self.pixels.get_mut(to..to + 4) {
+                    texel.copy_from_slice(&rgba[from..from + 4]);
+                }
+            }
+        }
+        self.grow_dirty([x0, y0, x0 + w + 2, y0 + h + 2]);
     }
 
     fn grow_dirty(&mut self, rect: [u32; 4]) {
