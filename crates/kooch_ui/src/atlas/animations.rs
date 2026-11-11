@@ -21,6 +21,8 @@ struct Animation {
 pub(crate) struct Animations {
     gifs: HashMap<Guid, Animation>,
     videos: HashMap<Guid, kooch_video::Player>,
+    /// PROBE(#1793): frames blitted, their bytes and time, since the last log.
+    probe: (u32, u64, std::time::Duration, Option<Instant>),
 }
 
 impl GlyphAtlas {
@@ -59,7 +61,27 @@ impl GlyphAtlas {
                     continue;
                 };
                 let corner = [image.rect[0] - 1, image.rect[1] - 1];
+                let began = Instant::now();
                 self.blit(corner, picture.size, &picture.rgba);
+                let probe = &mut animations.probe;
+                probe.0 += 1;
+                probe.1 += picture.rgba.len() as u64;
+                probe.2 += began.elapsed();
+                let since = *probe.3.get_or_insert_with(Instant::now);
+                if since.elapsed().as_secs() >= 2 {
+                    tracing::info!(
+                        target: "video_probe",
+                        %guid,
+                        size = ?picture.size,
+                        blits = probe.0,
+                        mb = probe.1 / 1_000_000,
+                        blit_ms = probe.2.as_millis() as u64,
+                        skipped = player.skipped,
+                        "atlas (2 s)"
+                    );
+                    *probe = (0, 0, std::time::Duration::ZERO, Some(Instant::now()));
+                    player.skipped = 0;
+                }
                 continue;
             }
             let Some(animation) = animations.gifs.get_mut(&guid) else {

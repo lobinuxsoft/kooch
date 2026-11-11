@@ -256,6 +256,7 @@ fn pack(
                     {
                         tracing::warn!("UI video {guid} does not fit the atlas");
                     }
+                    tracing::info!(target: "video_probe", %guid, size = ?first.size, "video (re)started");
                     atlas.set_video(guid, Some(kooch_video::Player::start(bytes.into())));
                 }
                 Err(error) => tracing::warn!("UI video not loaded: {}: {error}", path.display()),

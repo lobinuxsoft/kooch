@@ -128,14 +128,47 @@ struct SentUi {
     params: Vec<UiParam>,
     shaders: Vec<UiShader>,
     vectors: Vec<UiVector>,
+    probe: Probe,
+}
+
+/// PROBE(#1793): atlas uploads, their bytes and time, logged every two seconds.
+#[derive(Default)]
+struct Probe(u32, u64, std::time::Duration, Option<std::time::Instant>);
+
+impl Probe {
+    fn add(&mut self, bytes: usize, took: std::time::Duration, end: &str) {
+        self.0 += 1;
+        self.1 += bytes as u64;
+        self.2 += took;
+        let since = *self.3.get_or_insert_with(std::time::Instant::now);
+        if since.elapsed().as_secs() >= 2 {
+            tracing::info!(
+                target: "video_probe",
+                end,
+                uploads = self.0,
+                mb = self.1 / 1_000_000,
+                ms = self.2.as_millis() as u64,
+                "atlas uploads over the wire (2 s)"
+            );
+            *self = Probe(
+                0,
+                0,
+                std::time::Duration::ZERO,
+                Some(std::time::Instant::now()),
+            );
+        }
+    }
 }
 
 /// This frame's UI when it changed since the last reply. Takes the atlas upload: the editor keeps
 /// what it was sent, so each texel crosses once.
 pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
     let mut sent = resources.remove::<SentUi>().unwrap_or_default();
+    let began = std::time::Instant::now();
+    let mut upload_bytes = 0;
     let frame = resources.get_mut::<UiDrawList>().and_then(|list| {
         let upload = list.atlas_upload.take();
+        upload_bytes = upload.as_ref().map_or(0, |upload| upload.texels.len());
         let sources = std::mem::take(&mut list.vector_sources);
         let texts = std::mem::take(&mut list.vector_texts);
         let fonts = std::mem::take(&mut list.vector_fonts);
@@ -205,6 +238,9 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
                 .collect(),
         })
     });
+    if upload_bytes > 0 {
+        sent.probe.add(upload_bytes, began.elapsed(), "host encode");
+    }
     resources.insert(sent);
     frame
 }
@@ -224,6 +260,7 @@ pub struct UiReceiver {
     atlas: Vec<u8>,
     dirty: Option<[u32; 4]>,
     fresh: bool,
+    probe: Probe,
     vector_side: u32,
     vectors: Vec<UiVector>,
     /// Every file still resident, handed over each time: the renderer parses only keys it lacks,
@@ -357,6 +394,14 @@ impl UiReceiver {
     }
 
     fn write(&mut self, upload: &UiUpload) -> bool {
+        let began = std::time::Instant::now();
+        let written = self.write_texels(upload);
+        self.probe
+            .add(upload.texels.len(), began.elapsed(), "editor decode");
+        written
+    }
+
+    fn write_texels(&mut self, upload: &UiUpload) -> bool {
         let [x0, y0, x1, y1] = upload.rect;
         if x0 >= x1 || y0 >= y1 || x1 > self.side || y1 > self.side {
             return false;
