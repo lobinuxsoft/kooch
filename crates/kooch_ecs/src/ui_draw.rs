@@ -210,8 +210,9 @@ pub struct UiDrawList {
     pub shaders: Vec<UiShader>,
     /// Side of the square RGBA8 atlas: glyph coverage and images share it.
     pub atlas_side: u32,
-    /// What to write into the atlas before drawing; `None` when nothing changed.
-    pub atlas_upload: Option<AtlasUpload>,
+    /// What to write into the atlas before drawing, oldest first; the renderer takes them. A host
+    /// keeps one, grown over its atlas; the editor queues what arrived, holding no atlas copy.
+    pub atlas_uploads: Vec<AtlasUpload>,
     /// Side of the square page atlas; 0 while nothing large is packed.
     pub page_side: u32,
     /// Rasters not written into the page atlas yet. Nothing keeps a copy: the renderer takes them.
@@ -220,7 +221,7 @@ pub struct UiDrawList {
     pub vector_side: u32,
     /// Every SVG resident in the vector atlas. The renderer redraws it when this changes.
     pub vectors: Vec<UiVector>,
-    /// Files not handed over yet; the renderer takes them, as it takes `atlas_upload`.
+    /// Files not handed over yet; the renderer takes them, as it takes `atlas_uploads`.
     pub vector_sources: Vec<UiVectorSource>,
     /// Text not handed over yet, as `vector_sources`.
     pub vector_texts: Vec<UiVectorText>,

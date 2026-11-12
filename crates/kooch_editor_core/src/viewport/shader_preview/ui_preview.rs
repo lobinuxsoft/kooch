@@ -31,10 +31,10 @@ impl UiPreview {
             }],
             materials: vec![UiMaterial::default()],
             atlas_side: SIDE,
-            atlas_upload: Some(AtlasUpload {
+            atlas_uploads: vec![AtlasUpload {
                 rect: [0, 0, SIDE, SIDE],
                 texels: dome(),
-            }),
+            }],
             ..UiDrawList::default()
         };
         Self {

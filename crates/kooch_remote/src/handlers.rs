@@ -518,7 +518,9 @@ fn set_playing(resources: &mut Resources, playing: bool) -> Result<(), RemoteErr
         snapshot.0.restore(resources);
         forget_the_world(resources);
     }
-    tracing::info!("remote: stop");
+    // What Play built is freed now; glibc keeps it until asked (#1898).
+    let took = kooch_core::memory::return_freed();
+    tracing::info!(?took, "remote: stop");
     Ok(())
 }
 
@@ -526,7 +528,6 @@ fn set_playing(resources: &mut Resources, playing: bool) -> Result<(), RemoteErr
 fn update_archetype_add(resources: &mut Resources, entity: Entity, type_id: TypeId) {
     kooch_ecs::move_entity::gained(resources, entity, type_id);
 }
-
 
 mod entities;
 mod scenes;
