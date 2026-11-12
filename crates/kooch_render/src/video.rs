@@ -18,6 +18,8 @@ pub struct VideoTarget<'a> {
     pub texture: &'a wgpu::Texture,
     pub origin: [u32; 2],
     pub border: bool,
+    /// The texels the frame fills, border aside; `None` for its own size. Smaller filters it down.
+    pub size: Option<[u32; 2]>,
 }
 
 /// The conversion pipeline, one per target format.
@@ -123,9 +125,13 @@ impl VideoConverter {
         planes: &VideoPlanes,
         target: VideoTarget<'_>,
     ) {
-        let size = planes.planes[0].size();
+        let own = planes.planes[0].size();
+        let [fill_w, fill_h] = target.size.unwrap_or([own.width, own.height]);
+        if fill_w == 0 || fill_h == 0 {
+            return;
+        }
         let border = u32::from(target.border);
-        let (width, height) = (size.width + 2 * border, size.height + 2 * border);
+        let (width, height) = (fill_w + 2 * border, fill_h + 2 * border);
         let [x, y] = target.origin;
         let extent = target.texture.size();
         if x.saturating_add(width) > extent.width || y.saturating_add(height) > extent.height {
@@ -136,6 +142,10 @@ impl VideoConverter {
             (y as f32).to_bits(),
             u32::from(planes.full),
             border,
+            (fill_w as f32).to_bits(),
+            (fill_h as f32).to_bits(),
+            0,
+            0,
         ];
         queue.write_buffer(&planes.params, 0, bytemuck::cast_slice(&params));
         let format = target.texture.format();
@@ -178,7 +188,7 @@ impl VideoConverter {
         ];
         let params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("video_params"),
-            size: 16,
+            size: 32,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });

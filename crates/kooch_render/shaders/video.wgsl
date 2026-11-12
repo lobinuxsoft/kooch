@@ -8,6 +8,9 @@ struct Params {
     full: u32,
     // 1 when the target has a border texel around the frame (an atlas slot).
     border: u32,
+    // The texels the frame fills; smaller than the frame when its slot was fitted to the screen.
+    fill: vec2<f32>,
+    _pad: vec2<f32>,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -22,11 +25,29 @@ fn vs_video(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(corner * 2.0 - 1.0, 0.0, 1.0);
 }
 
+// Luma averaged over the frame texels one target texel covers, up to 4×4, so a fitted slot does
+// not alias.
+fn luma_at(pixel: vec2<f32>, ratio: vec2<f32>, size: vec2<f32>) -> f32 {
+    let taps = vec2<i32>(clamp(ceil(ratio), vec2(1.0), vec2(4.0)));
+    let step = ratio / vec2<f32>(taps);
+    let first = pixel - ratio * 0.5 + step * 0.5;
+    var sum = 0.0;
+    for (var j = 0; j < taps.y; j++) {
+        for (var i = 0; i < taps.x; i++) {
+            let at = clamp(first + step * vec2<f32>(f32(i), f32(j)), vec2(0.5), size - 0.5);
+            sum += textureLoad(luma, vec2<i32>(at), 0).r;
+        }
+    }
+    return sum / f32(taps.x * taps.y);
+}
+
 fn video_rgb(position: vec2<f32>) -> vec3<f32> {
     let size = vec2<f32>(textureDimensions(luma));
+    let ratio = size / params.fill;
     // The border repeats the edge, as the atlas's CPU blit does.
-    let pixel = clamp(position - params.origin - f32(params.border), vec2(0.5), size - 0.5);
-    var y = textureLoad(luma, vec2<i32>(pixel), 0).r;
+    let fill = clamp(position - params.origin - f32(params.border), vec2(0.5), params.fill - 0.5);
+    let pixel = fill * ratio;
+    var y = luma_at(pixel, ratio, size);
     var c = vec2<f32>(
         textureSampleLevel(cb, chroma, pixel / size, 0.0).r,
         textureSampleLevel(cr, chroma, pixel / size, 0.0).r,

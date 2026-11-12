@@ -65,6 +65,10 @@ impl UiVideos {
                 texture: atlas,
                 origin: [video.rect[0], video.rect[1]],
                 border: true,
+                size: Some([
+                    video.rect[2].saturating_sub(video.rect[0] + 2),
+                    video.rect[3].saturating_sub(video.rect[1] + 2),
+                ]),
             };
             converter.draw(device, queue, encoder, planes, target);
         }

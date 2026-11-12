@@ -210,6 +210,11 @@ impl GlyphAtlas {
     }
 
     /// The mtime the raster of `guid` in `class` was read at, if there is one.
+    /// `guid`'s raster, the one every size class shares.
+    pub(crate) fn raster(&self, guid: Guid) -> Option<AtlasImage> {
+        self.images.get(&(guid, 0)).map(|(_, image)| *image)
+    }
+
     pub(crate) fn packed(&self, guid: Guid, class: u8) -> Option<SystemTime> {
         self.images
             .get(&(guid, class))
