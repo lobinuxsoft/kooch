@@ -76,8 +76,7 @@ pub(crate) struct Stream<B: AsRef<[u8]>> {
 
 impl<B: AsRef<[u8]>> Stream<B> {
     pub(crate) fn open(bytes: B) -> Result<Self, String> {
-        let file = MatroskaFile::open(Cursor::new(bytes))
-            .map_err(|error| format!("failed to read the WebM: {error}"))?;
+        let file = demux(bytes)?;
         let track = file
             .tracks()
             .iter()
@@ -95,6 +94,17 @@ impl<B: AsRef<[u8]>> Stream<B> {
             ready: VecDeque::new(),
             ended: false,
         })
+    }
+
+    /// Starts `bytes`, the same file, again from its first frame on the same decoder.
+    /// 🔴 A new decoder per loop allocated nine 12.5 MB pictures each pass and freed the old ones on
+    /// the render thread, which raised glibc's mmap threshold and fragmented the heap (#1891).
+    pub(crate) fn rewind(&mut self, bytes: B) -> Result<(), String> {
+        self.file = demux(bytes)?;
+        self.decoder.flush();
+        self.ready.clear();
+        self.ended = false;
+        Ok(())
     }
 
     /// The next frame, or `None` past the last.
@@ -126,6 +136,11 @@ impl<B: AsRef<[u8]>> Stream<B> {
             }
         }
     }
+}
+
+fn demux<B: AsRef<[u8]>>(bytes: B) -> Result<MatroskaFile<Cursor<B>>, String> {
+    MatroskaFile::open(Cursor::new(bytes))
+        .map_err(|error| format!("failed to read the WebM: {error}"))
 }
 
 fn timed(planes: Planes, scale: u64) -> Picture {
