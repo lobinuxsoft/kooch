@@ -13,8 +13,13 @@ pub const QUAD_IMAGE: u32 = 2;
 /// With [`QUAD_IMAGE`]: the texels are in the vector atlas Vello draws, not the glyph atlas (#1865).
 /// 4 is `QUAD_CURVED`, which `ui.wgsl` sets itself.
 pub const QUAD_VECTOR: u32 = 8;
+/// With [`QUAD_IMAGE`]: the texels are in the page atlas, where large rasters and videos live
+/// on the GPU only (#1893).
+pub const QUAD_PAGE: u32 = 16;
 /// In [`UiMask::luminance`]: the mask image's texels are in the vector atlas.
 pub const MASK_VECTOR: u32 = 2;
+/// In [`UiMask::luminance`]: the mask image's texels are in the page atlas.
+pub const MASK_PAGE: u32 = 4;
 /// Evenly spaced points in a [`UiCurve`]; `ui.wgsl` holds the same number.
 pub const CURVE_POINTS: usize = 128;
 
@@ -177,7 +182,7 @@ pub struct UiFontSource {
     pub data: Arc<[u8]>,
 }
 
-/// A video playing in a slot of the RGBA8 atlas (#1793): the renderer decodes it and draws each
+/// A video playing in a slot of the page atlas (#1793): the renderer decodes it and draws each
 /// frame there on the GPU, so the atlas upload carries only its first frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UiVideo {
@@ -207,6 +212,10 @@ pub struct UiDrawList {
     pub atlas_side: u32,
     /// What to write into the atlas before drawing; `None` when nothing changed.
     pub atlas_upload: Option<AtlasUpload>,
+    /// Side of the square page atlas; 0 while nothing large is packed.
+    pub page_side: u32,
+    /// Rasters not written into the page atlas yet. Nothing keeps a copy: the renderer takes them.
+    pub page_uploads: Vec<AtlasUpload>,
     /// Side of the square vector atlas; 0 while no SVG is packed there.
     pub vector_side: u32,
     /// Every SVG resident in the vector atlas. The renderer redraws it when this changes.

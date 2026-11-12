@@ -12,7 +12,10 @@ use swash::scale::{Render, Source, StrikeWith};
 use swash::zeno::{Format, Vector};
 
 mod animations;
+mod pages;
 mod vectors;
+
+pub(crate) use pages::PAGE_ABOVE;
 
 /// Fractions of a pixel a glyph's x is snapped to: four is where more stops being visible.
 const SUBPIXEL: f32 = 4.0;
@@ -73,6 +76,8 @@ pub struct AtlasImage {
     pub density: [f32; 2],
     /// Drawn by Vello into the vector atlas, not the RGBA8 one (#1865).
     pub vector: bool,
+    /// In the page atlas, which has no CPU copy (#1893).
+    pub page: bool,
 }
 
 /// The atlas: RGBA8 pixels, what is where, and what changed since the last upload.
@@ -92,6 +97,7 @@ pub struct GlyphAtlas {
     /// Each image's own slice, read from its `.meta` when packed.
     slices: HashMap<Guid, [f32; 4]>,
     animations: animations::Animations,
+    pages: pages::Pages,
 }
 
 impl Default for GlyphAtlas {
@@ -113,6 +119,7 @@ impl GlyphAtlas {
             vectors: vectors::VectorSlots::default(),
             slices: HashMap::new(),
             animations: animations::Animations::default(),
+            pages: pages::Pages::default(),
         }
     }
 
@@ -135,6 +142,16 @@ impl GlyphAtlas {
 
     pub fn side(&self) -> u32 {
         self.side
+    }
+
+    /// Side of the page atlas, 0 while nothing is packed there.
+    pub fn page_side(&self) -> u32 {
+        self.pages.side()
+    }
+
+    /// The rasters packed into the pages since the last call: the renderer is their only holder.
+    pub fn take_page_uploads(&mut self) -> Vec<kooch_ecs::AtlasUpload> {
+        self.pages.take_uploads()
     }
 
     /// RGBA8, row by row.
@@ -249,9 +266,7 @@ impl GlyphAtlas {
         if w == 0 || h == 0 {
             return None;
         }
-        if let Some((id, _)) = self.images.remove(&(guid, class)) {
-            self.allocator.deallocate(id);
-        }
+        self.evict((guid, class));
         let slot = self.allocate(w + 2, h + 2)?;
         let (x0, y0) = (slot.rectangle.min.x as u32, slot.rectangle.min.y as u32);
         self.blit([x0, y0], (w, h), rgba);
@@ -260,9 +275,73 @@ impl GlyphAtlas {
             modified,
             density,
             vector: false,
+            page: false,
         };
         self.images.insert((guid, class), (slot.id, image));
         Some(image)
+    }
+
+    /// Packs a raster in the pages when it is large, in the atlas when not.
+    pub(crate) fn insert_raster(
+        &mut self,
+        key: (Guid, u8),
+        modified: SystemTime,
+        (w, h): (u32, u32),
+        rgba: &[u8],
+        density: [f32; 2],
+    ) -> Option<AtlasImage> {
+        match w.max(h) > PAGE_ABOVE {
+            true => self.insert_page(key, modified, (w, h), rgba, density),
+            false => self.insert_image(key, modified, (w, h), rgba, density),
+        }
+    }
+
+    /// Packs an RGBA8 image in the pages, replacing what `guid` had. When they are full they are
+    /// cleared, as the atlas is at its top.
+    pub(crate) fn insert_page(
+        &mut self,
+        (guid, class): (Guid, u8),
+        modified: SystemTime,
+        (w, h): (u32, u32),
+        rgba: &[u8],
+        density: [f32; 2],
+    ) -> Option<AtlasImage> {
+        if w == 0 || h == 0 {
+            return None;
+        }
+        self.evict((guid, class));
+        let slot = match self.pages.allocate(w + 2, h + 2) {
+            Some(slot) => slot,
+            None => {
+                self.clear_pages();
+                self.pages.allocate(w + 2, h + 2)?
+            }
+        };
+        let (x0, y0) = (slot.rectangle.min.x as u32, slot.rectangle.min.y as u32);
+        self.pages.write([x0, y0], (w, h), rgba);
+        let image = AtlasImage {
+            rect: [x0 + 1, y0 + 1, x0 + 1 + w, y0 + 1 + h],
+            modified,
+            density,
+            vector: false,
+            page: true,
+        };
+        self.images.insert((guid, class), (slot.id, image));
+        Some(image)
+    }
+
+    fn evict(&mut self, key: (Guid, u8)) {
+        match self.images.remove(&key) {
+            Some((id, image)) if image.page => self.pages.deallocate(id),
+            Some((id, _)) => self.allocator.deallocate(id),
+            None => {}
+        }
+    }
+
+    fn clear_pages(&mut self) {
+        self.pages.clear();
+        self.images.retain(|_, (_, image)| !image.page);
+        self.generation = self.generation.wrapping_add(1);
     }
 
     /// A slot, doubling the atlas while it is under [`MAX_SIDE`]; at the top, clearing it. Clearing
@@ -301,7 +380,8 @@ impl GlyphAtlas {
     fn clear(&mut self) {
         self.allocator.clear();
         self.glyphs.clear();
-        self.images.clear();
+        // The pages have their own slots, still where the quads point.
+        self.images.retain(|_, (_, image)| image.page);
         self.pixels.fill(0);
         self.generation = self.generation.wrapping_add(1);
         self.dirty = Some([0, 0, self.side, self.side]);

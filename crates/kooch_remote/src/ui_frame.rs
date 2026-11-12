@@ -55,6 +55,11 @@ pub struct UiFrame {
     pub videos: Vec<(u64, [u32; 4])>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub video_sources: Vec<(u64, String)>,
+    /// The page atlas (#1893): its side, and each large raster once, as it was packed.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub page_side: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub page_uploads: Vec<UiUpload>,
 }
 
 /// A [`UiVectorText`] on the wire.
@@ -143,6 +148,7 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
     let mut sent = resources.remove::<SentUi>().unwrap_or_default();
     let frame = resources.get_mut::<UiDrawList>().and_then(|list| {
         let upload = list.atlas_upload.take();
+        let pages = std::mem::take(&mut list.page_uploads);
         let videos = std::mem::take(&mut list.video_sources);
         let sources = std::mem::take(&mut list.vector_sources);
         let texts = std::mem::take(&mut list.vector_texts);
@@ -154,6 +160,7 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
                 .collect()
         });
         if upload.is_none()
+            && pages.is_empty()
             && sources.is_empty()
             && texts.is_empty()
             && videos.is_empty()
@@ -223,6 +230,14 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
                 .iter()
                 .map(|video| (video.key, STANDARD.encode(&video.data)))
                 .collect(),
+            page_side: list.page_side,
+            page_uploads: pages
+                .iter()
+                .map(|page| UiUpload {
+                    rect: page.rect,
+                    texels: STANDARD.encode(&page.texels),
+                })
+                .collect(),
         })
     });
     resources.insert(sent);
@@ -255,6 +270,9 @@ pub struct UiReceiver {
     videos: Vec<UiVideo>,
     /// Every video still shown, handed over each time as `vector_sources`.
     video_sources: Vec<UiVideoSource>,
+    page_side: u32,
+    /// Handed over once and not kept: the pages have no CPU copy (#1893).
+    page_uploads: Vec<AtlasUpload>,
 }
 
 impl UiReceiver {
@@ -299,6 +317,16 @@ impl UiReceiver {
                 .collect();
         }
         self.fresh = true;
+        self.page_side = frame.page_side;
+        for page in &frame.page_uploads {
+            match STANDARD.decode(&page.texels) {
+                Ok(texels) => self.page_uploads.push(AtlasUpload {
+                    rect: page.rect,
+                    texels,
+                }),
+                Err(_) => tracing::warn!("the project sent a UI image this editor cannot read"),
+            }
+        }
         self.vector_side = frame.vector_side;
         self.vectors = frame
             .vectors
@@ -395,6 +423,8 @@ impl UiReceiver {
             vector_fonts: self.vector_fonts.clone(),
             videos: self.videos.clone(),
             video_sources: self.video_sources.clone(),
+            page_side: self.page_side,
+            page_uploads: std::mem::take(&mut self.page_uploads),
         })
     }
 

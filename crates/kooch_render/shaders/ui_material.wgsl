@@ -18,6 +18,8 @@ struct UiInput {
     image: bool,
     // Drawn by Vello rather than packed as texels (#1865).
     vector: bool,
+    // In the page atlas, where large images and videos live (#1893).
+    page: bool,
     atlas_min: vec2<f32>,
     atlas_size: vec2<f32>,
 }
@@ -27,5 +29,5 @@ fn sample_image(input: UiInput, uv: vec2<f32>) -> vec4<f32> {
     if !input.image {
         return vec4<f32>(1.0);
     }
-    return ui_sample(input.vector, input.atlas_min + uv * input.atlas_size);
+    return ui_sample(input.vector, input.page, input.atlas_min + uv * input.atlas_size);
 }

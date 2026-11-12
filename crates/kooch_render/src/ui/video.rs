@@ -1,5 +1,5 @@
 //! Videos in the UI (#1793): each plays here, in the renderer, and its frame is drawn on the GPU into
-//! its atlas slot, so a frame never crosses the CPU atlas or the remote wire.
+//! its slot of the page atlas, so a frame never crosses the CPU or the remote wire.
 
 use std::sync::Arc;
 
@@ -18,15 +18,15 @@ pub(super) struct UiVideos {
 }
 
 impl UiVideos {
-    /// Starts new videos, stops hidden ones and draws each due frame into `atlas`. `rewritten`: the
-    /// atlas was replaced or uploaded to this frame, so every slot is drawn again.
+    /// Starts new videos, stops hidden ones and draws each due frame into `pages`. `rewritten`: the
+    /// pages were replaced or uploaded to this frame, so every slot is drawn again.
     pub(super) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         list: &mut UiDrawList,
-        atlas: &wgpu::Texture,
+        pages: &wgpu::Texture,
         rewritten: bool,
     ) {
         for source in std::mem::take(&mut list.video_sources) {
@@ -62,7 +62,7 @@ impl UiVideos {
                 continue;
             }
             let target = VideoTarget {
-                texture: atlas,
+                texture: pages,
                 origin: [video.rect[0], video.rect[1]],
                 border: true,
                 size: Some([

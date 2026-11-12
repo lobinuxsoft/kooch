@@ -259,8 +259,9 @@ fn pack(
             match first {
                 Ok((rgba, size)) => {
                     let (rgba, size, density) = shrink(rgba, size, fit);
+                    // Its frames are drawn on the GPU, so its slot never needs a CPU copy.
                     if atlas
-                        .insert_image((guid, 0), modified, size, &rgba, density)
+                        .insert_page((guid, 0), modified, size, &rgba, density)
                         .is_none()
                     {
                         tracing::warn!("UI video {guid} does not fit the atlas");
@@ -279,7 +280,7 @@ fn pack(
                 false => decode(&bytes).map(|(rgba, size, _)| shrink(rgba, size, fit)),
             };
             let inserted = decoded.map(|(rgba, size, density)| {
-                atlas.insert_image((guid, class), modified, size, &rgba, density)
+                atlas.insert_raster((guid, class), modified, size, &rgba, density)
             });
             match inserted {
                 Ok(Some(_)) => {}
