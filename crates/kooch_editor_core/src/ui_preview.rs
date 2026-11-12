@@ -28,11 +28,44 @@ pub(crate) fn start_preview_system(resources: &mut Resources) {
     resources.insert(kooch_ui::UiShaders::default());
 }
 
+/// The preview's atlas generation while Play has it released.
+#[derive(Default)]
+struct Released(Option<u32>);
+
+/// 🔴 In Play the host's atlas is drawn, so the preview's (64 MB with a HUD image) is freed until
+/// Stop, then rebuilt from the files (#1891).
+fn release_preview(resources: &mut Resources) {
+    if resources
+        .get::<Released>()
+        .is_some_and(|released| released.0.is_some())
+    {
+        return;
+    }
+    let generation = resources
+        .remove::<kooch_ui::GlyphAtlas>()
+        .map_or(0, |atlas| atlas.generation());
+    resources.remove::<UiPass>();
+    resources.remove::<kooch_ecs::UiDrawList>();
+    resources.insert(Released(Some(generation)));
+}
+
+fn restore_preview(resources: &mut Resources) {
+    let Some(generation) = resources
+        .get_mut::<Released>()
+        .and_then(|released| released.0.take())
+    else {
+        return;
+    };
+    resources.insert(kooch_ui::GlyphAtlas::after(generation));
+}
+
 /// Stopped, the documents are the editor's to build and lay out; in Play the host's frame stands.
 pub(crate) fn preview_ui_system(resources: &mut Resources) {
     if remote_playing(resources) {
+        release_preview(resources);
         return;
     }
+    restore_preview(resources);
     kooch_ui::prune_trees(resources);
     kooch_ui::load_fonts(resources);
     kooch_ui::build_documents(resources);
