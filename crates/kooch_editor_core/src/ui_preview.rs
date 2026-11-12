@@ -84,6 +84,12 @@ pub(crate) fn draw(
     size: (u32, u32),
 ) {
     if !remote_playing(resources) {
+        if let Some(pass) = resources
+            .get_mut::<RemoteUi>()
+            .and_then(|ui| ui.pass.as_mut())
+        {
+            pass.park_videos();
+        }
         kooch_render::ui::draw_frame(gpu, encoder, resources, target, size);
         return;
     }
