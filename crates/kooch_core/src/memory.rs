@@ -1,4 +1,4 @@
-//! Handing freed heap back to the operating system (#1589).
+//! Handing freed heap back to the operating system (#1589), and keeping big blocks out of it (#1891).
 
 use std::time::Duration;
 
@@ -17,4 +17,17 @@ pub fn return_freed() -> Duration {
         libc::malloc_trim(0);
     }
     start.elapsed()
+}
+
+/// Serves every allocation of 1 MiB or more from its own mapping, returned to the OS when freed.
+///
+/// 🔴 glibc raises this threshold each time a mapped block is freed, so after one 12 MB video frame
+/// every smaller big block lands in the main heap and fragments it: measured +104 MB in 3 min, flat
+/// once fixed. Setting it turns the raising off for the whole process, C libraries and plugins too.
+pub fn map_big_blocks() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: `mallopt` only changes glibc's allocator settings; a refused value returns 0.
+    unsafe {
+        libc::mallopt(libc::M_MMAP_THRESHOLD, 1 << 20);
+    }
 }
