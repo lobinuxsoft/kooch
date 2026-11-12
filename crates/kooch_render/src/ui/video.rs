@@ -1,13 +1,15 @@
 //! Videos in the UI (#1793): each plays here, in the renderer, and its frame is drawn on the GPU into
 //! its atlas slot, so a frame never crosses the CPU atlas or the remote wire.
 
+use std::sync::Arc;
+
 use kooch_ecs::UiDrawList;
 use kooch_video::Player;
 
 use crate::video::{VideoConverter, VideoPlanes, VideoTarget};
 
-/// A playing video: its key, player and the planes of the frame it shows.
-type Playing = (u64, Player, Option<VideoPlanes>);
+/// A video: its key, its file, the player while it is drawn and the planes of the frame it shows.
+type Playing = (u64, Arc<[u8]>, Option<Player>, Option<VideoPlanes>);
 
 #[derive(Default)]
 pub(super) struct UiVideos {
@@ -29,8 +31,7 @@ impl UiVideos {
     ) {
         for source in std::mem::take(&mut list.video_sources) {
             if !self.playing.iter().any(|(key, ..)| *key == source.key) {
-                self.playing
-                    .push((source.key, Player::start(source.data), None));
+                self.playing.push((source.key, source.data, None, None));
             }
         }
         let shown = &list.videos;
@@ -43,12 +44,14 @@ impl UiVideos {
             .converter
             .get_or_insert_with(|| VideoConverter::new(device));
         for video in shown {
-            let Some((_, player, planes)) =
+            let Some((_, bytes, player, planes)) =
                 self.playing.iter_mut().find(|(key, ..)| *key == video.key)
             else {
                 continue;
             };
-            let due = player.due();
+            let due = player
+                .get_or_insert_with(|| Player::start(bytes.clone()))
+                .due();
             if let Some(picture) = &due {
                 converter.upload(device, queue, planes, picture);
             }
@@ -64,6 +67,15 @@ impl UiVideos {
                 border: true,
             };
             converter.draw(device, queue, encoder, planes, target);
+        }
+    }
+
+    /// Stops every video until it is drawn again, from its first frame.
+    /// 🔴 A 4K decoder holds 18 pictures, 215 MB, and a player nobody draws keeps them (#1894).
+    pub(super) fn park(&mut self) {
+        for (_, _, player, planes) in &mut self.playing {
+            *player = None;
+            *planes = None;
         }
     }
 }
