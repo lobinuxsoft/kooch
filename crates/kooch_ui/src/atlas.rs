@@ -116,6 +116,14 @@ impl GlyphAtlas {
         }
     }
 
+    /// An empty atlas following one of `generation`, so every tree rastered into that one redraws.
+    pub fn after(generation: u32) -> Self {
+        Self {
+            generation: generation.wrapping_add(1),
+            ..Self::default()
+        }
+    }
+
     /// The slice `guid`'s `.meta` gave it, zero until it is packed.
     pub fn slice(&self, guid: Guid) -> [f32; 4] {
         self.slices.get(&guid).copied().unwrap_or_default()

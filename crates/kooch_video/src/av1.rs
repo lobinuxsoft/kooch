@@ -62,6 +62,11 @@ impl Decoder {
         self.drain(show)
     }
 
+    /// Drops what is in flight, keeping the decoder's picture pool for the next pass.
+    pub(crate) fn flush(&mut self) {
+        self.0.flush();
+    }
+
     /// Hands `show` every picture ready now.
     pub(crate) fn drain(
         &mut self,

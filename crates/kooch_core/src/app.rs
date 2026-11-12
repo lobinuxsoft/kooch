@@ -60,6 +60,7 @@ impl App {
     ///
     /// Consider using `add_plugins(MinimalPlugins)` to get basic functionality.
     pub fn new() -> Self {
+        crate::memory::map_big_blocks();
         let mut app = Self {
             resources: Resources::new(),
             schedule: Schedule::new(),

@@ -62,14 +62,15 @@ impl Player {
     }
 }
 
-/// Decodes `bytes` again and again, each loop's times after the last; ends with its [`Player`].
+/// Decodes `bytes` again and again on one decoder, each loop's times after the last; ends with its
+/// [`Player`].
 fn play(bytes: Arc<[u8]>, send: SyncSender<Picture>) {
     let mut base = Duration::ZERO;
+    let mut stream = match Stream::open(bytes.clone()) {
+        Ok(stream) => stream,
+        Err(error) => return tracing::warn!("video not played: {error}"),
+    };
     loop {
-        let mut stream = match Stream::open(bytes.clone()) {
-            Ok(stream) => stream,
-            Err(error) => return tracing::warn!("video not played: {error}"),
-        };
         let (mut last, mut step) = (None, STEP);
         loop {
             match stream.next() {
@@ -94,5 +95,8 @@ fn play(bytes: Arc<[u8]>, send: SyncSender<Picture>) {
             return tracing::warn!("video not played: it has no frames");
         };
         base += last + step;
+        if let Err(error) = stream.rewind(bytes.clone()) {
+            return tracing::warn!("video stopped: {error}");
+        }
     }
 }

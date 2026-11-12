@@ -417,8 +417,8 @@ pub enum RemoteError {
     ExtensionFailed { name: String, detail: String },
 }
 
-/// A response: the echoed request id plus either a result or an error.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// A response: the echoed request id plus either a result or an error. Read by [`decode`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Response {
     pub id: u64,
     #[serde(flatten)]
@@ -450,6 +450,8 @@ impl Response {
         }
     }
 }
+
+mod decode;
 
 #[cfg(test)]
 mod tests;
