@@ -190,16 +190,8 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
                 sync.last_pull = Some(Instant::now());
                 profiling::scope!("remote: apply moved");
                 mirror.apply_moved(&moved.moved, &moved.components, resources);
-                let pending = resources
-                    .get::<crate::ui_preview::RemoteUi>()
-                    .and_then(|ui| ui.list.atlas_upload.as_ref().map(|upload| upload.rect));
-                if let Some(mut list) = session.take_ui(pending) {
-                    let ui = resources.get_or_default::<crate::ui_preview::RemoteUi>();
-                    // Pages the renderer never took are carried: nothing else holds them (#1893).
-                    let left = std::mem::take(&mut ui.list.page_uploads);
-                    list.page_uploads.splice(0..0, left);
-                    ui.list = list;
-                }
+                let ui = resources.get_or_default::<crate::ui_preview::RemoteUi>();
+                session.take_ui(&mut ui.list);
                 record_stats(resources, session, refresh, Duration::ZERO);
                 return;
             }

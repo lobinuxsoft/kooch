@@ -230,7 +230,7 @@ impl UiPass {
             self.bind = bind;
             self.atlas_side = list.atlas_side;
         }
-        if let Some(upload) = list.atlas_upload.take() {
+        for upload in std::mem::take(&mut list.atlas_uploads) {
             let [x0, y0, x1, y1] = upload.rect;
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {

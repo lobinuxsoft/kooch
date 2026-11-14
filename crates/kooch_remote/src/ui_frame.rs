@@ -147,7 +147,9 @@ struct SentUi {
 pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
     let mut sent = resources.remove::<SentUi>().unwrap_or_default();
     let frame = resources.get_mut::<UiDrawList>().and_then(|list| {
-        let upload = list.atlas_upload.take();
+        // A host merges its uploads into one, grown over its own atlas.
+        let upload = list.atlas_uploads.pop();
+        list.atlas_uploads.clear();
         let pages = std::mem::take(&mut list.page_uploads);
         let videos = std::mem::take(&mut list.video_sources);
         let sources = std::mem::take(&mut list.vector_sources);
@@ -244,8 +246,8 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
     frame
 }
 
-/// The editor's end. Keeps the RGBA8 atlas on the CPU, so frames that land between two draws merge
-/// into one upload instead of the later one dropping the earlier one's glyphs.
+/// The editor's end. Hands what arrived into one list the renderer keeps, swapping buffers rather
+/// than cloning them; glyph uploads queue there, so none needs a CPU copy of the atlas (#1898).
 #[derive(Default)]
 pub struct UiReceiver {
     quads: Vec<UiQuad>,
@@ -256,8 +258,9 @@ pub struct UiReceiver {
     params: Vec<UiParam>,
     shaders: Vec<UiShader>,
     side: u32,
-    atlas: Vec<u8>,
-    dirty: Option<[u32; 4]>,
+    atlas_uploads: Vec<AtlasUpload>,
+    /// Reused for every base64 decode of the quads and their tables.
+    scratch: Vec<u8>,
     fresh: bool,
     vector_side: u32,
     vectors: Vec<UiVector>,
@@ -277,36 +280,34 @@ pub struct UiReceiver {
 
 impl UiReceiver {
     pub fn receive(&mut self, frame: UiFrame) {
-        let (Some(quads), Some(masks), Some(curves), Some(mirrors)) = (
-            decoded(&frame.quads),
-            decoded(&frame.masks),
-            decoded(&frame.curves),
-            decoded(&frame.mirrors),
-        ) else {
+        let scratch = &mut self.scratch;
+        let read = decode_into(&frame.quads, scratch, &mut self.quads)
+            && decode_into(&frame.masks, scratch, &mut self.masks)
+            && decode_into(&frame.curves, scratch, &mut self.curves)
+            && decode_into(&frame.mirrors, scratch, &mut self.mirrors);
+        if !read {
             tracing::warn!("the project sent UI quads this editor cannot read");
+            self.quads.clear();
             return;
-        };
-        self.quads = quads;
-        self.masks = masks;
-        self.curves = curves;
-        self.mirrors = mirrors;
-        self.materials = frame
-            .materials
-            .iter()
-            .map(|&[quad, shader, first, count]| UiMaterial {
-                quad,
-                shader,
-                params: [first, count],
-            })
-            .collect();
-        self.params = frame
-            .params
-            .into_iter()
-            .map(|(name, value)| UiParam {
+        }
+        self.materials.clear();
+        self.materials
+            .extend(
+                frame
+                    .materials
+                    .iter()
+                    .map(|&[quad, shader, first, count]| UiMaterial {
+                        quad,
+                        shader,
+                        params: [first, count],
+                    }),
+            );
+        self.params.clear();
+        self.params
+            .extend(frame.params.into_iter().map(|(name, value)| UiParam {
                 name: name.into(),
                 value,
-            })
-            .collect();
+            }));
         if let Some(shaders) = frame.shaders {
             self.shaders = shaders
                 .into_iter()
@@ -328,16 +329,18 @@ impl UiReceiver {
             }
         }
         self.vector_side = frame.vector_side;
-        self.vectors = frame
-            .vectors
-            .iter()
-            .map(|&(key, rect, source, crop)| UiVector {
-                key,
-                rect,
-                source,
-                crop,
-            })
-            .collect();
+        self.vectors.clear();
+        self.vectors.extend(
+            frame
+                .vectors
+                .iter()
+                .map(|&(key, rect, source, crop)| UiVector {
+                    key,
+                    rect,
+                    source,
+                    crop,
+                }),
+        );
         for (key, svg) in frame.vector_sources {
             match STANDARD.decode(&svg) {
                 Ok(svg) => self.vector_sources.push(UiVectorSource {
@@ -362,11 +365,13 @@ impl UiReceiver {
         let resident = |key: u64| vectors.iter().any(|vector| vector.source == key);
         self.vector_sources.retain(|source| resident(source.key));
         self.vector_texts.retain(|text| resident(text.key));
-        self.videos = frame
-            .videos
-            .iter()
-            .map(|&(key, rect)| UiVideo { key, rect })
-            .collect();
+        self.videos.clear();
+        self.videos.extend(
+            frame
+                .videos
+                .iter()
+                .map(|&(key, rect)| UiVideo { key, rect }),
+        );
         for (key, data) in frame.video_sources {
             match STANDARD.decode(&data) {
                 Ok(data) => self.video_sources.push(UiVideoSource {
@@ -380,101 +385,78 @@ impl UiReceiver {
         self.video_sources
             .retain(|source| videos.iter().any(|video| video.key == source.key));
         if frame.atlas_side != self.side {
+            // Written for the old texture; a grown atlas is sent whole.
             self.side = frame.atlas_side;
-            self.atlas = vec![0; (self.side * self.side * 4) as usize];
-            self.dirty = None;
+            self.atlas_uploads.clear();
         }
         let Some(upload) = frame.upload else {
             return;
         };
-        if !self.write(&upload) {
-            tracing::warn!(rect = ?upload.rect, "the project sent a glyph upload that does not fit");
+        match checked(&upload, self.side) {
+            Some(upload) => self.atlas_uploads.push(upload),
+            None => {
+                tracing::warn!(rect = ?upload.rect, "the project sent a glyph upload that does not fit")
+            }
         }
     }
 
-    /// What arrived since the last call. `pending` is an upload the renderer never took — a hidden
-    /// Game View — folded in so its glyphs survive the replacement.
-    pub fn take(&mut self, pending: Option<[u32; 4]>) -> Option<UiDrawList> {
+    /// Hands what arrived since the last call into `list`, the one the renderer keeps: what it has
+    /// not taken yet stays queued there. False when nothing arrived.
+    pub fn take_into(&mut self, list: &mut UiDrawList) -> bool {
         if !std::mem::take(&mut self.fresh) {
-            return None;
-        }
-        let rect = match (self.dirty.take(), pending) {
-            (Some(a), Some(b)) => Some(union(a, b)),
-            (a, b) => a.or(b),
-        }
-        .filter(|rect| rect[2] <= self.side && rect[3] <= self.side);
-        Some(UiDrawList {
-            quads: self.quads.clone(),
-            masks: self.masks.clone(),
-            curves: self.curves.clone(),
-            mirrors: self.mirrors.clone(),
-            materials: self.materials.clone(),
-            params: self.params.clone(),
-            shaders: self.shaders.clone(),
-            atlas_side: self.side,
-            atlas_upload: rect.map(|rect| AtlasUpload {
-                rect,
-                texels: region(&self.atlas, self.side, rect),
-            }),
-            vector_side: self.vector_side,
-            vectors: self.vectors.clone(),
-            vector_sources: self.vector_sources.clone(),
-            vector_texts: self.vector_texts.clone(),
-            vector_fonts: self.vector_fonts.clone(),
-            videos: self.videos.clone(),
-            video_sources: self.video_sources.clone(),
-            page_side: self.page_side,
-            page_uploads: std::mem::take(&mut self.page_uploads),
-        })
-    }
-
-    fn write(&mut self, upload: &UiUpload) -> bool {
-        let [x0, y0, x1, y1] = upload.rect;
-        if x0 >= x1 || y0 >= y1 || x1 > self.side || y1 > self.side {
             return false;
         }
-        let Ok(texels) = STANDARD.decode(&upload.texels) else {
-            return false;
-        };
-        let row_bytes = (x1 - x0) as usize * 4;
-        if texels.len() != row_bytes * (y1 - y0) as usize {
-            return false;
+        // Each frame replaces these whole, so the receiver keeps the list's old buffers to refill.
+        std::mem::swap(&mut self.quads, &mut list.quads);
+        std::mem::swap(&mut self.masks, &mut list.masks);
+        std::mem::swap(&mut self.curves, &mut list.curves);
+        std::mem::swap(&mut self.mirrors, &mut list.mirrors);
+        std::mem::swap(&mut self.materials, &mut list.materials);
+        std::mem::swap(&mut self.params, &mut list.params);
+        std::mem::swap(&mut self.vectors, &mut list.vectors);
+        std::mem::swap(&mut self.videos, &mut list.videos);
+        list.shaders.clone_from(&self.shaders);
+        list.vector_sources.clone_from(&self.vector_sources);
+        list.vector_texts.clone_from(&self.vector_texts);
+        list.vector_fonts.clone_from(&self.vector_fonts);
+        list.video_sources.clone_from(&self.video_sources);
+        if list.atlas_side != self.side {
+            list.atlas_uploads.clear();
         }
-        for (row, y) in texels.chunks_exact(row_bytes).zip(y0..y1) {
-            let start = (y * self.side + x0) as usize * 4;
-            self.atlas[start..start + row_bytes].copy_from_slice(row);
-        }
-        self.dirty = Some(
-            self.dirty
-                .map_or(upload.rect, |dirty| union(dirty, upload.rect)),
-        );
+        list.atlas_side = self.side;
+        list.atlas_uploads.append(&mut self.atlas_uploads);
+        list.vector_side = self.vector_side;
+        list.page_side = self.page_side;
+        list.page_uploads.append(&mut self.page_uploads);
         true
     }
 }
 
-fn decoded<T: bytemuck::Pod>(encoded: &str) -> Option<Vec<T>> {
-    let bytes = STANDARD.decode(encoded).ok()?;
-    if bytes.len() % size_of::<T>() != 0 {
+/// `upload` decoded, when it fits an atlas of `side`.
+fn checked(upload: &UiUpload, side: u32) -> Option<AtlasUpload> {
+    let [x0, y0, x1, y1] = upload.rect;
+    if x0 >= x1 || y0 >= y1 || x1 > side || y1 > side {
         return None;
     }
-    // Collected rather than cast: a decoded `Vec<u8>` carries no alignment for `f32`.
-    Some(bytemuck::pod_collect_to_vec(&bytes))
+    let texels = STANDARD.decode(&upload.texels).ok()?;
+    (texels.len() == (x1 - x0) as usize * 4 * (y1 - y0) as usize).then_some(AtlasUpload {
+        rect: upload.rect,
+        texels,
+    })
 }
 
-fn union(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
-    [
-        a[0].min(b[0]),
-        a[1].min(b[1]),
-        a[2].max(b[2]),
-        a[3].max(b[3]),
-    ]
-}
-
-fn region(atlas: &[u8], side: u32, [x0, y0, x1, y1]: [u32; 4]) -> Vec<u8> {
-    (y0..y1)
-        .flat_map(|y| {
-            let start = (y * side + x0) as usize * 4;
-            atlas[start..start + (x1 - x0) as usize * 4].iter().copied()
-        })
-        .collect()
+/// Decodes `encoded` into `out`, reusing both buffers. Read unaligned: bytes carry no alignment
+/// for `f32`.
+fn decode_into<T: bytemuck::Pod>(encoded: &str, scratch: &mut Vec<u8>, out: &mut Vec<T>) -> bool {
+    scratch.clear();
+    if STANDARD.decode_vec(encoded, scratch).is_err() || scratch.len() % size_of::<T>() != 0 {
+        return false;
+    }
+    out.clear();
+    out.extend(
+        scratch
+            .chunks_exact(size_of::<T>())
+            .map(bytemuck::pod_read_unaligned::<T>),
+    );
+    true
 }

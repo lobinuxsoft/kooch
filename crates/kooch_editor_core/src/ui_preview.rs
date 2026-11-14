@@ -47,6 +47,8 @@ fn release_preview(resources: &mut Resources) {
     resources.remove::<UiPass>();
     resources.remove::<kooch_ecs::UiDrawList>();
     resources.insert(Released(Some(generation)));
+    // Freed is not returned: glibc keeps it until asked (#1898).
+    kooch_core::memory::return_freed();
 }
 
 fn restore_preview(resources: &mut Resources) {
@@ -57,6 +59,7 @@ fn restore_preview(resources: &mut Resources) {
         return;
     };
     resources.insert(kooch_ui::GlyphAtlas::after(generation));
+    kooch_core::memory::return_freed();
 }
 
 /// Stopped, the documents are the editor's to build and lay out; in Play the host's frame stands.

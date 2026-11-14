@@ -265,10 +265,9 @@ impl RemoteSession {
         self.host_metrics
     }
 
-    /// The project's UI when it changed since the last call. `pending` is the rect of an atlas
-    /// upload the renderer never took, carried into the new list.
-    pub fn take_ui(&mut self, pending: Option<[u32; 4]>) -> Option<kooch_ecs::UiDrawList> {
-        self.ui.take(pending)
+    /// Hands the project's UI into `list` when it changed since the last call.
+    pub fn take_ui(&mut self, list: &mut kooch_ecs::UiDrawList) -> bool {
+        self.ui.take_into(list)
     }
 
     /// Tells the project the Game View's size when it changed: its layout and camera aspect read it.

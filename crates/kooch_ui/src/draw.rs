@@ -91,11 +91,11 @@ fn upload(atlas: &mut GlyphAtlas, list: &mut UiDrawList) {
     // Grown over one not uploaded yet, not replacing it: a frame the renderer skipped would
     // otherwise lose its glyphs.
     if let Some(dirty) = atlas.take_dirty() {
-        let rect = match list.atlas_upload.take() {
-            Some(pending) => union(pending.rect, dirty),
-            None => dirty,
-        };
-        list.atlas_upload = Some(AtlasUpload {
+        let rect = list
+            .atlas_uploads
+            .drain(..)
+            .fold(dirty, |rect, pending| union(rect, pending.rect));
+        list.atlas_uploads.push(AtlasUpload {
             rect,
             texels: region(atlas, rect),
         });
