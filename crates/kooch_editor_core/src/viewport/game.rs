@@ -3,11 +3,10 @@
 
 use kooch_core::gpu::GpuContext;
 use kooch_core::resource::Resources;
-use kooch_core::time::Time;
 use kooch_ecs::query::filter::Without;
-use kooch_render::SkyRenderPass;
 use kooch_render::camera_stack::{CameraStack, StackViews};
 use kooch_render::meshlet::{MeshletBlit, MeshletRenderStage, ViewId};
+use kooch_render::{SkyRenderPass, SkyTarget};
 
 /// The Game viewport's own render stats.
 #[derive(Copy, Clone, Debug, Default)]
@@ -103,23 +102,23 @@ pub(crate) fn render_game_view(
         });
 
     let sky_drawn = if let Some(active_sky) = SkyRenderPass::active_sky(resources) {
-        let time_secs = Time::of(resources).elapsed_secs();
         sky_pass.render(
-            gpu.queue(),
+            gpu,
             &mut encoder,
-            game.target.view(),
-            game.target.depth_view(),
+            SkyTarget {
+                view: game.target.view(),
+                depth: game.target.depth_view(),
+                aspect,
+            },
             resources,
             &camera,
-            aspect,
             active_sky,
-            time_secs,
         )
     } else {
         false
     };
     if !sky_drawn {
-        super::render::clear_to_black(&mut encoder, game.target.view(), game.target.depth_view());
+        SkyRenderPass::clear(&mut encoder, game.target.view(), game.target.depth_view());
     }
 
     // Same per-frame truth the View panel uses: `instances_uploaded > 0` iff the pipeline ran a

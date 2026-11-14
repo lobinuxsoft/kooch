@@ -1,13 +1,10 @@
 use super::*;
+use crate::material::{Shader, ShaderKind};
+use crate::meshlet::validate_sky;
 
 #[test]
-fn shader_parses() {
-    let module = naga::front::wgsl::parse_str(SHADER_SOURCE).expect("sky shader should parse");
-    let mut validator = naga::valid::Validator::new(
-        naga::valid::ValidationFlags::all(),
-        naga::valid::Capabilities::all(),
-    );
-    validator
-        .validate(&module)
-        .expect("sky shader should validate");
+fn the_default_sky_compiles() {
+    let shader = Shader::parse(DEFAULT_SKY_SHADER).expect("the engine's sky parses");
+    assert_eq!(shader.kind, ShaderKind::Sky);
+    validate_sky(&shader.params_wgsl(), &shader.source).expect("the engine's sky validates");
 }

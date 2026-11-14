@@ -306,6 +306,7 @@ impl Node {
             Self::Ring => &["uv", "radius", "thickness"],
             Self::Polygon => &["uv", "sides", "radius"],
             Self::Checker => &["uv", "tiles"],
+            Self::ShaderOutput { kind } if kind == "sky" => &["color"],
             Self::ShaderOutput { kind } if kind == "post_process" || kind == "ui" => {
                 &["color", "alpha"]
             }

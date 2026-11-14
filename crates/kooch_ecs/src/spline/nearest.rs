@@ -83,4 +83,4 @@ const SAMPLES_PER_SEGMENT: u32 = 8;
 /// Each one shrinks the window to 62 % of itself, so 24 takes a segment's eighth below a micrometre.
 const REFINEMENTS: u32 = 24;
 
-const GOLDEN: f32 = 1.618_034;
+const GOLDEN: f32 = std::f32::consts::GOLDEN_RATIO;

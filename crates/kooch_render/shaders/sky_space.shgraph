@@ -1,0 +1,312 @@
+// kind: sky
+/*KOOCH_GRAPH;(nodes:{0:(value:(node:Uv),pos:(x:340.0,y:-78.0),open:true),1:(value:(node:WorldNormal),pos:(x:0.0,y:-206.0),open:true),2:(value:(node:ConstVector(width:2,value:(220.0,110.0,0.0,0.0))),pos:(x:340.0,y:150.0),open:true),3:(value:(node:VoronoiNoise(metric:"euclidean")),pos:(x:680.0,y:138.0),open:true),4:(value:(node:ConstFloat(0.0)),pos:(x:680.0,y:-206.0),open:true),5:(value:(node:ConstFloat(0.08)),pos:(x:680.0,y:-34.0),open:true),6:(value:(node:Smoothstep),pos:(x:1020.0,y:-264.0),open:true),7:(value:(node:OneMinus),pos:(x:1360.0,y:120.0),open:true),8:(value:(node:ConstFloat(0.6)),pos:(x:1020.0,y:-36.0),open:true),9:(value:(node:Step),pos:(x:1360.0,y:292.0),open:true),10:(value:(node:Multiply),pos:(x:1700.0,y:-178.0),open:true),11:(value:(node:ConstFloat(10.0)),pos:(x:1020.0,y:136.0),open:true),12:(value:(node:Power),pos:(x:1360.0,y:492.0),open:true),13:(value:(node:Float(name:"star_brightness",default:1.6,range:Some((0.0,4.0)))),pos:(x:1360.0,y:692.0),open:true),14:(value:(node:ConstFloat(0.12)),pos:(x:1360.0,y:864.0),open:true),15:(value:(node:MulAdd),pos:(x:1700.0,y:22.0),open:true),16:(value:(node:ConstColor((1.0,0.80000013,0.62,1.0))),pos:(x:1700.0,y:250.0),open:true),17:(value:(node:ConstColor((0.7,0.81999993,1.0,1.0))),pos:(x:1700.0,y:562.0),open:true),18:(value:(node:Mix),pos:(x:2040.0,y:362.0),open:true),19:(value:(node:Multiply),pos:(x:2040.0,y:162.0),open:true),20:(value:(node:Multiply),pos:(x:2380.0,y:64.0),open:true),21:(value:(node:ConstVector(width:2,value:(640.0,320.0,0.0,0.0))),pos:(x:680.0,y:450.0),open:true),22:(value:(node:VoronoiNoise(metric:"euclidean")),pos:(x:1020.0,y:652.0),open:true),23:(value:(node:ConstFloat(0.0)),pos:(x:1020.0,y:308.0),open:true),24:(value:(node:ConstFloat(0.12)),pos:(x:1020.0,y:480.0),open:true),25:(value:(node:Smoothstep),pos:(x:1360.0,y:1036.0),open:true),26:(value:(node:OneMinus),pos:(x:1700.0,y:874.0),open:true),27:(value:(node:ConstFloat(0.7)),pos:(x:1360.0,y:1264.0),open:true),28:(value:(node:Step),pos:(x:1700.0,y:1046.0),open:true),29:(value:(node:Multiply),pos:(x:2040.0,y:590.0),open:true),30:(value:(node:ConstFloat(0.3)),pos:(x:2040.0,y:790.0),open:true),31:(value:(node:Multiply),pos:(x:2380.0,y:264.0),open:true),32:(value:(node:Add),pos:(x:2720.0,y:50.0),open:true),33:(value:(node:ConstVector(width:3,value:(0.32,0.88,0.35,0.0))),pos:(x:0.0,y:50.0),open:true),34:(value:(node:Dot),pos:(x:340.0,y:-278.0),open:true),35:(value:(node:Multiply),pos:(x:680.0,y:-578.0),open:true),36:(value:(node:ConstFloat(-14.0)),pos:(x:680.0,y:-378.0),open:true),37:(value:(node:Multiply),pos:(x:1020.0,y:-464.0),open:true),38:(value:(node:Exp),pos:(x:1360.0,y:-624.0),open:true),39:(value:(node:FractalNoise(basis:"value",fractal:"fbm")),pos:(x:1360.0,y:-992.0),open:true),40:(value:(node:ConstVector(width:2,value:(8.0,4.0,0.0,0.0))),pos:(x:1020.0,y:-692.0),open:true),41:(value:(node:ConstFloat(5.0)),pos:(x:1020.0,y:-864.0),open:true),42:(value:(node:FractalNoise(basis:"gradient",fractal:"fbm")),pos:(x:1700.0,y:-718.0),open:true),43:(value:(node:ConstVector(width:2,value:(24.0,12.0,0.0,0.0))),pos:(x:1360.0,y:-108.0),open:true),44:(value:(node:ConstFloat(4.0)),pos:(x:1360.0,y:-280.0),open:true),45:(value:(node:ConstFloat(0.45)),pos:(x:1360.0,y:-1336.0),open:true),46:(value:(node:ConstFloat(0.8)),pos:(x:1360.0,y:-1164.0),open:true),47:(value:(node:Smoothstep),pos:(x:1700.0,y:-1146.0),open:true),48:(value:(node:ConstFloat(0.6)),pos:(x:1360.0,y:-452.0),open:true),49:(value:(node:Multiply),pos:(x:1700.0,y:-918.0),open:true),50:(value:(node:Add),pos:(x:2040.0,y:-238.0),open:true),51:(value:(node:Color(name:"nebula_a",default:(0.42,0.11999999,0.36000004,1.0))),pos:(x:2040.0,y:-862.0),open:true),52:(value:(node:Color(name:"nebula_b",default:(0.099999994,0.2599998,0.45,1.0))),pos:(x:2040.0,y:-550.0),open:true),53:(value:(node:Mix),pos:(x:2380.0,y:-364.0),open:true),54:(value:(node:Float(name:"nebula_intensity",default:0.25,range:Some((0.0,1.0)))),pos:(x:1700.0,y:-350.0),open:true),55:(value:(node:Multiply),pos:(x:2040.0,y:-38.0),open:true),56:(value:(node:Multiply),pos:(x:2380.0,y:-136.0),open:true),57:(value:(node:Multiply),pos:(x:2720.0,y:-150.0),open:true),58:(value:(node:ConstColor((0.0040000007,0.004999999,0.012,1.0))),pos:(x:3060.0,y:-6.0),open:true),59:(value:(node:Add),pos:(x:3060.0,y:-206.0),open:true),60:(value:(node:Add),pos:(x:3400.0,y:-50.0),open:true),61:(value:(node:ShaderOutput(kind:"sky")),pos:(x:3740.0,y:-36.0),open:true)},wires:[(out_pin:(node:32,output:0),in_pin:(node:59,input:1)),(out_pin:(node:33,output:0),in_pin:(node:34,input:1)),(out_pin:(node:34,output:0),in_pin:(node:35,input:1)),(out_pin:(node:30,output:0),in_pin:(node:31,input:1)),(out_pin:(node:54,output:0),in_pin:(node:55,input:1)),(out_pin:(node:20,output:0),in_pin:(node:32,input:0)),(out_pin:(node:12,output:0),in_pin:(node:15,input:0)),(out_pin:(node:2,output:0),in_pin:(node:3,input:5)),(out_pin:(node:53,output:0),in_pin:(node:57,input:0)),(out_pin:(node:56,output:0),in_pin:(node:57,input:1)),(out_pin:(node:9,output:0),in_pin:(node:10,input:1)),(out_pin:(node:31,output:0),in_pin:(node:32,input:1)),(out_pin:(node:45,output:0),in_pin:(node:47,input:0)),(out_pin:(node:5,output:0),in_pin:(node:6,input:1)),(out_pin:(node:7,output:0),in_pin:(node:10,input:0)),(out_pin:(node:22,output:3),in_pin:(node:28,input:1)),(out_pin:(node:0,output:0),in_pin:(node:22,input:0)),(out_pin:(node:22,output:0),in_pin:(node:25,input:2)),(out_pin:(node:42,output:0),in_pin:(node:53,input:2)),(out_pin:(node:16,output:0),in_pin:(node:18,input:0)),(out_pin:(node:11,output:0),in_pin:(node:12,input:1)),(out_pin:(node:48,output:0),in_pin:(node:49,input:1)),(out_pin:(node:1,output:0),in_pin:(node:34,input:0)),(out_pin:(node:21,output:0),in_pin:(node:22,input:5)),(out_pin:(node:38,output:0),in_pin:(node:49,input:0)),(out_pin:(node:35,output:0),in_pin:(node:37,input:0)),(out_pin:(node:0,output:0),in_pin:(node:42,input:0)),(out_pin:(node:14,output:0),in_pin:(node:15,input:2)),(out_pin:(node:17,output:0),in_pin:(node:18,input:1)),(out_pin:(node:40,output:0),in_pin:(node:39,input:7)),(out_pin:(node:24,output:0),in_pin:(node:25,input:1)),(out_pin:(node:25,output:0),in_pin:(node:26,input:0)),(out_pin:(node:3,output:3),in_pin:(node:18,input:2)),(out_pin:(node:6,output:0),in_pin:(node:7,input:0)),(out_pin:(node:47,output:0),in_pin:(node:50,input:0)),(out_pin:(node:23,output:0),in_pin:(node:25,input:0)),(out_pin:(node:50,output:0),in_pin:(node:56,input:0)),(out_pin:(node:36,output:0),in_pin:(node:37,input:1)),(out_pin:(node:8,output:0),in_pin:(node:9,input:0)),(out_pin:(node:0,output:0),in_pin:(node:3,input:0)),(out_pin:(node:49,output:0),in_pin:(node:50,input:1)),(out_pin:(node:15,output:0),in_pin:(node:19,input:1)),(out_pin:(node:3,output:3),in_pin:(node:12,input:0)),(out_pin:(node:4,output:0),in_pin:(node:6,input:0)),(out_pin:(node:43,output:0),in_pin:(node:42,input:7)),(out_pin:(node:42,output:0),in_pin:(node:55,input:0)),(out_pin:(node:18,output:0),in_pin:(node:20,input:1)),(out_pin:(node:39,output:0),in_pin:(node:47,input:2)),(out_pin:(node:0,output:0),in_pin:(node:39,input:0)),(out_pin:(node:29,output:0),in_pin:(node:31,input:0)),(out_pin:(node:37,output:0),in_pin:(node:38,input:0)),(out_pin:(node:3,output:3),in_pin:(node:9,input:1)),(out_pin:(node:44,output:0),in_pin:(node:42,input:2)),(out_pin:(node:26,output:0),in_pin:(node:29,input:0)),(out_pin:(node:51,output:0),in_pin:(node:53,input:0)),(out_pin:(node:3,output:0),in_pin:(node:6,input:2)),(out_pin:(node:19,output:0),in_pin:(node:20,input:0)),(out_pin:(node:52,output:0),in_pin:(node:53,input:1)),(out_pin:(node:34,output:0),in_pin:(node:35,input:0)),(out_pin:(node:55,output:0),in_pin:(node:56,input:1)),(out_pin:(node:59,output:0),in_pin:(node:60,input:0)),(out_pin:(node:27,output:0),in_pin:(node:28,input:0)),(out_pin:(node:60,output:0),in_pin:(node:61,input:0)),(out_pin:(node:28,output:0),in_pin:(node:29,input:1)),(out_pin:(node:58,output:0),in_pin:(node:60,input:1)),(out_pin:(node:46,output:0),in_pin:(node:47,input:1)),(out_pin:(node:57,output:0),in_pin:(node:59,input:0)),(out_pin:(node:10,output:0),in_pin:(node:19,input:0)),(out_pin:(node:41,output:0),in_pin:(node:39,input:2)),(out_pin:(node:13,output:0),in_pin:(node:15,input:1))])*/
+// Written by the shader graph. Edit it there: saving the graph replaces this file.
+
+struct SurfaceParams {
+    star_brightness: f32,  // @range(0, 4)
+    nebula_a: vec4<f32>,  // @color
+    nebula_b: vec4<f32>,  // @color
+    nebula_intensity: f32,  // @range(0, 1)
+}
+
+const SURFACE_DEFAULTS = SurfaceParams(
+    1.6,  // star_brightness
+    vec4<f32>(0.42, 0.11999999, 0.36000004, 1.0),  // nebula_a
+    vec4<f32>(0.099999994, 0.2599998, 0.45, 1.0),  // nebula_b
+    0.25,  // nebula_intensity
+);
+
+// Wraps a lattice cell into `period`, so a noise hashed from it repeats every `period` cells and a
+// uv that comes back to itself — a tiled texture, a full turn of polar coordinates — has no seam.
+// An axis at 0 is left open, which is what every noise was before there was a period at all.
+fn graph_wrap(cell: vec2<f32>, period: vec2<f32>) -> vec2<f32> {
+    let wrapped = cell - period * floor(cell / max(period, vec2<f32>(1.0)));
+    return select(cell, wrapped, period > vec2<f32>(0.5));
+}
+
+// The period one octave finer. Kept whole: a period that is not a whole number of cells does not
+// wrap, so the octaves quantise rather than seam.
+fn graph_wrap_octave(period: vec2<f32>, lacunarity: f32) -> vec2<f32> {
+    return round(period * max(lacunarity, 1.0));
+}
+
+// The same wrap where the third axis is the phase, which turns rather than tiles.
+fn graph_wrap3(cell: vec3<f32>, period: vec2<f32>) -> vec3<f32> {
+    return vec3<f32>(graph_wrap(cell.xy, period), cell.z);
+}
+
+// Pseudo-random numbers from a cell coordinate, shared by every noise node.
+fn graph_hash(p: vec2<f32>) -> f32 {
+    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.547);
+}
+
+fn graph_hash2(p: vec2<f32>) -> vec2<f32> {
+    let q = vec2<f32>(dot(p, vec2<f32>(127.1, 311.7)), dot(p, vec2<f32>(269.5, 183.3)));
+    return fract(sin(q) * 43758.547);
+}
+
+// A random direction for a lattice point, each component in -1..1.
+fn graph_gradient(cell: vec2<f32>) -> vec2<f32> {
+    return graph_hash2(cell) * 2.0 - 1.0;
+}
+
+// Value noise: a random value at each lattice point, smoothed between them. 0..1.
+fn graph_value_noise(uv: vec2<f32>, period: vec2<f32>) -> f32 {
+    let cell = floor(uv);
+    let f = fract(uv);
+    let w = f * f * (3.0 - 2.0 * f);
+    let a = graph_hash(graph_wrap(cell, period));
+    let b = graph_hash(graph_wrap(cell + vec2<f32>(1.0, 0.0), period));
+    let c = graph_hash(graph_wrap(cell + vec2<f32>(0.0, 1.0), period));
+    let d = graph_hash(graph_wrap(cell + vec2<f32>(1.0, 1.0), period));
+    return mix(mix(a, b, w.x), mix(c, d, w.x), w.y);
+}
+
+// Octaves of value noise. `mode` 0 sums them (fBm), 1 folds each about its middle (turbulence), 2 turns
+// the fold into sharp crests (ridged). `roughness` is how much each octave keeps of the one before,
+// `lacunarity` how much finer it is. Normalised back to 0..1.
+fn graph_value_fractal(p: vec2<f32>, octaves: f32, roughness: f32, lacunarity: f32, mode: f32, period: vec2<f32>) -> f32 {
+    let count = i32(clamp(round(octaves), 1.0, 8.0));
+    var sum = 0.0;
+    var weight = 0.0;
+    var amplitude = 1.0;
+    var at = p;
+    var tile = period;
+    for (var i = 0; i < count; i = i + 1) {
+        let n = graph_value_noise(at, tile);
+        let folded = abs(n * 2.0 - 1.0);
+        let shaped = select(select(n, folded, mode > 0.5), (1.0 - folded) * (1.0 - folded), mode > 1.5);
+        sum = sum + amplitude * shaped;
+        weight = weight + amplitude;
+        amplitude = amplitude * clamp(roughness, 0.0, 1.0);
+        at = at * lacunarity;
+        tile = graph_wrap_octave(tile, lacunarity);
+    }
+    return sum / max(weight, 0.00001);
+}
+
+// The coordinate pushed around by the noise itself before it is read: smoke, marble, flame.
+fn graph_value_warp(p: vec2<f32>, amount: f32, period: vec2<f32>) -> vec2<f32> {
+    let push = vec2<f32>(graph_value_noise(p + vec2<f32>(5.2, 1.3), period), graph_value_noise(p + vec2<f32>(1.7, 9.2), period));
+    return p + (push * 2.0 - 1.0) * amount;
+}
+
+// Gradient (Perlin) noise: a random slope at each lattice point, blended with a quintic fade. 0..1.
+fn graph_gradient_noise(uv: vec2<f32>, period: vec2<f32>) -> f32 {
+    let cell = floor(uv);
+    let f = fract(uv);
+    let fade = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    let a = dot(graph_gradient(graph_wrap(cell, period)), f);
+    let b = dot(graph_gradient(graph_wrap(cell + vec2<f32>(1.0, 0.0), period)), f - vec2<f32>(1.0, 0.0));
+    let c = dot(graph_gradient(graph_wrap(cell + vec2<f32>(0.0, 1.0), period)), f - vec2<f32>(0.0, 1.0));
+    let d = dot(graph_gradient(graph_wrap(cell + vec2<f32>(1.0, 1.0), period)), f - vec2<f32>(1.0, 1.0));
+    return mix(mix(a, b, fade.x), mix(c, d, fade.x), fade.y) * 0.5 + 0.5;
+}
+
+// Octaves of gradient noise. `mode` 0 sums them (fBm), 1 folds each about its middle (turbulence), 2 turns
+// the fold into sharp crests (ridged). `roughness` is how much each octave keeps of the one before,
+// `lacunarity` how much finer it is. Normalised back to 0..1.
+fn graph_gradient_fractal(p: vec2<f32>, octaves: f32, roughness: f32, lacunarity: f32, mode: f32, period: vec2<f32>) -> f32 {
+    let count = i32(clamp(round(octaves), 1.0, 8.0));
+    var sum = 0.0;
+    var weight = 0.0;
+    var amplitude = 1.0;
+    var at = p;
+    var tile = period;
+    for (var i = 0; i < count; i = i + 1) {
+        let n = graph_gradient_noise(at, tile);
+        let folded = abs(n * 2.0 - 1.0);
+        let shaped = select(select(n, folded, mode > 0.5), (1.0 - folded) * (1.0 - folded), mode > 1.5);
+        sum = sum + amplitude * shaped;
+        weight = weight + amplitude;
+        amplitude = amplitude * clamp(roughness, 0.0, 1.0);
+        at = at * lacunarity;
+        tile = graph_wrap_octave(tile, lacunarity);
+    }
+    return sum / max(weight, 0.00001);
+}
+
+// The coordinate pushed around by the noise itself before it is read: smoke, marble, flame.
+fn graph_gradient_warp(p: vec2<f32>, amount: f32, period: vec2<f32>) -> vec2<f32> {
+    let push = vec2<f32>(graph_gradient_noise(p + vec2<f32>(5.2, 1.3), period), graph_gradient_noise(p + vec2<f32>(1.7, 9.2), period));
+    return p + (push * 2.0 - 1.0) * amount;
+}
+
+// Cellular (Voronoi) noise: one point per cell, `randomness` of the way from the cell's middle to a
+// random place, circling with `phase` so the cells can move.
+struct GraphVoronoi {
+    // Distance to the nearest point. Smoothness (0..1) rounds F1, F2 and the border alike.
+    f1: f32,
+    // Distance to the second nearest point.
+    f2: f32,
+    // Distance to the nearest cell border, which F2 - F1 only approximates.
+    edge: f32,
+    // A random value per cell, for colouring cells apart.
+    cell: f32,
+    // Where the nearest point is, in the scaled coordinate.
+    position: vec2<f32>,
+}
+
+// 0 Euclidean (round cells), 1 Manhattan (diamonds), 2 Chebyshev (squares).
+fn graph_voronoi_distance(d: vec2<f32>, metric: i32) -> f32 {
+    let a = abs(d);
+    return select(select(length(d), a.x + a.y, metric == 1), max(a.x, a.y), metric == 2);
+}
+
+fn graph_voronoi_point(cell: vec2<f32>, randomness: f32, phase: f32, period: vec2<f32>) -> vec2<f32> {
+    let at = graph_wrap(cell, period);
+    return mix(vec2<f32>(0.5), 0.5 + 0.5 * sin(phase + 6.2831855 * graph_hash2(at)), randomness);
+}
+
+// How far smoothness 1 blends: past it the 5x5 search is too narrow and the blend tears (measured).
+const GRAPH_VORONOI_BLEND: f32 = 0.12;
+
+// Smooth minimum over `distances` except `skipped`, around their true minimum `least`. Symmetric
+// (log-sum-exp): a running polynomial blend depends on cell order and tears where cells swap.
+fn graph_voronoi_blend(distances: ptr<function, array<f32, 25>>, skipped: i32, least: f32, k: f32) -> f32 {
+    var sum = 0.0;
+    for (var i = 0; i < 25; i = i + 1) {
+        if i != skipped {
+            sum = sum + exp(-((*distances)[i] - least) / k);
+        }
+    }
+    return least - k * log(max(sum, 1e-6));
+}
+
+fn graph_voronoi(uv: vec2<f32>, randomness: f32, phase: f32, smoothness: f32, metric: i32, edges: bool, period: vec2<f32>) -> GraphVoronoi {
+    let cell = floor(uv);
+    let f = fract(uv);
+    var out: GraphVoronoi;
+    out.f1 = 8.0;
+    out.f2 = 8.0;
+    var distances: array<f32, 25>;
+    var nearest_index = 0;
+    var nearest = vec2<f32>(0.0);
+    var nearest_cell = vec2<f32>(0.0);
+    // 5x5, not 3x3: a random point two cells away is sometimes the second nearest, and 3x3 got F2
+    // wrong often enough to speckle.
+    for (var y = -2; y <= 2; y = y + 1) {
+        for (var x = -2; x <= 2; x = x + 1) {
+            let offset = vec2<f32>(f32(x), f32(y));
+            let point = graph_voronoi_point(cell + offset, randomness, phase, period);
+            let r = offset + point - f;
+            let d = graph_voronoi_distance(r, metric);
+            let index = (y + 2) * 5 + x + 2;
+            distances[index] = d;
+            if d < out.f1 {
+                out.f2 = out.f1;
+                out.f1 = d;
+                out.cell = graph_hash(graph_wrap(cell + offset, period));
+                out.position = cell + offset + point;
+                nearest = r;
+                nearest_cell = offset;
+                nearest_index = index;
+            } else if d < out.f2 {
+                out.f2 = d;
+            }
+        }
+    }
+    // The true border distance takes a second pass around the nearest cell — only when asked for.
+    if edges {
+        var edge = 8.0;
+        for (var y = -2; y <= 2; y = y + 1) {
+            for (var x = -2; x <= 2; x = x + 1) {
+                let offset = nearest_cell + vec2<f32>(f32(x), f32(y));
+                let r = offset + graph_voronoi_point(cell + offset, randomness, phase, period) - f;
+                let apart = r - nearest;
+                if dot(apart, apart) > 0.00001 {
+                    edge = min(edge, dot(0.5 * (nearest + r), normalize(apart)));
+                }
+            }
+        }
+        out.edge = edge;
+    }
+    let blend = clamp(smoothness, 0.0, 1.0);
+    if blend > 0.0 {
+        let k = blend * GRAPH_VORONOI_BLEND;
+        let f1 = graph_voronoi_blend(&distances, -1, out.f1, k);
+        let f2 = graph_voronoi_blend(&distances, nearest_index, out.f2, k);
+        // Bisector distances swap sets across a border, so their blend tears: half the blended gap
+        // does not, and at full smoothness it takes over.
+        out.edge = mix(out.edge, 0.5 * (f2 - f1), blend);
+        out.f1 = f1;
+        out.f2 = f2;
+    }
+    return out;
+}
+
+fn sky(input: SurfaceInput) -> vec4<f32> {
+    let p = surface_params(input.material_id);
+    let n0 = p.nebula_a;
+    let n1 = p.nebula_b;
+    let n2 = vec4<f32>(input.uv, 0.0, 0.0);
+    let n3 = vec4<f32>(4.0, 4.0, 4.0, 4.0);
+    let n4 = vec4<f32>(24.0, 12.0, 0.0, 0.0);
+    let l0 = round(max(n4.xy, vec2<f32>(0.0)));
+    let l1 = n2.xy * select(vec2<f32>(vec4<f32>(1.0).x), l0, l0 > vec2<f32>(0.5));
+    let l2 = graph_gradient_fractal(l1, n3.x, vec4<f32>(0.5).x, vec4<f32>(2.0).x, 0.0, l0);
+    let n5 = vec4<f32>(l2);
+    let n6 = mix(n0, n1, vec4<f32>(vec4<f32>(n5.x).x));
+    let n7 = vec4<f32>(0.45, 0.45, 0.45, 0.45);
+    let n8 = vec4<f32>(0.8, 0.8, 0.8, 0.8);
+    let n9 = vec4<f32>(5.0, 5.0, 5.0, 5.0);
+    let n10 = vec4<f32>(8.0, 4.0, 0.0, 0.0);
+    let l3 = round(max(n10.xy, vec2<f32>(0.0)));
+    let l4 = n2.xy * select(vec2<f32>(vec4<f32>(1.0).x), l3, l3 > vec2<f32>(0.5));
+    let l5 = graph_value_fractal(l4, n9.x, vec4<f32>(0.5).x, vec4<f32>(2.0).x, 0.0, l3);
+    let n11 = vec4<f32>(l5);
+    let n12 = smoothstep(vec4<f32>(n7.x), vec4<f32>(max(n8.x, n7.x + 0.00001)), vec4<f32>(n11.x));
+    let n13 = vec4<f32>(normalize(input.world_normal), 0.0);
+    let n14 = vec4<f32>(0.32, 0.88, 0.35, 0.0);
+    let n15 = vec4<f32>(dot(n13.xyz, n14.xyz));
+    let n16 = n15 * n15;
+    let n17 = vec4<f32>(-14.0, -14.0, -14.0, -14.0);
+    let n18 = n16 * n17;
+    let n19 = exp(n18);
+    let n20 = vec4<f32>(0.6, 0.6, 0.6, 0.6);
+    let n21 = n19 * n20;
+    let n22 = n12 + n21;
+    let n23 = vec4<f32>(f32(p.nebula_intensity));
+    let n24 = vec4<f32>(n5.x) * n23;
+    let n25 = n22 * n24;
+    let n26 = n6 * n25;
+    let n27 = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    let n28 = vec4<f32>(0.08, 0.08, 0.08, 0.08);
+    let n29 = vec4<f32>(220.0, 110.0, 0.0, 0.0);
+    let l6 = round(max(n29.xy, vec2<f32>(0.0)));
+    let l7 = n2.xy * select(vec2<f32>(vec4<f32>(1.0).x), l6, l6 > vec2<f32>(0.5));
+    let n30 = graph_voronoi(l7, clamp(vec4<f32>(1.0).x, 0.0, 1.0), vec4<f32>(0.0).x, max(vec4<f32>(0.0).x, 0.0), 0, false, l6);
+    let n31 = smoothstep(vec4<f32>(n27.x), vec4<f32>(max(n28.x, n27.x + 0.00001)), vec4<f32>(n30.f1));
+    let n32 = vec4<f32>(1.0) - n31;
+    let n33 = vec4<f32>(0.6, 0.6, 0.6, 0.6);
+    let n34 = step(vec4<f32>(n33.x), vec4<f32>(n30.cell));
+    let n35 = n32 * n34;
+    let n36 = vec4<f32>(10.0, 10.0, 10.0, 10.0);
+    let n37 = vec4<f32>(pow(max(vec4<f32>(n30.cell).x, 0.0), n36.x));
+    let n38 = vec4<f32>(f32(p.star_brightness));
+    let n39 = vec4<f32>(0.12, 0.12, 0.12, 0.12);
+    let n40 = n37 * n38 + n39;
+    let n41 = n35 * n40;
+    let n42 = vec4<f32>(1.0, 0.80000013, 0.62, 1.0);
+    let n43 = vec4<f32>(0.7, 0.81999993, 1.0, 1.0);
+    let n44 = mix(n42, n43, vec4<f32>(vec4<f32>(n30.cell).x));
+    let n45 = n41 * n44;
+    let n46 = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    let n47 = vec4<f32>(0.12, 0.12, 0.12, 0.12);
+    let n48 = vec4<f32>(640.0, 320.0, 0.0, 0.0);
+    let l8 = round(max(n48.xy, vec2<f32>(0.0)));
+    let l9 = n2.xy * select(vec2<f32>(vec4<f32>(1.0).x), l8, l8 > vec2<f32>(0.5));
+    let n49 = graph_voronoi(l9, clamp(vec4<f32>(1.0).x, 0.0, 1.0), vec4<f32>(0.0).x, max(vec4<f32>(0.0).x, 0.0), 0, false, l8);
+    let n50 = smoothstep(vec4<f32>(n46.x), vec4<f32>(max(n47.x, n46.x + 0.00001)), vec4<f32>(n49.f1));
+    let n51 = vec4<f32>(1.0) - n50;
+    let n52 = vec4<f32>(0.7, 0.7, 0.7, 0.7);
+    let n53 = step(vec4<f32>(n52.x), vec4<f32>(n49.cell));
+    let n54 = n51 * n53;
+    let n55 = vec4<f32>(0.3, 0.3, 0.3, 0.3);
+    let n56 = n54 * n55;
+    let n57 = n45 + n56;
+    let n58 = n26 + n57;
+    let n59 = vec4<f32>(0.0040000007, 0.004999999, 0.012, 1.0);
+    let n60 = n58 + n59;
+    return vec4<f32>(n60.rgb, 1.0);
+}

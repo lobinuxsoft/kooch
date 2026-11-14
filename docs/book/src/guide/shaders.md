@@ -58,6 +58,7 @@ The `// kind:` line picks what the file defines. With no line, it is a `surface`
 | `unlit` | `fn unlit(input: SurfaceInput) -> UnlitOutput` | Shows `color` as it is, under any light and in shadow |
 | `ui` | `fn ui(input: UiInput) -> vec4<f32>` | A UI node's fill: see [UI](#ui). |
 | `post_process` | `fn post_process(input: SurfaceInput) -> vec4<f32>` | One full-screen draw over the finished frame; reads it with `sample_scene(uv)` |
+| `sky` | `fn sky(input: SurfaceInput) -> vec4<f32>` | The backdrop behind everything, drawn by a `SkyRenderer`: see [Sky](#sky) |
 | `transparent` | `fn surface(input: SurfaceInput) -> SurfaceOutput`, setting `alpha` | Lit like a `surface`, then blended over the opaque scene, far to near |
 
 ```wgsl
@@ -205,6 +206,33 @@ checker. The **UV** node is the screen uv here.
 `color` is in the same display units as `emissive`: `1.0` is full brightness at any exposure. `alpha`
 is carried into `SurfaceOutput.alpha`; opaque passes ignore it. An unlit shader assumes no sun,
 which is what a planet's distant impostor or an atmosphere card needs.
+
+### Sky
+
+A `sky` shader draws the backdrop behind the scene. A **Sky Renderer** with no **material** draws
+the engine's own: a starfield with a galactic band and nebulae, a graph at
+`crates/kooch_render/shaders/sky_space.shgraph`. Assign a material whose shader is `kind: sky` to
+replace it; one that cannot draw falls back to the engine's. A scene with no Sky Renderer is black.
+
+```wgsl
+// kind: sky
+
+fn sky(input: SurfaceInput) -> vec4<f32> {
+    let up = input.world_normal.y * 0.5 + 0.5;
+    return vec4<f32>(mix(vec3<f32>(0.0, 0.0, 0.02), vec3<f32>(0.05, 0.1, 0.3), up), 1.0);
+}
+```
+
+- **World Normal** is the direction the pixel looks, in world space. It stays fixed to the world as
+  the camera turns.
+- **UV** is that direction's longitude in `x` and latitude in `y`, both in 0..1. A noise wired with a
+  **tiling** of `(2n, n)` wraps it without a seam and keeps its cells square at the horizon. Cells
+  bunch up near the poles.
+- The output has only **color**: a sky is opaque.
+- The graph panel previews it through a camera that turns slowly in place.
+
+A scene with no active Sky Renderer, or one whose material cannot draw, shows black. The editor and
+the game show the same thing.
 
 ### UI
 
