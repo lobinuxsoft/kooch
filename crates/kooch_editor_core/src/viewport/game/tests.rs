@@ -114,7 +114,7 @@ fn no_gameplay_camera_reports_none() {
         let mut cams = registry
             .get_cpu_mut::<PerspectiveCamera>()
             .expect("registered");
-        for (_, cam) in cams.iter_mut() {
+        for (_, mut cam) in cams.iter_mut() {
             cam.active = false;
         }
     }

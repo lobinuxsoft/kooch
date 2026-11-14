@@ -1,0 +1,434 @@
+// kind: sky
+/*KOOCH_GRAPH;(nodes:{0:(value:(node:Uv),pos:(x:240.0,y:0.0),open:true),1:(value:(node:WorldNormal),pos:(x:480.0,y:0.0),open:true),2:(value:(node:Float(name:"star_brightness",default:1.0,range:Some((0.0,4.0)))),pos:(x:720.0,y:0.0),open:true),3:(value:(node:Float(name:"twinkle",default:0.0,range:Some((0.0,1.0)))),pos:(x:960.0,y:0.0),open:true),4:(value:(node:Swizzle(pattern:"y")),pos:(x:1200.0,y:0.0),open:true),5:(value:(node:Abs),pos:(x:0.0,y:160.0),open:true),6:(value:(node:OneMinus),pos:(x:240.0,y:160.0),open:true),7:(value:(node:ConstFloat(0.7)),pos:(x:480.0,y:160.0),open:true),8:(value:(node:ConstFloat(0.3)),pos:(x:720.0,y:160.0),open:true),9:(value:(node:MulAdd),pos:(x:960.0,y:160.0),open:true),10:(value:(node:Multiply),pos:(x:1200.0,y:160.0),open:true),11:(value:(node:ConstVector(width:2,value:(220.0,110.0,0.0,0.0))),pos:(x:0.0,y:320.0),open:true),12:(value:(node:VoronoiNoise(metric:"euclidean")),pos:(x:240.0,y:320.0),open:true),13:(value:(node:ConstFloat(0.0)),pos:(x:480.0,y:320.0),open:true),14:(value:(node:ConstFloat(0.08)),pos:(x:720.0,y:320.0),open:true),15:(value:(node:Smoothstep),pos:(x:960.0,y:320.0),open:true),16:(value:(node:OneMinus),pos:(x:1200.0,y:320.0),open:true),17:(value:(node:ConstFloat(0.6)),pos:(x:0.0,y:480.0),open:true),18:(value:(node:Step),pos:(x:240.0,y:480.0),open:true),19:(value:(node:Multiply),pos:(x:480.0,y:480.0),open:true),20:(value:(node:ConstFloat(3.7)),pos:(x:720.0,y:480.0),open:true),21:(value:(node:Multiply),pos:(x:960.0,y:480.0),open:true),22:(value:(node:Fract),pos:(x:1200.0,y:480.0),open:true),23:(value:(node:ConstFloat(2.2)),pos:(x:0.0,y:640.0),open:true),24:(value:(node:Power),pos:(x:240.0,y:640.0),open:true),25:(value:(node:ConstFloat(13000.0)),pos:(x:480.0,y:640.0),open:true),26:(value:(node:ConstFloat(2600.0)),pos:(x:720.0,y:640.0),open:true),27:(value:(node:MulAdd),pos:(x:960.0,y:640.0),open:true),28:(value:(node:Blackbody),pos:(x:1200.0,y:640.0),open:true),29:(value:(node:ConstFloat(0.35)),pos:(x:0.0,y:800.0),open:true),30:(value:(node:Desaturate),pos:(x:240.0,y:800.0),open:true),31:(value:(node:ConstFloat(13.7)),pos:(x:480.0,y:800.0),open:true),32:(value:(node:Multiply),pos:(x:720.0,y:800.0),open:true),33:(value:(node:Fract),pos:(x:960.0,y:800.0),open:true),34:(value:(node:ConstFloat(0.999)),pos:(x:1200.0,y:800.0),open:true),35:(value:(node:ConstFloat(0.001)),pos:(x:0.0,y:960.0),open:true),36:(value:(node:MulAdd),pos:(x:240.0,y:960.0),open:true),37:(value:(node:ConstFloat(-0.667)),pos:(x:480.0,y:960.0),open:true),38:(value:(node:Power),pos:(x:720.0,y:960.0),open:true),39:(value:(node:ConstFloat(0.05)),pos:(x:960.0,y:960.0),open:true),40:(value:(node:Multiply),pos:(x:1200.0,y:960.0),open:true),41:(value:(node:Time),pos:(x:0.0,y:1120.0),open:true),42:(value:(node:ConstFloat(6.283)),pos:(x:240.0,y:1120.0),open:true),43:(value:(node:Multiply),pos:(x:480.0,y:1120.0),open:true),44:(value:(node:Fract),pos:(x:720.0,y:1120.0),open:true),45:(value:(node:ConstFloat(6.283)),pos:(x:960.0,y:1120.0),open:true),46:(value:(node:Multiply),pos:(x:1200.0,y:1120.0),open:true),47:(value:(node:ConstFloat(7.0)),pos:(x:0.0,y:1280.0),open:true),48:(value:(node:Multiply),pos:(x:240.0,y:1280.0),open:true),49:(value:(node:Add),pos:(x:480.0,y:1280.0),open:true),50:(value:(node:Sine),pos:(x:720.0,y:1280.0),open:true),51:(value:(node:ConstFloat(17.9)),pos:(x:960.0,y:1280.0),open:true),52:(value:(node:Multiply),pos:(x:1200.0,y:1280.0),open:true),53:(value:(node:Fract),pos:(x:0.0,y:1440.0),open:true),54:(value:(node:ConstFloat(6.283)),pos:(x:240.0,y:1440.0),open:true),55:(value:(node:Multiply),pos:(x:480.0,y:1440.0),open:true),56:(value:(node:ConstFloat(11.3)),pos:(x:720.0,y:1440.0),open:true),57:(value:(node:Multiply),pos:(x:960.0,y:1440.0),open:true),58:(value:(node:Add),pos:(x:1200.0,y:1440.0),open:true),59:(value:(node:Sine),pos:(x:0.0,y:1600.0),open:true),60:(value:(node:Multiply),pos:(x:240.0,y:1600.0),open:true),61:(value:(node:Multiply),pos:(x:480.0,y:1600.0),open:true),62:(value:(node:ConstFloat(1.0)),pos:(x:720.0,y:1600.0),open:true),63:(value:(node:Add),pos:(x:960.0,y:1600.0),open:true),64:(value:(node:Multiply),pos:(x:1200.0,y:1600.0),open:true),65:(value:(node:Multiply),pos:(x:0.0,y:1760.0),open:true),66:(value:(node:Multiply),pos:(x:240.0,y:1760.0),open:true),67:(value:(node:ConstVector(width:2,value:(640.0,320.0,0.0,0.0))),pos:(x:480.0,y:1760.0),open:true),68:(value:(node:VoronoiNoise(metric:"euclidean")),pos:(x:720.0,y:1760.0),open:true),69:(value:(node:ConstFloat(0.0)),pos:(x:960.0,y:1760.0),open:true),70:(value:(node:ConstFloat(0.12)),pos:(x:1200.0,y:1760.0),open:true),71:(value:(node:Smoothstep),pos:(x:0.0,y:1920.0),open:true),72:(value:(node:OneMinus),pos:(x:240.0,y:1920.0),open:true),73:(value:(node:ConstFloat(0.7)),pos:(x:480.0,y:1920.0),open:true),74:(value:(node:Step),pos:(x:720.0,y:1920.0),open:true),75:(value:(node:Multiply),pos:(x:960.0,y:1920.0),open:true),76:(value:(node:ConstFloat(3.7)),pos:(x:1200.0,y:1920.0),open:true),77:(value:(node:Multiply),pos:(x:0.0,y:2080.0),open:true),78:(value:(node:Fract),pos:(x:240.0,y:2080.0),open:true),79:(value:(node:ConstFloat(2.2)),pos:(x:480.0,y:2080.0),open:true),80:(value:(node:Power),pos:(x:720.0,y:2080.0),open:true),81:(value:(node:ConstFloat(13000.0)),pos:(x:960.0,y:2080.0),open:true),82:(value:(node:ConstFloat(2600.0)),pos:(x:1200.0,y:2080.0),open:true),83:(value:(node:MulAdd),pos:(x:0.0,y:2240.0),open:true),84:(value:(node:Blackbody),pos:(x:240.0,y:2240.0),open:true),85:(value:(node:ConstFloat(0.35)),pos:(x:480.0,y:2240.0),open:true),86:(value:(node:Desaturate),pos:(x:720.0,y:2240.0),open:true),87:(value:(node:ConstFloat(13.7)),pos:(x:960.0,y:2240.0),open:true),88:(value:(node:Multiply),pos:(x:1200.0,y:2240.0),open:true),89:(value:(node:Fract),pos:(x:0.0,y:2400.0),open:true),90:(value:(node:ConstFloat(0.999)),pos:(x:240.0,y:2400.0),open:true),91:(value:(node:ConstFloat(0.001)),pos:(x:480.0,y:2400.0),open:true),92:(value:(node:MulAdd),pos:(x:720.0,y:2400.0),open:true),93:(value:(node:ConstFloat(-0.667)),pos:(x:960.0,y:2400.0),open:true),94:(value:(node:Power),pos:(x:1200.0,y:2400.0),open:true),95:(value:(node:ConstFloat(0.015)),pos:(x:0.0,y:2560.0),open:true),96:(value:(node:Multiply),pos:(x:240.0,y:2560.0),open:true),97:(value:(node:Time),pos:(x:480.0,y:2560.0),open:true),98:(value:(node:ConstFloat(6.283)),pos:(x:720.0,y:2560.0),open:true),99:(value:(node:Multiply),pos:(x:960.0,y:2560.0),open:true),100:(value:(node:Fract),pos:(x:1200.0,y:2560.0),open:true),101:(value:(node:ConstFloat(6.283)),pos:(x:0.0,y:2720.0),open:true),102:(value:(node:Multiply),pos:(x:240.0,y:2720.0),open:true),103:(value:(node:ConstFloat(7.0)),pos:(x:480.0,y:2720.0),open:true),104:(value:(node:Multiply),pos:(x:720.0,y:2720.0),open:true),105:(value:(node:Add),pos:(x:960.0,y:2720.0),open:true),106:(value:(node:Sine),pos:(x:1200.0,y:2720.0),open:true),107:(value:(node:ConstFloat(17.9)),pos:(x:0.0,y:2880.0),open:true),108:(value:(node:Multiply),pos:(x:240.0,y:2880.0),open:true),109:(value:(node:Fract),pos:(x:480.0,y:2880.0),open:true),110:(value:(node:ConstFloat(6.283)),pos:(x:720.0,y:2880.0),open:true),111:(value:(node:Multiply),pos:(x:960.0,y:2880.0),open:true),112:(value:(node:ConstFloat(11.3)),pos:(x:1200.0,y:2880.0),open:true),113:(value:(node:Multiply),pos:(x:0.0,y:3040.0),open:true),114:(value:(node:Add),pos:(x:240.0,y:3040.0),open:true),115:(value:(node:Sine),pos:(x:480.0,y:3040.0),open:true),116:(value:(node:Multiply),pos:(x:720.0,y:3040.0),open:true),117:(value:(node:Multiply),pos:(x:960.0,y:3040.0),open:true),118:(value:(node:ConstFloat(1.0)),pos:(x:1200.0,y:3040.0),open:true),119:(value:(node:Add),pos:(x:0.0,y:3200.0),open:true),120:(value:(node:Multiply),pos:(x:240.0,y:3200.0),open:true),121:(value:(node:Multiply),pos:(x:480.0,y:3200.0),open:true),122:(value:(node:Multiply),pos:(x:720.0,y:3200.0),open:true),123:(value:(node:Add),pos:(x:960.0,y:3200.0),open:true),124:(value:(node:Multiply),pos:(x:1200.0,y:3200.0),open:true),125:(value:(node:ConstVector(width:3,value:(0.32,0.88,0.35,0.0))),pos:(x:0.0,y:3360.0),open:true),126:(value:(node:Dot),pos:(x:240.0,y:3360.0),open:true),127:(value:(node:Multiply),pos:(x:480.0,y:3360.0),open:true),128:(value:(node:ConstFloat(-14.0)),pos:(x:720.0,y:3360.0),open:true),129:(value:(node:Multiply),pos:(x:960.0,y:3360.0),open:true),130:(value:(node:Exp),pos:(x:1200.0,y:3360.0),open:true),131:(value:(node:FractalNoise(basis:"value",fractal:"fbm")),pos:(x:0.0,y:3520.0),open:true),132:(value:(node:ConstVector(width:2,value:(8.0,4.0,0.0,0.0))),pos:(x:240.0,y:3520.0),open:true),133:(value:(node:ConstFloat(5.0)),pos:(x:480.0,y:3520.0),open:true),134:(value:(node:FractalNoise(basis:"gradient",fractal:"fbm")),pos:(x:720.0,y:3520.0),open:true),135:(value:(node:ConstVector(width:2,value:(24.0,12.0,0.0,0.0))),pos:(x:960.0,y:3520.0),open:true),136:(value:(node:ConstFloat(4.0)),pos:(x:1200.0,y:3520.0),open:true),137:(value:(node:ConstFloat(0.45)),pos:(x:0.0,y:3680.0),open:true),138:(value:(node:ConstFloat(0.8)),pos:(x:240.0,y:3680.0),open:true),139:(value:(node:Smoothstep),pos:(x:480.0,y:3680.0),open:true),140:(value:(node:ConstFloat(0.6)),pos:(x:720.0,y:3680.0),open:true),141:(value:(node:Multiply),pos:(x:960.0,y:3680.0),open:true),142:(value:(node:Add),pos:(x:1200.0,y:3680.0),open:true),143:(value:(node:Color(name:"nebula_a",default:(0.42,0.12,0.36,1.0))),pos:(x:0.0,y:3840.0),open:true),144:(value:(node:Color(name:"nebula_b",default:(0.1,0.26,0.45,1.0))),pos:(x:240.0,y:3840.0),open:true),145:(value:(node:Mix),pos:(x:480.0,y:3840.0),open:true),146:(value:(node:Float(name:"nebula_intensity",default:0.25,range:Some((0.0,1.0)))),pos:(x:720.0,y:3840.0),open:true),147:(value:(node:Multiply),pos:(x:960.0,y:3840.0),open:true),148:(value:(node:Multiply),pos:(x:1200.0,y:3840.0),open:true),149:(value:(node:Multiply),pos:(x:0.0,y:4000.0),open:true),150:(value:(node:ConstColor((0.004,0.005,0.012,1.0))),pos:(x:240.0,y:4000.0),open:true),151:(value:(node:Add),pos:(x:480.0,y:4000.0),open:true),152:(value:(node:Add),pos:(x:720.0,y:4000.0),open:true),153:(value:(node:ShaderOutput(kind:"sky")),pos:(x:960.0,y:4000.0),open:true)},wires:[(out_pin:(node:74,output:0),in_pin:(node:75,input:1)),(out_pin:(node:81,output:0),in_pin:(node:83,input:1)),(out_pin:(node:14,output:0),in_pin:(node:15,input:1)),(out_pin:(node:12,output:3),in_pin:(node:18,input:1)),(out_pin:(node:118,output:0),in_pin:(node:119,input:1)),(out_pin:(node:64,output:0),in_pin:(node:65,input:1)),(out_pin:(node:145,output:0),in_pin:(node:149,input:0)),(out_pin:(node:23,output:0),in_pin:(node:24,input:1)),(out_pin:(node:0,output:0),in_pin:(node:12,input:0)),(out_pin:(node:122,output:0),in_pin:(node:123,input:1)),(out_pin:(node:76,output:0),in_pin:(node:77,input:1)),(out_pin:(node:36,output:0),in_pin:(node:38,input:0)),(out_pin:(node:77,output:0),in_pin:(node:78,input:0)),(out_pin:(node:90,output:0),in_pin:(node:92,input:1)),(out_pin:(node:80,output:0),in_pin:(node:83,input:0)),(out_pin:(node:113,output:0),in_pin:(node:114,input:0)),(out_pin:(node:10,output:0),in_pin:(node:117,input:1)),(out_pin:(node:140,output:0),in_pin:(node:141,input:1)),(out_pin:(node:1,output:0),in_pin:(node:126,input:0)),(out_pin:(node:30,output:0),in_pin:(node:66,input:1)),(out_pin:(node:100,output:0),in_pin:(node:102,input:0)),(out_pin:(node:116,output:0),in_pin:(node:117,input:0)),(out_pin:(node:57,output:0),in_pin:(node:58,input:0)),(out_pin:(node:150,output:0),in_pin:(node:152,input:1)),(out_pin:(node:62,output:0),in_pin:(node:63,input:1)),(out_pin:(node:107,output:0),in_pin:(node:108,input:1)),(out_pin:(node:112,output:0),in_pin:(node:113,input:1)),(out_pin:(node:61,output:0),in_pin:(node:63,input:0)),(out_pin:(node:33,output:0),in_pin:(node:36,input:0)),(out_pin:(node:111,output:0),in_pin:(node:114,input:1)),(out_pin:(node:125,output:0),in_pin:(node:126,input:1)),(out_pin:(node:144,output:0),in_pin:(node:145,input:1)),(out_pin:(node:35,output:0),in_pin:(node:36,input:2)),(out_pin:(node:78,output:0),in_pin:(node:80,input:0)),(out_pin:(node:7,output:0),in_pin:(node:9,input:1)),(out_pin:(node:37,output:0),in_pin:(node:38,input:1)),(out_pin:(node:22,output:0),in_pin:(node:24,input:0)),(out_pin:(node:137,output:0),in_pin:(node:139,input:0)),(out_pin:(node:138,output:0),in_pin:(node:139,input:1)),(out_pin:(node:65,output:0),in_pin:(node:66,input:0)),(out_pin:(node:38,output:0),in_pin:(node:40,input:0)),(out_pin:(node:12,output:0),in_pin:(node:15,input:2)),(out_pin:(node:1,output:0),in_pin:(node:4,input:0)),(out_pin:(node:53,output:0),in_pin:(node:55,input:0)),(out_pin:(node:39,output:0),in_pin:(node:40,input:1)),(out_pin:(node:31,output:0),in_pin:(node:32,input:1)),(out_pin:(node:46,output:0),in_pin:(node:49,input:1)),(out_pin:(node:20,output:0),in_pin:(node:21,input:1)),(out_pin:(node:68,output:3),in_pin:(node:77,input:0)),(out_pin:(node:97,output:0),in_pin:(node:113,input:0)),(out_pin:(node:73,output:0),in_pin:(node:74,input:0)),(out_pin:(node:18,output:0),in_pin:(node:19,input:1)),(out_pin:(node:106,output:0),in_pin:(node:116,input:0)),(out_pin:(node:68,output:3),in_pin:(node:99,input:0)),(out_pin:(node:83,output:0),in_pin:(node:84,input:0)),(out_pin:(node:98,output:0),in_pin:(node:99,input:1)),(out_pin:(node:131,output:0),in_pin:(node:139,input:2)),(out_pin:(node:12,output:3),in_pin:(node:21,input:0)),(out_pin:(node:8,output:0),in_pin:(node:9,input:2)),(out_pin:(node:126,output:0),in_pin:(node:127,input:1)),(out_pin:(node:70,output:0),in_pin:(node:71,input:1)),(out_pin:(node:109,output:0),in_pin:(node:111,input:0)),(out_pin:(node:119,output:0),in_pin:(node:120,input:1)),(out_pin:(node:25,output:0),in_pin:(node:27,input:1)),(out_pin:(node:114,output:0),in_pin:(node:115,input:0)),(out_pin:(node:4,output:0),in_pin:(node:5,input:0)),(out_pin:(node:34,output:0),in_pin:(node:36,input:1)),(out_pin:(node:41,output:0),in_pin:(node:57,input:0)),(out_pin:(node:50,output:0),in_pin:(node:60,input:0)),(out_pin:(node:89,output:0),in_pin:(node:92,input:0)),(out_pin:(node:44,output:0),in_pin:(node:46,input:0)),(out_pin:(node:108,output:0),in_pin:(node:109,input:0)),(out_pin:(node:51,output:0),in_pin:(node:52,input:1)),(out_pin:(node:141,output:0),in_pin:(node:142,input:1)),(out_pin:(node:67,output:0),in_pin:(node:68,input:5)),(out_pin:(node:15,output:0),in_pin:(node:16,input:0)),(out_pin:(node:17,output:0),in_pin:(node:18,input:0)),(out_pin:(node:29,output:0),in_pin:(node:30,input:1)),(out_pin:(node:121,output:0),in_pin:(node:122,input:0)),(out_pin:(node:12,output:3),in_pin:(node:43,input:0)),(out_pin:(node:92,output:0),in_pin:(node:94,input:0)),(out_pin:(node:129,output:0),in_pin:(node:130,input:0)),(out_pin:(node:0,output:0),in_pin:(node:134,input:0)),(out_pin:(node:151,output:0),in_pin:(node:152,input:0)),(out_pin:(node:97,output:0),in_pin:(node:104,input:0)),(out_pin:(node:99,output:0),in_pin:(node:100,input:0)),(out_pin:(node:130,output:0),in_pin:(node:141,input:0)),(out_pin:(node:63,output:0),in_pin:(node:64,input:1)),(out_pin:(node:49,output:0),in_pin:(node:50,input:0)),(out_pin:(node:66,output:0),in_pin:(node:123,input:0)),(out_pin:(node:68,output:0),in_pin:(node:71,input:2)),(out_pin:(node:2,output:0),in_pin:(node:124,input:1)),(out_pin:(node:41,output:0),in_pin:(node:48,input:0)),(out_pin:(node:148,output:0),in_pin:(node:149,input:1)),(out_pin:(node:104,output:0),in_pin:(node:105,input:0)),(out_pin:(node:71,output:0),in_pin:(node:72,input:0)),(out_pin:(node:19,output:0),in_pin:(node:65,input:0)),(out_pin:(node:101,output:0),in_pin:(node:102,input:1)),(out_pin:(node:94,output:0),in_pin:(node:96,input:0)),(out_pin:(node:126,output:0),in_pin:(node:127,input:0)),(out_pin:(node:42,output:0),in_pin:(node:43,input:1)),(out_pin:(node:16,output:0),in_pin:(node:19,input:0)),(out_pin:(node:123,output:0),in_pin:(node:124,input:0)),(out_pin:(node:146,output:0),in_pin:(node:147,input:1)),(out_pin:(node:91,output:0),in_pin:(node:92,input:2)),(out_pin:(node:133,output:0),in_pin:(node:131,input:2)),(out_pin:(node:47,output:0),in_pin:(node:48,input:1)),(out_pin:(node:58,output:0),in_pin:(node:59,input:0)),(out_pin:(node:136,output:0),in_pin:(node:134,input:2)),(out_pin:(node:52,output:0),in_pin:(node:53,input:0)),(out_pin:(node:0,output:0),in_pin:(node:131,input:0)),(out_pin:(node:69,output:0),in_pin:(node:71,input:0)),(out_pin:(node:79,output:0),in_pin:(node:80,input:1)),(out_pin:(node:135,output:0),in_pin:(node:134,input:7)),(out_pin:(node:95,output:0),in_pin:(node:96,input:1)),(out_pin:(node:84,output:0),in_pin:(node:86,input:0)),(out_pin:(node:75,output:0),in_pin:(node:121,input:0)),(out_pin:(node:26,output:0),in_pin:(node:27,input:2)),(out_pin:(node:55,output:0),in_pin:(node:58,input:1)),(out_pin:(node:56,output:0),in_pin:(node:57,input:1)),(out_pin:(node:9,output:0),in_pin:(node:10,input:0)),(out_pin:(node:11,output:0),in_pin:(node:12,input:5)),(out_pin:(node:43,output:0),in_pin:(node:44,input:0)),(out_pin:(node:103,output:0),in_pin:(node:104,input:1)),(out_pin:(node:12,output:3),in_pin:(node:52,input:0)),(out_pin:(node:40,output:0),in_pin:(node:64,input:0)),(out_pin:(node:102,output:0),in_pin:(node:105,input:1)),(out_pin:(node:143,output:0),in_pin:(node:145,input:0)),(out_pin:(node:128,output:0),in_pin:(node:129,input:1)),(out_pin:(node:88,output:0),in_pin:(node:89,input:0)),(out_pin:(node:45,output:0),in_pin:(node:46,input:1)),(out_pin:(node:5,output:0),in_pin:(node:6,input:0)),(out_pin:(node:87,output:0),in_pin:(node:88,input:1)),(out_pin:(node:86,output:0),in_pin:(node:122,input:1)),(out_pin:(node:48,output:0),in_pin:(node:49,input:0)),(out_pin:(node:3,output:0),in_pin:(node:10,input:1)),(out_pin:(node:10,output:0),in_pin:(node:61,input:1)),(out_pin:(node:110,output:0),in_pin:(node:111,input:1)),(out_pin:(node:117,output:0),in_pin:(node:119,input:0)),(out_pin:(node:120,output:0),in_pin:(node:121,input:1)),(out_pin:(node:13,output:0),in_pin:(node:15,input:0)),(out_pin:(node:68,output:3),in_pin:(node:74,input:1)),(out_pin:(node:72,output:0),in_pin:(node:75,input:0)),(out_pin:(node:127,output:0),in_pin:(node:129,input:0)),(out_pin:(node:96,output:0),in_pin:(node:120,input:0)),(out_pin:(node:142,output:0),in_pin:(node:148,input:0)),(out_pin:(node:59,output:0),in_pin:(node:60,input:1)),(out_pin:(node:21,output:0),in_pin:(node:22,input:0)),(out_pin:(node:134,output:0),in_pin:(node:147,input:0)),(out_pin:(node:149,output:0),in_pin:(node:151,input:0)),(out_pin:(node:60,output:0),in_pin:(node:61,input:0)),(out_pin:(node:134,output:0),in_pin:(node:145,input:2)),(out_pin:(node:27,output:0),in_pin:(node:28,input:0)),(out_pin:(node:132,output:0),in_pin:(node:131,input:7)),(out_pin:(node:147,output:0),in_pin:(node:148,input:1)),(out_pin:(node:139,output:0),in_pin:(node:142,input:0)),(out_pin:(node:93,output:0),in_pin:(node:94,input:1)),(out_pin:(node:152,output:0),in_pin:(node:153,input:0)),(out_pin:(node:82,output:0),in_pin:(node:83,input:2)),(out_pin:(node:105,output:0),in_pin:(node:106,input:0)),(out_pin:(node:32,output:0),in_pin:(node:33,input:0)),(out_pin:(node:54,output:0),in_pin:(node:55,input:1)),(out_pin:(node:85,output:0),in_pin:(node:86,input:1)),(out_pin:(node:115,output:0),in_pin:(node:116,input:1)),(out_pin:(node:12,output:3),in_pin:(node:32,input:0)),(out_pin:(node:68,output:3),in_pin:(node:108,input:0)),(out_pin:(node:6,output:0),in_pin:(node:9,input:0)),(out_pin:(node:124,output:0),in_pin:(node:151,input:1)),(out_pin:(node:68,output:3),in_pin:(node:88,input:0)),(out_pin:(node:0,output:0),in_pin:(node:68,input:0)),(out_pin:(node:24,output:0),in_pin:(node:27,input:0)),(out_pin:(node:28,output:0),in_pin:(node:30,input:0))])*/
+// Written by the shader graph. Edit it there: saving the graph replaces this file.
+
+struct SurfaceParams {
+    star_brightness: f32,  // @range(0, 4)
+    twinkle: f32,  // @range(0, 1)
+    nebula_a: vec4<f32>,  // @color
+    nebula_b: vec4<f32>,  // @color
+    nebula_intensity: f32,  // @range(0, 1)
+}
+
+const SURFACE_DEFAULTS = SurfaceParams(
+    1.0,  // star_brightness
+    0.0,  // twinkle
+    vec4<f32>(0.42, 0.12, 0.36, 1.0),  // nebula_a
+    vec4<f32>(0.1, 0.26, 0.45, 1.0),  // nebula_b
+    0.25,  // nebula_intensity
+);
+
+// Wraps a lattice cell into `period`, so a noise hashed from it repeats every `period` cells and a
+// uv that comes back to itself — a tiled texture, a full turn of polar coordinates — has no seam.
+// An axis at 0 is left open, which is what every noise was before there was a period at all.
+fn graph_wrap(cell: vec2<f32>, period: vec2<f32>) -> vec2<f32> {
+    let wrapped = cell - period * floor(cell / max(period, vec2<f32>(1.0)));
+    return select(cell, wrapped, period > vec2<f32>(0.5));
+}
+
+// The period one octave finer. Kept whole: a period that is not a whole number of cells does not
+// wrap, so the octaves quantise rather than seam.
+fn graph_wrap_octave(period: vec2<f32>, lacunarity: f32) -> vec2<f32> {
+    return round(period * max(lacunarity, 1.0));
+}
+
+// The same wrap where the third axis is the phase, which turns rather than tiles.
+fn graph_wrap3(cell: vec3<f32>, period: vec2<f32>) -> vec3<f32> {
+    return vec3<f32>(graph_wrap(cell.xy, period), cell.z);
+}
+
+// Pseudo-random numbers from a cell coordinate, shared by every noise node.
+fn graph_hash(p: vec2<f32>) -> f32 {
+    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.547);
+}
+
+fn graph_hash2(p: vec2<f32>) -> vec2<f32> {
+    let q = vec2<f32>(dot(p, vec2<f32>(127.1, 311.7)), dot(p, vec2<f32>(269.5, 183.3)));
+    return fract(sin(q) * 43758.547);
+}
+
+// A random direction for a lattice point, each component in -1..1.
+fn graph_gradient(cell: vec2<f32>) -> vec2<f32> {
+    return graph_hash2(cell) * 2.0 - 1.0;
+}
+
+// Value noise: a random value at each lattice point, smoothed between them. 0..1.
+fn graph_value_noise(uv: vec2<f32>, period: vec2<f32>) -> f32 {
+    let cell = floor(uv);
+    let f = fract(uv);
+    let w = f * f * (3.0 - 2.0 * f);
+    let a = graph_hash(graph_wrap(cell, period));
+    let b = graph_hash(graph_wrap(cell + vec2<f32>(1.0, 0.0), period));
+    let c = graph_hash(graph_wrap(cell + vec2<f32>(0.0, 1.0), period));
+    let d = graph_hash(graph_wrap(cell + vec2<f32>(1.0, 1.0), period));
+    return mix(mix(a, b, w.x), mix(c, d, w.x), w.y);
+}
+
+// Octaves of value noise. `mode` 0 sums them (fBm), 1 folds each about its middle (turbulence), 2 turns
+// the fold into sharp crests (ridged). `roughness` is how much each octave keeps of the one before,
+// `lacunarity` how much finer it is. Normalised back to 0..1.
+fn graph_value_fractal(p: vec2<f32>, octaves: f32, roughness: f32, lacunarity: f32, mode: f32, period: vec2<f32>) -> f32 {
+    let count = i32(clamp(round(octaves), 1.0, 8.0));
+    var sum = 0.0;
+    var weight = 0.0;
+    var amplitude = 1.0;
+    var at = p;
+    var tile = period;
+    for (var i = 0; i < count; i = i + 1) {
+        let n = graph_value_noise(at, tile);
+        let folded = abs(n * 2.0 - 1.0);
+        let shaped = select(select(n, folded, mode > 0.5), (1.0 - folded) * (1.0 - folded), mode > 1.5);
+        sum = sum + amplitude * shaped;
+        weight = weight + amplitude;
+        amplitude = amplitude * clamp(roughness, 0.0, 1.0);
+        at = at * lacunarity;
+        tile = graph_wrap_octave(tile, lacunarity);
+    }
+    return sum / max(weight, 0.00001);
+}
+
+// The coordinate pushed around by the noise itself before it is read: smoke, marble, flame.
+fn graph_value_warp(p: vec2<f32>, amount: f32, period: vec2<f32>) -> vec2<f32> {
+    let push = vec2<f32>(graph_value_noise(p + vec2<f32>(5.2, 1.3), period), graph_value_noise(p + vec2<f32>(1.7, 9.2), period));
+    return p + (push * 2.0 - 1.0) * amount;
+}
+
+// Gradient (Perlin) noise: a random slope at each lattice point, blended with a quintic fade. 0..1.
+fn graph_gradient_noise(uv: vec2<f32>, period: vec2<f32>) -> f32 {
+    let cell = floor(uv);
+    let f = fract(uv);
+    let fade = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    let a = dot(graph_gradient(graph_wrap(cell, period)), f);
+    let b = dot(graph_gradient(graph_wrap(cell + vec2<f32>(1.0, 0.0), period)), f - vec2<f32>(1.0, 0.0));
+    let c = dot(graph_gradient(graph_wrap(cell + vec2<f32>(0.0, 1.0), period)), f - vec2<f32>(0.0, 1.0));
+    let d = dot(graph_gradient(graph_wrap(cell + vec2<f32>(1.0, 1.0), period)), f - vec2<f32>(1.0, 1.0));
+    return mix(mix(a, b, fade.x), mix(c, d, fade.x), fade.y) * 0.5 + 0.5;
+}
+
+// Octaves of gradient noise. `mode` 0 sums them (fBm), 1 folds each about its middle (turbulence), 2 turns
+// the fold into sharp crests (ridged). `roughness` is how much each octave keeps of the one before,
+// `lacunarity` how much finer it is. Normalised back to 0..1.
+fn graph_gradient_fractal(p: vec2<f32>, octaves: f32, roughness: f32, lacunarity: f32, mode: f32, period: vec2<f32>) -> f32 {
+    let count = i32(clamp(round(octaves), 1.0, 8.0));
+    var sum = 0.0;
+    var weight = 0.0;
+    var amplitude = 1.0;
+    var at = p;
+    var tile = period;
+    for (var i = 0; i < count; i = i + 1) {
+        let n = graph_gradient_noise(at, tile);
+        let folded = abs(n * 2.0 - 1.0);
+        let shaped = select(select(n, folded, mode > 0.5), (1.0 - folded) * (1.0 - folded), mode > 1.5);
+        sum = sum + amplitude * shaped;
+        weight = weight + amplitude;
+        amplitude = amplitude * clamp(roughness, 0.0, 1.0);
+        at = at * lacunarity;
+        tile = graph_wrap_octave(tile, lacunarity);
+    }
+    return sum / max(weight, 0.00001);
+}
+
+// The coordinate pushed around by the noise itself before it is read: smoke, marble, flame.
+fn graph_gradient_warp(p: vec2<f32>, amount: f32, period: vec2<f32>) -> vec2<f32> {
+    let push = vec2<f32>(graph_gradient_noise(p + vec2<f32>(5.2, 1.3), period), graph_gradient_noise(p + vec2<f32>(1.7, 9.2), period));
+    return p + (push * 2.0 - 1.0) * amount;
+}
+
+// Cellular (Voronoi) noise: one point per cell, `randomness` of the way from the cell's middle to a
+// random place, circling with `phase` so the cells can move.
+struct GraphVoronoi {
+    // Distance to the nearest point. Smoothness (0..1) rounds F1, F2 and the border alike.
+    f1: f32,
+    // Distance to the second nearest point.
+    f2: f32,
+    // Distance to the nearest cell border, which F2 - F1 only approximates.
+    edge: f32,
+    // A random value per cell, for colouring cells apart.
+    cell: f32,
+    // Where the nearest point is, in the scaled coordinate.
+    position: vec2<f32>,
+}
+
+// 0 Euclidean (round cells), 1 Manhattan (diamonds), 2 Chebyshev (squares).
+fn graph_voronoi_distance(d: vec2<f32>, metric: i32) -> f32 {
+    let a = abs(d);
+    return select(select(length(d), a.x + a.y, metric == 1), max(a.x, a.y), metric == 2);
+}
+
+fn graph_voronoi_point(cell: vec2<f32>, randomness: f32, phase: f32, period: vec2<f32>) -> vec2<f32> {
+    let at = graph_wrap(cell, period);
+    return mix(vec2<f32>(0.5), 0.5 + 0.5 * sin(phase + 6.2831855 * graph_hash2(at)), randomness);
+}
+
+// How far smoothness 1 blends: past it the 5x5 search is too narrow and the blend tears (measured).
+const GRAPH_VORONOI_BLEND: f32 = 0.12;
+
+// Smooth minimum over `distances` except `skipped`, around their true minimum `least`. Symmetric
+// (log-sum-exp): a running polynomial blend depends on cell order and tears where cells swap.
+fn graph_voronoi_blend(distances: ptr<function, array<f32, 25>>, skipped: i32, least: f32, k: f32) -> f32 {
+    var sum = 0.0;
+    for (var i = 0; i < 25; i = i + 1) {
+        if i != skipped {
+            sum = sum + exp(-((*distances)[i] - least) / k);
+        }
+    }
+    return least - k * log(max(sum, 1e-6));
+}
+
+fn graph_voronoi(uv: vec2<f32>, randomness: f32, phase: f32, smoothness: f32, metric: i32, edges: bool, period: vec2<f32>) -> GraphVoronoi {
+    let cell = floor(uv);
+    let f = fract(uv);
+    var out: GraphVoronoi;
+    out.f1 = 8.0;
+    out.f2 = 8.0;
+    var distances: array<f32, 25>;
+    var nearest_index = 0;
+    var nearest = vec2<f32>(0.0);
+    var nearest_cell = vec2<f32>(0.0);
+    // 5x5, not 3x3: a random point two cells away is sometimes the second nearest, and 3x3 got F2
+    // wrong often enough to speckle.
+    for (var y = -2; y <= 2; y = y + 1) {
+        for (var x = -2; x <= 2; x = x + 1) {
+            let offset = vec2<f32>(f32(x), f32(y));
+            let point = graph_voronoi_point(cell + offset, randomness, phase, period);
+            let r = offset + point - f;
+            let d = graph_voronoi_distance(r, metric);
+            let index = (y + 2) * 5 + x + 2;
+            distances[index] = d;
+            if d < out.f1 {
+                out.f2 = out.f1;
+                out.f1 = d;
+                out.cell = graph_hash(graph_wrap(cell + offset, period));
+                out.position = cell + offset + point;
+                nearest = r;
+                nearest_cell = offset;
+                nearest_index = index;
+            } else if d < out.f2 {
+                out.f2 = d;
+            }
+        }
+    }
+    // The true border distance takes a second pass around the nearest cell — only when asked for.
+    if edges {
+        var edge = 8.0;
+        for (var y = -2; y <= 2; y = y + 1) {
+            for (var x = -2; x <= 2; x = x + 1) {
+                let offset = nearest_cell + vec2<f32>(f32(x), f32(y));
+                let r = offset + graph_voronoi_point(cell + offset, randomness, phase, period) - f;
+                let apart = r - nearest;
+                if dot(apart, apart) > 0.00001 {
+                    edge = min(edge, dot(0.5 * (nearest + r), normalize(apart)));
+                }
+            }
+        }
+        out.edge = edge;
+    }
+    let blend = clamp(smoothness, 0.0, 1.0);
+    if blend > 0.0 {
+        let k = blend * GRAPH_VORONOI_BLEND;
+        let f1 = graph_voronoi_blend(&distances, -1, out.f1, k);
+        let f2 = graph_voronoi_blend(&distances, nearest_index, out.f2, k);
+        // Bisector distances swap sets across a border, so their blend tears: half the blended gap
+        // does not, and at full smoothness it takes over.
+        out.edge = mix(out.edge, 0.5 * (f2 - f1), blend);
+        out.f1 = f1;
+        out.f2 = f2;
+    }
+    return out;
+}
+
+// Planckian locus (Kang et al. 2002) to linear sRGB, normalised so the brightest channel is 1:
+// the hue of the glow, its brightness left to the caller.
+fn graph_blackbody(kelvin: f32) -> vec4<f32> {
+    let t = clamp(kelvin, 1667.0, 25000.0);
+    let i = 1.0 / t;
+    var x: f32;
+    if (t < 4000.0) {
+        x = ((-0.2661239e9 * i - 0.2343589e6) * i + 0.8776956e3) * i + 0.179910;
+    } else {
+        x = ((-3.0258469e9 * i + 2.1070379e6) * i + 0.2226347e3) * i + 0.240390;
+    }
+    var y: f32;
+    if (t < 2222.0) {
+        y = ((-1.1063814 * x - 1.34811020) * x + 2.18555832) * x - 0.20219683;
+    } else if (t < 4000.0) {
+        y = ((-0.9549476 * x - 1.37418593) * x + 2.09137015) * x - 0.16748867;
+    } else {
+        y = ((3.0817580 * x - 5.87338670) * x + 3.75112997) * x - 0.37001483;
+    }
+    let xyz = vec3<f32>(x / y, 1.0, (1.0 - x - y) / y);
+    let rgb = max(vec3<f32>(
+        dot(xyz, vec3<f32>(3.2404542, -1.5371385, -0.4985314)),
+        dot(xyz, vec3<f32>(-0.9692660, 1.8760108, 0.0415560)),
+        dot(xyz, vec3<f32>(0.0556434, -0.2040259, 1.0572252)),
+    ), vec3<f32>(0.0));
+    return vec4<f32>(rgb / max(max(rgb.r, rgb.g), max(rgb.b, 0.00001)), 1.0);
+}
+
+fn sky(input: SurfaceInput) -> vec4<f32> {
+    let p = surface_params(input.material_id);
+    let n0 = p.nebula_a;
+    let n1 = p.nebula_b;
+    let n2 = vec4<f32>(input.uv, 0.0, 0.0);
+    let n3 = vec4<f32>(4.0, 4.0, 4.0, 4.0);
+    let n4 = vec4<f32>(24.0, 12.0, 0.0, 0.0);
+    let l0 = round(max(n4.xy, vec2<f32>(0.0)));
+    let l1 = n2.xy * select(vec2<f32>(vec4<f32>(1.0).x), l0, l0 > vec2<f32>(0.5));
+    let l2 = graph_gradient_fractal(l1, n3.x, vec4<f32>(0.5).x, vec4<f32>(2.0).x, 0.0, l0);
+    let n5 = vec4<f32>(l2);
+    let n6 = mix(n0, n1, vec4<f32>(vec4<f32>(n5.x).x));
+    let n7 = vec4<f32>(0.45, 0.45, 0.45, 0.45);
+    let n8 = vec4<f32>(0.8, 0.8, 0.8, 0.8);
+    let n9 = vec4<f32>(5.0, 5.0, 5.0, 5.0);
+    let n10 = vec4<f32>(8.0, 4.0, 0.0, 0.0);
+    let l3 = round(max(n10.xy, vec2<f32>(0.0)));
+    let l4 = n2.xy * select(vec2<f32>(vec4<f32>(1.0).x), l3, l3 > vec2<f32>(0.5));
+    let l5 = graph_value_fractal(l4, n9.x, vec4<f32>(0.5).x, vec4<f32>(2.0).x, 0.0, l3);
+    let n11 = vec4<f32>(l5);
+    let n12 = smoothstep(vec4<f32>(n7.x), vec4<f32>(max(n8.x, n7.x + 0.00001)), vec4<f32>(n11.x));
+    let n13 = vec4<f32>(normalize(input.world_normal), 0.0);
+    let n14 = vec4<f32>(0.32, 0.88, 0.35, 0.0);
+    let n15 = vec4<f32>(dot(n13.xyz, n14.xyz));
+    let n16 = n15 * n15;
+    let n17 = vec4<f32>(-14.0, -14.0, -14.0, -14.0);
+    let n18 = n16 * n17;
+    let n19 = exp(n18);
+    let n20 = vec4<f32>(0.6, 0.6, 0.6, 0.6);
+    let n21 = n19 * n20;
+    let n22 = n12 + n21;
+    let n23 = vec4<f32>(f32(p.nebula_intensity));
+    let n24 = vec4<f32>(n5.x) * n23;
+    let n25 = n22 * n24;
+    let n26 = n6 * n25;
+    let n27 = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    let n28 = vec4<f32>(0.08, 0.08, 0.08, 0.08);
+    let n29 = vec4<f32>(220.0, 110.0, 0.0, 0.0);
+    let l6 = round(max(n29.xy, vec2<f32>(0.0)));
+    let l7 = n2.xy * select(vec2<f32>(vec4<f32>(1.0).x), l6, l6 > vec2<f32>(0.5));
+    let n30 = graph_voronoi(l7, clamp(vec4<f32>(1.0).x, 0.0, 1.0), vec4<f32>(0.0).x, max(vec4<f32>(0.0).x, 0.0), 0, false, l6);
+    let n31 = smoothstep(vec4<f32>(n27.x), vec4<f32>(max(n28.x, n27.x + 0.00001)), vec4<f32>(n30.f1));
+    let n32 = vec4<f32>(1.0) - n31;
+    let n33 = vec4<f32>(0.6, 0.6, 0.6, 0.6);
+    let n34 = step(vec4<f32>(n33.x), vec4<f32>(n30.cell));
+    let n35 = n32 * n34;
+    let n36 = vec4<f32>(13.7, 13.7, 13.7, 13.7);
+    let n37 = vec4<f32>(n30.cell) * n36;
+    let n38 = fract(n37);
+    let n39 = vec4<f32>(0.999, 0.999, 0.999, 0.999);
+    let n40 = vec4<f32>(0.001, 0.001, 0.001, 0.001);
+    let n41 = n38 * n39 + n40;
+    let n42 = vec4<f32>(-0.667, -0.667, -0.667, -0.667);
+    let n43 = vec4<f32>(pow(max(n41.x, 0.0), n42.x));
+    let n44 = vec4<f32>(0.05, 0.05, 0.05, 0.05);
+    let n45 = n43 * n44;
+    let n46 = vec4<f32>(input.time, sin(input.time), cos(input.time), input.time * 0.1);
+    let n47 = vec4<f32>(7.0, 7.0, 7.0, 7.0);
+    let n48 = vec4<f32>(n46.x) * n47;
+    let n49 = vec4<f32>(6.283, 6.283, 6.283, 6.283);
+    let n50 = vec4<f32>(n30.cell) * n49;
+    let n51 = fract(n50);
+    let n52 = vec4<f32>(6.283, 6.283, 6.283, 6.283);
+    let n53 = n51 * n52;
+    let n54 = n48 + n53;
+    let n55 = sin(n54);
+    let n56 = vec4<f32>(11.3, 11.3, 11.3, 11.3);
+    let n57 = vec4<f32>(n46.x) * n56;
+    let n58 = vec4<f32>(17.9, 17.9, 17.9, 17.9);
+    let n59 = vec4<f32>(n30.cell) * n58;
+    let n60 = fract(n59);
+    let n61 = vec4<f32>(6.283, 6.283, 6.283, 6.283);
+    let n62 = n60 * n61;
+    let n63 = n57 + n62;
+    let n64 = sin(n63);
+    let n65 = n55 * n64;
+    let n66 = vec4<f32>(n13.y);
+    let n67 = abs(n66);
+    let n68 = vec4<f32>(1.0) - n67;
+    let n69 = vec4<f32>(0.7, 0.7, 0.7, 0.7);
+    let n70 = vec4<f32>(0.3, 0.3, 0.3, 0.3);
+    let n71 = n68 * n69 + n70;
+    let n72 = vec4<f32>(f32(p.twinkle));
+    let n73 = n71 * n72;
+    let n74 = n65 * n73;
+    let n75 = vec4<f32>(1.0, 1.0, 1.0, 1.0);
+    let n76 = n74 + n75;
+    let n77 = n45 * n76;
+    let n78 = n35 * n77;
+    let n79 = vec4<f32>(3.7, 3.7, 3.7, 3.7);
+    let n80 = vec4<f32>(n30.cell) * n79;
+    let n81 = fract(n80);
+    let n82 = vec4<f32>(2.2, 2.2, 2.2, 2.2);
+    let n83 = vec4<f32>(pow(max(n81.x, 0.0), n82.x));
+    let n84 = vec4<f32>(13000.0, 13000.0, 13000.0, 13000.0);
+    let n85 = vec4<f32>(2600.0, 2600.0, 2600.0, 2600.0);
+    let n86 = n83 * n84 + n85;
+    let n87 = graph_blackbody(n86.x);
+    let n88 = vec4<f32>(0.35, 0.35, 0.35, 0.35);
+    let n89 = mix(n87, vec4<f32>(vec3<f32>(dot(n87.rgb, vec3<f32>(0.2126, 0.7152, 0.0722))), n87.a), vec4<f32>(clamp(n88.x, 0.0, 1.0)));
+    let n90 = n78 * n89;
+    let n91 = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    let n92 = vec4<f32>(0.12, 0.12, 0.12, 0.12);
+    let n93 = vec4<f32>(640.0, 320.0, 0.0, 0.0);
+    let l8 = round(max(n93.xy, vec2<f32>(0.0)));
+    let l9 = n2.xy * select(vec2<f32>(vec4<f32>(1.0).x), l8, l8 > vec2<f32>(0.5));
+    let n94 = graph_voronoi(l9, clamp(vec4<f32>(1.0).x, 0.0, 1.0), vec4<f32>(0.0).x, max(vec4<f32>(0.0).x, 0.0), 0, false, l8);
+    let n95 = smoothstep(vec4<f32>(n91.x), vec4<f32>(max(n92.x, n91.x + 0.00001)), vec4<f32>(n94.f1));
+    let n96 = vec4<f32>(1.0) - n95;
+    let n97 = vec4<f32>(0.7, 0.7, 0.7, 0.7);
+    let n98 = step(vec4<f32>(n97.x), vec4<f32>(n94.cell));
+    let n99 = n96 * n98;
+    let n100 = vec4<f32>(13.7, 13.7, 13.7, 13.7);
+    let n101 = vec4<f32>(n94.cell) * n100;
+    let n102 = fract(n101);
+    let n103 = vec4<f32>(0.999, 0.999, 0.999, 0.999);
+    let n104 = vec4<f32>(0.001, 0.001, 0.001, 0.001);
+    let n105 = n102 * n103 + n104;
+    let n106 = vec4<f32>(-0.667, -0.667, -0.667, -0.667);
+    let n107 = vec4<f32>(pow(max(n105.x, 0.0), n106.x));
+    let n108 = vec4<f32>(0.015, 0.015, 0.015, 0.015);
+    let n109 = n107 * n108;
+    let n110 = vec4<f32>(input.time, sin(input.time), cos(input.time), input.time * 0.1);
+    let n111 = vec4<f32>(7.0, 7.0, 7.0, 7.0);
+    let n112 = vec4<f32>(n110.x) * n111;
+    let n113 = vec4<f32>(6.283, 6.283, 6.283, 6.283);
+    let n114 = vec4<f32>(n94.cell) * n113;
+    let n115 = fract(n114);
+    let n116 = vec4<f32>(6.283, 6.283, 6.283, 6.283);
+    let n117 = n115 * n116;
+    let n118 = n112 + n117;
+    let n119 = sin(n118);
+    let n120 = vec4<f32>(11.3, 11.3, 11.3, 11.3);
+    let n121 = vec4<f32>(n110.x) * n120;
+    let n122 = vec4<f32>(17.9, 17.9, 17.9, 17.9);
+    let n123 = vec4<f32>(n94.cell) * n122;
+    let n124 = fract(n123);
+    let n125 = vec4<f32>(6.283, 6.283, 6.283, 6.283);
+    let n126 = n124 * n125;
+    let n127 = n121 + n126;
+    let n128 = sin(n127);
+    let n129 = n119 * n128;
+    let n130 = n129 * n73;
+    let n131 = vec4<f32>(1.0, 1.0, 1.0, 1.0);
+    let n132 = n130 + n131;
+    let n133 = n109 * n132;
+    let n134 = n99 * n133;
+    let n135 = vec4<f32>(3.7, 3.7, 3.7, 3.7);
+    let n136 = vec4<f32>(n94.cell) * n135;
+    let n137 = fract(n136);
+    let n138 = vec4<f32>(2.2, 2.2, 2.2, 2.2);
+    let n139 = vec4<f32>(pow(max(n137.x, 0.0), n138.x));
+    let n140 = vec4<f32>(13000.0, 13000.0, 13000.0, 13000.0);
+    let n141 = vec4<f32>(2600.0, 2600.0, 2600.0, 2600.0);
+    let n142 = n139 * n140 + n141;
+    let n143 = graph_blackbody(n142.x);
+    let n144 = vec4<f32>(0.35, 0.35, 0.35, 0.35);
+    let n145 = mix(n143, vec4<f32>(vec3<f32>(dot(n143.rgb, vec3<f32>(0.2126, 0.7152, 0.0722))), n143.a), vec4<f32>(clamp(n144.x, 0.0, 1.0)));
+    let n146 = n134 * n145;
+    let n147 = n90 + n146;
+    let n148 = vec4<f32>(f32(p.star_brightness));
+    let n149 = n147 * n148;
+    let n150 = n26 + n149;
+    let n151 = vec4<f32>(0.004, 0.005, 0.012, 1.0);
+    let n152 = n150 + n151;
+    return vec4<f32>(n152.rgb, 1.0);
+}

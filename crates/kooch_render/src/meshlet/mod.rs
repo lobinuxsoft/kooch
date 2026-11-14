@@ -66,9 +66,9 @@ pub use material_pass::{
     RESOLVE_MATERIAL_DEPTH_SHADER, SHADING_TILE_SIZE, SURFACE_RECONSTRUCT_SHADER,
     TRANSPARENT_ARGS_SHADER, TRANSPARENT_CLIP_INSERT_FRAME, TRANSPARENT_LAYERS,
     TRANSPARENT_SHADE_FRAME, TRANSPARENT_TAIL_FRAME, VISIBILITY_BUFFER_RESOLVE_SHADER,
-    compose_material_shader, compose_post_shader, compose_preview_shader,
+    compose_material_shader, compose_post_shader, compose_preview_shader, compose_sky_shader,
     compose_transparent_composite, compose_transparent_insert, shader_scope, validate_post,
-    validate_preview, validate_surface,
+    validate_preview, validate_sky, validate_surface,
 };
 pub use pool::{GlobalMeshPool, GpuGlobalMeshPool, MeshBounds, MeshDescriptor, MeshHandle};
 pub use reject_overlay::{MeshletRejectOverlay, RejectReason};
