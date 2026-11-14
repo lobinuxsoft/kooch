@@ -209,8 +209,10 @@ which is what a planet's distant impostor or an atmosphere card needs.
 
 ### Sky
 
-A `sky` shader draws the backdrop behind the scene. Assign its material to a **Sky Renderer**'s
-**material** field; with one set, the renderer's own colours and clouds are not drawn.
+A `sky` shader draws the backdrop behind the scene. A **Sky Renderer** with no **material** draws
+the engine's own: a starfield with a galactic band and nebulae, a graph at
+`crates/kooch_render/shaders/sky_space.shgraph`. Assign a material whose shader is `kind: sky` to
+replace it; one that cannot draw falls back to the engine's. A scene with no Sky Renderer is black.
 
 ```wgsl
 // kind: sky

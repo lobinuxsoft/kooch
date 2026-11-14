@@ -123,10 +123,9 @@ fn init_renderers(resources: &mut Resources) {
         tracing::debug!("RenderPlugin: GpuContext not up yet, deferring init to the retry");
         return;
     };
-    let pipeline_cache = gpu.pipeline_cache();
     let vbuf64 = Vbuf64Support::detect(gpu.device());
     let debug_caps = MeshletDebugCaps::detect(gpu.device());
-    let sky_pass = SkyRenderPass::new(gpu.device(), gpu.format(), pipeline_cache);
+    let sky_pass = SkyRenderPass::new(gpu.device(), gpu.format());
     let mut pool = TargetPool::new(gpu.device());
     let depth = GameDepth::new(&mut pool, gpu.size());
     let meshlet_stage = MeshletRenderStage::new(

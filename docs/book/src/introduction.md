@@ -39,7 +39,7 @@ What works today:
   world-space normal as colour and a scene with lights looked exactly like one without.
 - Rigid-body physics on rapier3d: colliders, joints, collision events, sensors, materials,
   and custom gravity fields that sum.
-- Procedural sky and volumetric clouds.
+- Procedural skies authored in the Shader Graph, a starfield by default.
 - Scene serialisation (`.scene`, RON) driven by reflection, with more than one scene
   loadable at once.
 - Input as data: an action is an asset, with composites and processors, editable in a panel.
