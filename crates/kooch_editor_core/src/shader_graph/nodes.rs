@@ -259,6 +259,8 @@ pub(crate) enum Node {
     Exp,
     /// A hue wheel, one turn per unit of phase.
     Rainbow,
+    /// The colour of a body glowing at a temperature, in kelvin: a star, a flame, hot metal.
+    Blackbody,
     /// Signed distance to a box with rounded corners: negative inside.
     RoundedBox,
     /// A signed distance as a mask with a soft edge: 1 inside.
@@ -504,6 +506,7 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::UiPoint,
         Node::Exp,
         Node::Rainbow,
+        Node::Blackbody,
         Node::surface_output(),
     ]
 }

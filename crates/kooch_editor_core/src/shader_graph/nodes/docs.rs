@@ -84,6 +84,7 @@ impl Node {
             Self::Luminance => "How bright a colour reads, as one number.",
             Self::Exp => "e to the power of the value.",
             Self::Rainbow => "A hue wheel: one turn per unit of phase.",
+            Self::Blackbody => "The colour of a glow at a temperature: red, orange, white, blue.",
             Self::SceneColor => "The frame the camera produced. Post-process shaders only.",
             Self::WorldPosition => "The shaded point, in world space.",
             Self::WorldNormal => "The surface's normal, in world space.",
@@ -376,6 +377,7 @@ impl Node {
             Self::Luminance => &[(Three, "The colour.")],
             Self::Exp => &[(Any, "The power.")],
             Self::Rainbow => &[(One, "Where on the wheel.")],
+            Self::Blackbody => &[(One, "Kelvin, 1667 to 25000: a candle ~1900, the Sun ~5800.")],
             Self::ShaderOutput { kind } if kind == "ui" => &[
                 (Three, "The colour. Unwired: the node's background-color."),
                 (One, "Opacity. Unwired: 1."),
@@ -454,9 +456,11 @@ impl Node {
             Self::Uv | Self::Parallax => (Two, "The uv."),
             Self::UiSize => (Two, "Width and height, in pixels."),
             Self::ImageNormal => (Three, self.about()),
-            Self::UiImage | Self::UiColor | Self::UiBorderColor | Self::Rainbow => {
-                (Four, "The colour.")
-            }
+            Self::UiImage
+            | Self::UiColor
+            | Self::UiBorderColor
+            | Self::Rainbow
+            | Self::Blackbody => (Four, "The colour."),
             Self::RoundedBox => (One, "The distance."),
             Self::SdfFill | Self::SdfStroke | Self::LightBand => {
                 (One, "A mask: 1 on it, 0 away from it.")
