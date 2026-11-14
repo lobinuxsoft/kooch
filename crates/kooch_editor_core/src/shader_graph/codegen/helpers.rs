@@ -64,6 +64,7 @@ pub(super) fn helpers(graph: &Graph) -> String {
     push(uses(&|n| matches!(n, Node::Checker)), CHECKER_HELPER);
     push(uses(&|n| matches!(n, Node::RoundedBox)), ROUNDED_BOX_HELPER);
     push(uses(&|n| matches!(n, Node::Rainbow)), RAINBOW_HELPER);
+    push(uses(&|n| matches!(n, Node::Blackbody)), BLACKBODY_HELPER);
     push(uses(&|n| matches!(n, Node::UiPoint)), UI_POINT_HELPER);
     push(uses(&|n| matches!(n, Node::BlinnPhong)), BLINN_PHONG_HELPER);
     push(
@@ -125,6 +126,8 @@ const CHECKER_HELPER: &str = include_str!("helpers/checker.wgsl");
 const ROUNDED_BOX_HELPER: &str = include_str!("helpers/rounded_box.wgsl");
 
 const RAINBOW_HELPER: &str = include_str!("helpers/rainbow.wgsl");
+/// Kang et al. 2002 Planckian locus, xy to linear sRGB, brightest channel at 1.
+const BLACKBODY_HELPER: &str = include_str!("helpers/blackbody.wgsl");
 const UI_POINT_HELPER: &str = include_str!("helpers/ui_point.wgsl");
 const BLINN_PHONG_HELPER: &str = include_str!("helpers/blinn_phong.wgsl");
 const SDF_FILL_HELPER: &str = include_str!("helpers/sdf_fill.wgsl");

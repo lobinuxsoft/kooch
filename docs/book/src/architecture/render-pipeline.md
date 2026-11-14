@@ -632,9 +632,10 @@ path only.
 
 ### Sky and composite
 
-The sky is a fullscreen pass: procedural gradient plus volumetric clouds
-(3D value noise FBM, Beer–Lambert transmittance, Henyey–Greenstein
-phase, in-scattering toward the sun). It draws first, and the meshlet
+The sky is a fullscreen pass running a `kind: sky` Shader Graph: the
+`SkyRenderer`'s material, or the engine's starfield (`sky_space.shgraph`).
+Without a `SkyRenderer` the pass only clears to black, in the editor and the
+game alike. It draws first, and the meshlet
 stage's colour is blitted over it — `alpha = 0` is the background
 sentinel, so pixels no meshlet covered keep the sky.
 

@@ -117,6 +117,7 @@ impl Node {
             Self::Luminance => "Luminance".to_owned(),
             Self::Exp => "Exp".to_owned(),
             Self::Rainbow => "Rainbow".to_owned(),
+            Self::Blackbody => "Blackbody".to_owned(),
             Self::SceneColor => "Scene Color".to_owned(),
             Self::WorldPosition => "World Position".to_owned(),
             Self::WorldNormal => "World Normal".to_owned(),
@@ -297,6 +298,7 @@ impl Node {
             Self::Luminance => &["colour"],
             Self::Exp => &["value"],
             Self::Rainbow => &["phase"],
+            Self::Blackbody => &["kelvin"],
             Self::WhiteNoise => &["uv", "scale", "tiling"],
             Self::VoronoiNoise { .. } | Self::Voronoi => {
                 &["uv", "scale", "randomness", "phase", "smoothness", "tiling"]
@@ -306,6 +308,7 @@ impl Node {
             Self::Ring => &["uv", "radius", "thickness"],
             Self::Polygon => &["uv", "sides", "radius"],
             Self::Checker => &["uv", "tiles"],
+            Self::ShaderOutput { kind } if kind == "sky" => &["color"],
             Self::ShaderOutput { kind } if kind == "post_process" || kind == "ui" => {
                 &["color", "alpha"]
             }
@@ -510,7 +513,8 @@ impl Node {
             | Self::BlinnPhong
             | Self::Sway
             | Self::LightBand
-            | Self::Rainbow => Category::Effect,
+            | Self::Rainbow
+            | Self::Blackbody => Category::Effect,
             Self::UiImage
             | Self::UiColor
             | Self::UiBorderColor

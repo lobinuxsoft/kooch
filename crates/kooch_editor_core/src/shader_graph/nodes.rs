@@ -259,6 +259,8 @@ pub(crate) enum Node {
     Exp,
     /// A hue wheel, one turn per unit of phase.
     Rainbow,
+    /// The colour of a body glowing at a temperature, in kelvin: a star, a flame, hot metal.
+    Blackbody,
     /// Signed distance to a box with rounded corners: negative inside.
     RoundedBox,
     /// A signed distance as a mask with a soft edge: 1 inside.
@@ -346,13 +348,14 @@ impl Category {
 
 /// The kinds a graph generates. Not `ShaderKind::NAMES`: a kind the codegen has no body for would
 /// write a shader its pass refuses.
-pub(crate) const OUTPUT_KINDS: [&str; 6] = [
+pub(crate) const OUTPUT_KINDS: [&str; 7] = [
     "surface",
     "unlit",
     "post_process",
     "transparent",
     "transparent_unlit",
     "ui",
+    "sky",
 ];
 
 /// Every node the menu offers, one per kind, in menu order.
@@ -503,6 +506,7 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::UiPoint,
         Node::Exp,
         Node::Rainbow,
+        Node::Blackbody,
         Node::surface_output(),
     ]
 }

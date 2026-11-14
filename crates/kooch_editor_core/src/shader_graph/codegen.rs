@@ -62,6 +62,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     // An unlit transparent is both: the unlit body, blended by its alpha (#452).
     let unlit = kind == "unlit" || kind == "transparent_unlit";
     let post = kind == "post_process";
+    let sky = kind == "sky";
     let ui = kind == "ui";
     let transparent = kind == "transparent" || kind == "transparent_unlit";
 
@@ -86,7 +87,9 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         "vec4<f32>(0.0)",
     ];
     // Alpha, then the clip it is tested against (#452).
-    let fallbacks: Vec<&str> = if post {
+    let fallbacks: Vec<&str> = if sky {
+        vec!["vec4<f32>(0.0)"]
+    } else if post {
         vec!["vec4<f32>(0.0)", "vec4<f32>(1.0)"]
     } else if ui {
         vec!["input.color", "vec4<f32>(1.0)"]
@@ -97,7 +100,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     };
     // Masked only when the clip is wired: an unwired clip would rasterise in the slower bin for
     // nothing.
-    let clip = (!post && !ui)
+    let clip = (!post && !ui && !sky)
         .then_some(fallbacks.len() - 1)
         .filter(|&input| body.wired_in(output, input));
     let outputs: Vec<String> = fallbacks
@@ -118,6 +121,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     source.push_str(&helpers(graph));
     let (function, returns) = match (unlit, post) {
         _ if ui => ("ui", "vec4<f32>"),
+        _ if sky => ("sky", "vec4<f32>"),
         (true, _) => ("unlit", "UnlitOutput"),
         (_, true) => ("post_process", "vec4<f32>"),
         _ => ("surface", "SurfaceOutput"),
@@ -128,6 +132,11 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         let _ = writeln!(source, "    let p = surface_params(input.material_id);");
     }
     source.push_str(&body.lines);
+    if sky {
+        // Opaque by definition: nothing is behind the sky to blend with.
+        let _ = writeln!(source, "    return vec4<f32>({}.rgb, 1.0);\n}}", outputs[0]);
+        return finish(source);
+    }
     if post || ui {
         let _ = writeln!(
             source,
