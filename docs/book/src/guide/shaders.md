@@ -231,6 +231,11 @@ fn sky(input: SurfaceInput) -> vec4<f32> {
 - The output has only **color**: a sky is opaque.
 - The graph panel previews it through a camera that turns slowly in place.
 
+The engine's sky colours each star with the **Blackbody** node (a temperature in kelvin to the colour
+of its glow) and draws their brightness from the real sky's falloff: many faint, a few bright. Its
+material parameters are `star_brightness`, `twinkle`, `nebula_a`, `nebula_b` and `nebula_intensity`.
+`twinkle` is 0 because stars do not twinkle in space; the air does that, and most near the horizon.
+
 A scene with no active Sky Renderer, or one whose material cannot draw, shows black. The editor and
 the game show the same thing.
 

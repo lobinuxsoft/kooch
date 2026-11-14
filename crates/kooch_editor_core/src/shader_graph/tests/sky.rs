@@ -60,9 +60,107 @@ impl Builder {
         let star = self.binary(Node::Multiply, (core, 0), (lit, 0));
         (star, voronoi)
     }
+
+    /// A fresh 0..1 from a cell's hash, uncorrelated with the hash itself.
+    fn rehash(&mut self, cells: NodeId, scale: f32) -> NodeId {
+        let factor = self.float(scale);
+        let spread = self.binary(Node::Multiply, (cells, 3), (factor, 0));
+        let fract = self.add(Node::Fract);
+        self.wire(spread, 0, fract, 0);
+        fract
+    }
+
+    /// A layer of stars, each with its own temperature and a brightness drawn from the sky's
+    /// power law: the count of stars brighter than L falls as L^-1.5.
+    fn layer(
+        &mut self,
+        uv: NodeId,
+        cells: [f32; 2],
+        radius: f32,
+        share: f32,
+        faint: f32,
+        air: NodeId,
+    ) -> NodeId {
+        let (star, voronoi) = self.stars(uv, cells, radius, share);
+        // Mostly orange to white, rarely blue-white or deep red.
+        let pick = self.rehash(voronoi, 3.7);
+        let curve = self.float(2.2);
+        let skewed = self.binary(Node::Power, (pick, 0), (curve, 0));
+        let span = self.float(13000.0);
+        let coolest = self.float(2600.0);
+        let kelvin = self.add(Node::MulAdd);
+        self.wire(skewed, 0, kelvin, 0);
+        self.wire(span, 0, kelvin, 1);
+        self.wire(coolest, 0, kelvin, 2);
+        let hue = self.add(Node::Blackbody);
+        self.wire(kelvin, 0, hue, 0);
+        // The eye barely sees colour in starlight.
+        let washed = self.float(0.35);
+        let colour = self.binary(Node::Desaturate, (hue, 0), (washed, 0));
+
+        let draw = self.rehash(voronoi, 13.7);
+        let keep = self.float(0.999);
+        let least = self.float(0.001);
+        let u = self.add(Node::MulAdd);
+        self.wire(draw, 0, u, 0);
+        self.wire(keep, 0, u, 1);
+        self.wire(least, 0, u, 2);
+        let slope = self.float(-0.667);
+        let law = self.binary(Node::Power, (u, 0), (slope, 0));
+        let floor = self.float(faint);
+        let level = self.binary(Node::Multiply, (law, 0), (floor, 0));
+        let shimmer = self.shimmer(voronoi, air);
+        let flicker = self.binary(Node::Multiply, (level, 0), (shimmer, 0));
+        let lit = self.binary(Node::Multiply, (star, 0), (flicker, 0));
+        self.binary(Node::Multiply, (lit, 0), (colour, 0))
+    }
+
+    /// How much the air shakes the light: `twinkle`, strongest at the horizon where the light
+    /// crosses the most air.
+    fn air(&mut self, normal: NodeId, twinkle: NodeId) -> NodeId {
+        let up = self.add(Node::Swizzle {
+            pattern: "y".to_owned(),
+        });
+        self.wire(normal, 0, up, 0);
+        let height = self.add(Node::Abs);
+        self.wire(up, 0, height, 0);
+        let low = self.add(Node::OneMinus);
+        self.wire(height, 0, low, 0);
+        let reach = self.float(0.7);
+        let base = self.float(0.3);
+        let weight = self.add(Node::MulAdd);
+        self.wire(low, 0, weight, 0);
+        self.wire(reach, 0, weight, 1);
+        self.wire(base, 0, weight, 2);
+        self.binary(Node::Multiply, (weight, 0), (twinkle, 0))
+    }
+
+    /// `1 ± air`, each star on its own phase: two sines at unrelated rates, so it never repeats.
+    fn shimmer(&mut self, cells: NodeId, air: NodeId) -> NodeId {
+        let time = self.add(Node::Time);
+        let mut wave = None;
+        for (rate, scale) in [(7.0, 6.283), (11.3, 17.9)] {
+            let phase = self.rehash(cells, scale);
+            let turn = self.float(6.283);
+            let offset = self.binary(Node::Multiply, (phase, 0), (turn, 0));
+            let speed = self.float(rate);
+            let t = self.binary(Node::Multiply, (time, 0), (speed, 0));
+            let angle = self.binary(Node::Add, (t, 0), (offset, 0));
+            let sine = self.add(Node::Sine);
+            self.wire(angle, 0, sine, 0);
+            wave = Some(match wave {
+                Some(prev) => self.binary(Node::Multiply, (prev, 0), (sine, 0)),
+                None => sine,
+            });
+        }
+        let wave = wave.unwrap_or(time);
+        let swing = self.binary(Node::Multiply, (wave, 0), (air, 0));
+        let one = self.float(1.0);
+        self.binary(Node::Add, (swing, 0), (one, 0))
+    }
 }
 
-/// Stars in two layers and a nebula along a galactic band: what roll-a-ball's sky is made of.
+/// Stars in two layers and a nebula along a galactic band: the engine's default sky.
 pub(crate) fn space() -> Graph {
     let mut b = Builder {
         graph: Graph::new(),
@@ -71,32 +169,22 @@ pub(crate) fn space() -> Graph {
     let uv = b.add(Node::Uv);
     let normal = b.add(Node::WorldNormal);
 
-    // Bright stars, few, tinted by their cell's hash; then a fine dim layer.
-    let (bright, cells) = b.stars(uv, [220.0, 110.0], 0.08, 0.4);
-    let exponent = b.float(10.0);
-    let rank = b.binary(Node::Power, (cells, 3), (exponent, 0));
+    // Two layers of stars, each lit and coloured from its cell: few bright, a dust of faint ones.
     let star_brightness = b.add(Node::Float {
         name: "star_brightness".to_owned(),
-        default: 1.6,
+        default: 1.0,
         range: Some([0.0, 4.0]),
     });
-    let floor = b.float(0.12);
-    let level = b.add(Node::MulAdd);
-    b.wire(rank, 0, level, 0);
-    b.wire(star_brightness, 0, level, 1);
-    b.wire(floor, 0, level, 2);
-    let warm = b.add(Node::ConstColor([1.0, 0.8, 0.62, 1.0]));
-    let cool = b.add(Node::ConstColor([0.7, 0.82, 1.0, 1.0]));
-    let tint = b.add(Node::Mix);
-    b.wire(warm, 0, tint, 0);
-    b.wire(cool, 0, tint, 1);
-    b.wire(cells, 3, tint, 2);
-    let lit = b.binary(Node::Multiply, (bright, 0), (level, 0));
-    let near = b.binary(Node::Multiply, (lit, 0), (tint, 0));
-    let (dim, _) = b.stars(uv, [640.0, 320.0], 0.12, 0.3);
-    let faint = b.float(0.3);
-    let far = b.binary(Node::Multiply, (dim, 0), (faint, 0));
-    let stars = b.binary(Node::Add, (near, 0), (far, 0));
+    let twinkle = b.add(Node::Float {
+        name: "twinkle".to_owned(),
+        default: 0.0,
+        range: Some([0.0, 1.0]),
+    });
+    let air = b.air(normal, twinkle);
+    let near = b.layer(uv, [220.0, 110.0], 0.08, 0.4, 0.05, air);
+    let far = b.layer(uv, [640.0, 320.0], 0.12, 0.3, 0.015, air);
+    let both = b.binary(Node::Add, (near, 0), (far, 0));
+    let stars = b.binary(Node::Multiply, (both, 0), (star_brightness, 0));
 
     // The galaxy's plane, tilted off the world axes so it never lines up with the horizon.
     let pole = b.vector([0.32, 0.88, 0.35, 0.0], 3);
