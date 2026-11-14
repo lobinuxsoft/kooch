@@ -4,8 +4,8 @@ use glam::{Mat3, Vec2};
 use kooch_core::resource::Resources;
 use kooch_ecs::query::Query;
 use kooch_ecs::{
-    AtlasUpload, Entity, MASK_VECTOR, QUAD_GLYPH, QUAD_IMAGE, QUAD_VECTOR, UiCurve, UiDrawList,
-    UiMask, UiMaterial, UiMirror, UiParam, UiQuad, UiShader, ViewSize,
+    AtlasUpload, Entity, MASK_PAGE, MASK_VECTOR, QUAD_GLYPH, QUAD_IMAGE, QUAD_PAGE, QUAD_VECTOR,
+    UiCurve, UiDrawList, UiMask, UiMaterial, UiMirror, UiParam, UiQuad, UiShader, ViewSize,
 };
 
 use crate::layout::CANVAS_HEIGHT;
@@ -76,6 +76,8 @@ fn clear(list: &mut UiDrawList) {
 
 fn upload(atlas: &mut GlyphAtlas, list: &mut UiDrawList) {
     list.atlas_side = atlas.side();
+    list.page_side = atlas.page_side();
+    list.page_uploads.extend(atlas.take_page_uploads());
     list.vector_side = atlas.vector_side();
     list.vectors = atlas.vectors();
     // Appended, as the glyph upload is grown: the renderer takes them when it draws.
@@ -304,7 +306,8 @@ fn push_masks(
             uv_min: [x0, y0],
             uv_size: [x1 - x0, y1 - y0],
             luminance: image.map_or(0, |(mask, packed)| {
-                u32::from(mask.luminance) | if packed.vector { MASK_VECTOR } else { 0 }
+                let page = if packed.page { MASK_PAGE } else { 0 };
+                u32::from(mask.luminance) | if packed.vector { MASK_VECTOR } else { page }
             }),
             fill_from,
             fill: tree.param(node, "fill").map_or(1.0, |value| value[0]),
@@ -511,9 +514,10 @@ fn push_crop(
 
 /// Which texture the quad samples.
 fn image_flags(packed: AtlasImage) -> u32 {
-    match packed.vector {
-        true => QUAD_IMAGE | QUAD_VECTOR,
-        false => QUAD_IMAGE,
+    match (packed.vector, packed.page) {
+        (true, _) => QUAD_IMAGE | QUAD_VECTOR,
+        (false, true) => QUAD_IMAGE | QUAD_PAGE,
+        (false, false) => QUAD_IMAGE,
     }
 }
 

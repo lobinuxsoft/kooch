@@ -86,6 +86,7 @@ impl GlyphAtlas {
             modified,
             density,
             vector: true,
+            page: false,
         };
         let key = key_of((guid, class), modified);
         let file = key_of(guid, modified);
@@ -124,6 +125,7 @@ impl GlyphAtlas {
             modified,
             density: [1.0; 2],
             vector: true,
+            page: false,
         };
         let key = key_of((guid, crop), modified);
         let file = key_of(guid, modified);
@@ -171,6 +173,7 @@ impl GlyphAtlas {
             modified: SystemTime::UNIX_EPOCH,
             density: [1.0; 2],
             vector: true,
+            page: false,
         };
         let vectors = &mut self.vectors;
         for font in fonts {

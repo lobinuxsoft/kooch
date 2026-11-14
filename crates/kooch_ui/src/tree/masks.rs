@@ -89,8 +89,11 @@ impl UiTree {
     /// image reached it, the node counts as unmasked, as it draws.
     fn solid(&self, node: UiNode, point: Vec2, atlas: Option<&GlyphAtlas>) -> bool {
         let found = self.mask(node).zip(atlas).and_then(|(mask, atlas)| {
-            // Any raster of it answers whether a point is solid.
-            let [x0, y0, x1, y1] = atlas.image(mask.guid, [0, 0])?.rect;
+            // Any raster of it answers whether a point is solid; the GPU-only atlases have no texels here.
+            let image = atlas
+                .image(mask.guid, [0, 0])
+                .filter(|image| !image.vector && !image.page)?;
+            let [x0, y0, x1, y1] = image.rect;
             let rect = self.rect.get(node.0 as usize)?;
             let at = ((point - rect.min) / rect.size).clamp(Vec2::ZERO, Vec2::ONE);
             let x = x0 + (at.x * (x1 - x0).saturating_sub(1) as f32) as u32;

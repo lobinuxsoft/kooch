@@ -34,12 +34,14 @@ pub struct UiPass {
     mirrors_capacity: u64,
     started: std::time::Instant,
     vectors: vector::UiVectors,
+    pages: pages::UiPages,
     videos: video::UiVideos,
     offset: [f32; 2],
 }
 
 mod buffers;
 mod materials;
+mod pages;
 mod vector;
 mod video;
 
@@ -133,16 +135,8 @@ impl UiPass {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
+                texture_entry(7),
+                texture_entry(8),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -166,6 +160,7 @@ impl UiPass {
         let mirrors_capacity = 4;
         let mirrors = mirrors_buffer(device, mirrors_capacity);
         let vectors = vector::UiVectors::new(device);
+        let pages = pages::UiPages::new(device);
         let buffers = Buffers {
             screen: &screen,
             values: &values,
@@ -173,6 +168,7 @@ impl UiPass {
             curves: &curves,
             mirrors: &mirrors,
             vectors: vectors.view(),
+            pages: pages.view(),
         };
         let (atlas, bind) = atlas_and_bind(device, &layout, buffers, 1);
         let capacity = 256;
@@ -198,6 +194,7 @@ impl UiPass {
             mirrors_capacity,
             started: std::time::Instant::now(),
             vectors,
+            pages,
             videos: Default::default(),
             offset: [0.0; 2],
         }
@@ -226,7 +223,6 @@ impl UiPass {
         list: &mut UiDrawList,
         clear: bool,
     ) {
-        let rewritten = list.atlas_upload.is_some() || list.atlas_side != self.atlas_side;
         if list.atlas_side != self.atlas_side && list.atlas_side > 0 {
             let buffers = self.buffers();
             let (atlas, bind) = atlas_and_bind(device, &self.layout, buffers, list.atlas_side);
@@ -256,9 +252,16 @@ impl UiPass {
                 },
             );
         }
-        self.videos
-            .prepare(device, queue, encoder, list, &self.atlas, rewritten);
-        if self.vectors.prepare(device, queue, encoder, list) {
+        let (replaced, rewritten) = self.pages.prepare(device, queue, encoder, list);
+        self.videos.prepare(
+            device,
+            queue,
+            encoder,
+            list,
+            self.pages.texture(),
+            rewritten,
+        );
+        if self.vectors.prepare(device, queue, encoder, list) || replaced {
             self.bind = bind_group(device, &self.layout, self.buffers(), &self.atlas);
         }
         if list.quads.is_empty() && !clear {
@@ -342,6 +345,7 @@ impl UiPass {
             curves: &self.curves,
             mirrors: &self.mirrors,
             vectors: self.vectors.view(),
+            pages: self.pages.view(),
         }
     }
 
@@ -420,6 +424,7 @@ struct Buffers<'a> {
     curves: &'a wgpu::Buffer,
     mirrors: &'a wgpu::Buffer,
     vectors: &'a wgpu::TextureView,
+    pages: &'a wgpu::TextureView,
 }
 
 /// The pipeline every UI draw shares but for its fragment entry.
@@ -568,8 +573,26 @@ fn bind_group(
                 binding: 7,
                 resource: wgpu::BindingResource::TextureView(buffers.vectors),
             },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: wgpu::BindingResource::TextureView(buffers.pages),
+            },
         ],
     })
+}
+
+/// A filtered 2D texture the fragment samples: the vector and page atlases.
+fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
 }
 
 #[cfg(test)]

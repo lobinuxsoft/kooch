@@ -15,6 +15,7 @@ fn fs_material(in: Varyings) -> @location(0) vec4<f32> {
     input.material_id = in.material_flags.x;
     input.image = (in.material_flags.y & QUAD_IMAGE) != 0u;
     input.vector = (in.material_flags.y & QUAD_VECTOR) != 0u;
+    input.page = (in.material_flags.y & QUAD_PAGE) != 0u;
     input.atlas_min = vec2<f32>(in.atlas_rect.xy);
     input.atlas_size = vec2<f32>(in.atlas_rect.zw);
     let color = ui(input);

@@ -188,6 +188,7 @@ impl MaterialTexturePool {
                 texture: &texture.texture,
                 origin: [0, 0],
                 border: false,
+                size: None,
             };
             self.converter.draw(device, queue, encoder, planes, target);
             drawn.push(*guid);

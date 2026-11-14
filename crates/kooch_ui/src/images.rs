@@ -10,7 +10,7 @@ use kooch_core::resource::Resources;
 
 use kooch_ecs::ViewSize;
 
-use crate::atlas::{TOP_CLASS, class_side, size_class};
+use crate::atlas::{AtlasImage, TOP_CLASS, class_side, size_class};
 use crate::crops::Crop;
 use crate::documents::{path_of, read_bytes, stamp};
 use crate::layout::CANVAS_HEIGHT;
@@ -156,6 +156,7 @@ fn pack(
     atlas: &mut GlyphAtlas,
 ) {
     for (&guid, classes) in &wanted.classes {
+        let fit = fit_side(classes);
         let crops: Vec<Crop> = wanted
             .crops
             .iter()
@@ -173,6 +174,8 @@ fn pack(
         let meta = kooch_core::asset_meta::meta_path_for(&path);
         let modified = stamp(database, guid, None, std::slice::from_ref(&meta));
         let vector = kooch_core::svg::is_svg(&path);
+        // A GIF plays its frames into the slot at their own size, so it is never fitted.
+        let shrinks = !vector && !kooch_core::gif::is_gif(&path);
         let classes: Vec<u8> = match vector {
             true => classes.iter().copied().collect(),
             false => vec![0],
@@ -188,7 +191,10 @@ fn pack(
         };
         let stale: Vec<u8> = classes
             .into_iter()
-            .filter(|&class| atlas.packed(guid, class) != Some(modified))
+            .filter(|&class| {
+                atlas.packed(guid, class) != Some(modified)
+                    || (shrinks && refit(atlas.raster(guid), fit))
+            })
             .collect();
         if stale.is_empty() && crops.is_empty() {
             continue;
@@ -252,8 +258,10 @@ fn pack(
                 kooch_video::first_frame(&bytes).and_then(|first| Ok((first.rgba()?, first.size)));
             match first {
                 Ok((rgba, size)) => {
+                    let (rgba, size, density) = shrink(rgba, size, fit);
+                    // Its frames are drawn on the GPU, so its slot never needs a CPU copy.
                     if atlas
-                        .insert_image((guid, 0), modified, size, &rgba, [1.0; 2])
+                        .insert_page((guid, 0), modified, size, &rgba, density)
                         .is_none()
                     {
                         tracing::warn!("UI video {guid} does not fit the atlas");
@@ -269,10 +277,10 @@ fn pack(
         for class in stale {
             let decoded = match vector {
                 true => raster(&bytes, class, scale),
-                false => decode(&bytes),
+                false => decode(&bytes).map(|(rgba, size, _)| shrink(rgba, size, fit)),
             };
             let inserted = decoded.map(|(rgba, size, density)| {
-                atlas.insert_image((guid, class), modified, size, &rgba, density)
+                atlas.insert_raster((guid, class), modified, size, &rgba, density)
             });
             match inserted {
                 Ok(Some(_)) => {}
@@ -308,6 +316,47 @@ fn decode(bytes: &[u8]) -> Result<Decoded, String> {
         .to_rgba8();
     let size = rgba.dimensions();
     Ok((rgba.into_raw(), size, [1.0; 2]))
+}
+
+/// The longer side a raster is packed at: the largest class it shows at, the top one before layout.
+/// 🔴 Packed at the file's size, one 4K image or video frame took a 4096² atlas, 64 MB (#1893).
+fn fit_side(classes: &HashSet<u8>) -> u32 {
+    let shown = classes.iter().copied().max().unwrap_or(0);
+    class_side(if shown == 0 { TOP_CLASS } else { shown })
+}
+
+/// Whether `packed`, a raster, is bigger than `fit` or was shrunk below it.
+fn refit(packed: Option<AtlasImage>, fit: u32) -> bool {
+    let Some(image) = packed else {
+        return false;
+    };
+    let [x0, y0, x1, y1] = image.rect;
+    let longer = (x1 - x0).max(y1 - y0);
+    longer > fit || (image.density[0] < 1.0 && longer < fit)
+}
+
+/// `rgba` with its longer side at most `fit`, and the texels per file texel it kept.
+fn shrink(rgba: Vec<u8>, (w, h): (u32, u32), fit: u32) -> Decoded {
+    let longer = w.max(h);
+    if longer <= fit {
+        return (rgba, (w, h), [1.0; 2]);
+    }
+    let Some(image) = image::RgbaImage::from_raw(w, h, rgba) else {
+        return (Vec::new(), (0, 0), [1.0; 2]);
+    };
+    let ratio = fit as f32 / longer as f32;
+    let size = (
+        ((w as f32 * ratio).round() as u32).max(1),
+        ((h as f32 * ratio).round() as u32).max(1),
+    );
+    let small = image::imageops::resize(
+        &image,
+        size.0,
+        size.1,
+        image::imageops::FilterType::Triangle,
+    );
+    let density = [size.0 as f32 / w as f32, size.1 as f32 / h as f32];
+    (small.into_raw(), size, density)
 }
 
 /// An SVG whose longer side fills `class`; with no class yet, at its own size on screen.
