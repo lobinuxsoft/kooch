@@ -63,17 +63,21 @@ pub enum ShaderKind {
     TransparentUnlit,
     /// A UI node's fill: defines `fn ui(UiInput) -> vec4<f32>`, straight alpha (#1690).
     Ui,
+    /// The backdrop behind everything: defines `fn sky(SurfaceInput) -> vec4<f32>`, with the view
+    /// direction in `world_normal` and its longitude and latitude in `uv` (#1900).
+    Sky,
 }
 
 impl ShaderKind {
     /// What a `// kind:` line names, in the order errors list them.
-    pub const NAMES: [&'static str; 6] = [
+    pub const NAMES: [&'static str; 7] = [
         "surface",
         "unlit",
         "post_process",
         "transparent",
         "transparent_unlit",
         "ui",
+        "sky",
     ];
 
     fn parse(name: &str) -> Option<Self> {
@@ -84,6 +88,7 @@ impl ShaderKind {
             "transparent" => Some(Self::Transparent),
             "transparent_unlit" => Some(Self::TransparentUnlit),
             "ui" => Some(Self::Ui),
+            "sky" => Some(Self::Sky),
             _ => None,
         }
     }
@@ -107,7 +112,7 @@ impl ShaderKind {
             // The UI's frame reads none of this.
             Self::Ui => "",
             // A post-process has a frame of its own, so it needs no glue at all.
-            Self::Surface | Self::PostProcess => {
+            Self::Surface | Self::PostProcess | Self::Sky => {
                 "const SURFACE_UNLIT: bool = false;\nconst SURFACE_TRANSPARENT: bool = false;\n"
             }
             Self::Transparent => {

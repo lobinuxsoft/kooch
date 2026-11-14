@@ -2,12 +2,11 @@
 
 use kooch_core::gpu::GpuContext;
 use kooch_core::resource::Resources;
-use kooch_core::time::Time;
 use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_ecs::query::Query;
 use kooch_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
-use kooch_render::SkyRenderPass;
 use kooch_render::meshlet::{MeshletBlit, MeshletRenderStage, MeshletRenderStats};
+use kooch_render::{SkyRenderPass, SkyTarget};
 
 use crate::viewport::target::ViewportTarget;
 
@@ -75,17 +74,17 @@ pub(crate) fn render_viewport(
         if let (Some(active_sky), Some(camera)) =
             (SkyRenderPass::active_sky(resources), view_camera(resources))
         {
-            let time_secs = Time::of(resources).elapsed_secs();
             sky_pass.render(
-                gpu.queue(),
+                gpu,
                 &mut encoder,
-                target.view(),
-                target.depth_view(),
+                SkyTarget {
+                    view: target.view(),
+                    depth: target.depth_view(),
+                    aspect: target.aspect(),
+                },
                 resources,
                 &camera,
-                target.aspect(),
                 active_sky,
-                time_secs,
             )
         } else {
             false
@@ -95,7 +94,7 @@ pub(crate) fn render_viewport(
     };
 
     if !sky_drawn {
-        clear_to_black(&mut encoder, target.view(), target.depth_view());
+        SkyRenderPass::clear(&mut encoder, target.view(), target.depth_view());
     }
     if let (Some(scopes), Some(query)) = (scopes, sky_query) {
         scopes.end(&mut encoder, query);
@@ -150,36 +149,6 @@ pub(crate) fn render_viewport(
     }
 
     gpu.queue().submit(Some(encoder.finish()));
-}
-
-pub(super) fn clear_to_black(
-    encoder: &mut wgpu::CommandEncoder,
-    view: &wgpu::TextureView,
-    depth: &wgpu::TextureView,
-) {
-    let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("viewport_clear_pass"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-            view: depth,
-            depth_ops: Some(wgpu::Operations {
-                load: wgpu::LoadOp::Clear(0.0),
-                store: wgpu::StoreOp::Store,
-            }),
-            stencil_ops: None,
-        }),
-        timestamp_writes: None,
-        occlusion_query_set: None,
-        multiview_mask: None,
-    });
 }
 
 /// The View panel's camera: the editor's own, always.

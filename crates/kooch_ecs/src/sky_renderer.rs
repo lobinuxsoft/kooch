@@ -1,6 +1,7 @@
 //! Sky renderer component.
 
 use glam::Vec3;
+use kooch_core::Guid;
 
 use crate::component::Component;
 
@@ -15,6 +16,9 @@ pub struct SkyRenderer {
     pub active: bool,
     /// Priority for multi-sky tiebreaking (higher wins).
     pub priority: i32,
+    /// A material whose shader is `kind: sky` draws the sky instead of the fields below (#1900).
+    #[reflect(asset = "kooch_render::material::asset::Material")]
+    pub material: Option<Guid>,
     /// Zenith color (top of the dome) in linear RGB.
     pub top_color: Vec3,
     /// Horizon / nadir color (bottom of the dome) in linear RGB.
@@ -42,6 +46,7 @@ impl Default for SkyRenderer {
         Self {
             active: true,
             priority: 0,
+            material: None,
             top_color: Vec3::new(0.5, 0.7, 1.0),
             bottom_color: Vec3::new(0.1, 0.2, 0.4),
             sun_direction: Vec3::new(0.3, 0.7, -0.5),

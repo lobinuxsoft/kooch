@@ -4,14 +4,13 @@
 use kooch_core::event::{AppExit, Events};
 use kooch_core::gpu::{GpuContext, TargetDesc, TargetId, TargetPool};
 use kooch_core::resource::Resources;
-use kooch_core::time::Time;
 use wgpu::{CurrentSurfaceTexture, SurfaceTexture};
 
+use super::GameDepth;
 use super::frame::FrameSetup;
-use super::{GameDepth, SKY_FALLBACK};
 use crate::meshlet::{MeshletBlit, MeshletRenderStage};
 use crate::post_process::{StackTarget, active_stack, run_stack};
-use crate::sky::SkyRenderPass;
+use crate::sky::{SkyRenderPass, SkyTarget};
 
 pub(super) fn present_frame_system(resources: &mut Resources) {
     let Some(setup) = resources.get::<FrameSetup>().cloned() else {
@@ -176,24 +175,24 @@ fn render_passes(
         SkyRenderPass::active_sky(resources),
         setup.stack.base.as_ref(),
     ) {
-        let time_secs = Time::of(resources).elapsed_secs();
         sky_pass.render(
-            gpu.queue(),
+            gpu,
             &mut encoder,
-            &view,
-            depth_view,
+            SkyTarget {
+                view: &view,
+                depth: depth_view,
+                aspect,
+            },
             resources,
             camera,
-            aspect,
             active_sky,
-            time_secs,
         )
     } else {
         false
     };
 
     if !sky_drawn {
-        clear_with_gradient(&mut encoder, &view, depth_view);
+        SkyRenderPass::clear(&mut encoder, &view, depth_view);
     }
     if let (Some(scopes), Some(query)) = (scopes, sky_query) {
         scopes.end(&mut encoder, query);
@@ -342,39 +341,4 @@ fn finish_offscreen(
     if let Some(pool) = resources.get_mut::<TargetPool>() {
         pool.release(target);
     }
-}
-
-fn clear_with_gradient(
-    encoder: &mut wgpu::CommandEncoder,
-    view: &wgpu::TextureView,
-    depth: &wgpu::TextureView,
-) {
-    let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("game_clear_pass"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color {
-                    r: SKY_FALLBACK.x as f64,
-                    g: SKY_FALLBACK.y as f64,
-                    b: SKY_FALLBACK.z as f64,
-                    a: SKY_FALLBACK.w as f64,
-                }),
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-            view: depth,
-            depth_ops: Some(wgpu::Operations {
-                load: wgpu::LoadOp::Clear(0.0),
-                store: wgpu::StoreOp::Store,
-            }),
-            stencil_ops: None,
-        }),
-        timestamp_writes: None,
-        occlusion_query_set: None,
-        multiview_mask: None,
-    });
 }

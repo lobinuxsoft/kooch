@@ -21,6 +21,7 @@ fn reflect_fields() {
         &[
             "active",
             "priority",
+            "material",
             "top_color",
             "bottom_color",
             "sun_direction",

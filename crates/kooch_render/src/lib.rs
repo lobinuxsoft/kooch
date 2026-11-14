@@ -37,7 +37,7 @@ pub use meshlet::{
 pub use perf::EngineVramTracker;
 pub use plugin::RenderPlugin;
 pub use projection::perspective_rh_reverse_z;
-pub use sky::{ActiveSky, SkyRenderPass};
+pub use sky::{ActiveSky, SkyPreview, SkyRenderPass, SkyTarget};
 pub use texture::{GpuTexture, Image, ImageFormat, ImageLoader};
 pub use vbuf64::{
     CLUSTER_ID_BITS, MAX_CLUSTER_ID, TRI_ID_BITS, TRI_ID_MASK, Vbuf64Support, pack_visibility,

@@ -8,7 +8,6 @@ mod present;
 
 pub use assets::AssetPlugin;
 
-use glam::Vec4;
 use kooch_core::app::App;
 use kooch_core::gpu::{GpuContext, TargetDesc, TargetId, TargetPool};
 use kooch_core::plugin::Plugin;
@@ -20,11 +19,6 @@ use crate::VIEWPORT_DEPTH_FORMAT;
 use crate::meshlet::{MeshletBlit, MeshletDebugCaps, MeshletRenderStage, MeshletRenderStageConfig};
 use crate::sky::SkyRenderPass;
 use crate::vbuf64::Vbuf64Support;
-
-/// Fallback clear color when no `SkyRenderer` entity is active. Matches the
-/// `SkyRenderer` component's default bottom gradient so play and edit modes
-/// look identical out of the box.
-const SKY_FALLBACK: Vec4 = Vec4::new(0.1, 0.2, 0.4, 1.0);
 
 /// Plugin that installs the full render pipeline.
 #[derive(Default)]

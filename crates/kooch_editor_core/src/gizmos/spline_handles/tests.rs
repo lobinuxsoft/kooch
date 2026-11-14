@@ -1,4 +1,5 @@
 use super::*;
+use kooch_ecs::spline::{TANGENT_ALIGNED, TANGENT_AUTO, TANGENT_BROKEN};
 
 fn curve() -> Spline {
     Spline {

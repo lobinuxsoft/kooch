@@ -6,6 +6,7 @@ use super::*;
 
 mod noise;
 mod seam;
+mod sky;
 mod subgraphs;
 mod uv;
 

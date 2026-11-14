@@ -32,6 +32,10 @@ pub const MATERIAL_SURFACE_PRELUDE: &str = include_str!("../../shaders/material_
 /// produced (#1201). Entry points: `vs_fullscreen`, `fs_post`.
 pub const MATERIAL_POST_FRAME: &str = include_str!("../../shaders/material_frame_post.wgsl");
 
+/// The frame a sky shader runs inside: one full-screen draw behind everything (#1900). Entry
+/// points: `vs_fullscreen`, `fs_sky`.
+pub const MATERIAL_SKY_FRAME: &str = include_str!("../../shaders/material_frame_sky.wgsl");
+
 /// The sorted fallback for a transparent surface: its meshlets rasterised far to near and blended
 /// (#452). Entry points: `vs_forward`, `fs_forward`.
 pub const MATERIAL_FORWARD_FRAME: &str = concat!(
@@ -185,6 +189,16 @@ pub fn compose_post_shader(params: &str, post: &str) -> String {
 /// Checks a post-process shader before a pipeline is built from it. Line numbers are the file's own.
 pub fn validate_post(params: &str, post: &str) -> Result<(), String> {
     validate_body(|body| compose_post_shader(params, body), post)
+}
+
+/// A sky shader's composition: the surface contract, its parameters, its body and the sky frame.
+pub fn compose_sky_shader(params: &str, sky: &str) -> String {
+    [MATERIAL_SURFACE_PRELUDE, params, sky, MATERIAL_SKY_FRAME].join("\n")
+}
+
+/// Checks a sky shader before a pipeline is built from it. Line numbers are the file's own.
+pub fn validate_sky(params: &str, sky: &str) -> Result<(), String> {
+    validate_body(|body| compose_sky_shader(params, body), sky)
 }
 
 /// Validates what `compose` makes of `body`, with line numbers into `body`.

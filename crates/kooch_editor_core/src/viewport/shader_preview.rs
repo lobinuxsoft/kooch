@@ -94,6 +94,8 @@ pub(crate) struct ShaderPreview {
     /// A post-process shows over a test image instead of on a primitive (#1201). Built the first
     /// time one is previewed.
     post: Option<kooch_render::post_process::PostPreview>,
+    /// A `kind: sky` shader shows as the backdrop a turning camera sees (#1900).
+    sky: Option<kooch_render::SkyPreview>,
     /// A `kind: ui` shader shows on a node instead (#1805). Built the first time one is previewed.
     ui: Option<ui_preview::UiPreview>,
 }
@@ -217,6 +219,7 @@ impl ShaderPreview {
             refusal: None,
             angle: 0.0,
             post: None,
+            sky: None,
             ui: None,
         }
     }
@@ -295,6 +298,10 @@ impl ShaderPreview {
         self.angle = (self.angle + dt / TURN_SECONDS).fract();
         if source.contains("fn post_process(") {
             self.render_post(gpu, params_wgsl, source, params, images);
+            return;
+        }
+        if source.contains("fn sky(") {
+            self.render_sky(gpu, params_wgsl, source, params, images);
             return;
         }
         if source.contains("fn ui(") {
@@ -446,6 +453,43 @@ impl ShaderPreview {
             label: Some("shader_preview_post_encoder"),
         });
         let drawn = post.render(
+            device,
+            queue,
+            &mut encoder,
+            self.target.view(),
+            self.target.size(),
+            params_wgsl,
+            source,
+            kooch_render::post_process::PreviewMaterials {
+                pool: &self.pool,
+                textures: &self.textures,
+                slots: &slots,
+            },
+            self.angle * TURN_SECONDS,
+        );
+        self.pipeline = None;
+        self.refusal = drawn.err();
+        queue.submit(Some(encoder.finish()));
+    }
+
+    /// A sky, as a camera turning slowly in place sees it.
+    fn render_sky(
+        &mut self,
+        gpu: &GpuContext,
+        params_wgsl: &str,
+        source: &str,
+        params: &[ShaderParam],
+        images: &[(String, kooch_core::Guid)],
+    ) {
+        let (device, queue) = (gpu.device(), gpu.queue());
+        let slots = self.write_defaults(queue, params, images);
+        let sky = self
+            .sky
+            .get_or_insert_with(|| kooch_render::SkyPreview::new(device, self.format));
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("shader_preview_sky_encoder"),
+        });
+        let drawn = sky.render(
             device,
             queue,
             &mut encoder,

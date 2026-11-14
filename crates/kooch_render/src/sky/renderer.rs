@@ -3,11 +3,14 @@
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
+use kooch_core::Guid;
 use kooch_ecs::query::Query;
 use kooch_ecs::sky_renderer::SkyRenderer;
 
 use super::SHADER_SOURCE;
+use super::graph::{SkyGraph, SkyView};
 use crate::VIEWPORT_DEPTH_FORMAT;
+use crate::material::MaterialPipeline;
 
 /// Snapshot of an active `SkyRenderer` component used by the render pass.
 /// Copy of the ECS component so the pass can drop its query borrow before
@@ -24,6 +27,8 @@ pub struct ActiveSky {
     pub cloud_thickness: f32,
     pub wind_direction: [f32; 3],
     pub wind_speed: f32,
+    /// A `kind: sky` material, drawn instead of the fields above (#1900).
+    pub material: Option<Guid>,
 }
 
 impl From<&SkyRenderer> for ActiveSky {
@@ -39,8 +44,16 @@ impl From<&SkyRenderer> for ActiveSky {
             cloud_thickness: s.cloud_thickness,
             wind_direction: s.wind_direction.to_array(),
             wind_speed: s.wind_speed,
+            material: s.material,
         }
     }
+}
+
+/// Where the sky draws: the colour and depth it clears, and their aspect.
+pub struct SkyTarget<'a> {
+    pub view: &'a wgpu::TextureView,
+    pub depth: &'a wgpu::TextureView,
+    pub aspect: f32,
 }
 
 /// Matches `CameraUniforms` in sky_main.wgsl — same layout as the raymarch
@@ -91,6 +104,7 @@ pub struct SkyRenderPass {
     camera_buffer: wgpu::Buffer,
     sky_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    graph: SkyGraph,
 }
 
 impl SkyRenderPass {
@@ -202,6 +216,7 @@ impl SkyRenderPass {
             camera_buffer,
             sky_buffer,
             bind_group,
+            graph: SkyGraph::new(device, format),
         }
     }
 
@@ -231,20 +246,64 @@ impl SkyRenderPass {
     #[profiling::function]
     pub fn render(
         &mut self,
-        queue: &wgpu::Queue,
+        gpu: &kooch_core::gpu::GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        target: SkyTarget<'_>,
+        resources: &kooch_core::resource::Resources,
+        camera: &crate::ViewCamera,
+        sky: ActiveSky,
+    ) -> bool {
+        let (device, queue) = (gpu.device(), gpu.queue());
+        let SkyTarget {
+            view: target,
+            depth,
+            aspect,
+        } = target;
+        let time_secs = kooch_core::time::Time::of(resources).elapsed_secs();
+        if sky.material.is_none() {
+            self.update_camera(queue, resources, camera, aspect);
+            self.update_sky(queue, sky, time_secs);
+        }
+        let mut pass = Self::begin(encoder, target, depth);
+        match sky.material {
+            // A material that cannot draw leaves the clear, black, as a scene without a sky.
+            Some(material) => {
+                if let Some(materials) = resources.get::<MaterialPipeline>() {
+                    let view = SkyView {
+                        view: camera.view(),
+                        projection: camera.projection(aspect),
+                        position: camera.position(),
+                        time: time_secs,
+                    };
+                    self.graph
+                        .draw(device, queue, &mut pass, materials, material, &view);
+                }
+            }
+            None => {
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &self.bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+        }
+        true
+    }
+
+    /// What a scene without a sky shows: black, the same in the editor and the game (#1900).
+    pub fn clear(
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         depth: &wgpu::TextureView,
-        resources: &kooch_core::resource::Resources,
-        camera: &crate::ViewCamera,
-        aspect: f32,
-        sky: ActiveSky,
-        time_secs: f32,
-    ) -> bool {
-        self.update_camera(queue, resources, camera, aspect);
-        self.update_sky(queue, sky, time_secs);
+    ) {
+        drop(Self::begin(encoder, target, depth));
+    }
 
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+    /// The sky's pass: colour cleared to black, depth to far.
+    pub(super) fn begin<'e>(
+        encoder: &'e mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+    ) -> wgpu::RenderPass<'e> {
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("sky_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
@@ -266,11 +325,7 @@ impl SkyRenderPass {
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,
-        });
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.draw(0..3, 0..1);
-        true
+        })
     }
 
     /// Uploads the matrices of the camera **the caller is rendering through**.
