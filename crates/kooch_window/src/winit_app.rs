@@ -189,6 +189,10 @@ impl WinitApp {
         }
 
         self.app.schedule.run_post_physics(&mut self.app.resources);
+
+        if let Some(gpu) = self.app.resources.get::<GpuContext>() {
+            gpu.reclaim();
+        }
     }
 
     /// Creates the windows systems asked for this frame. A failure is logged and dropped: the
