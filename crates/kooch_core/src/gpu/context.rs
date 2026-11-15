@@ -219,6 +219,14 @@ impl GpuContext {
         &self.queue
     }
 
+    /// Frees what destroyed resources left behind, without waiting on the GPU. Call once a frame:
+    /// wgpu drains that list only on `poll`, never on submit, so without it the heap only grows.
+    pub fn reclaim(&self) {
+        if let Err(e) = self.device.poll(wgpu::PollType::Poll) {
+            tracing::warn!(target: "kooch::gpu", "device poll failed: {e}");
+        }
+    }
+
     /// Returns a reference to the [`Surface`].
     #[inline]
     pub fn surface(&self) -> &Surface<'static> {
