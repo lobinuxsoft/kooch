@@ -44,6 +44,26 @@ pub(crate) fn present_editor_frame(
             .update_texture(gpu.device(), gpu.queue(), *id, image_delta);
     }
 
+    // 🔴 Both swapchain calls carry a scope, because either one can be the vblank wait and they are
+    // not interchangeable: `acquire` blocks when no image is free, `present` blocks when the queue
+    // is full.
+    let output = {
+        profiling::scope!("surface acquire");
+        match gpu.surface().get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(tex)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => tex,
+            status => {
+                tracing::warn!(?status, "Failed to acquire surface texture");
+                // Before any GPU scope opens: one left open stops the profiler recycling for
+                // good (#1909). egui still forgets these textures, drawn or not.
+                for id in &full_output.textures_delta.free {
+                    overlay.renderer.free_texture(id);
+                }
+                return false;
+            }
+        }
+    };
+
     let mut encoder = gpu
         .device()
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -61,21 +81,6 @@ pub(crate) fn present_editor_frame(
         &clipped_primitives,
         &screen_descriptor,
     );
-
-    // 🔴 Both swapchain calls carry a scope, because either one can be the vblank wait and they are
-    // not interchangeable: `acquire` blocks when no image is free, `present` blocks when the queue
-    // is full.
-    let output = {
-        profiling::scope!("surface acquire");
-        match gpu.surface().get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(tex)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => tex,
-            status => {
-                tracing::warn!(?status, "Failed to acquire surface texture");
-                return false;
-            }
-        }
-    };
     let view = output
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
