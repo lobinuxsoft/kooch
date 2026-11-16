@@ -146,6 +146,8 @@ fn a_trimesh_catches_what_falls() {
 /// The shape terraforming needs: it collides against the cells directly,
 /// so a body crossing a chunk seam must not catch on anything.
 #[test]
+// Rapier 0.36's debug check of its solver graph fails on voxels (dimforge/rapier#1029, fix in #1030).
+#[cfg_attr(debug_assertions, ignore = "rapier#1029")]
 fn voxels_have_no_seam_to_snag_on() {
     let mut resources = world();
     let guid = publish(&mut resources, unit_cube());
