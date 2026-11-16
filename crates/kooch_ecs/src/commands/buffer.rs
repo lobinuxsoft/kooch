@@ -5,6 +5,7 @@ use kooch_core::resource::Resources;
 use crate::allocator::EntityAllocator;
 use crate::archetype_registry::ArchetypeRegistry;
 use crate::component::registry::ComponentRegistry;
+use crate::dynamic_components::DynamicComponents;
 
 use super::command::Command;
 use super::entity_builder::EntityBuilder;
@@ -74,6 +75,10 @@ impl Commands {
                 Command::Despawn(entity) => {
                     crate::move_entity::drop_in(&mut components, &mut archetypes, entity);
                     components.remove_entity(entity);
+                    // Components the binary does not know live outside the registry (#1906).
+                    if let Some(dynamic) = resources.get_mut::<DynamicComponents>() {
+                        dynamic.remove_entity(entity);
+                    }
                     // Mark slot as dead in allocator.
                     if let Some(alloc) = resources.get_mut::<EntityAllocator>() {
                         alloc.despawn(entity);
