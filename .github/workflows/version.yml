@@ -109,7 +109,9 @@ jobs:
           fi
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "chore: bump the engine to $VERSION"
+          # 🔴 `[skip ci]`: a push by this bot starts a run that waits for an approval nobody gives,
+          # then expires red on every PR (#1913). The commit only moves the version.
+          git commit -am "chore: bump the engine to $VERSION [skip ci]"
           git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
 
       - name: Say what it did

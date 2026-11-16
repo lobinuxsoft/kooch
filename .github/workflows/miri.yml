@@ -29,6 +29,8 @@ on:
       # than run-always because Miri interprets rather than executes, and
       # a docs PR has nothing for it to interpret.
       - 'crates/kooch_ecs/**'
+      # kooch_ecs runs on it: `App::new` reached `mallopt` from here (#1913).
+      - 'crates/kooch_core/**'
       - '.github/workflows/miri.yml'
   # So a suspicion can be checked without inventing a commit.
   workflow_dispatch:

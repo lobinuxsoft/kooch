@@ -11,7 +11,8 @@ use std::time::Duration;
 /// released, never per frame: it walks the arena.
 pub fn return_freed() -> Duration {
     let start = std::time::Instant::now();
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // Not under Miri: it cannot call glibc's allocator hooks and aborts the run (#1913).
+    #[cfg(all(target_os = "linux", target_env = "gnu", not(miri)))]
     // SAFETY: `malloc_trim` takes a pad size and only operates on glibc's own arenas.
     unsafe {
         libc::malloc_trim(0);
@@ -25,7 +26,7 @@ pub fn return_freed() -> Duration {
 /// every smaller big block lands in the main heap and fragments it: measured +104 MB in 3 min, flat
 /// once fixed. Setting it turns the raising off for the whole process, C libraries and plugins too.
 pub fn map_big_blocks() {
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[cfg(all(target_os = "linux", target_env = "gnu", not(miri)))]
     // SAFETY: `mallopt` only changes glibc's allocator settings; a refused value returns 0.
     unsafe {
         libc::mallopt(libc::M_MMAP_THRESHOLD, 1 << 20);
