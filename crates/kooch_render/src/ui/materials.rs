@@ -64,15 +64,19 @@ impl UiMaterials {
         self.values.clear();
         self.runs.clear();
         for material in &list.materials {
-            let guid = list.shaders[material.shader as usize].guid;
             let [first, count] = material.params.map(|n| n as usize);
             let block = self.values.len();
             self.values.resize(block + MAX_PARAM_SCALARS as usize, 0.0);
+            // Indices from a remote host: one that points nowhere draws nothing, it never panics.
+            let Some(guid) = list.shaders.get(material.shader as usize).map(|s| s.guid) else {
+                continue;
+            };
+            let own = list.params.get(first..first + count).unwrap_or_default();
             let Some((shader, _)) = self.entries.get(&guid).and_then(|e| e.built.as_ref()) else {
                 continue;
             };
             for param in &shader.params {
-                let written = list.params[first..first + count]
+                let written = own
                     .iter()
                     .find(|own| own.name.eq_ignore_ascii_case(&param.name));
                 let value = written.map_or(param.default, |own| own.value);

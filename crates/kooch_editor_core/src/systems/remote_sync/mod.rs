@@ -190,8 +190,11 @@ fn sync_state(state: &mut RemoteState, sync: &mut RemoteSyncState, resources: &m
                 sync.last_pull = Some(Instant::now());
                 profiling::scope!("remote: apply moved");
                 mirror.apply_moved(&moved.moved, &moved.components, resources);
-                let ui = resources.get_or_default::<crate::ui_preview::RemoteUi>();
-                session.take_ui(&mut ui.list);
+                // Stopped, the host's UI is not drawn and was released (#1893).
+                if *playing {
+                    let ui = resources.get_or_default::<crate::ui_preview::RemoteUi>();
+                    session.take_ui(&mut ui.list);
+                }
                 record_stats(resources, session, refresh, Duration::ZERO);
                 return;
             }
