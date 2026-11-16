@@ -5,7 +5,8 @@
 A system is a function. That is the entire type:
 
 ```rust
-pub fn my_system(resources: &mut Resources) { … }
+# use kooch::prelude::*;
+pub fn my_system(resources: &mut Resources) { /* … */ }
 ```
 
 No trait to implement, no macro, no parameter-injection magic. `Resources` is the world, and a
@@ -35,6 +36,12 @@ use kooch::prelude::*;
 use kooch::kooch_ecs::query::Query;
 
 use crate::health::Health;
+# mod health {
+#     use kooch::prelude::*;
+#     #[derive(Default, Reflect)]
+#     pub struct Health { pub current: f32, pub max: f32 }
+#     impl Component for Health {}
+# }
 
 pub fn regenerate_health(resources: &mut Resources) {
     let dt = resources
@@ -47,14 +54,23 @@ pub fn regenerate_health(resources: &mut Resources) {
         health.current = (health.current + 5.0 * dt).min(health.max);
     });
 }
+# fn main() {}
 ```
 
 A few shapes worth knowing:
 
 ```rust
-Query::<&Health>::new(resources)                 // read one component
-Query::<&mut Health>::new(resources)             // write one component
-Query::<(&Transform, &mut Health)>::new(res)     // entities that have both
+# use kooch::prelude::*;
+# use kooch::kooch_ecs::query::Query;
+# #[derive(Default, Reflect)]
+# pub struct Health { pub current: f32 }
+# impl Component for Health {}
+# fn queries(resources: &mut Resources) {
+# let res = &mut *resources;
+Query::<&Health>::new(res);                     // read one component
+Query::<&mut Health>::new(res);                 // write one component
+Query::<(&Transform, &mut Health)>::new(res);   // entities that have both
+# }
 ```
 
 and on the query itself:
@@ -137,8 +153,12 @@ every frame: `warn_once!("no PlayerInput on any entity")`.
 `Time::of(resources)` is the clock, never missing: an app without one (a bare test) gets a stand-in
 at its start with a 60 Hz frame, the same answer for every system.
 
-```rust,ignore
+```rust
+# use kooch::prelude::*;
+# use kooch::kooch_core::time::Time;
+# fn tick(resources: &Resources) {
 let dt = Time::of(resources).delta_secs();
+# }
 ```
 
 ### Time scale
@@ -149,7 +169,9 @@ any scale and runs no step at all while paused. What must keep moving during a p
 tween on it — reads `unscaled_delta_secs()` instead; the engine's UI already does. Stop puts the
 scale back to `1.0`, so a game stopped while paused starts the next Play running.
 
-```rust,ignore
+```rust
+# use kooch::prelude::*;
+# use kooch::kooch_core::time::Time;
 fn toggle_pause(resources: &mut Resources) {
     if let Some(time) = resources.get_mut::<Time>() {
         let paused = time.scale() == 0.0;
@@ -186,8 +208,14 @@ is not. That is what lets the editor's Play button start gameplay without a rebu
 `registrations.rs` does it by wrapping each of your systems:
 
 ```rust
+# use kooch::prelude::*;
+# use kooch::kooch_core::stage::Stage;
+# fn my_system(_: &mut Resources) {}
+# struct Game { run_systems: bool }
+# impl Game { fn build(&self, app: &mut App) {
 app.insert_resource(Playing(self.run_systems));            // false while authoring
 app.add_system(Stage::Update, run_if_playing(my_system));  // skipped while the gate is down
+# } }
 ```
 
 What it means in practice: **a system must not assume it runs every frame from startup.** It
@@ -203,7 +231,11 @@ moves an entity between archetypes and that cannot happen while a query is itera
 while it is used. Take it out, use it, put it back:
 
 ```rust
+# use kooch::prelude::*;
 use kooch::kooch_ecs::commands::Commands;
+# #[derive(Default, Reflect)]
+# pub struct Health { pub current: f32, pub max: f32 }
+# impl Component for Health {}
 
 pub fn spawn_a_pickup(resources: &mut Resources) {
     let Some(mut commands) = resources.remove::<Commands>() else { return };
@@ -230,7 +262,10 @@ Two things that catch people:
 To despawn:
 
 ```rust
+# use kooch::prelude::*;
+# fn remove(commands: &mut Commands, target: Entity) {
 commands.entity(target).despawn();
+# }
 ```
 
 ## Registration
@@ -239,7 +274,12 @@ You do not write it. The editor watches `src/`, finds
 `pub fn regenerate_health(_: &mut Resources)`, and regenerates `registrations.rs`:
 
 ```rust
+# use kooch::prelude::*;
+# use kooch::kooch_core::stage::Stage;
+# mod health { pub fn regenerate_health(_: &mut kooch::prelude::Resources) {} }
+# fn build(app: &mut App) {
 app.add_system(Stage::Update, run_if_playing(health::regenerate_health));
+# }
 ```
 
 It watches by **polling**, so saving from any editor is enough — including one that is not
@@ -251,9 +291,13 @@ this one. There is no button to press.
 says otherwise:
 
 ```rust
+# use kooch::prelude::*;
 #[system]                     // Update, gated by Play — the default
+# fn a(_: &mut Resources) {}
 #[system(PreUpdate)]          // a different stage, still gated
+# fn b(_: &mut Resources) {}
 #[system(PostUpdate, always)] // and running while you author, too
+# fn c(_: &mut Resources) {}
 ```
 
 `always` drops the `Playing` gate. Reach for it when the work has to happen in the editor as

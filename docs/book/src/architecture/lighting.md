@@ -23,7 +23,7 @@ to exist.
 
 ```mermaid
 flowchart LR
-    C["DirectionalLight<br/>PointLight<br/>SpotLight<br/>+ GlobalTransform"] --> E[extract_lights<br/>pure, no GPU]
+    C["DirectionalLight<br/>PointLight<br/>SpotLight<br/>+ GlobalTransform"] --> E[LightFrame::extract<br/>pure, no GPU]
     E --> B[GpuLights<br/>storage buffer,<br/>grows geometrically]
     B --> G["the froxel grid<br/>four GPU passes,<br/>per view"]
     G --> S["inti_shade()<br/>in both shading paths"]
@@ -391,7 +391,7 @@ neighbouring pages instead of two.
 Past that the count is **capped by what the device can bind** and the lights that fit keep their
 shadows:
 
-```
+```text
 the page table does not fit this many lights on this device;
 the rest cast no shadow  shadowed=2612 asked=3008
 ```
@@ -514,10 +514,10 @@ spike"*. A spot uses `with_lod` (perspective), a cascade
 `with_orthographic_lod`; both apply `SHADOW_LOD_RELAXATION`, because a
 shadow is a silhouette and loses detail a lit surface keeps.
 
-🔴 **Slots are handed out inside `extract_lights`, in its walk order**, and
-`shadow_casting_spots` reads that same order back. Two walks that
-disagreed would light one spot through another's map — geometry from
-elsewhere in the room, which reads as a broken shadow pass rather than as
+🔴 **Slots are handed out inside `LightFrame::extract`, in its walk order**, and
+`LightFrame::spot_shadows` hands out that same list. It is one walk on purpose:
+two walks that disagreed would light one spot through another's map — geometry
+from elsewhere in the room, which reads as a broken shadow pass rather than as
 a crossed index.
 
 🔴 **No sun is not no shadows.** A scene lit by a torch and nothing else
@@ -554,7 +554,7 @@ computes `depth = zw.x / zw.y`. Expanded with a standard perspective,
 with the **infinite reverse-Z** projection this engine migrated to
 (ADR 0002), `m22 = 0` and `m23 = near`:
 
-```
+```text
 depth = near / major_axis_magnitude
 ```
 
@@ -1253,7 +1253,7 @@ viewport and none in the other.
 
 So a page id carries the camera above everything else:
 
-```
+```text
 page = view * view_span + light * stride + <chain offset>
 ```
 
@@ -1627,7 +1627,9 @@ which is never in doubt.
 | `virtual_shadows` | pages instead of cascades. **Off by default** — every scene in the project was authored against the cascades |
 | `shadow_density` | texels per screen pixel; the page count falls with its square |
 | `shadow_pool_pages` | the memory budget, 1024–6144 pages |
-| `virtual_shadow_debug` | paints the page each pixel reads |
+
+The page each pixel marked and how old the page it reads is are debug views, not settings:
+`VirtualPageTiles` and `VirtualPageAge`.
 
 🔴 **The marking rate is gone.** While marking was an instrument, a
 coarser rate traded accuracy for threads. It decides which pages *exist*

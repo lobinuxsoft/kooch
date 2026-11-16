@@ -59,6 +59,12 @@ use kooch::kooch_ecs::transform::Transform;
 use kooch::prelude::*;
 
 use crate::spinner::Spinner;
+# mod spinner {
+#     use kooch::prelude::*;
+#     #[derive(Default, Reflect)]
+#     pub struct Spinner { pub speed: f32 }
+#     impl Component for Spinner {}
+# }
 
 /// Rotates every entity that has a `Spinner`.
 pub fn spin(resources: &mut Resources) {
@@ -72,6 +78,7 @@ pub fn spin(resources: &mut Resources) {
         transform.rotation *= Quat::from_rotation_y(spinner.speed.to_radians() * dt);
     });
 }
+# fn main() {}
 ```
 
 The query matches only entities that have **both** components, so a `Spinner` on an entity

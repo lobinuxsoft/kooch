@@ -527,7 +527,7 @@ The menu groups the nodes the way the panels do:
   - **Radial Shear** and **Spherize** shear into a spiral or bulge like a lens (*strength* 10).
   - **offset** moves the result.
 - **Shapes** read the uv square with its middle at `0.5`, and answer with a mask in every component.
-- A few nodes lean on a small WGSL function (`graph_noise`, `graph_rotate`, …). It is written into the
+- A few nodes lean on a small WGSL function (`graph_gradient_noise`, `graph_rotate`, …). It is written into the
   file **only when a node asks for it**, so a generated shader carries nothing it does not use.
 
 An unconnected output keeps a usable default: the geometric normal, roughness `0.5`, and zero for the

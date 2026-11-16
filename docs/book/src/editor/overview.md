@@ -532,6 +532,10 @@ resolved would stop existing. The Play is held instead and released the moment t
 so you play in your scene rather than the project's last saved one.
 
 ```rust
+# use kooch::prelude::*;
+# use kooch::kooch_ecs::world_snapshot::WorldSnapshot;
+# struct PlaySnapshot(WorldSnapshot);
+# fn set_playing(resources: &mut Resources, playing: bool) {
 // kooch_remote::handlers::set_playing, in essence
 if playing {
     resources.insert(PlaySnapshot(WorldSnapshot::capture(resources)));
@@ -543,6 +547,7 @@ Playing::set(resources, false);
 if let Some(snapshot) = resources.remove::<PlaySnapshot>() {
     snapshot.0.restore(resources);
 }
+# }
 ```
 
 This is why your project's systems register with `run_systems: false` while authoring: they
@@ -567,7 +572,7 @@ the editor — and Play's child process inherits the editor's environment
 and nothing else. Without the field, handing a game one variable meant
 relaunching the editor with it set.
 
-```
+```text
 KOOCH_SHADING_PAD=4 KOOCH_FRAME_METRICS=log
 ```
 

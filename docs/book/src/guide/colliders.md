@@ -52,7 +52,7 @@ nothing can be walked off it — a shape whose only job is to be large.
 A half-space is the plane itself: it has no edges, so there is nothing
 to fall past.
 
-```
+```text
 shape:  Half-space (infinite plane)
 normal: (0, 1, 0)
 ```
@@ -118,7 +118,7 @@ is a floor a character sinks into.
 
 The console says how far it moved, in mesh units:
 
-```
+```text
 simplified collision mesh; the deviation is how far the surface moved
   from=91211 to=2000 deviation=0.043
 ```
@@ -159,7 +159,7 @@ LOD 0 straight back into the triangles it started from.
 A GUID that never resolves logs a warning naming it. That warning is the
 only clue a collider is missing, so it is worth reading:
 
-```
+```text
 a collider names a mesh that will not load, so its body will not collide
 ```
 

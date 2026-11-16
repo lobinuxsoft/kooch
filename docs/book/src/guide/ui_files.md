@@ -72,11 +72,14 @@ number, space separated).
 Code reads and changes a document through its tree, without touching entities:
 
 ```rust
+# use kooch::prelude::*;
+# fn hide(resources: &mut Resources, document: Entity) {
 let tree = resources.get_mut::<UiTrees>().unwrap().get_mut(document).unwrap();
 let coins: Vec<UiNode> = tree.with_class("coin").collect();
 tree.set_class(coins[0], "taken", true); // the sheet's `.taken` rules apply this frame
 let hint = tree.query("hint").unwrap();
 tree.set_visible(hint, false); // `display: none`: no space, no draw, no pointer, no focus
+# }
 ```
 
 Showing a node again gives it back the display the sheet sets. Hiding a whole layer is
@@ -120,8 +123,11 @@ code. `ui_instance` instances markup under a node of a built document, with the 
 `set` a file writes, `src` relative to the document's file:
 
 ```rust
+# use kooch::prelude::*;
+# struct Item { name: String }
+# fn fill(resources: &mut Resources, document: Entity, items: &[Item]) -> Result<(), String> {
 let Some(list) = resources.get::<UiTrees>()
-    .and_then(|trees| trees.get(document)?.query("items")) else { return };
+    .and_then(|trees| trees.get(document)?.query("items")) else { return Ok(()) };
 for (index, item) in items.iter().enumerate() {
     let markup = format!(
         r#"<use src="menu_button.kxml" data-index="{index}" on:click="items.pick">
@@ -131,6 +137,8 @@ for (index, item) in items.iter().enumerate() {
     );
     ui_instance(resources, document, list, &markup)?;
 }
+# Ok(())
+# }
 ```
 
 Each instance clicks with its own action, or all share one and the handler reads which:
@@ -187,6 +195,7 @@ A system hears the UI the way it hears input, by reading events. They are read t
 click:
 
 ```rust
+# use kooch::prelude::*;
 fn pause_menu(resources: &mut Resources) {
     let Some(events) = resources.get::<Events<UiEvent>>() else { return };
     for event in events.read() {
@@ -201,6 +210,7 @@ Or the project registers the action once, from a `Startup` system, and the UI ru
 click lands:
 
 ```rust
+# use kooch::prelude::*;
 fn quit(resources: &mut Resources, _event: &UiEvent) { /* ... */ }
 
 fn register_actions(resources: &mut Resources) {
@@ -437,7 +447,10 @@ A parameter follows a field with `bind:param.<name>`, or takes a value from code
 ```
 
 ```rust
+# use kooch::prelude::*;
+# fn fill(tree: &mut UiTree, node: UiNode) {
 tree.set_param(node, "fill", 0.6);
+# }
 ```
 
 A value set by code or a binding wins over the style until the document is rebuilt. `ring.wgsl`
@@ -476,9 +489,12 @@ curved node or above it, the bent result.
 A system moves a node every frame with no relayout, the style's values being the start:
 
 ```rust
+# use kooch::prelude::*;
+# fn tilt(tree: &mut UiTree, card: UiNode, pointer: Vec2) {
 let mut tilt = tree.transform_of(card);
 tilt.rotate_y = pointer.x * 20.0;
 tree.set_transform(card, tilt);
+# }
 ```
 
 `-kooch-flip: x`, `y` or `both` mirrors a node and everything inside it about its centre, after

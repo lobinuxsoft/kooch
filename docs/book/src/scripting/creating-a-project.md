@@ -8,7 +8,7 @@ never touch.
 
 ## What the editor generates
 
-```
+```text
 MyGame/
 ├── Cargo.toml
 ├── assets/
@@ -97,7 +97,16 @@ change to your code still recompiles fast. The first build after adding it takes
 
 ### `main.rs` — the game, and nothing else
 
-```rust
+```rust,no_run
+# #![allow(non_snake_case)]
+# use kooch::prelude::*;
+# mod PROJECT_CRATE {
+#     pub mod registrations {
+#         use kooch::prelude::*;
+#         pub struct ProjectRegistrations { pub run_systems: bool }
+#         impl Plugin for ProjectRegistrations { fn build(&self, _: &mut App) {} }
+#     }
+# }
 use PROJECT_CRATE::registrations;
 
 fn main() {
@@ -149,6 +158,10 @@ Also generated. It exports one plugin whose only job is to describe your compone
 standalone editor that loaded this `dylib`:
 
 ```rust
+# #[derive(Default)] struct ProjectPlugin;
+# mod registrations {
+#     pub fn declare_components(_: &mut dyn kooch::kooch_plugin_api::Engine) {}
+# }
 impl kooch::kooch_plugin_api::KoochPlugin for ProjectPlugin {
     fn name(&self) -> &str { "my_game" }
     fn build(&mut self, engine: &mut dyn kooch::kooch_plugin_api::Engine) {
@@ -157,6 +170,7 @@ impl kooch::kooch_plugin_api::KoochPlugin for ProjectPlugin {
 }
 
 kooch::kooch_plugin_api::export_plugin!(ProjectPlugin);
+# fn main() {}
 ```
 
 ## Opening an older project

@@ -9,11 +9,17 @@ Actions are authored in the Input Map panel.
 `LoadedActions` reads every action once a frame, in `Stage::Input`, so `Update` asks it by the guid
 a component holds — no backend, and an unset or missing action reads at rest:
 
-```rust,ignore
+```rust
+# use kooch::prelude::*;
+# struct Input { movement: Option<Guid>, jump: Option<Guid> }
+# struct Drive { forward: Option<Guid> }
+# fn read(resources: &Resources, input: &Input, drive: &Drive) -> Option<()> {
 let loaded = resources.get::<LoadedActions>()?;
 let stick = loaded.vector2(input.movement);
 let jump = loaded.just_pressed(input.jump); // down this frame, not the last: a held button fires once
 let gas = loaded.axis(drive.forward);
+# Some(())
+# }
 ```
 
 `evaluate(guid, backend)` still reads the device right now, for code that runs before
@@ -25,10 +31,13 @@ An action's **Map** field, in the Input Map panel, names the group it belongs to
 `Vehicle`. Switching a map off makes every action in it read as released and at rest, wherever it
 is read from:
 
-```rust,ignore
+```rust
+# use kooch::prelude::*;
+# fn pause(resources: &mut Resources, menu_open: bool) {
 if let Some(loaded) = resources.get_mut::<LoadedActions>() {
     loaded.set_map("Player", !menu_open);
 }
+# }
 ```
 
 A pause menu switches `Player` off, so a jump pressed under the menu is not waiting when it closes;
@@ -48,9 +57,14 @@ Whichever is moving answers. Both read as the **same kind of number**, so a syst
 action with one formula whatever device the player holds:
 
 ```rust
+# use kooch::prelude::*;
+# struct Input { look: Option<Guid> }
+# fn look(loaded: &LoadedActions, input: &Input, turn_speed_degrees_per_second: f32, dt: f32) {
+# let (mut yaw, mut pitch) = (0.0, 0.0);
 let look = loaded.vector2(input.look);
 yaw   += look.x * turn_speed_degrees_per_second * dt;
 pitch += look.y * turn_speed_degrees_per_second * dt;
+# }
 ```
 
 That works because **mouse motion is a velocity** — pixels per second — the way a stick's deflection
@@ -75,8 +89,14 @@ wheel in **lines this frame**, with up as away from the player. An `Axis` action
 bound to it is consumed **without** `dt`, because a wheel has notches, not a speed:
 
 ```rust
+# use kooch::prelude::*;
+# struct Input { zoom: Option<Guid> }
+# fn zoom(loaded: &LoadedActions, input: &Input, distance: &mut f32, metres_per_notch: f32) {
+# let (min, max) = (2.0, 20.0);
+# let mut distance = *distance;
 let zoom = loaded.axis(input.zoom);
 distance = (distance - zoom * metres_per_notch).clamp(min, max);
+# }
 ```
 
 A trackpad reports pixels, which are converted at egui's 50 per line, so a notch and a swipe of
@@ -93,9 +113,12 @@ triggers as `LeftZ`/`RightZ` axes instead; bind those the same way.
 ## Rumble
 
 ```rust
+# use kooch::prelude::*;
+# fn shake(backend: &mut dyn InputBackend) {
 if let Some(pad) = backend.active_gamepad() {
     backend.rumble(pad, Rumble { strong: 0.8, weak: 0.3, duration_ms: 150 });
 }
+# }
 ```
 
 `strong` is the heavy, low motor and `weak` the light, high one, both in `[0, 1]`. A new rumble
@@ -108,8 +131,11 @@ to it with the next world pull — a frame late, the same feel.
 Mouse look wants the cursor held in place and hidden. Ask for it; the window applies it:
 
 ```rust
+# use kooch::prelude::*;
+# fn capture(resources: &mut Resources) {
 resources.insert(CursorMode::Captured); // held and hidden; motion keeps arriving
 resources.insert(CursorMode::Free);     // visible again, free to leave the window
+# }
 ```
 
 Absent means no opinion. Where the platform cannot lock the cursor in place (X11), it is confined

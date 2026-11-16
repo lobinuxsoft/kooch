@@ -72,10 +72,14 @@ unsupported type needs `#[reflect(skip)]` or the derive will not compile.
 ### On the struct
 
 ```rust
+# use kooch::prelude::*;
 #[derive(Default, Reflect)]
 #[reflect(category = "Gameplay")]      // groups it in the Add Component menu
 #[reflect(inspector = "read_only")]    // "hidden" | "read_only" | "editable" (default)
-pub struct Health { … }
+pub struct Health {
+    // ...
+#   pub current: f32,
+}
 ```
 
 A component with **no category sits loose** at the top of the Add Component menu, above the groups.
@@ -97,6 +101,10 @@ menu does not offer it.
 A `Vec` field reflects two ways, and the element type decides which:
 
 ```rust
+# use kooch::prelude::*;
+# #[derive(Default, Reflect)]
+# pub struct Knot { pub position: Vec3 }
+# #[derive(Default, Reflect)]
 pub struct Blockout {
     /// A list of reflected structs: each item has its own fields, and the Inspector edits them.
     pub knots: Vec<Knot>,
@@ -113,6 +121,13 @@ while it still serialises and still travels over the wire.
 ### On a field
 
 ```rust
+# use kooch::prelude::*;
+# use kooch_ecs::reflect::{EntityRef, FieldChoice, FieldCondition};
+# #[derive(Default, Reflect)]
+# pub struct Wave { #[reflect(asset = "Mesh")] pub mesh: Option<Guid>, pub count: u32 }
+# static FIRE_MODE_CHOICES: &[FieldChoice] = &[FieldChoice { label: "Single", value: 0 }];
+# static DAMAGE_TYPE_BITS: &[FieldChoice] = &[FieldChoice { label: "Fire", value: 1 }];
+# static BURST_ONLY: FieldCondition = FieldCondition { field: "fire_mode", values: &[1] };
 #[derive(Default, Reflect)]
 pub struct Weapon {
     /// Not shown, not serialised. Use for runtime caches and for types
@@ -169,6 +184,7 @@ is indistinguishable from a broken one.
 Use `Option<EntityRef>`.
 
 ```rust
+# use kooch::prelude::*;
 use kooch_ecs::reflect::EntityRef;
 
 #[derive(Default, Reflect)]
@@ -202,11 +218,18 @@ You do not write it. The editor scans `src/`, finds `impl Component for Health`,
 regenerates `registrations.rs` with both halves:
 
 ```rust
+# use kooch::prelude::*;
+# use kooch::kooch_ecs::component::plugin_bridge::declare_component;
+# #[derive(Default, Reflect)]
+# pub struct Health { pub current: f32 }
+# impl Component for Health {}
+# fn register(registry: &mut ComponentRegistry, engine: &mut dyn kooch::kooch_plugin_api::Engine) {
 // Registers the type with the running ECS — scene save/load and the Inspector.
 registry.register_cpu_reflected::<Health>();
 
 // Describes the type to a standalone editor that loaded this dylib.
 declare_component::<Health>(engine);
+# }
 ```
 
 The component's name comes from `std::any::type_name::<T>()`, so there is exactly one name

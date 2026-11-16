@@ -5,6 +5,7 @@ the editor and a system reads it, like a `ScriptableObject` in Unity. Any type w
 `Default` can be one:
 
 ```rust
+# use kooch::prelude::*;
 #[derive(Reflect)]
 pub struct BallConfig {
     /// N·m at a full pull.
@@ -33,14 +34,25 @@ undo. Saving reaches a running game at once.
 A component points at the file with an asset field, and a system loads it by guid:
 
 ```rust
+# use kooch::prelude::*;
+# #[derive(Default, Reflect)]
+# pub struct RollDrive {
 #[reflect(asset = "my_game::registrations::components::ball::BallConfig")]
 pub config: Option<Guid>,
+# }
 ```
 
 ```rust
+# use kooch::prelude::*;
+# #[derive(Reflect)]
+# pub struct BallConfig { pub max_torque: f32, pub max_spin: f32 }
+# impl Default for BallConfig { fn default() -> Self { Self { max_torque: 6.0, max_spin: 40.0 } } }
+# impl DataAsset for BallConfig { const EXTENSION: &'static str = "ballconfig"; }
+# fn read(resources: &mut Resources, guid: Guid) {
 if let Some(config) = data_asset::<BallConfig>(resources, guid) {
     // …
 }
+# }
 ```
 
 The name in `asset` is the type's full path, `registrations` included, because the project's modules
@@ -62,8 +74,15 @@ choices apply, because those stay in the project's library.
 An [action](./panels.md#running-your-code) has the type, so it can write one:
 
 ```rust
+# use kooch::prelude::*;
 use kooch::kooch_ecs::reflect::{data_fields, data_text};
+# #[derive(Reflect)]
+# pub struct BallConfig { pub max_torque: f32, pub max_spin: f32 }
+# impl Default for BallConfig { fn default() -> Self { Self { max_torque: 6.0, max_spin: 40.0 } } }
+# impl DataAsset for BallConfig { const EXTENSION: &'static str = "ballconfig"; }
+# fn write(call: &mut kooch::kooch_plugin_api::EditorCall) {
 
 let config = BallConfig { max_torque: 12.0, max_spin: 60.0 };
 call.write_asset("config/fast.ballconfig", data_text(&data_fields(&config)));
+# }
 ```

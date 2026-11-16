@@ -304,7 +304,7 @@ options menu possible:
 |---|---|
 | exposure, ambient, shadows, contact shadows | resources read per frame |
 | `compute_shading`, `shading_rate`, `upscale`, `sharpening` | applied per frame on the stage |
-| `render_scale` | next frame — `render_frame_system` calls `resize` once a frame and it early-returns unless the size or the scale moved |
+| `render_scale` | next frame — `prepare_frame_system` calls `resize` once a frame and it early-returns unless the size or the scale moved |
 | `anisotropy` | rebuilds one sampler when the number changes |
 | `vsync` | reconfigures the surface when the mode differs |
 | `window_mode` | `set_fullscreen` / `set_decorations` when the window is not already like that |
@@ -791,7 +791,16 @@ several), wrapped in a debug group carrying its name. A system also says
 where it runs inside its stage:
 
 ```rust
-app.add_cpu_ordered(Stage::Render, Order::after("render_frame_system"), MyPass);
+# use kooch::prelude::*;
+# use kooch::kooch_core::{schedule::Order, stage::Stage};
+# struct MyPass;
+# impl System for MyPass {
+#     fn run(&mut self, _: &mut Resources) {}
+#     fn name(&self) -> &str { "my_pass" }
+# }
+# fn build(app: &mut App) {
+app.add_cpu_ordered(Stage::Render, Order::after("render_meshlets_system"), MyPass);
+# }
 ```
 
 Targets come from a pool: `TargetPool::acquire` hands back a target

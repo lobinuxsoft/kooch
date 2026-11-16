@@ -96,7 +96,7 @@ look broken. It is simply useless.
 re-sent, and it is called for the first two seconds of every recording.
 Not once, and not for two frames, because:
 
-```rust
+```rust,ignore
 let propagate_full_delta = std::mem::take(&mut self.propagate_all_scope_details);
 ...
 Err(Error::Empty) => return,   // the frame had no scopes
@@ -114,7 +114,7 @@ The snapshot above fixes *receiving* the names. **Saving them is a
 separate problem**, and it is the one that produced
 `scope#ScopeId(67)` in capture after capture:
 
-```rust
+```rust,ignore
 // FrameView::write
 write.write_all(b"PUF0")?;
 for frame in self.all_uniq() { frame.write_into(None, write)?; }

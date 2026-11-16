@@ -149,7 +149,7 @@ licence, not by hiding it.**
 
 `LICENSE.md` is vendored with the engine, and the facade compiles it in:
 
-```rust
+```rust,ignore
 pub const LICENSE: &str = include_str!("../LICENSE.md");
 ```
 

@@ -51,6 +51,7 @@ pub fn reset_tuning(call: &mut EditorCall) {
         call.set_number(ball, "RollDrive.max_torque", 6.0);
     }
 }
+# fn main() {}
 ```
 
 ```xml
