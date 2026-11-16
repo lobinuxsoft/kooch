@@ -144,6 +144,29 @@ fn despawn_via_entity_commands() {
     assert!(Query::<&Health>::new(&resources).is_empty());
 }
 
+/// A component the binary does not know is parked outside the registry; despawn must reach it.
+#[test]
+fn despawn_drops_dynamic_components() {
+    let mut resources = setup();
+    resources.insert(crate::dynamic_components::DynamicComponents::new());
+    let mut commands = Commands::new();
+
+    let entity = commands.spawn(&mut resources).insert(Health(100)).id();
+    commands.apply(&mut resources);
+    resources
+        .get_mut::<crate::dynamic_components::DynamicComponents>()
+        .unwrap()
+        .insert(entity, "ProjectOnly", Vec::new());
+
+    commands.despawn(entity);
+    commands.apply(&mut resources);
+
+    let dynamic = resources
+        .get::<crate::dynamic_components::DynamicComponents>()
+        .unwrap();
+    assert!(dynamic.is_empty());
+}
+
 // -- Insert/Remove on existing entity --
 
 #[test]
