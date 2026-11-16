@@ -42,7 +42,7 @@ const fn spec(
     }
 }
 
-use AttributeKind::{Action, Binding, Bool, Number, Sheet, Template};
+use AttributeKind::{Action, Binding, Bool, Number, Sheet, Template, Text};
 
 const FOCUS: [AttributeSpec; 5] = [
     spec(
@@ -89,12 +89,40 @@ const TOGGLE: [AttributeSpec; 8] = [
     FOCUS[3],
     FOCUS[4],
 ];
-const SLIDER: [AttributeSpec; 11] = [
+/// What a node showing a `.webm` reads (#1793).
+const VIDEO: [AttributeSpec; 3] = [
+    spec(
+        "autoplay",
+        Bool,
+        "true",
+        "Plays its video as soon as it shows",
+    ),
+    spec("loop", Bool, "true", "Starts its video over at the end"),
+    spec(
+        "on:end",
+        Action,
+        "",
+        "Sent when a video that does not loop ends",
+    ),
+];
+const TIME: [AttributeSpec; 1] = [spec(
+    "bind:video-time",
+    Text,
+    "",
+    "Shows `m:ss / m:ss` of the video node with this name",
+)];
+const SLIDER: [AttributeSpec; 12] = [
     spec("value", Number, "0", "Where it starts"),
     spec("min", Number, "0", "Lowest value"),
     spec("max", Number, "1", "Highest value"),
     spec("step", Number, "0", "Snaps to it; 0 slides freely"),
     BIND,
+    spec(
+        "bind:video",
+        Text,
+        "",
+        "Follows the video node with this name, and seeks it when dragged",
+    ),
     CHANGE,
     FOCUS[0],
     FOCUS[1],
@@ -128,7 +156,8 @@ impl ElementKind {
     pub fn attributes(self) -> &'static [AttributeSpec] {
         match self {
             Self::Ui => &UI,
-            Self::Panel | Self::Label => &[],
+            Self::Panel => &VIDEO,
+            Self::Label => &TIME,
             Self::Button => &BUTTON,
             Self::Toggle => &TOGGLE,
             Self::Slider => &SLIDER,

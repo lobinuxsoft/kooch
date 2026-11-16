@@ -357,10 +357,33 @@ once and kept in memory as RGBA, so a long or large GIF costs width × height ×
 keep them short and small. A frame delay under 20 ms plays at 100 ms, as browsers do.
 
 **Video.** A `.webm` (AV1, 8-bit 4:2:0) is a `background-image` too (`url("intro.webm")`) and
-loops from its first frame. It is decoded on its own thread a couple of frames ahead, and the GPU
+plays from its first frame. It is decoded on its own thread a couple of frames ahead, and the GPU
 draws each new frame into its place in the atlas, so it has to fit there: up to 2048 pixels on its
-longer side. It has no sound and no play, pause or seek yet. In the editor's Play the editor plays
-the video itself: only its file crosses from the game, once, so it can drift a few frames from it.
+longer side. It has no sound yet. In the editor's Play the editor plays the video itself: only its
+file crosses from the game, once, and it runs the game's clock on from each play, pause or seek.
+
+The node showing it reads `autoplay` and `loop` (both `true` when absent) and sends `on:end` when a
+video that does not loop reaches its end. A file controls it with the engine's `video.*` actions,
+which name the video node and need no handler in the project:
+
+| Action | Does |
+|---|---|
+| `video.play intro` / `video.pause intro` / `video.toggle intro` | Plays, pauses, or flips between them |
+| `video.stop intro` | Pauses at the first frame |
+| `video.restart intro` | Plays from the first frame |
+| `video.skip intro -10` | Moves 10 seconds back (forward when positive; 10 when absent) |
+| `video.seek intro 30` | Goes to second 30 |
+| `video.loop intro` | Flips `loop` |
+| `video.rate intro 2` | Plays at twice the speed; `1` is normal |
+
+A slider with `bind:video="intro"` follows the video and seeks it when released, over its own
+`min`–`max`; a label with `bind:video-time="intro"` shows `m:ss / m:ss`. From code, the same
+through the tree: `play_video`, `pause_video`, `stop_video`, `seek_video`, `skip_video`,
+`set_video_loop`, `set_video_rate`, and `video(node)` for where it is, how long it is and whether
+it plays. A seek lands exactly, decoding from the keyframe before it, and the clock holds on the
+last frame until the new one shows: an encode with a keyframe every second or two, at the size it
+is shown, keeps it fast. Two nodes showing the same file share one slot, so they show
+the same frame: control one of them.
 
 **SVG.** An `.svg` is drawn at the size it shows on screen, so an icon stays sharp on a handheld
 and on a 4K monitor alike. It is drawn once per size class (16, 32, 64… up to 2048 pixels on its

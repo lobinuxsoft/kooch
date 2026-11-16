@@ -72,6 +72,8 @@ pub(crate) struct Stream<B: AsRef<[u8]>> {
     frame: Frame,
     ready: VecDeque<Picture>,
     ended: bool,
+    /// Ticks of the last video frame read: a seek ahead of it with no keyframe between reads on.
+    read: Option<u64>,
 }
 
 impl<B: AsRef<[u8]>> Stream<B> {
@@ -93,14 +95,52 @@ impl<B: AsRef<[u8]>> Stream<B> {
             frame: Frame::default(),
             ready: VecDeque::new(),
             ended: false,
+            read: None,
         })
     }
 
-    /// Starts `bytes`, the same file, again from its first frame on the same decoder.
+    /// How long the file says it lasts.
+    pub(crate) fn duration(&self) -> Option<Duration> {
+        let ticks = self.file.info().duration()?;
+        (ticks.is_finite() && ticks > 0.0)
+            .then(|| Duration::from_nanos((ticks * self.scale as f64) as u64))
+    }
+
+    /// The timestamp of each keyframe of the video track, in file ticks, by reading the file once
+    /// without decoding: a seek starts at the last one before its target.
+    pub(crate) fn keyframes(&self, bytes: B) -> Vec<u64> {
+        let Ok(mut file) = demux(bytes) else {
+            return Vec::new();
+        };
+        let (mut frame, mut out) = (Frame::default(), Vec::new());
+        while let Ok(true) = file.next_frame(&mut frame) {
+            if frame.track == self.track && frame.is_keyframe == Some(true) {
+                out.push(frame.timestamp);
+            }
+        }
+        out
+    }
+
+    /// Goes to the keyframe at or before `at`; frames come from there, on the same decoder.
     /// 🔴 A new decoder per loop allocated nine 12.5 MB pictures each pass and freed the old ones on
     /// the render thread, which raised glibc's mmap threshold and fragmented the heap (#1891).
-    pub(crate) fn rewind(&mut self, bytes: B) -> Result<(), String> {
-        self.file = demux(bytes)?;
+    pub(crate) fn seek(&mut self, at: Duration, keyframes: &[u64]) -> Result<(), String> {
+        let ticks = u64::try_from(at.as_nanos() / u128::from(self.scale)).unwrap_or(u64::MAX);
+        let start = keyframes
+            .iter()
+            .rev()
+            .find(|&&keyframe| keyframe <= ticks)
+            .copied()
+            .unwrap_or(0);
+        // 🔴 Rewinding to the same keyframe restarted the decode it was already part-way through:
+        // with two keyframes in a 4K file, each catch-up seek began again and never landed.
+        if !self.ended && self.read.is_some_and(|read| start <= read && read <= ticks) {
+            return Ok(());
+        }
+        self.read = None;
+        self.file
+            .seek(start)
+            .map_err(|error| format!("failed to seek the WebM: {error}"))?;
         self.decoder.flush();
         self.ready.clear();
         self.ended = false;
@@ -130,6 +170,7 @@ impl<B: AsRef<[u8]>> Stream<B> {
                 self.ended = true;
                 self.decoder.drain(&mut show)?;
             } else if self.frame.track == self.track {
+                self.read = Some(self.frame.timestamp);
                 let at = i64::try_from(self.frame.timestamp).unwrap_or(i64::MAX);
                 let unit = std::mem::take(&mut self.frame.data);
                 self.decoder.decode(unit, at, &mut show)?;

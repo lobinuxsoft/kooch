@@ -54,6 +54,10 @@ pub fn handle(request: &Request, resources: &mut Resources) -> Response {
             resources.insert(kooch_ecs::ViewSize(size));
             Response::ok(id, ResponseData::Ok)
         }
+        Method::SetVideoWaits { keys } => {
+            resources.insert(kooch_ecs::UiVideoWaits(keys.clone()));
+            Response::ok(id, ResponseData::Ok)
+        }
         Method::SetField {
             entity,
             component,

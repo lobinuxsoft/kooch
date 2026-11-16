@@ -167,6 +167,8 @@ pub enum Method {
     },
     /// The editor's Game View, in physical pixels: the host has no window to measure (#1691).
     SetViewSize { width: u32, height: u32 },
+    /// The UI videos the editor has no frame for yet: the host holds their clocks (#1793).
+    SetVideoWaits { keys: Vec<u64> },
     /// Every registered component type with its field schema.
     GetSchema,
     /// Overwrite one field of one component on one entity.

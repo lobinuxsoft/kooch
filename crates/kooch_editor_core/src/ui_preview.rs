@@ -127,5 +127,12 @@ pub(crate) fn draw(
         &mut ui.list,
         false,
     );
+    let waits = pass.video_waits();
     resources.insert(ui);
+    if let Some(session) = resources
+        .get_mut::<RemoteState>()
+        .and_then(|state| state.session.as_mut())
+    {
+        session.send_video_waits(waits);
+    }
 }

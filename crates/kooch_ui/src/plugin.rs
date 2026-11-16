@@ -12,7 +12,7 @@ use kooch_core::schedule::Order;
 use crate::{
     GlyphAtlas, UiActions, UiDocument, UiEvent, UiFocus, UiFonts, UiPointer, UiShaders, UiTrees,
     bind_params, bind_texts, bind_values, build_documents, draw_documents, layout_documents,
-    load_fonts, load_images, load_shaders, navigate_focus, pick_pointer, prune_trees,
+    load_fonts, load_images, load_shaders, navigate_focus, pick_pointer, play_videos, prune_trees,
     restyle_documents,
 };
 
@@ -92,10 +92,12 @@ impl Plugin for UiPlugin {
         // build, so a new document never shows a raw `{Type.field}`.
         app.add_ordered(Stage::PostUpdate, Order::after("load_shaders"), bind_params);
         app.add_ordered(Stage::PostUpdate, Order::after("bind_params"), bind_texts);
+        // Before layout: a video's time label is text, laid out this frame.
+        app.add_ordered(Stage::PostUpdate, Order::after("bind_texts"), play_videos);
         // After gameplay's `Update`, which is where a game edits its trees.
         app.add_ordered(
             Stage::PostUpdate,
-            Order::after("bind_texts"),
+            Order::after("play_videos"),
             layout_documents,
         );
         app.add_ordered(

@@ -96,6 +96,7 @@ pub struct RemoteSession {
     ui: kooch_remote::ui_frame::UiReceiver,
     /// The Game View size the project was last told.
     view_sent: Option<(u32, u32)>,
+    waits_sent: kooch_ecs::UiVideoWaits,
 }
 
 impl RemoteSession {
@@ -174,6 +175,7 @@ impl RemoteSession {
             stale: None,
             ui: Default::default(),
             view_sent: None,
+            waits_sent: kooch_ecs::UiVideoWaits::default(),
         })
     }
 
@@ -198,6 +200,7 @@ impl RemoteSession {
             stale: None,
             ui: Default::default(),
             view_sent: None,
+            waits_sent: kooch_ecs::UiVideoWaits::default(),
         }
     }
 
@@ -273,6 +276,23 @@ impl RemoteSession {
     /// Drops everything the project's UI sent; it sends it all again on the next Play.
     pub fn forget_ui(&mut self) {
         self.ui = kooch_remote::ui_frame::UiReceiver::waiting();
+        self.waits_sent = kooch_ecs::UiVideoWaits::default();
+    }
+
+    /// Tells the project which of its UI videos have no frame here yet, when that changed.
+    pub fn send_video_waits(&mut self, waits: kooch_ecs::UiVideoWaits) {
+        if self.waits_sent == waits || self.state != ConnectionState::Connected {
+            return;
+        }
+        let keys = waits.0.clone();
+        // Kept unsent on failure, so the next frame tries again.
+        if self
+            .client
+            .notify(kooch_remote::protocol::Method::SetVideoWaits { keys })
+            .is_ok()
+        {
+            self.waits_sent = waits;
+        }
     }
 
     /// Tells the project the Game View's size when it changed: its layout and camera aspect read it.

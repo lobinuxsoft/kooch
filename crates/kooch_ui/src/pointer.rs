@@ -33,6 +33,8 @@ pub enum UiEventKind {
     Blur,
     Cancel,
     Change,
+    /// A video that does not loop reached its last frame.
+    End,
 }
 
 /// Where the pointer is in the UI. A game asks `over` before treating a click as its own.
@@ -45,6 +47,13 @@ pub struct UiPointer {
     /// A press that started over the game stays the game's until released, even across the UI.
     game_held: bool,
     was_down: bool,
+}
+
+impl UiPointer {
+    /// The node a press started on, while it is held: a slider being dragged.
+    pub fn held(&self) -> Option<(Entity, UiNode)> {
+        self.pressed
+    }
 }
 
 /// A handler the UI runs by action name, registered with [`UiActions::add`].
@@ -275,6 +284,8 @@ pub fn ui_actions(resources: &Resources, action: &str) -> Vec<Entity> {
 
 /// Sent for systems to read next frame, and run now when the project registered the action.
 pub(crate) fn dispatch(resources: &mut Resources, event: UiEvent) {
+    // The engine's own verbs: a file controls a video without the project writing a handler.
+    crate::video::run_action(resources, &event);
     let handlers: Vec<UiAction> = resources
         .get::<UiActions>()
         .map(|actions| {

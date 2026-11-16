@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use kooch_core::Guid;
 use kooch_core::gif::GifFrames;
-use kooch_ecs::{UiVideo, UiVideoSource};
+use kooch_ecs::{UiVideo, UiVideoClock, UiVideoSource};
 
 use super::GlyphAtlas;
 
@@ -24,6 +24,8 @@ pub(crate) struct Animations {
     gifs: HashMap<Guid, Animation>,
     /// Each video's key and file.
     videos: HashMap<Guid, (u64, Arc<[u8]>)>,
+    /// Each video's clock, as the documents showing it last set it; a video without one loops.
+    clocks: HashMap<Guid, UiVideoClock>,
     /// The videos last shown, and the keys the renderer was handed: a hidden one is stopped there,
     /// so it is handed again when it shows.
     shown: Vec<UiVideo>,
@@ -52,6 +54,25 @@ impl GlyphAtlas {
             Some(video) => self.animations.videos.insert(guid, video),
             None => self.animations.videos.remove(&guid),
         };
+    }
+
+    /// Whether `guid` is a video this atlas plays.
+    pub(crate) fn is_video(&self, guid: Guid) -> bool {
+        self.animations.videos.contains_key(&guid)
+    }
+
+    pub(crate) fn video_key(&self, guid: Guid) -> Option<u64> {
+        self.animations.videos.get(&guid).map(|(key, _)| *key)
+    }
+
+    /// The WebM `guid` plays, for its length.
+    pub(crate) fn video_bytes(&self, guid: Guid) -> Option<&Arc<[u8]>> {
+        self.animations.videos.get(&guid).map(|(_, bytes)| bytes)
+    }
+
+    /// Where `guid` plays from: shared by every node that shows the same file.
+    pub(crate) fn set_clock(&mut self, guid: Guid, clock: UiVideoClock) {
+        self.animations.clocks.insert(guid, clock);
     }
 
     /// The videos shown, and the files of those the renderer has not been handed yet.
@@ -86,9 +107,15 @@ impl GlyphAtlas {
                 // The slot with its border: the renderer repeats the edge there too.
                 if let Some(&(_, image)) = self.images.get(&(guid, 0)) {
                     let [x0, y0, x1, y1] = image.rect;
+                    let clock = animations.clocks.get(&guid).copied();
                     animations.shown.push(UiVideo {
                         key,
                         rect: [x0 - 1, y0 - 1, x1 + 1, y1 + 1],
+                        clock: clock.unwrap_or(UiVideoClock {
+                            rate: 1.0,
+                            looping: true,
+                            ..UiVideoClock::default()
+                        }),
                     });
                 }
                 continue;

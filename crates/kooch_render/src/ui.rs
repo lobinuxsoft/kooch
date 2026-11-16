@@ -208,11 +208,6 @@ impl UiPass {
     /// Uploads what changed and draws `list` over `target`, or over transparent black when `clear`.
     /// Takes the atlas upload, so it is written once.
     #[allow(clippy::too_many_arguments)]
-    /// Frees what the videos hold while this pass is not drawn; they start over when it is.
-    pub fn park_videos(&mut self) {
-        self.videos.park();
-    }
-
     pub fn draw(
         &mut self,
         device: &wgpu::Device,
@@ -492,6 +487,7 @@ pub fn draw_frame(
         &mut list,
         false,
     );
+    resources.insert(pass.video_waits());
     resources.insert(pass);
     resources.insert(list);
 }
