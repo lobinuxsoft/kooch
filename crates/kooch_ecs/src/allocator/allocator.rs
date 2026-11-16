@@ -12,14 +12,12 @@ const DEFAULT_CAPACITY: u32 = 1024;
 pub struct EntityAllocator {
     /// Per-slot generation counter; bumped on despawn.
     generations: Vec<u32>,
-    /// Per-slot liveness flag (O(1) lookup for alive_mask construction).
+    /// Per-slot liveness flag, for O(1) `is_alive`.
     alive: Vec<bool>,
     /// FIFO queue of free slot indices ready for reuse.
     free_list: VecDeque<u32>,
     /// Number of currently alive entities.
     alive_count: u32,
-    /// Slot indices whose alive state changed since the last GPU sync.
-    pending_sync: Vec<u32>,
     /// Entities despawned since the last cleanup (for component removal).
     pending_despawn: Vec<Entity>,
 }
@@ -43,7 +41,6 @@ impl EntityAllocator {
             alive: vec![false; cap],
             free_list,
             alive_count: 0,
-            pending_sync: Vec::new(),
             pending_despawn: Vec::new(),
         }
     }
@@ -61,7 +58,6 @@ impl EntityAllocator {
 
         self.alive[index as usize] = true;
         self.alive_count += 1;
-        self.pending_sync.push(index);
 
         Entity::new(index, self.generations[index as usize])
     }
@@ -83,7 +79,6 @@ impl EntityAllocator {
         self.generations[idx] = self.generations[idx].wrapping_add(1);
         self.alive_count -= 1;
         self.free_list.push_back(entity.index());
-        self.pending_sync.push(entity.index());
         self.pending_despawn.push(entity);
 
         true
@@ -134,18 +129,11 @@ impl EntityAllocator {
         self.generations[idx] = entity.generation();
         self.alive[idx] = true;
         self.alive_count += 1;
-        self.pending_sync.push(entity.index());
 
         // Remove the slot from the free-list.
         self.free_list.retain(|&slot| slot != entity.index());
 
         true
-    }
-
-    /// Marks every slot as needing a GPU alive-mask sync.
-    pub fn mark_all_pending_sync(&mut self) {
-        self.pending_sync.clear();
-        self.pending_sync.extend(0..self.generations.len() as u32);
     }
 
     // -- private --

@@ -97,10 +97,6 @@ impl WorldSnapshot {
 
         if let Some(allocator) = resources.get_mut::<EntityAllocator>() {
             *allocator = self.allocator.clone();
-            // The world was rebuilt underneath any GPU-side alive mask,
-            // so every slot has to be re-synced, not just the ones that
-            // happened to be dirty when the capture was taken.
-            allocator.mark_all_pending_sync();
         }
 
         for state in &self.entities {
