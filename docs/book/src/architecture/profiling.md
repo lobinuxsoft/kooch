@@ -134,11 +134,13 @@ kept it. Whether a real capture comes back readable depends on whether
 its first frame happened to be slow — which is why 846 frames on
 2026-08-16 were named and 1022 the same evening were not.
 
-`ProfilerPanel::keep_all_frames` sets `max_recent` to `usize::MAX` on any
-view that intends to save. The cost is RAM on the capturing machine,
-which is a desktop, and puffin packs older frames as they age. A bigger
-arbitrary number would just move the same silent cliff somewhere less
-obvious.
+`write_capture` writes the view's whole scope collection into the first
+frame of the file, so a name no longer depends on its carrier frame
+surviving. The panel keeps puffin's bounded default (1000 recent + 256
+slowest): an earlier fix kept every frame instead, and a connection left
+open grew the editor's heap without limit (#1908). Closing the Profiler
+panel also drops the connection. `capture_remote` still keeps every
+frame, because `--seconds` bounds it.
 
 ⚠️ `read_capture` now says so out loud: a capture whose scopes are all
 `scope#…` prints a warning naming this cause, instead of printing a

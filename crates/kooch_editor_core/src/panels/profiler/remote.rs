@@ -33,6 +33,16 @@ impl Default for Remote {
     }
 }
 
+/// Drops the connection: its thread keeps receiving frames while the panel is closed (#1908).
+pub(super) fn disconnect() {
+    if let Some(remote) = REMOTE.get() {
+        remote
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .client = None;
+    }
+}
+
 /// Draws the connection controls and, once connected, the game's frames.
 pub(super) fn draw(ui: &mut Ui, catalog: &[crate::panels::inspector::AssetCatalogEntry]) {
     let mut remote = REMOTE
@@ -107,8 +117,8 @@ pub(super) fn draw(ui: &mut Ui, catalog: &[crate::panels::inspector::AssetCatalo
 
     let mut reconnect = false;
     {
+        // puffin's default ring (1000 recent + 256 slowest): `write_capture` keeps the names.
         let mut frames = connection.frame_view();
-        super::keep_all_frames(&mut frames);
         ui.separator();
         let costs = super::shaders::shader_costs_in(&frames);
         super::shaders::draw(ui, &super::shaders::named_shader_costs(catalog, &costs));

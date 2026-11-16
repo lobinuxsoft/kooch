@@ -220,8 +220,7 @@ pub(super) fn save_view(view: &puffin::FrameView) -> std::io::Result<std::path::
     let count = view.all_uniq().count();
     let path = dir.join(format!("kooch-{count}-frames.puffin"));
     let mut file = std::io::BufWriter::new(std::fs::File::create(&path)?);
-    view.write(&mut file)
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    super::write_capture(view, &mut file).map_err(|e| std::io::Error::other(e.to_string()))?;
     Ok(path)
 }
 
