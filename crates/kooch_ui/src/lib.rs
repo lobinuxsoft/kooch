@@ -31,6 +31,7 @@ mod text_binds;
 mod tree;
 mod trees;
 mod ui_input;
+mod video;
 
 pub use atlas::{AtlasGlyph, AtlasImage, GlyphAtlas, GlyphKey};
 pub use bindings::{bind_params, bind_texts, bind_values, field_number, field_written};
@@ -59,6 +60,7 @@ pub use tree::masks::UiMaskImage;
 pub use tree::transforms::UiTransform;
 pub use tree::{GlyphQuad, Paint, UiNode, UiRect, UiTree};
 pub use trees::{UiTrees, prune_trees};
+pub use video::{VideoStatus, play_videos};
 
 /// Node styles are taffy's own: flexbox and CSS Grid as the web defines them.
 pub use taffy;

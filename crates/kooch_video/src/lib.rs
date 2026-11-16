@@ -16,6 +16,11 @@ pub fn is_video(path: &Path) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("webm"))
 }
 
+/// How long `bytes`, a WebM, lasts, as its header says.
+pub fn duration(bytes: &[u8]) -> Option<std::time::Duration> {
+    stream::Stream::open(bytes).ok()?.duration()
+}
+
 /// The first frame of `bytes`, a WebM: what shows before the player has one.
 pub fn first_frame(bytes: &[u8]) -> Result<Picture, String> {
     stream::Stream::open(bytes)?

@@ -75,6 +75,9 @@ fn setup(tree: &mut UiTree, node: UiNode, element: &Element, font_size: f32) {
             "tabindex" if &**value == "-1" => tree.unfocusable.push(node),
             "autofocus" => tree.autofocus = Some(node),
             "disabled" if &**value != "false" => tree.set_disabled(node, true),
+            key if crate::video::VIDEO_KEYS.contains(&key) => {
+                tree.video_attribute(node, key, value)
+            }
             _ => tree.bind_param(node, key, value),
         }
     }

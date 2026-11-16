@@ -90,5 +90,5 @@ pub use ui_draw::{
     AtlasUpload, CURVE_POINTS, MASK_PAGE, MASK_VECTOR, QUAD_GLYPH, QUAD_IMAGE, QUAD_PAGE,
     QUAD_VECTOR, UiCurve, UiDrawList, UiFontSource, UiGlyphRun, UiMask, UiMaterial, UiMirror,
     UiParam, UiQuad, UiResend, UiShader, UiVector, UiVectorSource, UiVectorText, UiVideo,
-    UiVideoSource,
+    UiVideoClock, UiVideoSource, UiVideoWaits,
 };

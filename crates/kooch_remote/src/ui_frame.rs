@@ -8,7 +8,7 @@ use kooch_core::resource::Resources;
 use kooch_ecs::{
     AtlasUpload, UiCurve, UiDrawList, UiFontSource, UiGlyphRun, UiMask, UiMaterial, UiMirror,
     UiParam, UiQuad, UiResend, UiShader, UiVector, UiVectorSource, UiVectorText, UiVideo,
-    UiVideoSource,
+    UiVideoClock, UiVideoSource,
 };
 use serde::{Deserialize, Serialize};
 
@@ -54,10 +54,10 @@ pub struct UiFrame {
     pub vector_texts: Vec<WireText>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vector_fonts: Vec<(u64, String)>,
-    /// Videos shown, `(key, slot)`, and each WebM once, base64 (#1793): the editor plays them
-    /// itself, so no frame crosses the wire.
+    /// Videos shown, `(key, slot, at_us, epoch, rate, looping)`, and each WebM once, base64
+    /// (#1793): the editor plays them itself on the host's clock, so no frame crosses the wire.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub videos: Vec<(u64, [u32; 4])>,
+    pub videos: Vec<(u64, [u32; 4], u64, u32, f32, bool)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub video_sources: Vec<(u64, String)>,
     /// The page atlas (#1893): its side, and each large raster once, as it was packed.
@@ -245,7 +245,17 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
             videos: list
                 .videos
                 .iter()
-                .map(|video| (video.key, video.rect))
+                .map(|video| {
+                    let clock = video.clock;
+                    (
+                        video.key,
+                        video.rect,
+                        clock.at_us,
+                        clock.epoch,
+                        clock.rate,
+                        clock.looping,
+                    )
+                })
                 .collect(),
             video_sources: videos
                 .iter()
@@ -403,7 +413,16 @@ impl UiReceiver {
             frame
                 .videos
                 .iter()
-                .map(|&(key, rect)| UiVideo { key, rect }),
+                .map(|&(key, rect, at_us, epoch, rate, looping)| UiVideo {
+                    key,
+                    rect,
+                    clock: UiVideoClock {
+                        at_us,
+                        epoch,
+                        rate,
+                        looping,
+                    },
+                }),
         );
         for (key, data) in frame.video_sources {
             match STANDARD.decode(&data) {

@@ -93,6 +93,9 @@ pub struct UiTree {
     pub(crate) params: Vec<Vec<NodeParam>>,
     pub(crate) param_binds: Vec<ParamBind>,
     pub(crate) text_binds: Vec<TextBind>,
+    /// Nodes showing a video, and the controls bound to one, sparse (#1793).
+    pub(crate) videos: Vec<crate::video::VideoNode>,
+    pub(crate) video_binds: Vec<crate::video::VideoBind>,
     rect: Vec<UiRect>,
     /// How far a container's children are moved up and left by scrolling, in canvas units.
     scroll: Vec<Vec2>,
@@ -151,6 +154,8 @@ impl UiTree {
             params: Vec::new(),
             param_binds: Vec::new(),
             text_binds: Vec::new(),
+            videos: Vec::new(),
+            video_binds: Vec::new(),
             rect: Vec::new(),
             scroll: Vec::new(),
             clip: Vec::new(),

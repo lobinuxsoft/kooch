@@ -189,7 +189,45 @@ pub struct UiVideo {
     pub key: u64,
     /// The slot's texels with their one-texel border, `[x0, y0, x1, y1]`.
     pub rect: [u32; 4],
+    pub clock: UiVideoClock,
 }
+
+/// Where a video is, as of the last time it was played, paused or sought: the renderer runs the
+/// clock on from there itself, so a playing video does not resend the UI every frame.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct UiVideoClock {
+    /// Microseconds into the video when `epoch` began.
+    pub at_us: u64,
+    /// Bumped at every play, pause, seek and rate change.
+    pub epoch: u32,
+    /// 0 while paused.
+    pub rate: f32,
+    pub looping: bool,
+}
+
+impl UiVideoClock {
+    /// The time into the video `elapsed` after `epoch` began, `length` long.
+    pub fn at(
+        &self,
+        elapsed: std::time::Duration,
+        length: Option<std::time::Duration>,
+    ) -> std::time::Duration {
+        let start = std::time::Duration::from_micros(self.at_us);
+        let at = start + elapsed.mul_f32(self.rate.max(0.0));
+        match length {
+            Some(length) if self.looping && !length.is_zero() => {
+                std::time::Duration::from_nanos((at.as_nanos() % length.as_nanos()) as u64)
+            }
+            Some(length) => at.min(length),
+            None => at,
+        }
+    }
+}
+
+/// Keys of the videos still waiting for their first frame since a start or a seek: their clocks
+/// hold until it shows, or a decoder slower than the clock never reaches it (#1793).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct UiVideoWaits(pub Vec<u64>);
 
 /// The WebM behind a [`UiVideo`], sent with each new one; a renderer plays each key once.
 #[derive(Debug, Clone, PartialEq)]
