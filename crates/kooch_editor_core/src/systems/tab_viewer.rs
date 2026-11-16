@@ -513,6 +513,13 @@ impl<'a> TabViewer for EditorTabViewer<'a> {
     fn closeable(&mut self, _tab: &mut Self::Tab) -> bool {
         true
     }
+
+    fn on_close(&mut self, tab: &mut Self::Tab) -> egui_dock::tab_viewer::OnCloseResponse {
+        if *tab == EditorTab::Profiler {
+            crate::panels::profiler::close();
+        }
+        egui_dock::tab_viewer::OnCloseResponse::Close
+    }
 }
 
 impl EditorTabViewer<'_> {

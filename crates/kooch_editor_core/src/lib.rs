@@ -41,7 +41,7 @@ pub(crate) mod panels;
 /// `puffin_http::Client` the panel drives and needs the same guard
 /// against a long capture discarding its own scope names.
 #[cfg(feature = "profiling")]
-pub use panels::profiler::{keep_all_frames, shader_costs_in};
+pub use panels::profiler::{shader_costs_in, write_capture};
 pub mod carry;
 pub mod code_reload;
 pub mod dlss_sdk;

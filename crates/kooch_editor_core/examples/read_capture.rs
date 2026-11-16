@@ -107,9 +107,8 @@ fn main() -> anyhow::Result<()> {
             frames.len()
         );
         println!(
-            "   Fix: recapture with a `capture_remote` built after this was found; it calls \
-             `keep_all_frames`. Note it is intermittent — the same length can come back named \
-             on another run if that first frame happened to be a slow one."
+            "   Fix: recapture with a `capture_remote` built after #1908; it writes with \
+             `write_capture`, which stores every name in the first frame."
         );
     }
 

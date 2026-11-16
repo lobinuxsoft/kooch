@@ -76,10 +76,9 @@ fn main() {
             announced = true;
         }
         let mut view = client.frame_view();
-        // Every turn, not once: the client rebuilds its view from
-        // scratch on each (re)connect, and the default it rebuilds with
-        // is the one that throws the names away.
-        kooch_editor_core::keep_all_frames(&mut view);
+        // Every turn, not once: the client rebuilds its view on each (re)connect. A capture bounded
+        // by `--seconds` keeps all of its frames, unlike the editor panel.
+        view.set_max_recent(usize::MAX);
         frames = view.all_uniq().count();
         drop(view);
         print!("\r{frames} frames");
@@ -106,7 +105,7 @@ fn main() {
         }
     };
     let mut file = std::io::BufWriter::new(file);
-    if let Err(error) = view.write(&mut file) {
+    if let Err(error) = kooch_editor_core::write_capture(&view, &mut file) {
         eprintln!("could not write the capture: {error}");
         std::process::exit(1);
     }
