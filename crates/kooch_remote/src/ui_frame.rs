@@ -7,7 +7,8 @@ use kooch_core::Guid;
 use kooch_core::resource::Resources;
 use kooch_ecs::{
     AtlasUpload, UiCurve, UiDrawList, UiFontSource, UiGlyphRun, UiMask, UiMaterial, UiMirror,
-    UiParam, UiQuad, UiShader, UiVector, UiVectorSource, UiVectorText, UiVideo, UiVideoSource,
+    UiParam, UiQuad, UiResend, UiShader, UiVector, UiVectorSource, UiVectorText, UiVideo,
+    UiVideoSource,
 };
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +16,10 @@ use serde::{Deserialize, Serialize};
 /// would be three times that, every frame the UI changes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UiFrame {
+    /// Everything, not what changed: the first frame after a resend, which a receiver that let its
+    /// copy go waits for (#1893).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub whole: bool,
     /// `UiQuad`s, back to front.
     pub quads: String,
     /// `UiMask`s, which the quads index.
@@ -140,11 +145,23 @@ struct SentUi {
     shaders: Vec<UiShader>,
     vectors: Vec<UiVector>,
     videos: Vec<UiVideo>,
+    /// Since the last resend.
+    sent_once: bool,
+}
+
+/// Sends the whole UI again from the next reply: the editor drops what it was sent on Stop.
+pub(crate) fn resend(resources: &mut Resources) {
+    resources.remove::<SentUi>();
+    resources.insert(UiResend);
 }
 
 /// This frame's UI when it changed since the last reply. Takes the atlas upload: the editor keeps
 /// what it was sent, so each texel crosses once.
 pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
+    // Until the UI repacks, the list still points at the atlas the receiver dropped.
+    if resources.contains::<UiResend>() {
+        return None;
+    }
     let mut sent = resources.remove::<SentUi>().unwrap_or_default();
     let frame = resources.get_mut::<UiDrawList>().and_then(|list| {
         // A host merges its uploads into one, grown over its own atlas.
@@ -187,7 +204,9 @@ pub(crate) fn take(resources: &mut Resources) -> Option<UiFrame> {
         sent.shaders.clone_from(&list.shaders);
         sent.vectors.clone_from(&list.vectors);
         sent.videos.clone_from(&list.videos);
+        let whole = !std::mem::replace(&mut sent.sent_once, true);
         Some(UiFrame {
+            whole,
             quads: STANDARD.encode(bytemuck::cast_slice::<UiQuad, u8>(&list.quads)),
             masks: STANDARD.encode(bytemuck::cast_slice::<UiMask, u8>(&list.masks)),
             curves: STANDARD.encode(bytemuck::cast_slice::<UiCurve, u8>(&list.curves)),
@@ -262,6 +281,8 @@ pub struct UiReceiver {
     /// Reused for every base64 decode of the quads and their tables.
     scratch: Vec<u8>,
     fresh: bool,
+    /// Dropped what it had: deltas are refused until a whole frame arrives.
+    waiting: bool,
     vector_side: u32,
     vectors: Vec<UiVector>,
     /// Every file still resident, handed over each time: the renderer parses only keys it lacks,
@@ -279,7 +300,19 @@ pub struct UiReceiver {
 }
 
 impl UiReceiver {
+    /// Empty, refusing deltas until the host sends everything again.
+    pub fn waiting() -> Self {
+        Self {
+            waiting: true,
+            ..Self::default()
+        }
+    }
+
     pub fn receive(&mut self, frame: UiFrame) {
+        if self.waiting && !frame.whole {
+            return;
+        }
+        self.waiting = false;
         let scratch = &mut self.scratch;
         let read = decode_into(&frame.quads, scratch, &mut self.quads)
             && decode_into(&frame.masks, scratch, &mut self.masks)

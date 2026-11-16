@@ -507,6 +507,7 @@ fn set_playing(resources: &mut Resources, playing: bool) -> Result<(), RemoteErr
     if playing {
         resources.insert(PlaySnapshot(WorldSnapshot::capture(resources)));
         kooch_core::run_state::Playing::set(resources, true);
+        crate::ui_frame::resend(resources);
         tracing::info!("remote: play");
         return Ok(());
     }

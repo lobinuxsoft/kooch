@@ -198,6 +198,10 @@ pub struct UiVideoSource {
     pub data: Arc<[u8]>,
 }
 
+/// Asks the UI to pack everything again: whoever held what it sent has dropped it (#1893).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UiResend;
+
 /// This frame's UI, back to front.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct UiDrawList {

@@ -75,6 +75,10 @@ fn clear(list: &mut UiDrawList) {
 }
 
 fn upload(atlas: &mut GlyphAtlas, list: &mut UiDrawList) {
+    // Pending uploads of another atlas (a replaced or grown one) point past this one's texels.
+    if list.atlas_side != atlas.side() {
+        list.atlas_uploads.clear();
+    }
     list.atlas_side = atlas.side();
     list.page_side = atlas.page_side();
     list.page_uploads.extend(atlas.take_page_uploads());
@@ -88,8 +92,7 @@ fn upload(atlas: &mut GlyphAtlas, list: &mut UiDrawList) {
     let (videos, video_sources) = atlas.take_videos();
     list.videos = videos;
     list.video_sources.extend(video_sources);
-    // Grown over one not uploaded yet, not replacing it: a frame the renderer skipped would
-    // otherwise lose its glyphs.
+    // Grown over one not uploaded yet, not replacing it: a skipped frame would lose its glyphs.
     if let Some(dirty) = atlas.take_dirty() {
         let rect = list
             .atlas_uploads
@@ -580,7 +583,9 @@ fn region(atlas: &GlyphAtlas, [x0, y0, x1, y1]: [u32; 4]) -> Vec<u8> {
     let mut texels = Vec::with_capacity(((x1 - x0) * (y1 - y0) * 4) as usize);
     for row in y0 as usize..y1 as usize {
         let start = (row * side + x0 as usize) * 4;
-        texels.extend_from_slice(&atlas.pixels()[start..start + (x1 - x0) as usize * 4]);
+        if let Some(from) = atlas.pixels().get(start..start + (x1 - x0) as usize * 4) {
+            texels.extend_from_slice(from);
+        }
     }
     texels
 }

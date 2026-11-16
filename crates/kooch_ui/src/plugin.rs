@@ -4,6 +4,7 @@ use kooch_core::app::App;
 use kooch_core::plugin::Plugin;
 use kooch_core::resource::Resources;
 use kooch_core::stage::Stage;
+use kooch_ecs::UiResend;
 use kooch_ecs::component::ComponentRegistry;
 
 use kooch_core::schedule::Order;
@@ -75,10 +76,15 @@ impl Plugin for UiPlugin {
             Order::after("build_documents"),
             restyle_documents,
         );
-        // Before layout: a full atlas clears, and the glyphs rasterize again against it.
         app.add_ordered(
             Stage::PostUpdate,
             Order::after("restyle_documents"),
+            repack_on_resend,
+        );
+        // Before layout: a full atlas clears, and the glyphs rasterize again against it.
+        app.add_ordered(
+            Stage::PostUpdate,
+            Order::after("repack_on_resend"),
             load_images,
         );
         app.add_ordered(Stage::PostUpdate, Order::after("load_images"), load_shaders);
@@ -102,4 +108,16 @@ impl Plugin for UiPlugin {
     fn name(&self) -> &str {
         "UiPlugin"
     }
+}
+
+/// A fresh atlas: every glyph, image, font and video is packed and sent again, since each crosses
+/// only once and the receiver let its copy go.
+fn repack_on_resend(resources: &mut Resources) {
+    if resources.remove::<UiResend>().is_none() {
+        return;
+    }
+    let generation = resources
+        .get::<GlyphAtlas>()
+        .map_or(0, GlyphAtlas::generation);
+    resources.insert(GlyphAtlas::after(generation));
 }

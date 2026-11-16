@@ -62,12 +62,28 @@ fn restore_preview(resources: &mut Resources) {
     kooch_core::memory::return_freed();
 }
 
+/// 🔴 Stopped, the host's UI is freed with its atlas, videos and what the receiver kept; the host
+/// sends it all again on the next Play (#1893).
+fn release_remote(resources: &mut Resources) {
+    if resources.remove::<RemoteUi>().is_none() {
+        return;
+    }
+    if let Some(session) = resources
+        .get_mut::<RemoteState>()
+        .and_then(|state| state.session.as_mut())
+    {
+        session.forget_ui();
+    }
+    kooch_core::memory::return_freed();
+}
+
 /// Stopped, the documents are the editor's to build and lay out; in Play the host's frame stands.
 pub(crate) fn preview_ui_system(resources: &mut Resources) {
     if remote_playing(resources) {
         release_preview(resources);
         return;
     }
+    release_remote(resources);
     restore_preview(resources);
     kooch_ui::prune_trees(resources);
     kooch_ui::load_fonts(resources);

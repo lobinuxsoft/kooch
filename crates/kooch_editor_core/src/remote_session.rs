@@ -270,6 +270,11 @@ impl RemoteSession {
         self.ui.take_into(list)
     }
 
+    /// Drops everything the project's UI sent; it sends it all again on the next Play.
+    pub fn forget_ui(&mut self) {
+        self.ui = kooch_remote::ui_frame::UiReceiver::waiting();
+    }
+
     /// Tells the project the Game View's size when it changed: its layout and camera aspect read it.
     pub fn send_view_size(&mut self, size: (u32, u32)) {
         if self.view_sent == Some(size) || self.state != ConnectionState::Connected {
