@@ -87,5 +87,13 @@ fn each_category_maps_to_a_rapier_flag() {
             "{case:?} maps to no rapier flag",
         );
     }
-    assert_eq!(mode_for(DebugCategories::all()), DebugRenderMode::all());
+    // Soft bodies are not exposed by the engine; any other new rapier flag must be mapped (#1727).
+    let soft = DebugRenderMode::SOFT_BODIES
+        | DebugRenderMode::PSEUDO_NORMALS
+        | DebugRenderMode::SOFT_VOLUME_CONTACTS
+        | DebugRenderMode::SOFT_BODY_STRESS;
+    assert_eq!(
+        mode_for(DebugCategories::all()),
+        DebugRenderMode::all().difference(soft)
+    );
 }
