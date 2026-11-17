@@ -9,7 +9,7 @@
 //!
 //! That is a deliberate model rather than a missing feature. The linked
 //! kind — where editing a prefab updates every placed copy, with per-field
-//! overrides — is #611 Phase B, and it answers a different question:
+//! overrides — is the editor's `PrefabInstance` (#611), and it answers a different question:
 //! keeping *authored* instances in step. Nothing about spawning a bullet
 //! wants it.
 //!
