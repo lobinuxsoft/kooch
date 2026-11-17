@@ -202,13 +202,11 @@ finding — each frame against the GPU work that produced it:
 
 **The same GPU work produces two different frames.** 33.5 ms of GPU
 became a 34.7 ms frame 167 times and a 69.4 ms frame 80 times — the bad
-outcome exactly double, which a GPU does not do and a swapchain does.
-Under FIFO with two images the compositor holds one while the GPU draws
-into the other, so the acquire waits out the compositor's turn instead
-of overlapping with it, and a frame that misses one vblank stays
-serialised. `KOOCH_FRAME_LATENCY=3` asks for a third image; it costs a
-frame of input lag, so the default stays at 2 until a capture from the
-device says which is worse.
+outcome exactly double. The first explanation — two swapchain images
+under FIFO, the compositor holding one — did **not** survive its own
+measurement: a third image (`KOOCH_FRAME_LATENCY=3`) and leaving FIFO
+both left the ratio where it was. What replaced it is in
+[Frame Pacing](./frame-pacing.md#what-this-does-not-fix).
 
 ⚠️ **The tool that found this had been in the repo for weeks.** The first
 reading of this capture used a hand-written script that summed scopes

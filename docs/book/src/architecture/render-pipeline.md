@@ -64,12 +64,12 @@ flowchart TD
         A1[Clear the R64 visibility buffer] --> A2["Raster: draw_indirect the survivors<br/>fragment does atomicMax(depth &lt;&lt; 32 | ids)"]
         A2 --> MV["motion vectors<br/>previous clip position, unjittered camera"]
         MV --> SH{"compute<br/>shading?"}
-        SH -- yes --> A4["shade: compute — or (half rate)<br/>one dispatch → Inti, into an HDR target"]
-        SH -- "no, the default" --> A5["shade: fragment<br/>one fullscreen pass per material, depth-tested Equal"]
+        SH -- "yes, the default" --> A4["shade: compute — or (half rate)<br/>one dispatch → Inti, into an HDR target"]
+        SH -- no --> A5["shade: fragment<br/>one fullscreen pass per material, depth-tested Equal"]
         A4 --> UP["shade: upsample<br/>only when the rate is half"]
-        UP --> TAA["taa / sgsr2<br/>the temporal resolve — off by default, #481"]
+        UP --> TAA["taa / sgsr2<br/>the temporal resolve — SGSR 2 by default"]
         TAA --> TM["tonemap<br/>HDR radiance → display-referred"]
-        TM --> RCAS["rcas<br/>sharpening, after the curve — off by default"]
+        TM --> RCAS["rcas<br/>sharpening, after the curve — 50 by default"]
     end
 
     A0 --> A1
@@ -201,12 +201,12 @@ normals and never computed a world position at all, which was invisible
 while shading was a function of the normal alone and would have lit the
 centroid of every triangle the moment a point light needed a distance.
 
-- **R64, fragment — the default.** One fullscreen pass *per material*,
+- **R64, fragment — opt-out.** One fullscreen pass *per material*,
   depth-testing `Equal` against a target holding each pixel's material
   id. The depth test is the per-material cull, in hardware, with
   early-Z. Each pass binds its own textures.
-- **R64, compute — opt-in.** One dispatch for the whole screen, into an
-  HDR target. Turned on per project (`compute_shading`) or per run
+- **R64, compute — the default.** One dispatch for the whole screen, into an
+  HDR target. Set per project (`compute_shading`) or per run
   (`KOOCH_COMPUTE_SHADING`), and it is what half-rate shading and the
   reduced-rate upsample require.
 - **R32** shades with one compute dispatch. **No texture sampling**: a
@@ -236,13 +236,13 @@ centroid of every triangle the moment a point light needed a distance.
 > the device's own run-to-run drift.
 
 > 🔴 **A `serde` default is not a recommendation — it is what an old file
-> silently becomes.** `compute_shading`, `shading_rate` and `temporal_aa`
-> all default to what the engine already did — fragment path, full rate,
-> no history — because an earlier version defaulted two of them to *on*
-> and every existing project changed shading path and gained a temporal
-> resolve in the same build. Two variables at once is not a change
-> anybody can bisect, and the first report was "you broke the whole
-> render".
+> silently becomes.** An earlier version flipped two defaults to *on* at
+> once, and every existing project changed shading path and gained a
+> temporal resolve in the same build. Two variables at once is not a
+> change anybody can bisect, and the first report was "you broke the
+> whole render". The defaults moved again later (6d6e5bee) — to what
+> `roll-a-ball` renders with: compute shading, SGSR 2 at 50 %,
+> sharpening 50 — in one commit that said so, with the reason in it.
 
 ### The window, and everything being live
 
@@ -404,10 +404,10 @@ number does not get to be a default.
 the render target with it and everything `render_scale` does not touch —
 the resolve's output, the tonemap, the blit.
 
-⚠️ These are a recommendation, not defaults. `RenderSettings::default()`
-stays what the engine did before any of them existed, for the reason the
-callout above gives: a serde default is what an old file silently
-becomes.
+Three of these are now the defaults — `compute_shading`, `upscale: 2`,
+`render_scale: 50` — because they are what the test project ships with.
+`shading_rate` stays at full: half rate is a handheld trade, not a
+default.
 
 Then [Inti](./lighting.md) — Cook-Torrance driven by the scene's lights.
 
@@ -606,10 +606,10 @@ path only.
   — cull, Hi-Z, raster, every reconstruction that reads the buffer the
   raster wrote — and the pair being separable is the whole reason the
   vectors are not wrong by a sub-pixel offset every frame.
-- **`taa`, and it is off by default.** The resolve exists and works;
-  turning it on is #481's remaining half. Debug views bypass it, because
-  averaging a false-colour legend across frames is not a legend any more.
-- **`rcas`, and it is off by default.** Robust Contrast Adaptive
+- **`taa` / `sgsr2` / `fsr3` / `dlss`** — the temporal resolve `upscale`
+  picks, SGSR 2 by default. Debug views bypass it, because averaging a
+  false-colour legend across frames is not a legend any more.
+- **`rcas`, 50 by default.** Robust Contrast Adaptive
   Sharpening, one full-screen pass, `sharpening` in `.rendersettings`.
   🔴 It runs **after** the tonemap, unlike everything else in this list:
   RCAS is adaptive because it solves for the filter weight at which the

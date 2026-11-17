@@ -72,7 +72,7 @@ prop and go finer only if the collision visibly misses.
 
 ## Baking one from the Inspector
 
-Select a mesh in the Asset Browser and its import settings grow two
+Select a mesh in the Asset Browser and its import settings grow three
 buttons:
 
 - **Create hull mesh** — one convex hull.
@@ -82,7 +82,7 @@ buttons:
   budget. For static level geometry too heavy to collide against as it
   is. Needs a budget: without one it writes the same triangles back out.
 
-Both write a `.glb` into `<project>/assets/collision/`, and both appear
+All three write a `.glb` into `<project>/assets/collision/`, and all appear
 in the same picker `Collider.mesh` uses. Point the collider at the result
 yourself: the bake is a new asset with its own GUID, and nothing
 repoints a collider behind your back.
@@ -156,11 +156,15 @@ asking the asset server for a `MeshletMesh` would build the whole
 simplification chain — 2.9 s for a 76 000-vertex mesh — and then decode
 LOD 0 straight back into the triangles it started from.
 
-A GUID that never resolves logs a warning naming it. That warning is the
-only clue a collider is missing, so it is worth reading:
+A GUID that never resolves logs a warning naming it, under the
+`kooch::collider_mesh` target. That warning is the only clue a collider is
+missing, so it is worth reading:
 
 ```text
-a collider names a mesh that will not load, so its body will not collide
+a collider names a mesh the asset database does not know
+a collider names a mesh that will not read, so its body will not collide
+a collider names a mesh that will not parse, so its body will not collide
+a collider names a mesh with no geometry in it
 ```
 
 ## Surface and filtering
@@ -203,7 +207,9 @@ for it at all, so its events carry no contact information.
 
 `collision_events` is separate and off by default: whether this collider
 **reports** what it touches. A scene pays for what it listens to, so the
-opt-in stays per collider.
+opt-in stays per collider. `contact_force_events` is its sibling: an
+event only when a contact pushes harder than `contact_force_threshold`
+newtons — "hit hard enough" without inspecting contacts every frame.
 
 ## Several shapes, one body
 

@@ -13,8 +13,11 @@ looks.
 **Embedded** — the project's own binary opens the editor:
 
 ```bash
-cargo run          # inside your project directory
+cargo run --features editor --bin <crate>_editor   # inside your project directory
 ```
+
+(A plain `cargo run` is the game, without the editor — see
+[Creating a Project](../scripting/creating-a-project.md).)
 
 The editor runs *inside* the project, so the project's components are simply linked in. This
 is the simplest arrangement and needs no socket, no second process, and nothing to go wrong
@@ -60,7 +63,7 @@ and opened.
 | **Components** | Every component type the engine and your project registered. |
 | **Archetypes** | Which combinations of components actually exist, and how many entities are in each. A debugging view of how the ECS stored your scene. |
 | **Asset Browser** | The project's assets and the engine's, as two roots. Right-click a `.scene` to make it the one the project opens with; that scene carries a ▶ in the tree and its name is in the accent colour. The tree is drawn by `kooch_ui`, the games' own UI; the search, menus and name fields are the editor's. Ctrl+click adds a row to the selection and Shift+click or Shift+arrows select a range; **Delete** removes the selected project files after asking — it is permanent. |
-| **Input Map** | Edits a `.inputaction` asset: bindings, the five composites, processors. An action is an asset, not an entry in a map — see [Writing a System](../scripting/systems.md). |
+| **Input Map** | Edits a `.inputaction` asset: bindings, the five composites, processors. An action is an asset, not an entry in a map — see [Input](../guide/input.md). |
 | **Console** | Structured logs from the editor *and* the launched project, filterable. Text is selectable and copyable. Cargo's per-crate progress (`Compiling …`) and per-asset build detail sit at DEBUG; warnings, errors and `Finished` stay visible. |
 | **Performance** | Frame timings, and per-stage counters where they exist. |
 
@@ -598,16 +601,9 @@ line still applies.
 
 Honest list, so nothing below is mistaken for a bug in your setup:
 
-- **No build button.** Changing Rust code means running `cargo build` yourself
-  ([#158](https://github.com/lobinuxsoft/kooch/issues/158)).
-- **No reload.** The project's `dylib` loads once, when the project opens. Seeing a code
-  change means reopening the editor
-  ([#648](https://github.com/lobinuxsoft/kooch/issues/648)).
-- **No New Scene.** Scenes have to exist on disk already
-  ([#619](https://github.com/lobinuxsoft/kooch/issues/619)).
-- **Exposure and ambient light have no panel.** Both are engine `Resources` with sane
-  defaults and no way to change them from the editor, so a scene that reads too bright or too
-  flat cannot be corrected without editing code. See
-  [Lighting](../architecture/lighting.md).
-- **Reconnecting discards unsaved changes silently.** Relaunching the host reloads the scene
-  from disk; anything not saved is gone, and nothing warns first.
+- **Compile errors are not shown in a panel.** **Rebuild & Run** compiles the project and
+  reloads its code, but a failing build is read in the Console's raw output rather than as a
+  list of errors ([#158](https://github.com/lobinuxsoft/kooch/issues/158)).
+- **A host that dies takes its unsaved changes with it.** Rebuild & Run carries the open
+  scenes across a deliberate restart; a process that already crashed has no live world left to
+  carry, so the reconnect reloads the scenes from disk.

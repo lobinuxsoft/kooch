@@ -75,9 +75,9 @@ Nothing errors; a query and `get_cpu` simply answer differently about the same e
   not need one. Bevy's own maintainers [proposed removing
   theirs](https://github.com/bevyengine/bevy/discussions/19164) for exactly those reasons. An
   `Option<T>` in a table column covers the churning-component case without any of it.
-- **Change detection.** Bevy's columns carry added and changed ticks. This engine has none, and
-  porting the column shape without them is simpler and correct. Revisions are per component type,
-  on the registry slot, which is what the editor's frame cache needs (#1561).
+- **Added ticks.** Bevy's columns carry an added and a changed tick per row. This engine keeps only
+  the changed one (#1870, below); per-type revisions on the registry slot still serve the editor's
+  frame cache (#1561).
 - **Chunked tables.** Unity splits an archetype into 16–64 KiB chunks, which matters for handing
   slices to parallel jobs. Whole-table columns iterate just as densely; the chunk is for the
   scheduler we do not have yet.

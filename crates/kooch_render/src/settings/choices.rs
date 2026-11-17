@@ -48,9 +48,8 @@ pub(super) const ANISOTROPY_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[
     },
 ];
 
-/// Vsync on. What a player wants, and what an editor wants: uncapped
-/// costs a GPU to draw frames nobody sees. Measuring is the exception
-/// and `KOOCH_PRESENT_MODE=novsync` is how it asks.
+/// Off, what roll-a-ball is tuned at (6d6e5bee). Safe because `FrameCap` paces the loop at 120 Hz
+/// anyway; `KOOCH_PRESENT_MODE=vsync` turns it on for one run.
 pub(super) fn default_vsync() -> bool {
     false
 }
@@ -62,9 +61,8 @@ pub(super) fn default_window_mode() -> u32 {
     1
 }
 
-/// Off, like every other quality setting in this file: it costs
-/// bandwidth on the surfaces that already cover the most pixels, and a
-/// project that never asked for that should not pay it.
+/// 2x, what roll-a-ball is tuned at (6d6e5bee): it costs bandwidth on the surfaces that already
+/// cover the most pixels, so the default stays at the low end.
 pub(super) fn default_anisotropy() -> u32 {
     2
 }

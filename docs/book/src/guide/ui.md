@@ -1,7 +1,7 @@
 # UI
 
-> In progress (#96). What exists today is the document and its tree; layout, text and drawing land
-> phase by phase.
+> In progress (#96). Overlay documents lay out, draw text, images, SVG and video, and take
+> pointer and gamepad input; World documents lay out but do not draw yet.
 
 A UI is **one entity** with a `UiDocument`, the way Unity's UI Toolkit has a `UIDocument`. Its nodes
 live inside the document, not in the hierarchy, so a menu of three hundred elements is still one
@@ -12,8 +12,12 @@ row in the scene.
 | `source` | The `.kxml` file with the structure (#280) |
 | `style` | The `.kcss` sheet with the look (#280) |
 | `mode` | **Overlay** draws over the screen; **World** places it in the scene at the entity |
+| `hidden` | Kept but not drawn, picked or read — a menu that comes and goes keeps its tree |
+| `point`, `click`, `scroll` | Input actions for the pointer. Empty reads the mouse |
+| `navigate`, `submit`, `cancel` | Input actions for focus. Empty reads arrows / d-pad / stick, Enter / South, Escape / East |
 
-Enable it with the engine's `ui` feature.
+Enable it with the engine's `ui` feature. The files themselves — `.kxml` structure, `.kcss`
+look, bindings, events, video — are [UI files](./ui_files.md).
 
 ## Units
 
@@ -29,7 +33,8 @@ node's place with `tree.rect(node)`: top-left origin, y down, in canvas units.
 
 ## Building a tree from code
 
-Until the file formats arrive, a game builds the tree itself and hands it to `UiTrees`:
+A document is usually built from its files. A game can also build a tree itself and hand it to
+`UiTrees`:
 
 ```rust
 use kooch::prelude::*;

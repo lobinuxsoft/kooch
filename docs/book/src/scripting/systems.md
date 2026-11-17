@@ -307,7 +307,7 @@ run while paused looks exactly like a gameplay one.
 
 The attribute **expands to nothing**. It is read by the editor when it regenerates the file;
 the compiler passes your function through untouched, and deleting the attribute never breaks a
-build. What it does do is *validate*: a stage that is not one of the fourteen is a compile error
+build. What it does do is *validate*: a stage that is not one of the fifteen is a compile error
 naming them, where a comment with the same typo would leave the system in `Update` forever and
 never say so.
 
@@ -315,7 +315,7 @@ never say so.
 
 ⚠️ The generated file names your system within a second of you saving. **The editor still runs
 the last build of your project.** Those two disagree until you rebuild, and the toolbar's
-Resync button pulses while they do.
+**Rebuild & Run** pulses while they do.
 
 This matters because the gap is invisible: the editor lists a project's components and systems
 out of its compiled dylib, so something added ten seconds ago exists in `registrations.rs` and
