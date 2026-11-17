@@ -3,7 +3,7 @@
 A `Collider` is what an entity presents to the solver: a shape, the
 surface that shape has on contact, and the filtering that decides which
 pairs are considered at all. It is the geometry — a `PhysicsBody` beside
-it is what makes that geometry move.
+it is what makes that geometry move ([Physics](physics.md)).
 
 Only the fields the selected shape reads are shown. Hiding is display
 only: every field is still stored and still saved, so switching shape
