@@ -3,8 +3,7 @@
 //! Generated from `templates/component.rs.tmpl`. Edit that file to change
 //! the scaffold for every new component.
 
-use kooch::kooch_ecs::Reflect;
-use kooch::kooch_ecs::component::Component;
+use kooch::prelude::*;
 
 /// A `{{Name}}` component. Attach it to entities; its public fields show
 /// up in the editor Inspector automatically.
@@ -18,7 +17,7 @@ use kooch::kooch_ecs::component::Component;
 ///
 /// ⚠️ Registering is not compiling. The generated file names your
 /// component within a second; the Inspector still lists what the *last
-/// build* of your project contained. The toolbar's Resync button pulses
+/// build* of your project contained. The toolbar's Rebuild & Run button pulses
 /// while those two disagree.
 ///
 /// 🔴 **Renaming this type breaks saved scenes, silently.** A scene

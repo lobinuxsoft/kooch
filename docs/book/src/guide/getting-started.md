@@ -15,6 +15,13 @@ there:
   and why each file exists.
 - **[The Editor](../editor/overview.md)** — the panels, how Play works, and what is not built
   yet.
+- **[Recipes](../scripting/recipes.md)** — the one-line way to write what every game writes:
+  input edges, UI clicks, time, rays.
+
+Then the guide, a page per thing a game is made of: [Scenes and Prefabs](scenes.md),
+[Physics](physics.md), [Characters](character.md), [Cameras](camera.md), [Input](input.md),
+[UI](ui.md), [Materials](materials.md), [Lighting](lighting.md), [Blocks](blocks.md),
+[Time](time.md), [Audio](audio.md).
 
 The rest of this page is the handful of things that are easy to trip over and do not belong
 to any one of those.
