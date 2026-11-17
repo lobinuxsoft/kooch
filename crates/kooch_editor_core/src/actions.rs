@@ -94,8 +94,8 @@ pub(crate) enum EditorAction {
         name: String,
         at: crate::viewport_pick::DropPoint,
     },
-    /// Spawn a block: writes a fresh `.block` holding `shape` into the project's assets and spawns
-    /// an entity pointing at it.
+    /// Spawn a block: an entity whose `Block` component holds `shape`'s geometry, saved in the
+    /// scene (#1452) — no file is written.
     SpawnBlock {
         into: SpawnTarget,
         shape: kooch_blockmesh::Shape,
