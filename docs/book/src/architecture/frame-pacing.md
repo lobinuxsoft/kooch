@@ -141,11 +141,13 @@ meant **a game built with Kóoch could not offer a vsync toggle** — the
 one graphics option every game ships. Its own options menu would have
 had to ask the player to set an environment variable.
 
-⚠️ `vsync: false` in a project file is a measurement configuration, not
-a performance setting. It costs a GPU drawing frames nobody sees, and on
-a handheld it costs battery for the same. It is off in exactly one case:
-somebody is reading a frame time and needs it to show work rather than
-the wait for the vblank.
+⚠️ **`vsync` defaults to off** (6d6e5bee, the values `roll-a-ball` is
+tuned at), and that is safe only because the loop is capped anyway:
+`FrameCap` holds a `Continuous` loop to **120 Hz** with nothing said —
+8.3 ms, past the ~5 ms a frame measured at, and the handhelds' native
+rate. `KOOCH_FRAME_CAP=<hz>` moves it and `off` uncaps it. An uncapped
+loop without vsync draws frames nobody sees, and on a handheld it costs
+the battery for the same.
 
 `GpuContext::set_vsync` compares against the mode the surface already
 has before it reconfigures, because `configure` rebuilds the swapchain —

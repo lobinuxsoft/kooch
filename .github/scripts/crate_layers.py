@@ -25,9 +25,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PAGE = ROOT / "docs/book/src/architecture/crate-graph.md"
-# An example, not a crate of the engine. It is a workspace member so that
-# `cargo test` builds it — a plugin that stops compiling is a broken ABI.
-NOT_ENGINE = {"example_plugin"}
+# Examples, not crates of the engine. Workspace members so that `cargo test`
+# builds them — a plugin that stops compiling is a broken ABI.
+NOT_ENGINE = {"example_plugin", "example_post_process"}
 
 
 def graph() -> dict[str, list[str]]:
@@ -66,7 +66,7 @@ def documented() -> dict[int, list[str]]:
     for line in PAGE.read_text().splitlines():
         row = re.match(r"\|\s*\*\*L(\d+)[^|]*\|([^|]*)\|", line)
         if row:
-            found[int(row.group(1))] = sorted(re.findall(r"`(kooch[a-z_]*)`", row.group(2)))
+            found[int(row.group(1))] = sorted(re.findall(r"`([a-z][a-z0-9_-]*)`", row.group(2)))
     return found
 
 

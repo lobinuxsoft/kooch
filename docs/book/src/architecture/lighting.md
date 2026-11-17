@@ -23,7 +23,7 @@ to exist.
 
 ```mermaid
 flowchart LR
-    C["DirectionalLight<br/>PointLight<br/>SpotLight<br/>+ GlobalTransform"] --> E[extract_lights<br/>pure, no GPU]
+    C["DirectionalLight<br/>PointLight<br/>SpotLight<br/>+ GlobalTransform"] --> E[LightFrame::extract<br/>pure, no GPU]
     E --> B[GpuLights<br/>storage buffer,<br/>grows geometrically]
     B --> G["the froxel grid<br/>four GPU passes,<br/>per view"]
     G --> S["inti_shade()<br/>in both shading paths"]
@@ -189,9 +189,9 @@ confession, not a unit. Kóoch's fudge is **named after the compromise** —
 bulb the day global illumination lands.
 
 `kooch_ecs::light_consts` holds the named values, so an author picks a
-situation instead of guessing a magnitude: `lux::OFFICE`,
-`lux::OVERCAST_DAY`, `lux::DIRECT_SUNLIGHT`, `lumens::CANDLE`,
-`lumens::CAR_HEADLIGHT`.
+situation instead of guessing a magnitude: `lux::AMBIENT_DAYLIGHT`,
+`lux::DIRECT_SUNLIGHT`, `lumens::LED_BULB_9W`, `lumens::FLOODLIGHT`,
+`lumens::VERY_LARGE_CINEMA_LIGHT`.
 
 > **Hover a field in the Inspector** and its doc comment appears as a
 > tooltip, units included. `intensity` on a directional light says LUX;
@@ -391,7 +391,7 @@ neighbouring pages instead of two.
 Past that the count is **capped by what the device can bind** and the lights that fit keep their
 shadows:
 
-```
+```text
 the page table does not fit this many lights on this device;
 the rest cast no shadow  shadowed=2612 asked=3008
 ```
@@ -458,9 +458,9 @@ maths its own way could disagree with the frame, and then it is one more
 thing to debug instead of the thing that settles the question.
 
 > ⚠️ **A light that shows no shadow is not necessarily broken.** A spot
-> casts since #777 and a point since #778, but both are limited to four
-> maps each: past the budget a light keeps lighting the scene and stops
-> casting. "Casts nothing" and "the shadow broke" render identically, so
+> casts since #777 and a point since #778, but they are budgeted — four
+> spot maps, 32 point cubes: past the budget a light keeps lighting the
+> scene and stops casting. "Casts nothing" and "the shadow broke" render identically, so
 > the editor prints which one it is next to the selector — `shadow_note`
 > in `kooch_lighting`.
 
@@ -469,7 +469,7 @@ below the selector says which reason:
 
 | Note | What happened |
 |---|---|
-| `This light is inactive — tick active in the Inspector` | The light exists and is switched off, so it never reached the buffer |
+| `This light is inactive — tick active in the Inspector to see it` | The light exists and is switched off, so it never reached the buffer |
 | `Select a light in the World panel` | The selection is not a light |
 
 Those two produce the *same magenta*, and the first smoke of this view
@@ -514,10 +514,10 @@ spike"*. A spot uses `with_lod` (perspective), a cascade
 `with_orthographic_lod`; both apply `SHADOW_LOD_RELAXATION`, because a
 shadow is a silhouette and loses detail a lit surface keeps.
 
-🔴 **Slots are handed out inside `extract_lights`, in its walk order**, and
-`shadow_casting_spots` reads that same order back. Two walks that
-disagreed would light one spot through another's map — geometry from
-elsewhere in the room, which reads as a broken shadow pass rather than as
+🔴 **Slots are handed out inside `LightFrame::extract`, in its walk order**, and
+`LightFrame::spot_shadows` hands out that same list. It is one walk on purpose:
+two walks that disagreed would light one spot through another's map — geometry
+from elsewhere in the room, which reads as a broken shadow pass rather than as
 a crossed index.
 
 🔴 **No sun is not no shadows.** A scene lit by a torch and nothing else
@@ -542,7 +542,7 @@ is a subtraction the shader already does.
 |---|---|
 | A **separate texture** from the cascade array | Different size, and one texture cannot have two. Sharing would mean six 2048² faces per light — 96 MiB each against 6 MiB at the size a lamp actually needs |
 | `DEFAULT_CUBE_SIZE = 512` | 6 MiB per light at `Depth32Float`. Bevy's is 1024; ours is smaller because these render on a handheld and the shadow of a lamp is wanted soft, not detailed |
-| `MAX_POINT_SHADOWS = 4` | **Memory**, not the technique. The `max_texture_array_layers` ceiling of 256 would allow 42, and 42 × 6 MiB is a quarter of a gigabyte of depth |
+| `MAX_POINT_SHADOWS = 32` | **Memory**, not the technique: 32 × 6 MiB is 192 MiB of depth (raised from 4 by #849). The `max_texture_array_layers` ceiling of 256 would allow 42 |
 | **Six culls, shared across lights** | A light's six faces are what can overlap on the GPU. Lights then serialise, costing three barriers at the limit against eighteen more survivor arenas idle whenever nothing casts |
 | Casting lights ranked **by distance to the camera** | Past the limit a light keeps lighting and stops casting. Which one loses its shadow must not be decided by when it was spawned |
 
@@ -554,7 +554,7 @@ computes `depth = zw.x / zw.y`. Expanded with a standard perspective,
 with the **infinite reverse-Z** projection this engine migrated to
 (ADR 0002), `m22 = 0` and `m23 = near`:
 
-```
+```text
 depth = near / major_axis_magnitude
 ```
 
@@ -618,10 +618,10 @@ the `cast_shadows` checkbox on a point light before #778.
 `a_floor_that_receives_no_shadows_has_none` is what keeps it honest, and
 it was verified failing: the same 0.0791 with the flag and without it.
 
-⚠️ Bevy checks two flags before its fetch, one on the mesh and one on
-the light (`pbr_functions.wesl`). This is the mesh half. The light half
-is `cast_shadows` on `MeshRenderer`, which is **still read by nobody** —
-a mesh with it unticked casts anyway.
+Bevy checks two flags before its fetch, one on the mesh and one on
+the light (`pbr_functions.wesl`). This is the mesh half. The other half
+is `cast_shadows` on `MeshRenderer`: unticked, the instance carries
+`INSTANCE_CASTS_NO_SHADOW` and every shadow view leaves it out.
 
 #### What a cube costs, and when it costs nothing
 
@@ -630,7 +630,7 @@ Six faces is the most expensive shadow the engine draws, and
 rather than paid.
 
 **Culled against the camera's frustum, then limited — in that order.**
-Limiting first would spend all four cubes on the nearest lights even when
+Limiting first would spend every cube on the nearest lights even when
 they are behind the camera, and the one lamp whose shadow anybody can see
 would get nothing. The test is the sphere of the light's own `range`, not
 its centre: a lamp just off the edge of the screen still shadows pixels
@@ -824,7 +824,7 @@ zero. No pixel changes, which is what `tests/light_reach.rs` pins
 byte-for-byte.
 
 What it removes is the work in between, and that work is not small: at
-the default of 16 contact-shadow steps, the ~26 unreachable lights in a
+the 16 contact-shadow steps that were then the default, the ~26 unreachable lights in a
 busy cell were spending 416 depth taps per pixel to produce nothing.
 
 ⚠️ This is **not** a fix for the cell being loose. The cell is supposed
@@ -929,8 +929,8 @@ cargo run --example measure_shadow_pages --features lighting -- \
 ```
 
 The walk lives in `kooch_render::shadow::pages` and runs on the CPU on
-purpose. The marking pass it previews belongs on the GPU — that is
-#477 — but here it only counts, so it needs no device and can be a test.
+purpose. The marking pass it models runs on the GPU (#477, below); this
+walk only counts, so it needs no device and can be a test.
 It also becomes the **oracle** that pass is checked against, the position
 `ClusterGrid::z_slice` already holds against `cluster_z_slice` in WGSL.
 
@@ -1043,23 +1043,14 @@ The census is a model. `KOOCH_PAGE_MARKING=1` runs the thing it models:
 one compute dispatch over the depth buffer, in
 `kooch_render::shadow::pages::mark` and `page_mark.wgsl`.
 
-**Where the controls are.** *Performance → Debug → Mark shadow pages*,
-beside the froxel grid's own A/B: a checkbox, the sampling rate, and the
-readout — pages, MiB, samples, sample/light pairs, and what share of
-Unreal's 4096-page pool that is. The environment variables are only the
-**defaults**, for the comparison that gets made on a handheld over SSH
-against a build nobody wants to make twice:
+**Where the controls are.** The pass runs whenever the virtual pages do: the `virtual_shadows`
+project setting, or `KOOCH_PAGE_MARKING=1` to force it on top of whatever the project says, for a
+comparison on a handheld over SSH against a build nobody wants to make twice. What it found reads
+in *Performance → Shadow pages*: pages, MiB, and what share of Unreal's 4096-page pool that is.
 
 ```bash
-KOOCH_PAGE_MARKING=1 kooch_editor        # every pixel
-KOOCH_PAGE_MARKING=1 KOOCH_PAGE_MARKING_RATE=4 kooch_editor
+KOOCH_PAGE_MARKING=1 kooch_editor
 ```
-
-🔴 **In the Performance panel and not in `.rendersettings`, deliberately.**
-#477 is explicit that nothing on the shadow side should grow a *public*
-setting — one written into the project and therefore promised to every
-project — before the pool's shape is decided. This is a diagnostic the
-editor drives, so it lives where the editor's other diagnostics do.
 
 🔴 **The count is for EVERY light the grid holds**, not the handful with
 a shadow slot today — and that is the measurement rather than an
@@ -1091,14 +1082,15 @@ above. Marking from depth alone would walk every light per pixel, which
 is the loop the grid exists to remove. Epic states the first half and
 the Chalmers papers the second.
 
-⚠️ `KOOCH_PAGE_MARKING_RATE` is not free accuracy in either direction. A
-coarser rate is fewer threads **and** a wider pixel footprint, so the
-level chosen comes out coarser and the count lower. 1 is the honest
-reading and the expensive one.
+🔴 **One sample per pixel, always.** While the pass was only an instrument a
+coarser rate traded accuracy for threads; now it decides which pages
+**exist**, and one sample in sixteen is fifteen pixels whose shadow was
+never rasterised.
 
-### Seeing it — *Paint pages over the scene*
+### Seeing it — *Virtual shadow page tiles*
 
-The count says how many; the view says **where**. It colours every pixel
+The count says how many; the debug view says **where**. Pick *Virtual shadow
+page tiles* in the viewport's debug view selector and it colours every pixel
 by the shadow page it reads:
 
 - **Hue is the level** — where the frame spends detail. A band of colour
@@ -1111,10 +1103,6 @@ by the shadow page it reads:
 The **sun's** page wins where there is a sun. A pixel is lit by many
 lights, and painting the last one walked would make the view depend on
 the light list's order.
-
-🔴 Painting forces the sampling rate to 1. At any coarser rate the view
-is a grid of dots over an unpainted frame, which reads as a broken pass
-rather than as a coarse sample.
 
 🔴 **It paints the view's FINAL colour target, not the radiance one**,
 and that is two problems solved at once. The radiance target lives
@@ -1129,9 +1117,10 @@ then owns a block of output pixels rather than one, and it fills the
 whole block — writing a single pixel would leave a grid of dots over an
 unpainted frame.
 
-🔴 **It is an instrument, not a feature.** Nothing reads what it writes,
-and it is off unless asked for — a measurement that runs whether or not
-anyone wanted it is a cost nobody attributed. Its job is to disagree
+🔴 **The paint is an instrument, not a feature.** Nothing reads what it
+writes, and it is off unless the debug view asks for it — a measurement
+that runs whether or not anyone wanted it is a cost nobody attributed.
+The count's job is to disagree
 with the census: every arithmetic decision in the shader has a twin in
 `pages.rs`, and if the two counts diverge, one of them is wrong.
 
@@ -1204,7 +1193,7 @@ shrank the space by a factor of ~58 and made flat affordable:
   chain is addressed from `local_level_floor` up, so its stride is
   **2 046 pages instead of 131 070**, and the sun's clipmap sits at the
   tail of the view's span. 101 lights and a sun now address ~485 000
-  pages — a few MiB of table at `PAGE_CELL` words per entry.
+  pages — a few MiB of table at `PAGE_READ` + `PAGE_WORK` words per entry.
 
 This is Epic's own shape: UE5 stays flat by never handing a distant
 light a full virtual space (`VSM_MAX_SINGLE_PAGE_SHADOW_MAPS` is 8192
@@ -1227,6 +1216,13 @@ maps of *one* entry each).
   its containment level and typically resolves on the first; a lamp's
   starts at the floor and has at most five levels to try, each a
   single indexed load where the hash paid a probe run.
+
+- **The table is two buffers** (#1579), split by which pass touches a
+  word: `PAGE_READ` (slot, content stamp, level jump) for the shading,
+  `PAGE_WORK` (frame asked, listing, frame born) for the page passes.
+  One cell of six words made the widest binding six words per page, and
+  the binding limit is what capped the shadowed light count; split, the
+  widest is three and twice the lights fit.
 
 `page_table.wgsl` holds the id arithmetic and the atlas layout, and is
 concatenated into every pass that touches the table, so the writer and
@@ -1253,7 +1249,7 @@ viewport and none in the other.
 
 So a page id carries the camera above everything else:
 
-```
+```text
 page = view * view_span + light * stride + <chain offset>
 ```
 
@@ -1360,19 +1356,19 @@ bare texel count, so an author whose cascades already sat at the floor
 still swaps on toggle; the resize-release door that already existed
 does the swap in both directions.
 
-### The coverage gate — a shadow nobody can resolve claims nothing (#944)
+### The distant tier — a shadow nobody can resolve gets one page (#944, #1009)
 
 Before the bias has to price anything, the demand is shrunk at the
 source: a local light whose **whole range** projects under
-`shadow_min_pixels` of radius on screen (8 by default, 0 turns it off)
-marks no pages at all. It still shades — the readers walk its chain,
-find nothing resident and return lit — and it gets its shadow back the
-frame the camera comes close enough to flip the comparison. The gate
-errs toward casting: it measures the range sphere, not the lit part of
-it, and the sun is never gated because it has no radius. Epic runs the
-same rule as a pass (`PruneLightGridCS`) before anything marks; here it
-is one comparison inside a loop that already holds every operand. The
-panel counts what it turns away on the census line.
+`shadow_min_pixels` of radius on screen (8 by default, 0 leaves only the
+derived test) becomes **distant** — it casts from ONE page per cube face
+instead of a six-face mip chain. It keeps a shadow, coarse, and gets the
+chain back the frame the camera comes close enough to flip the
+comparison. The test errs toward the chain: it measures the range
+sphere, not the lit part of it, and the sun is never demoted because it
+has no radius. Epic prunes the same way (`PruneLightGridCS`) before
+anything marks; here it is one comparison inside a loop that already
+holds every operand. The panel counts the pairs the distant tier serves.
 
 ## Rasterising into the pages — the depth raster (#866)
 
@@ -1416,7 +1412,7 @@ reuses the first one's survivors):
 
 One survivor list serves all six faces and every chain level of a lamp
 because a perspective error metric already scales with distance. The cap
-is `LAMP_CULLS = 64`; its honest ceiling is the group-error arena,
+is `LAMP_CULLS = 256`; its honest ceiling is the group-error arena,
 `LAMP_CULLS × group_capacity × 4 B`. Slots are buffer order — ranking
 casting lights (the classic path's `assign_point_slots`) is #939's named
 follow-up.
@@ -1430,28 +1426,20 @@ is a box width in shadow texels. `1` is comparison-bilinear, bit for
 bit the cube path's hardware look; wider widths are the Castano-class
 box with `frac`-clipped 1D edge weights, positioned with sub-texel
 precision, costing `(width + 1)²` loads **per light per pixel** — which
-is why sharp is the default and the widest choice is labelled with its
-bill. No blocker search: the penumbra is uniform, not
+is why the default stops at 3 (16 taps) and the widest choice is
+labelled with its bill. No blocker search: the penumbra is uniform, not
 contact-hardening.
 
-### The receiver bound — casters behind everything draw nothing (#940)
+### The receiver bound — removed (#940)
 
-Olsson §4's PMCD variant, at page granularity instead of the paper's
-per-face bound. Every sample that marks a lamp's page is a *receiver*,
-and the marking `atomicMax`es its radial distance from the light into
-the page's fifth table word (positive floats bitcast to ordered u32s —
-that is what lets an atomic hold a distance). The compaction carries
-the bound into the widened `page_list` — the expansion sits at the
-eight-storage-buffer limit and cannot bind the table — and the lamp
-expansion adds one rejection: a caster whose **nearest** point lies
-beyond the page's furthest receiver occludes nothing the frame shades.
-
-The bound is radial rather than per-face depth, so it errs toward
-keeping; zero means "no receiver recorded" and rejects nothing, which
-is what keeps planted rigs and the sun's slab test untouched. `age_view`
-zeroes it each frame — receivers are a frame's question. The panel's
-pair-tests line counts what it turns away, which is the number that
-says whether the fifth word earns its memory.
+Olsson §4's PMCD variant rejected a lamp caster whose nearest point lay
+beyond a page's furthest recorded receiver. It is gone, and so is the
+sun's twin. The record only covered the receivers that marked **that**
+level, while the reader climbs to coarser ones — so a receiver that
+climbed met a bound written by others and lost the caster it needed,
+and the page shaded lit. It saved 7 % of the sun's pairs; making it
+correct meant seventeen atomics per sample instead of one. Its table
+word now holds the reader's level jump (`PAGE_LOD`).
 
 ### Cached pages are effectively free (#477/#866)
 
@@ -1472,7 +1460,7 @@ Three things turn a generation over, and nothing else redraws a page:
 
 A moved-caster list past its buffer, or a pair-list overflow observed
 by the panel's readback, bumps a scene generation folded into every
-hash: everything redraws once, which is coarse and never stale. The
+stamp: everything redraws once, which is coarse and never stale. The
 panel prints `rastered · cached ·` side by side — UE5's rule of thumb
 is dirty under 5% of residents in a typical frame.
 
@@ -1507,37 +1495,14 @@ The pair carries the cull's own packed `(instance << 16 | meshlet)`, so
 it is self-describing — the draw never learns which level produced it,
 which is what lets every level share one indirect draw.
 
-### 🔴 The sun only, and the seam is not arbitrary
-
-A cull is **per view**, and a view is where the LOD is chosen. The sun's
-clipmap is **17** views. A hundred local lights with six faces and an
-eight-level chain each are **4848**, and the LOD selector is a two-pass
-reduction over the meshlet DAG that cannot simply be inlined per page.
-
-Local pages are marked and allocated today, counted as `local` in the
-panel, and not drawn. Drawing them needs the cull itself moved onto the
-GPU as one multi-view dispatch. That is the next machine, not a bigger
-version of this one — and reporting the count is what keeps a pool that
-looks full from being read as a pool that is full for the reason someone
-assumed.
-
 ### What it costs
 
 The pool defaults to **2048 pages = 128 MiB**, half of Epic's 4096, and
 the comparison that decided it is this engine's own: **152 MiB of fixed
 shadow allocations stand today for four casting lights.** The pool is
 less than that, adapts to the frame, and caps by memory rather than by a
-count of slots. `KOOCH_SHADOW_POOL_PAGES` raises it.
-
-⚠️ **Nothing is cached across frames.** The table is emptied every frame,
-so a static shadow is re-rasterised every frame — and caching is the
-optimisation virtual shadow maps exist for. Epic measures a cached local
-shadow map at 0.05 ms against 0.4–0.8 ms invalidated. It needs an
-eviction policy and an invalidation rule, and neither can be designed
-before anything renders.
-
-⚠️ **Nothing samples the atlas yet.** That is #477, and it is what turns
-this into shadows on screen.
+count of slots. `shadow_pool_pages` sets it per project;
+`KOOCH_SHADOW_POOL_PAGES` overrides it from the environment.
 
 ## Sampling a page — where the shadow finally appears (#477)
 
@@ -1624,10 +1589,22 @@ which is never in doubt.
 
 | Setting | What it decides |
 |---|---|
-| `virtual_shadows` | pages instead of cascades. **Off by default** — every scene in the project was authored against the cascades |
-| `shadow_density` | texels per screen pixel; the page count falls with its square |
-| `shadow_pool_pages` | the memory budget, 1024–6144 pages |
-| `virtual_shadow_debug` | paints the page each pixel reads |
+| `virtual_shadows` | pages instead of cascades. **On by default** |
+| `shadow_density` | texels per screen pixel, as a percentage (50 by default); the page count falls with its square |
+| `shadow_pool_pages` | the memory budget: 1024, 2048 (default), 4096 or 6144 pages, 64 KiB each |
+| `shadow_softness` | the page filter's box width in texels (3 by default); see *The page filter is a configurable box* |
+| `shadow_min_pixels` | the distant tier's threshold, in screen pixels (8 by default) |
+| `shadow_normal_bias` | the lookup's step along the normal, in clipmap texels (4.0) |
+| `shadow_depth_bias` | the lookup's step towards the light, in metres (0.2) |
+| `shadow_bias_max` | a ceiling on the normal step, in metres (0.5; 0 disables it) |
+| `shadow_bias_slope` | a ceiling on the receiver's depth gradient (0 = off) |
+| `shadow_page_march` | march the atlas instead of one PCF lookup (off) |
+| `shadow_page_geometry` | expand from the geometry, one thread per surviving meshlet, instead of pages × survivors (on, #1022) |
+| `shadow_page_halo` | how far, in pages, a receiver dilates its request — Epic's `PageDilationOffset` (0 = off) |
+| `shadow_light_reach` | how far a local light casts pages from, in multiples of its own range (2); it still shades past it |
+
+The page each pixel marked and how old the page it reads is are debug views, not settings:
+`VirtualPageTiles` and `VirtualPageAge`.
 
 🔴 **The marking rate is gone.** While marking was an instrument, a
 coarser rate traded accuracy for threads. It decides which pages *exist*
@@ -1689,9 +1666,10 @@ scattered point lights have none to sell.
   back asynchronously. A frame that overflows renders its later cells
   under-lit rather than reading past the end of the buffer, and the next
   frame has the bigger buffer.
-- **Four spot maps and four point cubes**, both memory limits rather than
-  limits of the technique. Past them a light keeps lighting and stops
-  casting, ranked by distance to the camera.
+- **Four spot maps and 32 point cubes** on the classic path, both memory
+  limits rather than limits of the technique. Past them a light keeps
+  lighting and stops casting, ranked by distance to the camera. The
+  virtual pages replace both caps with the pool's budget.
 - **No environment map**, no IBL, no area lights, no volumetrics, no
   bloom. The crate's original doc comment promised the last three. It now
   promises what it has.

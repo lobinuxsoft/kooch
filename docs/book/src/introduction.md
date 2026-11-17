@@ -31,36 +31,37 @@ APIs break freely.
 
 What works today:
 
-- An 18-crate Rust workspace plus a facade, edition 2024.
+- A 26-crate Rust workspace plus a facade, edition 2024 — see
+  [Crate Graph](./architecture/crate-graph.md).
 - GPU-driven meshlet rendering with a LOD chain, plus glTF mesh loading. A frame is a list of
   views, so the editor's viewport and the game's camera render from one stage.
-- **Cook-Torrance lighting** driven by the light components — see
-  [Lighting](./architecture/lighting.md). New as of #441; before it, the renderer painted the
-  world-space normal as colour and a scene with lights looked exactly like one without.
+- **Cook-Torrance lighting** driven by the light components, with clustered lights and
+  shadows — virtual shadow pages by default, cascades, spot maps and point cubes behind them.
+  See [Lighting](./architecture/lighting.md).
 - Rigid-body physics on rapier3d: colliders, joints, collision events, sensors, materials,
-  and custom gravity fields that sum.
-- Procedural skies authored in the Shader Graph, a starfield by default.
+  custom gravity fields that sum, and a floating character controller.
+- Procedural skies and materials authored in the Shader Graph.
+- In-game UI from `.kxml` / `.kcss` files, with video backgrounds — see [UI](./guide/ui.md).
 - Scene serialisation (`.scene`, RON) driven by reflection, with more than one scene
   loadable at once.
 - Input as data: an action is an asset, with composites and processors, editable in a panel.
 - An editor: viewport, hierarchy, Inspector, Console, asset browser, drag-and-drop, dockable
-  layout, undo/redo, project Hub, a Game panel beside the View panel, and Play/Stop that
-  snapshots and restores the authored world. Hovering a field shows its doc comment, units
-  included.
-- A project's own components and systems, written in Rust, loaded into the editor as a
-  `dylib`.
+  layout, undo/redo, project Hub, a Game panel beside the View panel, block modelling, and
+  Play/Stop that snapshots and restores the authored world. Hovering a field shows its doc
+  comment, units included.
+- A project's own components and systems, written in Rust: **Rebuild & Run** compiles them and
+  reloads them into the editor, keeping the open scenes.
+- Builds from the editor: presets per platform, an encrypted asset pack, a profiling mode —
+  see [Shipping a Game](./guide/shipping.md).
 
 What does not work yet, stated plainly:
 
-- **No hot reload.** Seeing a code change means rebuilding and reopening the editor
-  ([#648](https://github.com/lobinuxsoft/kooch/issues/648)).
-- **No build button.** `cargo build` is yours to run
+- **Compile errors are not shown as a list.** A failing build is read in the Console
   ([#158](https://github.com/lobinuxsoft/kooch/issues/158)).
-- **Reflection is shallow.** No `Vec<T>`, no `HashMap`, no user enums in components
-  ([#649](https://github.com/lobinuxsoft/kooch/issues/649)).
-- **No shadows.** Lit with no shadows is where the renderer is: better than a normal painted
-  as colour, and it cannot tell you where anything is touching
-  ([#476](https://github.com/lobinuxsoft/kooch/issues/476)).
+- **Reflection is partial.** Nested structs and `Vec<T>` work; maps and enums carrying data
+  do not ([#649](https://github.com/lobinuxsoft/kooch/issues/649)).
+- **No authorable audio.** `kooch_audio` plays sound, but there is no `AudioSource`
+  component yet ([#1645](https://github.com/lobinuxsoft/kooch/issues/1645)).
 - **No global illumination**, which is why punctual light defaults are larger than physics
   says they should be ([#450](https://github.com/lobinuxsoft/kooch/issues/450)). The
   [Lighting](./architecture/lighting.md) page explains the trade rather than hiding it.
@@ -69,16 +70,17 @@ What does not work yet, stated plainly:
 
 | Layer | Crate / Library |
 |---|---|
-| GPU | `wgpu 29` (Vulkan / DX12 / Metal) |
+| GPU | `wgpu 30` (Vulkan / DX12 / Metal) |
 | Windowing | `winit 0.30` |
 | Math | `glam 0.33` |
-| Physics | `rapier3d 0.34` |
-| Audio | `kira 0.9` |
+| Physics | `rapier3d 0.36` |
+| Audio | `kira 0.12` |
 | Input | `gilrs 0.11` (gamepad), winit (keyboard/mouse) |
+| UI layout | `taffy 0.15`, `vello 0.11` for vector shapes |
 | Gameplay code | Plain Rust — native plugin via `kooch_plugin_api` |
-| Editor UI | `egui 0.35` + `egui_dock 0.20` |
+| Editor UI | `egui 0.36` + `egui_dock 0.21` |
 | Mesh | `gltf 1.4` |
-| Serialisation | `serde 1` + `ron 0.8` |
+| Serialisation | `serde 1` + `ron 0.11` |
 
 ## License
 

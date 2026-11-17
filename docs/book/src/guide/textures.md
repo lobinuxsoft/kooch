@@ -131,7 +131,7 @@ of one coarse one. On a grazing floor with a tiled checker, 16× kept
 > ⚠️ It costs bandwidth, not arithmetic: more fetches on exactly the
 > surfaces that already cover the most pixels. On a handheld measured as
 > bandwidth-bound that is the expensive kind, which is why the default is
-> off and the number is chosen by looking at a floor *and* at a capture.
+> 2× and anything higher is chosen by looking at a floor *and* at a capture.
 
 ## The prototype textures
 

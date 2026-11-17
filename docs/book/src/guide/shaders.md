@@ -60,6 +60,7 @@ The `// kind:` line picks what the file defines. With no line, it is a `surface`
 | `post_process` | `fn post_process(input: SurfaceInput) -> vec4<f32>` | One full-screen draw over the finished frame; reads it with `sample_scene(uv)` |
 | `sky` | `fn sky(input: SurfaceInput) -> vec4<f32>` | The backdrop behind everything, drawn by a `SkyRenderer`: see [Sky](#sky) |
 | `transparent` | `fn surface(input: SurfaceInput) -> SurfaceOutput`, setting `alpha` | Lit like a `surface`, then blended over the opaque scene, far to near |
+| `transparent_unlit` | `fn unlit(input: SurfaceInput) -> UnlitOutput` | Blended like `transparent`, with no light on it: see [below](#transparent-with-no-light-on-it) |
 
 ```wgsl
 // kind: unlit
@@ -527,7 +528,7 @@ The menu groups the nodes the way the panels do:
   - **Radial Shear** and **Spherize** shear into a spiral or bulge like a lens (*strength* 10).
   - **offset** moves the result.
 - **Shapes** read the uv square with its middle at `0.5`, and answer with a mask in every component.
-- A few nodes lean on a small WGSL function (`graph_noise`, `graph_rotate`, …). It is written into the
+- A few nodes lean on a small WGSL function (`graph_gradient_noise`, `graph_rotate`, …). It is written into the
   file **only when a node asks for it**, so a generated shader carries nothing it does not use.
 
 An unconnected output keeps a usable default: the geometric normal, roughness `0.5`, and zero for the

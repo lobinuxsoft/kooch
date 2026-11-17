@@ -51,6 +51,8 @@ should be inside a planet, but something that clips in or spawns in must not flo
 ### Authoring a planet
 
 ```rust
+# use kooch::prelude::*;
+# fn spawn(commands: &mut Commands, mut resources: Resources) {
 commands.spawn(&mut resources)
     .insert(Transform::from_position(Vec3::ZERO))
     .insert(PointGravity {
@@ -63,6 +65,7 @@ commands.spawn(&mut resources)
         // How far past `radius` it fades to nothing, so leaving is not a line.
         falloff: 10.0,
     });
+# }
 ```
 
 `radius` is the **reach of the field**, not a body: a point source has no inside. That is the one
@@ -92,7 +95,7 @@ what it says.
 
 If you want the source to sit on the same entity as a scaled mesh, it can:
 the scale is simply ignored. Keeping them apart is still tidier, and it is
-what the `gravity_tour` scene does.
+what the `gravity_tour` scene of the roll-a-ball test project does.
 
 ## Sizing a planet
 
@@ -101,7 +104,7 @@ acceleration its own speed demands. Past that it does **not** fall off — it
 *orbits*, circling without touching. With `r` the body's centre — the
 planet's surface plus the body's own radius — and `g` the `strength`:
 
-```
+```text
 stays on the ground   v ≤ √(g · r)
 leaves for good       v ≥ √( g · (2·(radius − r) + falloff) )
 ```
@@ -125,7 +128,7 @@ makes it one.
 Raising `strength` to hold a faster body costs jump height, because both
 come from the same `g`:
 
-```
+```text
 h = (J/m)² / (2·g)
 ```
 
@@ -177,10 +180,13 @@ authored.
 Add a `GravityPriority` to the room:
 
 ```rust
+# use kooch::prelude::*;
+# fn spawn(commands: &mut Commands, mut resources: Resources, room_centre: Vec3) {
 commands.spawn(&mut resources)
     .insert(Transform::from_position(room_centre))
     .insert(AreaGravity { direction: Vec3::X, ..Default::default() })
     .insert(GravityPriority { level: 1 });
+# }
 ```
 
 A higher level suppresses every lower one **in proportion to how strongly it
@@ -210,6 +216,8 @@ level overrules the ones below it only where it reaches.
 ## Asking which way is down
 
 ```rust
+# use kooch::prelude::*;
+# fn ask(resources: &Resources, position: Vec3) {
 // The summed field. What the solver applies.
 let pull = gravity_at(&resources, position);
 
@@ -218,6 +226,7 @@ let up = gravity_up(&resources, position);
 
 // Up according to the strongest single source, ignoring the rest.
 let up = gravity_dominant(&resources, position);
+# }
 ```
 
 `gravity_up` is the default and the one the camera's `UP_GRAVITY` mode uses.

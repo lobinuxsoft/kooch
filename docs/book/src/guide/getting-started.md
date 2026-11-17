@@ -30,7 +30,7 @@ The editor materialises the engine once per version in
 and every project's `Cargo.toml` points at it:
 
 ```toml
-kooch = { path = "/home/you/.local/share/kooch/0.1.0/engine" }
+kooch = { path = "/home/you/.local/share/kooch/0.98.196/engine" }
 ```
 
 **Nothing is copied into the project.** Two projects on the same engine
@@ -55,7 +55,7 @@ Every materialised engine records which source tree it came from, in a
 file. An editor compares its own source against that stamp, and **says
 so rather than acting on it**:
 
-> Engine 0.1.0 — same version, different source than this editor ships
+> Engine 0.98.196 — same version, different source than this editor ships
 > `[ Install ]  [ Keep ]`
 
 **Install** replaces the directory, leaving one copy behind, never two.
@@ -97,8 +97,9 @@ against weeks-old source with nothing said.
 
 **The version moves on every pull request now**, automatically:
 `.github/workflows/version.yml` bumps `[workspace.package]` in the PR's
-own branch — major for a `!` or a `BREAKING CHANGE:`, minor for `feat:`,
-patch for everything else. A number that sits still is what made all
+own branch, read off the PR **title** — `feat:` a minor, everything else a
+patch, a `!` a major. Before 1.0 each shifts down one, the way Cargo reads
+a 0.x version, and 1.0 itself is set by hand. A number that sits still is what made all
 three mechanisms that depend on it — this directory's name, the
 `BuildStamp` a project compares itself against, and the pipeline cache —
 blind at once. Label a PR `no-version-bump` to opt out.
@@ -149,7 +150,7 @@ licence, not by hiding it.**
 
 `LICENSE.md` is vendored with the engine, and the facade compiles it in:
 
-```rust
+```rust,ignore
 pub const LICENSE: &str = include_str!("../LICENSE.md");
 ```
 
@@ -201,12 +202,14 @@ The boot scene is resolved in this order:
 
 1. `SceneBootstrapPlugin::with_scene(path)`, if your `main.rs` sets one explicitly.
 2. `--scene <path>` on the command line — absolute, or relative to the working directory.
-3. `scenes/default.scene` **beside the executable**.
-4. The same, relative to the working directory.
+3. The `main_scene` of the `project.kooch` **beside the executable** — set it with *Set as Main
+   Scene* in the Asset Browser.
+4. `assets/scenes/default.scene` beside the executable.
+5. The same two, relative to the working directory.
 
-So `cargo run` from the project root just works: the default path resolves because
-the working directory is the project. A different level is
-`cargo run -- --scene scenes/Level1.scene`.
+So `cargo run` from the project root just works: the manifest and the default path resolve
+because the working directory is the project. A different level is
+`cargo run -- --scene assets/scenes/Level1.scene`.
 
 ### 🔴 Why the executable comes first
 
@@ -215,21 +218,12 @@ wherever the desktop felt like — your home, or `/`. Resolved against the cwd a
 released game starts with **an empty scene and no error**: the file was not missing from the
 package, it was never looked for in the package.
 
-So a packaged game keeps its content beside the binary:
-
-```text
-dist/
-  mygame              the executable
-  scenes/             default.scene, and the rest
-  assets/             everything the scenes reference, by GUID (.meta included)
-```
+So a packaged game keeps `project.kooch` and its assets beside the binary — what the Build
+panel produces, described in [Shipping a Game](./shipping.md). A missing scene is logged as a
+packaging problem, naming the path it looked for.
 
 The cwd stays as the fallback because that is what a plain `cargo run` inside a project
-relies on — there the executable lives in `target/debug/` and has no `scenes/` beside it.
-
-⚠️ **The `.meta` sidecars are not optional.** A scene references its assets by GUID, and the
-GUID lives in the `.meta` next to each file. A copy that filters by extension and leaves them
-behind produces a game that loads its scene and renders nothing.
+relies on — there the executable lives in `target/debug/` and has nothing beside it.
 
 ## Component registration runs before the scene loads
 
@@ -258,12 +252,21 @@ cargo run
 
 `DefaultPlugins` is the group that makes this a game rather than a collection of crates:
 
-| Plugin | Role |
-|---|---|
-| `CorePlugin` | `Time`, the `AppExit` event |
-| `EcsPlugin` | Storage, `SceneManager`, built-in components, transform propagation |
-| `WindowPlugin` | Winit window and GPU surface |
-| `RenderPlugin` | The mesh and sky pipelines |
-| `SceneBootstrapPlugin` | Loads the boot scene at startup |
+| Plugin | Role | Feature |
+|---|---|---|
+| `CorePlugin` | `Time`, the `AppExit` event | always |
+| `EcsPlugin` | Storage, `SceneManager`, built-in components, transform propagation | always |
+| `ProfilingPlugin` | Streams frames to the editor's Profiler | `profiling` |
+| `WindowPlugin` | Winit window and GPU surface | `window` |
+| `InputPlugin` | Actions, devices | `input` |
+| `AssetPlugin`, `RenderPlugin` | Assets, the meshlet pipeline, sky, UI and video draw | `render` |
+| `WorldStreamingPlugin` | Chunk streaming and activation | `world` |
+| `PhysicsPlugin`, `ColliderMeshPlugin` | Rapier, and colliders built from mesh assets | `physics` |
+| `BlockPlugin` | Editor-authored blocks | `blockmesh` |
+| `UiPlugin` | `.kxml` documents | `ui` |
+| `GravityPlugin` | Gravity fields | `gravity` |
+| `CharacterPlugin` | The floating character controller | `character` |
+| `CameraPlugin` | `VirtualCamera` rigs | `camera` |
+| `SceneBootstrapPlugin` | Loads the boot scene at startup | always |
 
 Your project's own `main.rs` is what runs, so any plugin you add there is picked up.

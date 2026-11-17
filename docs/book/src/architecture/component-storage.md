@@ -7,7 +7,7 @@ saw coming.
 
 ## The shape
 
-```
+```text
 Entity ──▶ Archetype { entities: [Entity], rows: [Option<TableRow>], table: TableId }
                               ▲                      ▲
                               └── parallel lists ────┘
@@ -30,8 +30,13 @@ Two archetypes with the same component set share one table. A table is a propert
 Every site in the engine writes a component value and *then* changes the entity's archetype:
 
 ```rust
+# use kooch::prelude::*;
+# use kooch::kooch_ecs::move_entity;
+# use std::any::TypeId;
+# fn reparent(resources: &mut Resources, registry: &mut ComponentRegistry, child: Entity, parent: Entity) {
 registry.get_cpu_mut::<Parent>().unwrap().insert(child, Parent { entity: parent });
 move_entity::gained(resources, child, TypeId::of::<Parent>());
+# }
 ```
 
 Between those two lines the entity's table has no column for `Parent`, so the value lands in the
@@ -70,9 +75,9 @@ Nothing errors; a query and `get_cpu` simply answer differently about the same e
   not need one. Bevy's own maintainers [proposed removing
   theirs](https://github.com/bevyengine/bevy/discussions/19164) for exactly those reasons. An
   `Option<T>` in a table column covers the churning-component case without any of it.
-- **Change detection.** Bevy's columns carry added and changed ticks. This engine has none, and
-  porting the column shape without them is simpler and correct. Revisions are per component type,
-  on the registry slot, which is what the editor's frame cache needs (#1561).
+- **Added ticks.** Bevy's columns carry an added and a changed tick per row. This engine keeps only
+  the changed one (#1870, below); per-type revisions on the registry slot still serve the editor's
+  frame cache (#1561).
 - **Chunked tables.** Unity splits an archetype into 16–64 KiB chunks, which matters for handing
   slices to parallel jobs. Whole-table columns iterate just as densely; the chunk is for the
   scheduler we do not have yet.
@@ -84,12 +89,17 @@ Every write stamps the value's row with a tick from a process-wide clock: `get_m
 `SystemTick` resource, so a system asks for what changed since it last ran:
 
 ```rust
+# use kooch::prelude::*;
+# use kooch::kooch_core;
+# fn changed(resources: &Resources, registry: &ComponentRegistry) -> Option<()> {
 let since = resources
     .get::<kooch_core::change_tick::SystemTick>()
     .map_or(0, |tick| tick.last_run);
 for (entity, body) in registry.get_cpu::<PhysicsBody>()?.iter_changed(since) {
     // only bodies written since this system's last run
 }
+# Some(())
+# }
 ```
 
 `iter_mut` hands out a `Mut<T>`: reading through it is free, writing through it stamps the row, and

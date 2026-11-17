@@ -59,6 +59,12 @@ use kooch::kooch_ecs::transform::Transform;
 use kooch::prelude::*;
 
 use crate::spinner::Spinner;
+# mod spinner {
+#     use kooch::prelude::*;
+#     #[derive(Default, Reflect)]
+#     pub struct Spinner { pub speed: f32 }
+#     impl Component for Spinner {}
+# }
 
 /// Rotates every entity that has a `Spinner`.
 pub fn spin(resources: &mut Resources) {
@@ -72,6 +78,7 @@ pub fn spin(resources: &mut Resources) {
         transform.rotation *= Quat::from_rotation_y(spinner.speed.to_radians() * dt);
     });
 }
+# fn main() {}
 ```
 
 The query matches only entities that have **both** components, so a `Spinner` on an entity
@@ -81,24 +88,16 @@ with no `Transform` is simply skipped rather than being an error.
 
 Registration already happened. The editor polls `src/`, found `impl Component for Spinner` and
 `pub fn spin(_: &mut Resources)`, and rewrote `registrations.rs` with both — within a second of
-you saving, from whichever editor you saved in. The toolbar's Resync button forces it, and
-pulses when the generated file has moved ahead of your last build.
+you saving, from whichever editor you saved in.
 
-Then build. Today that means a terminal:
-
-```bash
-cargo build
-```
-
-and **reopening the editor**, because the project's library is loaded once when the project
-opens. A build button and a live reload are
-[#158](https://github.com/lobinuxsoft/kooch/issues/158) and
-[#648](https://github.com/lobinuxsoft/kooch/issues/648); until they land, this step is
-manual and it is the slow part of the loop.
+Then press **Rebuild & Run** in the toolbar. It compiles the project, reloads its library into
+the editor, and relaunches the game process — and the open scenes are carried across, unsaved
+edits included, so nothing needs reopening. The button pulses whenever `src/` has moved ahead of
+the last build. Compiling is still the slow part of the loop: Rust is built ahead of time.
 
 ## 5. Use it
 
-With the project reopened:
+With the rebuild done:
 
 1. Select an entity in **World** (or spawn one).
 2. **Add Component** → *Gameplay* → `Spinner`.
@@ -120,9 +119,9 @@ before it starts and restores on stop, so testing never costs you your scene.
 
 | Symptom | Cause |
 |---|---|
-| The component is not in the Add Component menu | The project has not been rebuilt and reopened since it was written — registering is not compiling |
+| The component is not in the Add Component menu | The project has not been rebuilt since it was written — registering is not compiling. Press **Rebuild & Run** |
 | A field is not in the Inspector | It is private, has `#[reflect(skip)]`, or is a type reflection does not support yet ([#649](https://github.com/lobinuxsoft/kooch/issues/649)) |
-| The derive does not compile | A field's type is not supported — `Vec<T>`, `HashMap`, your own enums. Mark it `#[reflect(skip)]` |
+| The derive does not compile | A field's type is not supported — nested structs and `Vec<T>` are; `HashMap` and enums carrying data are not yet. Mark it `#[reflect(skip)]` |
 | The system never runs | It is in `Update` behind the `Playing` gate; press Play. Or its signature does not match `pub fn f(_: &mut Resources)` exactly — on one line — so the scanner missed it |
 | The system runs in the wrong stage | Say which with `#[system(PreUpdate)]`; without it, every system lands in `Update`. See [Writing a System](./systems.md) |
 | A child object or shadow lags one frame behind | The system writes a `Transform` in `PostUpdate` or later, after the engine already resolved `GlobalTransform`. Move it to `Update` |

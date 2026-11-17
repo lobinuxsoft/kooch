@@ -531,3 +531,6 @@ mod goal_tests;
 
 #[cfg(all(test, feature = "camera"))]
 mod prelude_camera_tests;
+
+#[cfg(doctest)]
+mod book_tests;

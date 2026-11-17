@@ -28,7 +28,7 @@ and rewrites them within a second of a save.
 
 ⚠️ Regenerating is not rebuilding. The Inspector lists what your project's **last build**
 contained, so a component added a moment ago is in `registrations.rs` and in no binary yet.
-The toolbar's Resync button pulses while the two disagree.
+The toolbar's **Rebuild & Run** pulses while the two disagree.
 
 **Public fields show up in the Inspector automatically.** No attribute is required to opt in;
 attributes exist to opt *out*, or to say something the type alone cannot.
@@ -51,6 +51,8 @@ Each field's Rust type maps to a `FieldKind`, and the kind decides the widget:
 | `Option<EntityRef>` | Entity picker, and a drop target for a drag from the World panel |
 | `Entity`, `Option<Entity>` | Same widget, but see "Pointing at another entity" below |
 | `Vec<T>`, where `T` derives `Reflect` and `Default` | A list of rows, one widget per field of `T`, with add, remove and move up / down |
+| `Vec<T>` of plain values — numbers, vectors, strings | A list of values (#1452) |
+| A struct that derives `Reflect` | Its own fields, nested under the field's name (#1452) |
 
 > **The maths types come from the prelude.** `Vec3`, `Quat` and `Mat4` are `glam` types, and
 > `kooch::prelude` re-exports them so a project never declares its own `glam` dependency —
@@ -62,20 +64,25 @@ Each field's Rust type maps to a `FieldKind`, and the kind decides the widget:
 > whoever is authoring the scene — there is no second place to write it and no second place
 > for it to go stale.
 
-Anything outside that list — a lone nested struct, `Vec<f32>`, `HashMap<K, V>`, your own enums —
-is **not supported yet**. Recursive reflection for nested types and collections is
+Anything outside that list — `HashMap<K, V>`, enums carrying data, arrays — is **not supported
+yet**; what is left of recursive reflection is
 [#649](https://github.com/lobinuxsoft/kooch/issues/649). Until it lands, a field of an
-unsupported type needs `#[reflect(skip)]` or the derive will not compile.
+unsupported type needs `#[reflect(skip)]` or the derive will not compile. A field-less enum is a
+`u32` with `#[reflect(choices = …)]`, below.
 
 ## Attributes
 
 ### On the struct
 
 ```rust
+# use kooch::prelude::*;
 #[derive(Default, Reflect)]
 #[reflect(category = "Gameplay")]      // groups it in the Add Component menu
 #[reflect(inspector = "read_only")]    // "hidden" | "read_only" | "editable" (default)
-pub struct Health { … }
+pub struct Health {
+    // ...
+#   pub current: f32,
+}
 ```
 
 A component with **no category sits loose** at the top of the Add Component menu, above the groups.
@@ -97,6 +104,10 @@ menu does not offer it.
 A `Vec` field reflects two ways, and the element type decides which:
 
 ```rust
+# use kooch::prelude::*;
+# #[derive(Default, Reflect)]
+# pub struct Knot { pub position: Vec3 }
+# #[derive(Default, Reflect)]
 pub struct Blockout {
     /// A list of reflected structs: each item has its own fields, and the Inspector edits them.
     pub knots: Vec<Knot>,
@@ -113,6 +124,13 @@ while it still serialises and still travels over the wire.
 ### On a field
 
 ```rust
+# use kooch::prelude::*;
+# use kooch_ecs::reflect::{EntityRef, FieldChoice, FieldCondition};
+# #[derive(Default, Reflect)]
+# pub struct Wave { #[reflect(asset = "Mesh")] pub mesh: Option<Guid>, pub count: u32 }
+# static FIRE_MODE_CHOICES: &[FieldChoice] = &[FieldChoice { label: "Single", value: 0 }];
+# static DAMAGE_TYPE_BITS: &[FieldChoice] = &[FieldChoice { label: "Fire", value: 1 }];
+# static BURST_ONLY: FieldCondition = FieldCondition { field: "fire_mode", values: &[1] };
 #[derive(Default, Reflect)]
 pub struct Weapon {
     /// Not shown, not serialised. Use for runtime caches and for types
@@ -169,6 +187,7 @@ is indistinguishable from a broken one.
 Use `Option<EntityRef>`.
 
 ```rust
+# use kooch::prelude::*;
 use kooch_ecs::reflect::EntityRef;
 
 #[derive(Default, Reflect)]
@@ -202,11 +221,18 @@ You do not write it. The editor scans `src/`, finds `impl Component for Health`,
 regenerates `registrations.rs` with both halves:
 
 ```rust
+# use kooch::prelude::*;
+# use kooch::kooch_ecs::component::plugin_bridge::declare_component;
+# #[derive(Default, Reflect)]
+# pub struct Health { pub current: f32 }
+# impl Component for Health {}
+# fn register(registry: &mut ComponentRegistry, engine: &mut dyn kooch::kooch_plugin_api::Engine) {
 // Registers the type with the running ECS — scene save/load and the Inspector.
 registry.register_cpu_reflected::<Health>();
 
 // Describes the type to a standalone editor that loaded this dylib.
 declare_component::<Health>(engine);
+# }
 ```
 
 The component's name comes from `std::any::type_name::<T>()`, so there is exactly one name

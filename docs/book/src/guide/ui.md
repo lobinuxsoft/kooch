@@ -1,7 +1,7 @@
 # UI
 
-> In progress (#96). What exists today is the document and its tree; layout, text and drawing land
-> phase by phase.
+> In progress (#96). Overlay documents lay out, draw text, images, SVG and video, and take
+> pointer and gamepad input; World documents lay out but do not draw yet.
 
 A UI is **one entity** with a `UiDocument`, the way Unity's UI Toolkit has a `UIDocument`. Its nodes
 live inside the document, not in the hierarchy, so a menu of three hundred elements is still one
@@ -12,8 +12,12 @@ row in the scene.
 | `source` | The `.kxml` file with the structure (#280) |
 | `style` | The `.kcss` sheet with the look (#280) |
 | `mode` | **Overlay** draws over the screen; **World** places it in the scene at the entity |
+| `hidden` | Kept but not drawn, picked or read — a menu that comes and goes keeps its tree |
+| `point`, `click`, `scroll` | Input actions for the pointer. Empty reads the mouse |
+| `navigate`, `submit`, `cancel` | Input actions for focus. Empty reads arrows / d-pad / stick, Enter / South, Escape / East |
 
-Enable it with the engine's `ui` feature.
+Enable it with the engine's `ui` feature. The files themselves — `.kxml` structure, `.kcss`
+look, bindings, events, video — are [UI files](./ui_files.md).
 
 ## Units
 
@@ -29,22 +33,28 @@ node's place with `tree.rect(node)`: top-left origin, y down, in canvas units.
 
 ## Building a tree from code
 
-Until the file formats arrive, a game builds the tree itself and hands it to `UiTrees`:
+A document is usually built from its files. A game can also build a tree itself and hand it to
+`UiTrees`:
 
 ```rust
 use kooch::prelude::*;
 use kooch::kooch_ui::taffy::Style;
 
+# fn build(resources: &mut Resources, document_entity: Entity) {
 let mut tree = UiTree::new(Style::default());
 let speed = tree.push(UiTree::ROOT, Style::default()).unwrap();
 tree.set_name(speed, "speed");
 resources.get_mut::<UiTrees>().unwrap().insert(document_entity, tree);
+# }
 ```
 
 ## Text
 
 ```rust
+# use kooch::prelude::*;
+# fn show(tree: &mut UiTree, speed: UiNode) {
 tree.set_text(speed, "Velocidad: 12,5 m/s", 32.0);
+# }
 ```
 
 Text is shaped with **Inter**, which the engine ships (SIL Open Font License, in
@@ -56,7 +66,10 @@ A game writing into a document built from files names the node and keeps the siz
 gave it:
 
 ```rust
+# use kooch::prelude::*;
+# fn count(resources: &mut Resources, document: Entity) {
 resources.get_mut::<UiTrees>().unwrap().write_text(document, "clicks", "Clicks: 3");
+# }
 ```
 
 **Fira Code** ships too, with its programming ligatures (`=>`, `!=`): `tree.set_font(node, "Fira
@@ -72,10 +85,13 @@ sharp at 720p and at 1440p.
 ## Painting
 
 ```rust
+# use kooch::prelude::*;
+# fn style(tree: &mut UiTree, panel: UiNode, label: UiNode) {
 tree.set_background(panel, [0.08, 0.09, 0.12, 0.85]);
 tree.set_border_color(panel, [1.0, 0.55, 0.1, 1.0]); // width is the layout's `Style::border`
 tree.set_radius(panel, 18.0);
 tree.set_text_color(label, [0.55, 0.85, 1.0, 1.0]);
+# }
 ```
 
 Colours are sRGB, as a colour picker gives them. An Overlay draws over the finished frame, after

@@ -6,7 +6,8 @@ until the process ended. Loading a second scene cost the sum of both.
 
 ## One rule: what nothing is drawing goes
 
-A resource is freed when nothing has asked to draw it for `MAX_AGE` frames.
+A resource is freed when nothing has asked to draw it for `MESH_MAX_AGE` /
+`TEXTURE_MAX_AGE` frames (60 each).
 That single rule covers what look like three separate cases:
 
 | Case | Why it is the same event |
@@ -40,7 +41,7 @@ for a scene that drew 5.
 
 ## Two things that will bite
 
-🔴 **`MAX_AGE` is the defence against thrash, not a tuning knob.** Evicting on
+🔴 **The max age is the defence against thrash, not a tuning knob.** Evicting on
 the first unasked frame would re-upload a mesh every time a renderer blinks,
 which is the reallocation storm #1558 measured and removed. Sixty frames is one
 second: long enough that a gesture is a decision.
@@ -66,4 +67,4 @@ Not leaks, and "fixing" them would undo measured work:
 Materials themselves, scene documents and shaders still sit in `Assets<T>`
 forever, and the frustum level of the ask — the cull decides visibility on the
 GPU, so asking it means the GPU writes the ask, the way `PAGE_ASKED` does, never
-a per-frame readback. See #1589.
+a per-frame readback. See #1624.

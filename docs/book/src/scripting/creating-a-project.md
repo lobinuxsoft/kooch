@@ -8,13 +8,16 @@ never touch.
 
 ## What the editor generates
 
-```
+```text
 MyGame/
+├── .gitignore
 ├── Cargo.toml
 ├── assets/
-├── scenes/
+│   └── scenes/
+│       └── default.scene
 └── src/
-    ├── main.rs            # generated, yours to edit
+    ├── main.rs            # generated, yours to edit — the game
+    ├── editor.rs          # generated — the authoring binary
     ├── lib.rs             # generated, editor-managed
     └── registrations.rs   # generated, editor-managed — do not edit
 ```
@@ -38,7 +41,7 @@ runtime.
 ```toml
 [features]
 default = ["game"]
-game = ["kooch/physics", "kooch/gravity", "kooch/camera", "kooch/audio"]
+game = ["kooch/physics", "kooch/gravity", "kooch/camera", "kooch/audio", "kooch/vello"]
 editor = [
     "game",
     "kooch/editor",
@@ -54,9 +57,10 @@ kooch = { path = "…" }
 Each one buys something specific. `physics` gives you rigid bodies — without it a
 `PhysicsBody` is an inert component and nothing ever falls. `gravity` is the same story one
 level up: a `PointGravity` that pulls on nothing. `camera` is the third: a `VirtualCamera`
-that moves no camera.
+that moves no camera. `vello` is the UI, its SVGs drawn on the GPU so they stay sharp at any
+size.
 
-The `editor` three are what authoring needs and a game does not: `kooch/editor` is the
+The `editor` four are what authoring needs and a game does not: `kooch/editor` is the
 embedded editor, `kooch/remote` is the socket the standalone editor drives your project
 over, `kooch/dynamic` is the plugin API that lets it list your components without compiling
 them, and `physics-debug-render` compiles the solver walk the physics overlay draws.
@@ -97,7 +101,16 @@ change to your code still recompiles fast. The first build after adding it takes
 
 ### `main.rs` — the game, and nothing else
 
-```rust
+```rust,no_run
+# #![allow(non_snake_case)]
+# use kooch::prelude::*;
+# mod PROJECT_CRATE {
+#     pub mod registrations {
+#         use kooch::prelude::*;
+#         pub struct ProjectRegistrations { pub run_systems: bool }
+#         impl Plugin for ProjectRegistrations { fn build(&self, _: &mut App) {} }
+#     }
+# }
 use PROJECT_CRATE::registrations;
 
 fn main() {
@@ -149,6 +162,10 @@ Also generated. It exports one plugin whose only job is to describe your compone
 standalone editor that loaded this `dylib`:
 
 ```rust
+# #[derive(Default)] struct ProjectPlugin;
+# mod registrations {
+#     pub fn declare_components(_: &mut dyn kooch::kooch_plugin_api::Engine) {}
+# }
 impl kooch::kooch_plugin_api::KoochPlugin for ProjectPlugin {
     fn name(&self) -> &str { "my_game" }
     fn build(&mut self, engine: &mut dyn kooch::kooch_plugin_api::Engine) {
@@ -157,6 +174,7 @@ impl kooch::kooch_plugin_api::KoochPlugin for ProjectPlugin {
 }
 
 kooch::kooch_plugin_api::export_plugin!(ProjectPlugin);
+# fn main() {}
 ```
 
 ## Opening an older project
