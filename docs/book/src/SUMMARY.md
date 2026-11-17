@@ -32,6 +32,7 @@
 - [Creating a Project](./scripting/creating-a-project.md)
 - [Writing a Component](./scripting/components.md)
 - [Writing a System](./scripting/systems.md)
+- [Recipes](./scripting/recipes.md)
 
 # Architecture
 

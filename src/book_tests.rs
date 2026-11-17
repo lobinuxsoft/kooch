@@ -45,5 +45,6 @@ pages! {
     ScriptingComponents => "scripting/components.md",
     ScriptingCreatingAProject => "scripting/creating-a-project.md",
     ScriptingFirstProject => "scripting/first-project.md",
+    ScriptingRecipes => "scripting/recipes.md",
     ScriptingSystems => "scripting/systems.md",
 }
