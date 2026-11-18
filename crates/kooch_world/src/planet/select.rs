@@ -276,7 +276,7 @@ fn touches_shell(shape: &Shape, min: DVec3, max: DVec3) -> bool {
     nearest <= shape.radius + shape.relief && farthest >= shape.radius - shape.depth
 }
 
-fn bounds(shape: &Shape, key: BlockKey) -> (DVec3, DVec3) {
+pub(super) fn bounds(shape: &Shape, key: BlockKey) -> (DVec3, DVec3) {
     let side = block_side(shape, key.level);
     let min = key.cell.as_dvec3() * side;
     (min, min + DVec3::splat(side))
@@ -286,6 +286,6 @@ fn block_side(shape: &Shape, level: u8) -> f64 {
     voxel_size(shape, level) * BLOCK_SAMPLES as f64
 }
 
-fn voxel_size(shape: &Shape, level: u8) -> f64 {
+pub(super) fn voxel_size(shape: &Shape, level: u8) -> f64 {
     shape.voxel * (1u64 << level) as f64
 }

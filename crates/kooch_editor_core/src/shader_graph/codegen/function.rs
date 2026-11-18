@@ -61,6 +61,7 @@ pub(crate) fn generate_function(graph: &Graph, function: &str) -> Result<String,
         next: 0,
         locals: 0,
         post: false,
+        planet: false,
     };
     let values: Vec<String> = results
         .iter()
@@ -84,7 +85,7 @@ pub(crate) fn generate_function(graph: &Graph, function: &str) -> Result<String,
         .collect();
 
     let mut code = textures(graph);
-    code.push_str(&helpers(graph));
+    code.push_str(&helpers(graph, false));
     let _ = writeln!(code, "struct {function}_out {{");
     for (_, name) in &results {
         let _ = writeln!(code, "    out_{name}: vec4<f32>,");

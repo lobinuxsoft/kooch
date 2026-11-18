@@ -64,6 +64,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     let post = kind == "post_process";
     let sky = kind == "sky";
     let ui = kind == "ui";
+    let planet = kind == "planet";
     let transparent = kind == "transparent" || kind == "transparent_unlit";
 
     let wires: HashMap<InPinId, OutPinId> = graph.wires().map(|(from, to)| (to, from)).collect();
@@ -76,6 +77,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         next: 0,
         locals: 0,
         post,
+        planet,
     };
     // What an unconnected output falls back to. 🔴 Not zero for the normal: `normalize` of it is
     // NaN, which naga refuses outright.
@@ -87,7 +89,9 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         "vec4<f32>(0.0)",
     ];
     // Alpha, then the clip it is tested against (#452).
-    let fallbacks: Vec<&str> = if sky {
+    let fallbacks: Vec<&str> = if planet {
+        vec!["vec4<f32>(input.altitude)"]
+    } else if sky {
         vec!["vec4<f32>(0.0)"]
     } else if post {
         vec!["vec4<f32>(0.0)", "vec4<f32>(1.0)"]
@@ -100,7 +104,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     };
     // Masked only when the clip is wired: an unwired clip would rasterise in the slower bin for
     // nothing.
-    let clip = (!post && !ui && !sky)
+    let clip = (!post && !ui && !sky && !planet)
         .then_some(fallbacks.len() - 1)
         .filter(|&input| body.wired_in(output, input));
     let outputs: Vec<String> = fallbacks
@@ -118,20 +122,30 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         "// Written by the shader graph. Edit it there: saving the graph replaces this file.\n"
     );
     source.push_str(&declarations(graph));
-    source.push_str(&helpers(graph));
+    source.push_str(&helpers(graph, planet));
     let (function, returns) = match (unlit, post) {
         _ if ui => ("ui", "vec4<f32>"),
+        _ if planet => ("planet", "f32"),
         _ if sky => ("sky", "vec4<f32>"),
         (true, _) => ("unlit", "UnlitOutput"),
         (_, true) => ("post_process", "vec4<f32>"),
         _ => ("surface", "SurfaceOutput"),
     };
-    let takes = if ui { "UiInput" } else { "SurfaceInput" };
+    let takes = match () {
+        _ if ui => "UiInput",
+        _ if planet => "PlanetInput",
+        _ => "SurfaceInput",
+    };
     let _ = writeln!(source, "fn {function}(input: {takes}) -> {returns} {{");
     if graph.node_ids().any(|(_, n)| n.declared().is_some()) {
         let _ = writeln!(source, "    let p = surface_params(input.material_id);");
     }
     source.push_str(&body.lines);
+    if planet {
+        let _ = writeln!(source, "    return {}.x;\n}}", outputs[0]);
+        kooch_world::planet::validate_generator(&source)?;
+        return finish(source);
+    }
     if sky {
         // Opaque by definition: nothing is behind the sky to blend with.
         let _ = writeln!(source, "    return vec4<f32>({}.rgb, 1.0);\n}}", outputs[0]);

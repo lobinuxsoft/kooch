@@ -30,11 +30,19 @@ pub(super) struct Body<'a> {
     /// Whether the body being written is a post-process, which is the only kind with a scene to
     /// read (#1201).
     pub(super) post: bool,
+    /// Whether it is a planet's generator, whose samples have a position and no uv (#313).
+    pub(super) planet: bool,
 }
 
-const THIS_PIXEL: &str = "vec4<f32>(input.uv, 0.0, 0.0)";
-
 impl Body<'_> {
+    /// What a coordinate pin reads unwired: this pixel's uv, or on a planet the sample's position.
+    fn here(&self) -> &'static str {
+        match self.planet {
+            true => "vec4<f32>(input.position, 0.0)",
+            false => "vec4<f32>(input.uv, 0.0, 0.0)",
+        }
+    }
+
     /// The expression feeding `input` of `node`, emitting whatever it depends on first. An
     /// unconnected input reads as zero: half a graph still renders.
     fn input(&mut self, node: NodeId, input: usize) -> Result<String, String> {
@@ -114,14 +122,14 @@ impl Body<'_> {
                 }
             }
             Node::UiImage => {
-                let uv = self.input_or(id, 0, THIS_PIXEL)?;
+                let uv = self.input_or(id, 0, self.here())?;
                 format!("sample_image(input, {uv}.xy)")
             }
             Node::UiColor => "input.color".to_owned(),
             Node::UiBorderColor => "input.border_color".to_owned(),
             Node::UiSize => "vec4<f32>(input.size, 0.0, 0.0)".to_owned(),
             Node::Parallax => {
-                let uv = self.input_or(id, 0, THIS_PIXEL)?;
+                let uv = self.input_or(id, 0, self.here())?;
                 let (view, depth, focus) =
                     (argument(self, 1)?, argument(self, 2)?, argument(self, 3)?);
                 format!(
@@ -130,7 +138,7 @@ impl Body<'_> {
                 )
             }
             Node::ImageNormal => {
-                let uv = self.input_or(id, 0, THIS_PIXEL)?;
+                let uv = self.input_or(id, 0, self.here())?;
                 let strength = argument(self, 1)?;
                 format!("vec4<f32>(graph_image_normal(input, {uv}.xy, {strength}.x), 0.0)")
             }
@@ -140,7 +148,7 @@ impl Body<'_> {
                 format!("vec4<f32>(graph_rounded_box({point}.xy, {extent}.xy, {radius}.x))")
             }
             Node::UiPoint => {
-                let uv = self.input_or(id, 0, THIS_PIXEL)?;
+                let uv = self.input_or(id, 0, self.here())?;
                 format!("graph_ui_point({uv}.xy, input.size)")
             }
             Node::BlinnPhong => {
@@ -176,7 +184,7 @@ impl Body<'_> {
                 format!("vec4<f32>(sin({clock}), cos({clock} * {ratio}.x), 0.0, 0.0) * {amount}.x")
             }
             Node::LightBand => {
-                let point = self.input_or(id, 0, THIS_PIXEL)?;
+                let point = self.input_or(id, 0, self.here())?;
                 let direction = self.input_or(id, 1, "vec4<f32>(0.8, 0.6, 0.0, 0.0)")?;
                 let offset = argument(self, 2)?;
                 let width = self.input_or(id, 3, "vec4<f32>(0.15)")?;
@@ -199,6 +207,9 @@ impl Body<'_> {
             Node::Rainbow => format!("graph_rainbow({}.x)", argument(self, 0)?),
             Node::Blackbody => format!("graph_blackbody({}.x)", argument(self, 0)?),
             Node::WorldPosition => "vec4<f32>(input.world_position, 1.0)".to_owned(),
+            Node::PlanetAltitude => "vec4<f32>(input.altitude)".to_owned(),
+            Node::PlanetDirection => "vec4<f32>(input.direction, 0.0)".to_owned(),
+            Node::PlanetPosition => "vec4<f32>(input.position, 1.0)".to_owned(),
             Node::WorldNormal => "vec4<f32>(normalize(input.world_normal), 0.0)".to_owned(),
             Node::ViewDirection => {
                 "vec4<f32>(normalize(input.camera_position - input.world_position), 0.0)".to_owned()

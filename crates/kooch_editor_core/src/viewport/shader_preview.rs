@@ -71,10 +71,8 @@ pub(crate) struct ShaderPreview {
     mesh: PreviewMesh,
     pool: MaterialPool,
     textures: MaterialTexturePool,
-    /// 🔴 Ours rather than `MaterialPool::bind_group_layout`. That one belongs to the deferred
-    /// path: one binding, visible to COMPUTE only — and a *render* pipeline built on it is
-    /// invalid, which is exactly how this failed. The contract needs `materials` **and**
-    /// `material_values`, both read from the fragment stage.
+    /// 🔴 Ours, not `MaterialPool::bind_group_layout`: that one is COMPUTE-only, invalid for this
+    /// render pipeline, which reads `materials` and `material_values` in the fragment stage.
     materials_bgl: wgpu::BindGroupLayout,
     materials_bg: wgpu::BindGroup,
     camera_buffer: wgpu::Buffer,
@@ -303,6 +301,10 @@ impl ShaderPreview {
         if source.contains("fn sky(") {
             self.render_sky(gpu, params_wgsl, source, params, images);
             return;
+        }
+        if source.contains("fn planet(") {
+            return self
+                .refuse("A planet shape has no preview yet: it shows on the planet.".into());
         }
         if source.contains("fn ui(") {
             let ui = self

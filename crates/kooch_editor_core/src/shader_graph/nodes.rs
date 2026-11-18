@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::FunctionPin;
 
 mod docs;
+mod kinds;
 mod meta;
 mod params;
 
@@ -284,6 +285,14 @@ pub(crate) enum Node {
     /// A uv as a point from the node's centre, in units of its height so a circle stays round.
     UiPoint,
 
+    // -- Planet ---------------------------------------------------------
+    /// Height above the planet's base sphere, in metres; exact at any radius (#313).
+    PlanetAltitude,
+    /// From the planet's centre towards the sample, unit length.
+    PlanetDirection,
+    /// The sample from the planet's centre, in metres. f32, so coarse on a planet of real size.
+    PlanetPosition,
+
     // -- Output ---------------------------------------------------------
     /// A surface output from before the node had a kind; `migrated` turns it into a
     /// `ShaderOutput`, and the menu never offers it.
@@ -348,7 +357,7 @@ impl Category {
 
 /// The kinds a graph generates. Not `ShaderKind::NAMES`: a kind the codegen has no body for would
 /// write a shader its pass refuses.
-pub(crate) const OUTPUT_KINDS: [&str; 7] = [
+pub(crate) const OUTPUT_KINDS: [&str; 8] = [
     "surface",
     "unlit",
     "post_process",
@@ -356,6 +365,7 @@ pub(crate) const OUTPUT_KINDS: [&str; 7] = [
     "transparent_unlit",
     "ui",
     "sky",
+    "planet",
 ];
 
 /// Every node the menu offers, one per kind, in menu order.
@@ -373,6 +383,9 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::ViewDirection,
         Node::Time,
         Node::SceneColor,
+        Node::PlanetAltitude,
+        Node::PlanetDirection,
+        Node::PlanetPosition,
         Node::Float {
             name: "amount".to_owned(),
             default: 0.5,
