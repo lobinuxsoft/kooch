@@ -76,6 +76,7 @@ after Stop, not an error.
 | `linear_velocity`, `angular_velocity` | Reading how it moves |
 | `set_linear_velocity`, `set_angular_velocity` | Overriding it. Discards this step's bounce and slope |
 | `set_rotation(body, q)` | Facing a character. Pair it with `set_angular_velocity(Vec3::ZERO)` |
+| `teleport(body, position)` | A respawn or a portal: moves it and stops it. Writing a dynamic body's `Transform` in Play does nothing |
 | `transform(body)` | Where the solver has it, before the `Transform` catches up |
 | `mass(body)`, `is_sleeping(body)` | What it says |
 

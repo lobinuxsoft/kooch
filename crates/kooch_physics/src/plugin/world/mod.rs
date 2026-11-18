@@ -378,6 +378,21 @@ impl PhysicsWorld {
         self.backend_mut().set_transform(handle, position, rotation);
     }
 
+    /// Puts a body somewhere else at rest: a respawn, a portal. The velocity goes too, or a body
+    /// teleported mid-fall lands at the speed it left with.
+    pub fn teleport(&mut self, body: SolverBody, position: Vec3) {
+        let Some(handle) = self.handle(body.slot()) else {
+            return;
+        };
+        let Some((_, rotation)) = self.backend().get_transform(handle) else {
+            return;
+        };
+        let backend = self.backend_mut();
+        backend.set_transform(handle, position, rotation);
+        backend.set_linear_velocity(handle, Vec3::ZERO);
+        backend.set_angular_velocity(handle, Vec3::ZERO);
+    }
+
     /// Spin in rad/s, the twin of [`set_linear_velocity`](Self::set_linear_velocity), with the same
     /// warning.
     pub fn set_angular_velocity(&mut self, body: SolverBody, velocity: Vec3) {
