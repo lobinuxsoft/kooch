@@ -84,6 +84,10 @@ impl MeshletPipeline {
         }
         let mesh_handle = self.pool.register(mesh);
         self.registry.insert(guid, mesh_handle);
+        // 🔴 Publishing counts as asking. A renderer spawned with its mesh has no GlobalTransform
+        // until the next propagation, and a GUID never asked was swept that same frame — for ever,
+        // since a generated mesh has no file to load back.
+        self.asked.insert(guid, self.frame);
         self.defragment();
         mesh_handle
     }

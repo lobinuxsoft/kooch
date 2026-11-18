@@ -370,6 +370,24 @@ fn an_asked_mesh_stays() {
     assert!(pipeline.lookup(guid).is_some());
 }
 
+/// A generated mesh published late in a session survives until its renderer can ask for it: a
+/// renderer spawned with it has no GlobalTransform until the next propagation.
+#[test]
+fn a_published_mesh_waits() {
+    let mesh = build_default_meshlets(&cube_mesh()).expect("meshlets");
+    let guid = Guid::new_v4();
+    let mut pipeline = MeshletPipeline::new();
+    for _ in 0..10 {
+        pipeline.sweep(&[], 4);
+    }
+    pipeline.replace_mesh(guid, &mesh);
+    assert!(
+        pipeline.sweep(&[], 4).is_empty(),
+        "swept the frame it was published"
+    );
+    assert!(pipeline.lookup(guid).is_some());
+}
+
 /// A sweep that empties most of the pool compacts it, instead of keeping the holes for a mesh that
 /// may never come (#1589): measured, 7.2 MB of holes held for 170 KB of live meshes.
 #[test]
