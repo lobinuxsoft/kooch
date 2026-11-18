@@ -9,10 +9,11 @@ use std::collections::VecDeque;
 
 use bytemuck::{Pod, Zeroable};
 
+use super::TILE_SAMPLES;
 use super::atlas::BlockAtlas;
 use super::select::{bounds, voxel_size};
 use super::{BlockKey, BlockPool, Planets, Residency, Shape};
-use crate::voxel::{POOL_TEXTURE_FORMAT, SUBGRID_TILE_DIM};
+use crate::voxel::POOL_TEXTURE_FORMAT;
 
 #[cfg(test)]
 mod tests;
@@ -69,11 +70,13 @@ pub struct Job {
 
 impl Job {
     /// `key`'s block in `slot`. The f64 terms are taken here, so the GPU never subtracts radii.
+    /// `origin` is the tile's first sample, one voxel before the block's corner.
     pub fn new(key: BlockKey, slot: u32, shape: &Shape) -> Self {
-        let (origin, _) = bounds(shape, key);
+        let voxel = voxel_size(shape, key.level);
+        let origin = bounds(shape, key).0 - glam::DVec3::splat(voxel);
         Self {
             origin: origin.as_vec3().to_array(),
-            voxel: voxel_size(shape, key.level) as f32,
+            voxel: voxel as f32,
             radius: shape.radius as f32,
             excess: (origin.length_squared() - shape.radius * shape.radius) as f32,
             slot,
@@ -106,6 +109,14 @@ impl Backlog {
 
     pub fn len(&self) -> usize {
         self.queue.len()
+    }
+
+    /// Queues one slot again, as for a block whose mesh did not fit its batch.
+    pub fn retry(&mut self, slot: u32) {
+        self.push(&Residency {
+            added: vec![slot],
+            removed: Vec::new(),
+        });
     }
 
     pub fn is_empty(&self) -> bool {
@@ -192,7 +203,7 @@ impl GeneratePass {
         let constants: &[(&str, f64)] = &[
             ("TILES_X", f64::from(tiles.x)),
             ("TILES_Y", f64::from(tiles.y)),
-            ("TILE_DIM", f64::from(SUBGRID_TILE_DIM)),
+            ("TILE_DIM", f64::from(TILE_SAMPLES)),
         ];
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("kooch_world::planet::generate"),
@@ -240,11 +251,12 @@ impl GeneratePass {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("kooch_world::planet::generate"),
         });
-        self.record(device, queue, &mut encoder, atlas, jobs);
+        self.record(device, queue, &mut encoder, atlas, jobs, None);
         queue.submit([encoder.finish()]);
     }
 
     /// Generates `jobs` into `atlas`; anything past [`batch`](Self::batch) is left out.
+    /// `timestamps` times the pass when the device can.
     pub fn record(
         &self,
         device: &wgpu::Device,
@@ -252,6 +264,7 @@ impl GeneratePass {
         encoder: &mut wgpu::CommandEncoder,
         atlas: &BlockAtlas,
         jobs: &[Job],
+        timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) {
         let jobs = &jobs[..jobs.len().min(self.batch as usize)];
         if jobs.is_empty() {
@@ -274,7 +287,7 @@ impl GeneratePass {
         });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("kooch_world::planet::generate"),
-            timestamp_writes: None,
+            timestamp_writes: timestamps,
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &group, &[]);

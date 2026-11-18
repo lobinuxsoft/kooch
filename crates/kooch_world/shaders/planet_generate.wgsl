@@ -8,7 +8,7 @@
 
 override TILES_X: u32 = 32u;
 override TILES_Y: u32 = 1u;
-override TILE_DIM: u32 = 17u;
+override TILE_DIM: u32 = 18u;
 
 const WORKGROUP: u32 = 256u;
 // Voxels kept either side of the surface; beyond it a meshing pass needs only the sign, and f16
@@ -16,7 +16,7 @@ const WORKGROUP: u32 = 256u;
 const BAND: f32 = 64.0;
 
 struct Job {
-    // Block corner from the planet's centre, and the edge of one voxel at its level.
+    // The tile's first sample from the planet's centre, and the edge of one voxel at its level.
     origin: vec3<f32>,
     voxel: f32,
     radius: f32,

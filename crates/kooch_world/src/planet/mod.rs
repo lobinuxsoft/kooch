@@ -9,8 +9,10 @@
 
 mod atlas;
 mod generate;
+mod mesh;
 mod pool;
 mod select;
+mod terrain;
 #[cfg(test)]
 mod tests;
 
@@ -20,18 +22,24 @@ pub use atlas::BlockAtlas;
 pub use generate::{
     BARE_SPHERE, Backlog, GeneratePass, Job, PLANET_INPUT_WGSL, validate_generator,
 };
+pub use mesh::MeshPass;
 pub use pool::{BlockPool, Residency};
 pub use select::{Limits, Planets, Shape, View, select};
+pub use terrain::{GpuTimes, MESH_BATCH, MeshedBlock, Terrain};
 
-use crate::voxel::{SUBGRID_DIM, SUBGRID_TILE_DIM};
+use crate::voxel::SUBGRID_DIM;
 
 /// Samples per block axis; a level-`L` block covers `BLOCK_SAMPLES · voxel · 2^L` metres.
 pub const BLOCK_SAMPLES: u32 = SUBGRID_DIM;
 
-/// Atlas bytes one block costs: a `SUBGRID_TILE_DIM³` tile of `R16Float`.
-pub const BLOCK_BYTES: u64 = (SUBGRID_TILE_DIM as u64).pow(3) * 2;
+/// Samples per tile axis: the block's, plus one either side, so neighbours share the cells across
+/// their border and the mesh closes there.
+pub const TILE_SAMPLES: u32 = BLOCK_SAMPLES + 2;
 
-/// Default pool size: 6144 blocks, ≈ 57.6 MiB of atlas.
+/// Atlas bytes one block costs: a `TILE_SAMPLES³` tile of `R16Float`.
+pub const BLOCK_BYTES: u64 = (TILE_SAMPLES as u64).pow(3) * 2;
+
+/// Default pool size: 6144 blocks, ≈ 68.3 MiB of atlas.
 pub const DEFAULT_CAPACITY: u32 = 6144;
 
 /// One block of one planet: its octree level (0 = finest) and its cell at that level, in blocks
