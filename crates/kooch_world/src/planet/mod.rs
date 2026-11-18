@@ -1,12 +1,14 @@
 //! Planet terrain residency (#313): which voxel blocks of which planets hold a slot of the shared
-//! pool this frame. Decided on the CPU, as Zylann's octree streaming does; the GPU fills what it
-//! picks (#313 step 3).
+//! pool this frame. Decided on the CPU, as Zylann's octree streaming does; the GPU generates what it
+//! picks into one shared [`BlockAtlas`] (#313 step 3).
 //!
 //! Each planet is an octree of fixed-size blocks in its own local space, so a planet that orbits
 //! or spins regenerates nothing. Every planet competes for one pool by screen-space error: the
 //! planet you stand on takes what the distant ones do not need, and memory stays fixed however
 //! many planets exist.
 
+mod atlas;
+mod generate;
 mod pool;
 mod select;
 #[cfg(test)]
@@ -14,6 +16,10 @@ mod tests;
 
 use glam::IVec3;
 
+pub use atlas::BlockAtlas;
+pub use generate::{
+    BARE_SPHERE, Backlog, GeneratePass, Job, PLANET_INPUT_WGSL, validate_generator,
+};
 pub use pool::{BlockPool, Residency};
 pub use select::{Limits, Planets, Shape, View, select};
 
