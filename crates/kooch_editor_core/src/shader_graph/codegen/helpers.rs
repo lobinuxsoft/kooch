@@ -6,21 +6,23 @@ use egui_snarl::NodeId;
 use crate::shader_graph::{Graph, NOISE_PHASE, Node};
 
 /// `graph_rotate`, the noises and the shape helpers, each emitted only when a node in the graph
-/// asks for it: a generated file carries nothing it does not use.
-pub(super) fn helpers(graph: &Graph) -> String {
+/// asks for it: a generated file carries nothing it does not use. In a `volume` every fractal noise
+/// samples in 3D.
+pub(super) fn helpers(graph: &Graph, volume: bool) -> String {
     // Old noises read as the nodes they became, so they pull in the same helpers.
     let nodes: Vec<(NodeId, Node)> = graph
         .node_ids()
         .map(|(id, cell)| (id, cell.node.clone().migrated()))
         .collect();
     let uses = |wanted: &dyn Fn(&Node) -> bool| nodes.iter().any(|(_, node)| wanted(node));
-    // A fractal noise samples in 3D only when its phase is wired.
+    // A fractal noise samples in 3D only when its phase is wired, or everywhere in a volume.
     let animated = |basis: &str| {
         nodes.iter().any(|(id, node)| {
             matches!(node, Node::FractalNoise { basis: b, .. } if b == basis)
-                && graph
-                    .wires()
-                    .any(|(_, to)| to.node == *id && to.input == NOISE_PHASE)
+                && (volume
+                    || graph
+                        .wires()
+                        .any(|(_, to)| to.node == *id && to.input == NOISE_PHASE))
         })
     };
     let noise = |basis: &'static str| move |n: &Node| matches!(n, Node::FractalNoise { basis: b, .. } if b == basis);

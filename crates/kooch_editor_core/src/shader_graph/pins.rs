@@ -74,6 +74,7 @@ impl Node {
             (_, "uv" | "point" | "map") => None,
             (Self::ShaderOutput { .. } | Self::Output, "normal") => None,
             (Self::ShaderOutput { kind }, "color") if kind == "ui" => None,
+            (Self::ShaderOutput { .. }, "distance") => None,
             (Self::ShaderOutput { .. } | Self::Output, "alpha") => splat(1.0),
             (Self::ShaderOutput { .. } | Self::Output, "roughness") => splat(0.5),
             (Self::PolarCoordinates, "radial scale" | "length scale") => splat(1.0),

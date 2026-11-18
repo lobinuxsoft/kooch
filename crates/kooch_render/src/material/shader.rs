@@ -66,11 +66,14 @@ pub enum ShaderKind {
     /// The backdrop behind everything: defines `fn sky(SurfaceInput) -> vec4<f32>`, with the view
     /// direction in `world_normal` and its longitude and latitude in `uv` (#1900).
     Sky,
+    /// A planet's shape: defines `fn planet(PlanetInput) -> f32`, the signed distance in metres,
+    /// which `kooch_world::planet` generates its voxel blocks from (#313).
+    Planet,
 }
 
 impl ShaderKind {
     /// What a `// kind:` line names, in the order errors list them.
-    pub const NAMES: [&'static str; 7] = [
+    pub const NAMES: [&'static str; 8] = [
         "surface",
         "unlit",
         "post_process",
@@ -78,6 +81,7 @@ impl ShaderKind {
         "transparent_unlit",
         "ui",
         "sky",
+        "planet",
     ];
 
     fn parse(name: &str) -> Option<Self> {
@@ -89,6 +93,7 @@ impl ShaderKind {
             "transparent_unlit" => Some(Self::TransparentUnlit),
             "ui" => Some(Self::Ui),
             "sky" => Some(Self::Sky),
+            "planet" => Some(Self::Planet),
             _ => None,
         }
     }
@@ -109,8 +114,8 @@ impl ShaderKind {
     /// `surface` they call.
     fn glue(self) -> &'static str {
         match self {
-            // The UI's frame reads none of this.
-            Self::Ui => "",
+            // Neither the UI's frame nor the planet's generation reads any of this.
+            Self::Ui | Self::Planet => "",
             // A post-process has a frame of its own, so it needs no glue at all.
             Self::Surface | Self::PostProcess | Self::Sky => {
                 "const SURFACE_UNLIT: bool = false;\nconst SURFACE_TRANSPARENT: bool = false;\n"

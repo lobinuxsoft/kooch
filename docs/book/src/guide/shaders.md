@@ -59,6 +59,7 @@ The `// kind:` line picks what the file defines. With no line, it is a `surface`
 | `ui` | `fn ui(input: UiInput) -> vec4<f32>` | A UI node's fill: see [UI](#ui). |
 | `post_process` | `fn post_process(input: SurfaceInput) -> vec4<f32>` | One full-screen draw over the finished frame; reads it with `sample_scene(uv)` |
 | `sky` | `fn sky(input: SurfaceInput) -> vec4<f32>` | The backdrop behind everything, drawn by a `SkyRenderer`: see [Sky](#sky) |
+| `planet` | `fn planet(input: PlanetInput) -> f32` | A planet's shape as a signed distance, generated into its voxel blocks: see [Planet](#planet) |
 | `transparent` | `fn surface(input: SurfaceInput) -> SurfaceOutput`, setting `alpha` | Lit like a `surface`, then blended over the opaque scene, far to near |
 | `transparent_unlit` | `fn unlit(input: SurfaceInput) -> UnlitOutput` | Blended like `transparent`, with no light on it: see [below](#transparent-with-no-light-on-it) |
 
@@ -284,6 +285,34 @@ distance such as **Rounded Box** into a soft mask or a line along its edge. **Bl
 the diffuse and specular of one light, for a shader that lights itself. **Sway** is two waves that
 take long to repeat, **Light Band** a soft stripe to sweep across a surface, **Mul Add** is
 `value × scale + offset`, and **Luminance** how bright a colour reads.
+
+### Planet
+
+A `planet` shader is a planet's shape: the signed distance in metres from each point to the ground,
+negative inside it. The engine runs it in compute for every sample of every voxel block the planet
+needs, and keeps only what is near the surface. Nothing meshes those blocks yet (#313), so a planet
+shader is not visible on its own.
+
+```wgsl
+// kind: planet
+
+fn planet(input: PlanetInput) -> f32 {
+    // Rolling hills twelve metres high, eight around the equator.
+    let d = input.direction * 8.0;
+    return input.altitude - 12.0 * sin(d.x) * sin(d.y) * sin(d.z);
+}
+```
+
+`PlanetInput` carries `altitude` (metres above the base sphere), `direction` (from the centre, unit
+length), `position` (from the centre, in metres), `radius` and `planet`. **Use `altitude` and
+`direction`**: they stay exact on a planet of any size. `position` is f32, so on a planet the size
+of the Earth it is off by about half a metre, and a shape built on it shows steps.
+
+A graph writes this kind too: set the Output's kind to `planet`. Its one input is `distance`;
+unwired, it is the bare sphere. **Altitude**, **Planet Direction** and **Planet Position** are under
+**Input**, and every fractal noise samples in 3D, its third axis read from the coordinate's `z`.
+What has nothing to read in compute — uv, normals, the camera, time, textures, material parameters —
+stops the graph with a message that names it. The preview says it has nothing to draw.
 
 ## Parameters
 

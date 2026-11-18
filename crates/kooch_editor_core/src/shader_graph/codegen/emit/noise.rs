@@ -76,6 +76,9 @@ impl Body<'_> {
         }
         let phase = if self.wired_in(id, NOISE_PHASE) {
             Some(self.input_or(id, NOISE_PHASE, "vec4<f32>(0.0)")?)
+        } else if self.planet {
+            // A planet's samples fill a volume: its third axis is the noise's third.
+            Some(format!("vec4<f32>({uv}.z * {scale}.x)"))
         } else {
             None
         };
