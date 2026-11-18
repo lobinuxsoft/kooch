@@ -1,9 +1,9 @@
 use glam::IVec3;
 
 use super::{BARE_SPHERE as SPHERE, GeneratePass, Job};
-use crate::planet::TILE_SAMPLES;
-use crate::planet::{BlockAtlas, BlockKey, Shape};
-use crate::voxel::test_device::try_acquire;
+use crate::TILE_SAMPLES;
+use crate::test_device::try_acquire;
+use crate::{BlockAtlas, BlockKey, Shape};
 
 const EARTH: f64 = 6_371_000.0;
 

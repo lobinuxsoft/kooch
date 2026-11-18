@@ -290,9 +290,8 @@ take long to repeat, **Light Band** a soft stripe to sweep across a surface, **M
 
 A `planet` shader is a planet's shape: the signed distance in metres from each point to the ground,
 negative inside it. The engine runs it in compute for every sample of every voxel block the planet
-needs, and keeps only what is near the surface. `kooch_world::planet::Terrain` meshes them too, in
-compute, but no component draws a planet yet (#313): today a game places the meshes itself, as
-roll-a-ball's `planets.scene` does.
+needs, and meshes what is near the surface there too. A [`Planet`](planets.md) names it as its
+`generator`.
 
 ```wgsl
 // kind: planet

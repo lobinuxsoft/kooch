@@ -35,7 +35,7 @@ fn solar_system(height: f64) -> Planets {
             floor: 64,
             ceiling: DEFAULT_CAPACITY,
         };
-        planets.push(shape, viewer, limits);
+        planets.push(shape, &[viewer], limits);
     }
     planets
 }

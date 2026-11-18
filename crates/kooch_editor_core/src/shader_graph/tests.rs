@@ -214,7 +214,7 @@ fn every_node_compiles() {
             }
             // A planet is a compute generator, with no frame to preview in (#313).
             if kind == "planet" {
-                kooch_world::planet::validate_generator(&shader.source)
+                kooch_planet::validate_generator(&shader.source)
                     .unwrap_or_else(|why| panic!("{name} does not compile: {why}"));
                 continue;
             }

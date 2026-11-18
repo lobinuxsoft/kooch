@@ -32,18 +32,47 @@ pub struct Limits {
 #[derive(Clone, Debug, Default)]
 pub struct Planets {
     pub shape: Vec<Shape>,
-    /// The viewer in the planet's local space: its origin and rotation removed.
+    /// Every viewer in the planet's local space, its origin and rotation removed: `views` in a
+    /// row per planet. A block is refined for the viewer closest to it.
     pub viewer: Vec<DVec3>,
+    pub views: usize,
     pub limits: Vec<Limits>,
 }
 
 impl Planets {
     /// Adds a planet and returns its index, which is `BlockKey::planet`.
-    pub fn push(&mut self, shape: Shape, viewer: DVec3, limits: Limits) -> u32 {
+    /// Every planet takes as many viewers as the first one did; a planet with none is out of view.
+    pub fn push(&mut self, shape: Shape, viewers: &[DVec3], limits: Limits) -> u32 {
+        if self.shape.is_empty() {
+            self.viewer.clear();
+            self.views = viewers.len();
+        }
+        let nowhere = DVec3::splat(f64::INFINITY);
+        self.viewer.extend((0..self.views).map(|v| {
+            viewers
+                .get(v)
+                .or(viewers.last())
+                .copied()
+                .unwrap_or(nowhere)
+        }));
         self.shape.push(shape);
-        self.viewer.push(viewer);
         self.limits.push(limits);
         (self.shape.len() - 1) as u32
+    }
+
+    /// Empties it for the next frame, keeping its allocations.
+    pub fn clear(&mut self) {
+        self.shape.clear();
+        self.viewer.clear();
+        self.views = 0;
+        self.limits.clear();
+    }
+
+    /// `planet`'s viewers, in its local space.
+    pub fn viewers(&self, planet: usize) -> &[DVec3] {
+        self.viewer
+            .get(planet * self.views..(planet + 1) * self.views)
+            .unwrap_or_default()
     }
 
     pub fn len(&self) -> usize {
@@ -161,7 +190,12 @@ impl<S: Fn(BlockKey, DVec3, DVec3) -> bool> Refine<'_, S> {
     fn seed(&mut self, planet: usize, heap: &mut BinaryHeap<Node>) {
         let shape = self.planets.shape[planet];
         let outer = shape.radius + shape.relief;
-        let distance = self.planets.viewer[planet].length();
+        let distance = self
+            .planets
+            .viewers(planet)
+            .iter()
+            .map(|viewer| viewer.length())
+            .fold(f64::INFINITY, f64::min);
         if distance > outer && 2.0 * outer / distance * self.view.proj_scale < self.view.impostor_px
         {
             return;
@@ -252,8 +286,12 @@ impl<S: Fn(BlockKey, DVec3, DVec3) -> bool> Refine<'_, S> {
         let planet = key.planet as usize;
         let shape = self.planets.shape[planet];
         let (min, max) = bounds(&shape, key);
-        let viewer = self.planets.viewer[planet];
-        let distance = (viewer.clamp(min, max) - viewer).length();
+        let distance = self
+            .planets
+            .viewers(planet)
+            .iter()
+            .map(|viewer| (viewer.clamp(min, max) - *viewer).length())
+            .fold(f64::INFINITY, f64::min);
         voxel_size(&shape, key.level) / distance * self.view.proj_scale
     }
 }

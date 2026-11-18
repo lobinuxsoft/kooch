@@ -1,6 +1,6 @@
-//! Planet terrain residency (#313): which voxel blocks of which planets hold a slot of the shared
-//! pool this frame. Decided on the CPU, as Zylann's octree streaming does; the GPU generates what it
-//! picks into one shared [`BlockAtlas`] (#313 step 3).
+//! Planets on sparse voxel blocks (#313). Put a [`Planet`] on an entity and [`PlanetPlugin`] draws
+//! it: which blocks of which planets hold a slot of the shared pool is decided on the CPU, as
+//! Zylann's octree streaming does; the GPU generates and meshes them into one [`BlockAtlas`].
 //!
 //! Each planet is an octree of fixed-size blocks in its own local space, so a planet that orbits
 //! or spins regenerates nothing. Every planet competes for one pool by screen-space error: the
@@ -8,26 +8,36 @@
 //! many planets exist.
 
 mod atlas;
+mod component;
+mod draw;
 mod generate;
 mod mesh;
+mod plugin;
 mod pool;
+mod roster;
 mod select;
+mod sync;
 mod terrain;
+#[cfg(test)]
+mod test_device;
 #[cfg(test)]
 mod tests;
 
 use glam::IVec3;
 
 pub use atlas::BlockAtlas;
+pub use component::{Planet, PlanetBlock};
 pub use generate::{
     BARE_SPHERE, Backlog, GeneratePass, Job, PLANET_INPUT_WGSL, validate_generator,
 };
 pub use mesh::MeshPass;
+pub use plugin::PlanetPlugin;
 pub use pool::{BlockPool, Residency};
 pub use select::{Limits, Planets, Shape, View, select};
+pub use sync::{PlanetStats, PlanetTerrain, sync_planets};
 pub use terrain::{GpuTimes, MESH_BATCH, MeshedBlock, Terrain};
 
-use crate::voxel::SUBGRID_DIM;
+use kooch_world::voxel::SUBGRID_DIM;
 
 /// Samples per block axis; a level-`L` block covers `BLOCK_SAMPLES · voxel · 2^L` metres.
 pub const BLOCK_SAMPLES: u32 = SUBGRID_DIM;

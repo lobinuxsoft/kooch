@@ -52,6 +52,14 @@ impl BlockPool {
         self.slots.get(&key).copied()
     }
 
+    /// The slots `planet` holds, in no order.
+    pub fn slots_of(&self, planet: u32) -> impl Iterator<Item = u32> + '_ {
+        self.slots
+            .iter()
+            .filter(move |(key, _)| key.planet == planet)
+            .map(|(_, slot)| *slot)
+    }
+
     /// The block a resident slot holds.
     pub fn key(&self, slot: u32) -> Option<BlockKey> {
         let i = slot as usize;

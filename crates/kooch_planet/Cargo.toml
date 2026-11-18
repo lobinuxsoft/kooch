@@ -1,0 +1,27 @@
+[package]
+name = "kooch_planet"
+description = "Planets on sparse voxel blocks for kooch: one shared pool, generated and meshed on the GPU (#313)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kooch_core.workspace = true
+kooch_ecs.workspace = true
+kooch_ecs_macros.workspace = true
+# The meshes a planet's blocks become, and the shader asset its generator is.
+kooch_render.workspace = true
+# The voxel format the atlas shares with the streaming grid.
+kooch_world.workspace = true
+wgpu.workspace = true
+# Checks a generator before a pipeline is built from it; the same naga wgpu links.
+naga = { version = "30", features = ["wgsl-in"] }
+glam.workspace = true
+bytemuck.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+kooch_core = { workspace = true, features = ["test-adapter"] }
+pollster.workspace = true

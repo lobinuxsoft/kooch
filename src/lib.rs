@@ -51,6 +51,8 @@ pub use kooch_input;
 pub use kooch_lighting;
 #[cfg(feature = "physics")]
 pub use kooch_physics;
+#[cfg(feature = "planet")]
+pub use kooch_planet;
 #[cfg(feature = "remote")]
 pub use kooch_remote;
 #[cfg(feature = "render")]
@@ -159,6 +161,9 @@ pub mod prelude {
     // changed.
     #[cfg(feature = "blockmesh")]
     pub use kooch_blockmesh::{Block, BlockMesh, BlockPlugin, BuiltBlocks, SplineSweep};
+    // Voxel planets (#313); `PlanetStats` is what they cost this frame.
+    #[cfg(feature = "planet")]
+    pub use kooch_planet::{Planet, PlanetPlugin, PlanetStats};
 
     // A UI is one entity; the game reaches its nodes through `UiTrees` (#96).
     #[cfg(feature = "ui")]
@@ -336,6 +341,11 @@ impl kooch_core::plugin::PluginGroup for RemoteHostPlugins {
         #[cfg(feature = "blockmesh")]
         let builder = builder.add(kooch_blockmesh::BlockPlugin);
 
+        // Planets (#313). On the host it only registers `Planet`: there is no GPU there, and the
+        // editor draws the playing game's planets itself.
+        #[cfg(feature = "planet")]
+        let builder = builder.add(kooch_planet::PlanetPlugin);
+
         // Beside blocks and for the same reason: a scene's `UiDocument` has to resolve on the host.
         #[cfg(feature = "ui")]
         let builder = builder.add(kooch_ui::UiPlugin);
@@ -411,6 +421,11 @@ impl kooch_core::plugin::PluginGroup for DefaultPlugins {
         // forgotten line reads only "add_component failed".
         #[cfg(feature = "blockmesh")]
         let builder = builder.add(kooch_blockmesh::BlockPlugin);
+
+        // Planets (#313). On the host it only registers `Planet`: there is no GPU there, and the
+        // editor draws the playing game's planets itself.
+        #[cfg(feature = "planet")]
+        let builder = builder.add(kooch_planet::PlanetPlugin);
 
         // Beside blocks and for the same reason: a scene's `UiDocument` has to resolve on the host.
         #[cfg(feature = "ui")]

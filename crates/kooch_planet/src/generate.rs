@@ -13,7 +13,7 @@ use super::TILE_SAMPLES;
 use super::atlas::BlockAtlas;
 use super::select::{bounds, voxel_size};
 use super::{BlockKey, BlockPool, Planets, Residency, Shape};
-use crate::voxel::POOL_TEXTURE_FORMAT;
+use kooch_world::voxel::POOL_TEXTURE_FORMAT;
 
 #[cfg(test)]
 mod tests;
@@ -34,7 +34,7 @@ struct PlanetInput {
 /// graph writes too.
 pub const BARE_SPHERE: &str = "fn planet(input: PlanetInput) -> f32 { return input.altitude; }";
 
-const GENERATE_WGSL: &str = include_str!("../../shaders/planet_generate.wgsl");
+const GENERATE_WGSL: &str = include_str!("../shaders/generate.wgsl");
 
 /// Whether `generator` compiles into the generation pass, and if not, why.
 pub fn validate_generator(generator: &str) -> Result<(), String> {
@@ -166,7 +166,7 @@ impl GeneratePass {
         let source = compose(generator);
         validate(&source)?;
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("kooch_world::planet::generate"),
+            label: Some("kooch_planet::generate"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -191,12 +191,12 @@ impl GeneratePass {
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("kooch_world::planet::generate"),
+            label: Some("kooch_planet::generate"),
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("kooch_world::planet::generate"),
+            label: Some("kooch_planet::generate"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
         let tiles = atlas.tiles();
@@ -206,7 +206,7 @@ impl GeneratePass {
             ("TILE_DIM", f64::from(TILE_SAMPLES)),
         ];
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("kooch_world::planet::generate"),
+            label: Some("kooch_planet::generate"),
             layout: Some(&pipeline_layout),
             module: &module,
             entry_point: Some("generate_main"),
@@ -218,7 +218,7 @@ impl GeneratePass {
         });
         let batch = batch.max(1);
         let jobs = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("kooch_world::planet::generate::jobs"),
+            label: Some("kooch_planet::generate::jobs"),
             size: u64::from(batch) * size_of::<Job>() as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -249,7 +249,7 @@ impl GeneratePass {
             return;
         }
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("kooch_world::planet::generate"),
+            label: Some("kooch_planet::generate"),
         });
         self.record(device, queue, &mut encoder, atlas, jobs, None);
         queue.submit([encoder.finish()]);
@@ -272,7 +272,7 @@ impl GeneratePass {
         }
         queue.write_buffer(&self.jobs, 0, bytemuck::cast_slice(jobs));
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("kooch_world::planet::generate"),
+            label: Some("kooch_planet::generate"),
             layout: &self.layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -286,7 +286,7 @@ impl GeneratePass {
             ],
         });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("kooch_world::planet::generate"),
+            label: Some("kooch_planet::generate"),
             timestamp_writes: timestamps,
         });
         pass.set_pipeline(&self.pipeline);

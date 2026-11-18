@@ -118,6 +118,9 @@ impl Plugin for EditorPlugin {
         // is generated rather than loaded, so the editor that draws it
         // is the one that has to run the generation. Nothing else will.
         app.add_plugin(kooch_blockmesh::BlockPlugin);
+        // Whole too, for the same reason: a planet's blocks are generated on the GPU that draws
+        // them, and while a game plays remotely that GPU is this process's.
+        app.add_plugin(kooch_planet::PlanetPlugin);
         app.add_plugin(kooch_character::CharacterComponentsPlugin);
         // Same split again: the editor authors camera behaviour and never
         // runs it. A vcam driving a camera here would fight the editor's

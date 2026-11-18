@@ -2,10 +2,8 @@ use std::collections::HashMap;
 
 use glam::{DVec3, IVec3};
 
-use crate::planet::{
-    BARE_SPHERE, BlockKey, BlockPool, Limits, MeshedBlock, Planets, Residency, Shape, Terrain,
-};
-use crate::voxel::test_device::try_acquire;
+use crate::test_device::try_acquire;
+use crate::{BlockKey, BlockPool, Limits, MeshedBlock, Planets, Residency, Shape, Terrain};
 
 const RADIUS: f64 = 6.0;
 
@@ -20,7 +18,7 @@ fn sphere_blocks() -> (Planets, Vec<BlockKey>) {
     };
     planets.push(
         shape,
-        DVec3::ZERO,
+        &[DVec3::ZERO],
         Limits {
             floor: 8,
             ceiling: 8,
@@ -43,7 +41,7 @@ fn mesh_all(device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<MeshedBlock> {
     let mut pool = BlockPool::new(64);
     let mut residency = Residency::default();
     pool.apply(&keys, &mut residency);
-    let mut terrain = Terrain::new(device, queue, 64, BARE_SPHERE).unwrap();
+    let mut terrain = Terrain::new(device, queue, 64).unwrap();
     let mut out = Vec::new();
     let mut all = Vec::new();
     for _ in 0..8 {

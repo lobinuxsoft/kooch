@@ -4,7 +4,7 @@
 use glam::UVec3;
 
 use super::TILE_SAMPLES;
-use crate::voxel::POOL_TEXTURE_FORMAT;
+use kooch_world::voxel::POOL_TEXTURE_FORMAT;
 
 /// Tiles along X and Z; Y grows with the capacity.
 const TILES_ACROSS: u32 = 32;
@@ -21,7 +21,7 @@ impl BlockAtlas {
         let tiles = tiles_for(capacity);
         let size = tiles * TILE_SAMPLES;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("kooch_world::planet::atlas"),
+            label: Some("kooch_planet::atlas"),
             size: wgpu::Extent3d {
                 width: size.x,
                 height: size.y,

@@ -143,7 +143,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     source.push_str(&body.lines);
     if planet {
         let _ = writeln!(source, "    return {}.x;\n}}", outputs[0]);
-        kooch_world::planet::validate_generator(&source)?;
+        kooch_planet::validate_generator(&source)?;
         return finish(source);
     }
     if sky {

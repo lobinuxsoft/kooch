@@ -2402,6 +2402,7 @@ dependencies = [
  "kooch_input",
  "kooch_lighting",
  "kooch_physics",
+ "kooch_planet",
  "kooch_plugin_api",
  "kooch_remote",
  "kooch_render",
@@ -2563,6 +2564,7 @@ dependencies = [
  "kooch_lighting",
  "kooch_pack",
  "kooch_physics",
+ "kooch_planet",
  "kooch_remote",
  "kooch_render",
  "kooch_ui",
@@ -2675,6 +2677,23 @@ dependencies = [
  "rayon",
  "slotmap",
  "tracing",
+]
+
+[[package]]
+name = "kooch_planet"
+version = "0.98.203"
+dependencies = [
+ "bytemuck",
+ "glam 0.33.12",
+ "kooch_core",
+ "kooch_ecs",
+ "kooch_ecs_macros",
+ "kooch_render",
+ "kooch_world",
+ "naga",
+ "pollster 1.0.1",
+ "tracing",
+ "wgpu",
 ]
 
 [[package]]

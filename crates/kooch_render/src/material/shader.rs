@@ -67,7 +67,7 @@ pub enum ShaderKind {
     /// direction in `world_normal` and its longitude and latitude in `uv` (#1900).
     Sky,
     /// A planet's shape: defines `fn planet(PlanetInput) -> f32`, the signed distance in metres,
-    /// which `kooch_world::planet` generates its voxel blocks from (#313).
+    /// which `kooch_planet` generates its voxel blocks from (#313).
     Planet,
 }
 

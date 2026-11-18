@@ -7,7 +7,7 @@ use super::atlas::BlockAtlas;
 #[cfg(test)]
 mod tests;
 
-const MESH_WGSL: &str = include_str!("../../shaders/planet_mesh.wgsl");
+const MESH_WGSL: &str = include_str!("../shaders/mesh.wgsl");
 
 /// Floats per vertex: position, then normal.
 pub(super) const VERTEX_FLOATS: u64 = 6;
@@ -51,7 +51,7 @@ impl MeshPass {
             count: None,
         };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("kooch_world::planet::mesh"),
+            label: Some("kooch_planet::mesh"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -70,12 +70,12 @@ impl MeshPass {
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("kooch_world::planet::mesh"),
+            label: Some("kooch_planet::mesh"),
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("kooch_world::planet::mesh"),
+            label: Some("kooch_planet::mesh"),
             source: wgpu::ShaderSource::Wgsl(MESH_WGSL.into()),
         });
         let tiles = atlas.tiles();
@@ -86,7 +86,7 @@ impl MeshPass {
             ("INDEX_CAP", f64::from(index_cap)),
         ];
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("kooch_world::planet::mesh"),
+            label: Some("kooch_planet::mesh"),
             layout: Some(&pipeline_layout),
             module: &module,
             entry_point: Some("mesh_main"),
@@ -110,25 +110,21 @@ impl MeshPass {
             pipeline,
             layout,
             jobs: buffer(
-                "kooch_world::planet::mesh::jobs",
+                "kooch_planet::mesh::jobs",
                 u64::from(batch) * 4,
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             ),
             header: buffer(
-                "kooch_world::planet::mesh::header",
+                "kooch_planet::mesh::header",
                 header_bytes(batch),
                 out | wgpu::BufferUsages::COPY_DST,
             ),
             vertices: buffer(
-                "kooch_world::planet::mesh::vertices",
+                "kooch_planet::mesh::vertices",
                 u64::from(vertex_cap) * VERTEX_FLOATS * 4,
                 out,
             ),
-            indices: buffer(
-                "kooch_world::planet::mesh::indices",
-                u64::from(index_cap) * 4,
-                out,
-            ),
+            indices: buffer("kooch_planet::mesh::indices", u64::from(index_cap) * 4, out),
             batch,
             vertex_cap,
             index_cap,
@@ -153,7 +149,7 @@ impl MeshPass {
         let zeros = vec![0u8; header_bytes(self.batch) as usize];
         queue.write_buffer(&self.header, 0, &zeros);
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("kooch_world::planet::mesh"),
+            label: Some("kooch_planet::mesh"),
             layout: &self.layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -167,7 +163,7 @@ impl MeshPass {
             ],
         });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("kooch_world::planet::mesh"),
+            label: Some("kooch_planet::mesh"),
             timestamp_writes: timestamps,
         });
         pass.set_pipeline(&self.pipeline);
