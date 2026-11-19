@@ -16,8 +16,9 @@ use kooch_ecs::{Commands, Entity, MeshRenderer, Transform};
 use kooch_render::meshlet::{GpuMeshes, MeshBounds};
 
 use crate::component::PlanetBlock;
+use crate::seam::levels;
 use crate::sync::Found;
-use crate::{BLOCK_SAMPLES, BlockKey, BlockPool, CountedBlock, Terrain, WriteJob};
+use crate::{BLOCK_SAMPLES, BlockKey, BlockPool, CountedBlock, Near, Terrain, WriteJob};
 
 /// A mesh asked of the pool and not granted yet.
 #[derive(Clone, Copy)]
@@ -109,7 +110,7 @@ impl Blocks {
         self.asks = self.asks.wrapping_add(1);
         let mesh = Guid::from_bytes(slot_guid(s as u32, self.asks));
         self.asked[s] = Some(Asked { mesh, block });
-        meshes.reserve(mesh, block.sizes, bounds_of(block.voxel));
+        meshes.reserve(mesh, block.sizes, bounds_of(block.voxel, &block.near));
     }
 
     fn write(
@@ -289,13 +290,20 @@ impl Blocks {
     }
 }
 
-/// A block's extent in its own space: its vertices sit between one voxel before its corner and
-/// its last sample.
-fn bounds_of(voxel: f32) -> MeshBounds {
-    let side = BLOCK_SAMPLES as f32 + 1.0;
+/// A block's extent in its own space: its vertices sit within one cell of its sides, and a cell it
+/// borrows from a coarser neighbour is that neighbour's.
+fn bounds_of(voxel: f32, near: &Near) -> MeshBounds {
+    let up = near
+        .sides
+        .iter()
+        .map(|&side| levels(side))
+        .max()
+        .unwrap_or(0);
+    let reach = (1u64 << up.min(62)) as f32;
+    let side = BLOCK_SAMPLES as f32;
     MeshBounds {
-        center: Vec3::splat((side * 0.5 - 1.0) * voxel),
-        radius: side * voxel * 3f32.sqrt() * 0.5,
+        center: Vec3::splat(side * 0.5 * voxel),
+        radius: (side * 0.5 + reach) * voxel * 3f32.sqrt(),
     }
 }
 

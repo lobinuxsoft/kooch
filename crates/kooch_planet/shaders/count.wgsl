@@ -22,6 +22,7 @@ fn count_main(
     let block = wid.x;
     if (lid == 0u) {
         corner = tile_corner(jobs[block].slot);
+        load_near(jobs[block].near);
     }
     if (lid < 4u) {
         atomicStore(&totals[lid], 0u);

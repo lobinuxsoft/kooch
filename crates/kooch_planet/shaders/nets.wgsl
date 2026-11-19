@@ -5,6 +5,10 @@
 // sign-changing edge whose start lies in the block gives a quad over the four cells around it, so
 // two blocks of one level share their border cells and the mesh closes between them.
 //
+// Across a coarser leaf (#313 step 4c) a border cell is the coarse cell holding it, read from the
+// coarse tile, and a sample on the shared border is the coarsest leaf's: every leaf there agrees on
+// its sign.
+//
 // Meshlets are cut by the grid: the block's 16³ edge starts split into 4³ regions, one meshlet
 // each, and a region too full for one splits into its eight 2³ eighths, which always fit.
 
@@ -28,6 +32,44 @@ struct Near {
     sides: array<u32, 26>,
 }
 
+const SLOT_MASK: u32 = 0xffffffu;
+
+var<workgroup> near: Near;
+// Whether any side is a coarser leaf: most blocks have none.
+var<workgroup> borrows: u32;
+
+// Run by one invocation before the barrier that precedes any sample read.
+fn load_near(n: Near) {
+    near = n;
+    borrows = 0u;
+    for (var d = 0u; d < 26u; d++) {
+        borrows |= select(0u, 1u, levels(n.sides[d]) != 0u);
+    }
+}
+
+fn levels(side: u32) -> u32 {
+    return (side >> 24u) & 0x7fu;
+}
+
+fn side_of(d: vec3<i32>) -> u32 {
+    let i = (d.x + 1) + 3 * (d.y + 1) + 9 * (d.z + 1);
+    return near.sides[u32(i) - select(0u, 1u, i > 13)];
+}
+
+// Where the coarser leaf `up` levels above, across `d`, has its sample 1, in samples of ours from
+// our sample 1.
+fn coarse_base(d: vec3<i32>, up: u32) -> vec3<i32> {
+    let k = vec3<i32>(near.cell[0], near.cell[1], near.cell[2]);
+    let kc = (k + d) >> vec3<u32>(up);
+    return ((kc * 16) << vec3<u32>(up)) - k * 16;
+}
+
+// A coarse tile's sample, in our voxels: tiles store distance over their own voxel.
+fn coarse_at(side: u32, t: vec3<i32>) -> f32 {
+    let scale = f32(1u << levels(side));
+    return textureLoad(atlas, tile_corner(side & SLOT_MASK) + t, 0).x * scale;
+}
+
 var<workgroup> corner: vec3<i32>;
 
 fn tile_corner(slot: u32) -> vec3<i32> {
@@ -35,8 +77,51 @@ fn tile_corner(slot: u32) -> vec3<i32> {
     return vec3<i32>(tile * TILE);
 }
 
-fn at(s: vec3<u32>) -> f32 {
+fn own(s: vec3<u32>) -> f32 {
     return textureLoad(atlas, corner + vec3<i32>(s), 0).x;
+}
+
+fn at(s: vec3<u32>) -> f32 {
+    let border = any(s == vec3<u32>(1u)) || any(s == vec3<u32>(TILE - 1u));
+    if (borrows == 0u || !border) {
+        return own(s);
+    }
+    return shared_at(s);
+}
+
+// A border sample from the coarsest leaf around it that has it as a sample.
+fn shared_at(s: vec3<u32>) -> f32 {
+    var best = 0u;
+    var value = own(s);
+    for (var m = 1u; m < 8u; m++) {
+        var d = vec3<i32>(0);
+        var around = true;
+        for (var a = 0u; a < 3u; a++) {
+            if (((m >> a) & 1u) == 0u) {
+                continue;
+            }
+            if (s[a] == 1u) {
+                d[a] = -1;
+            } else if (s[a] == TILE - 1u) {
+                d[a] = 1;
+            } else {
+                around = false;
+            }
+        }
+        let side = side_of(d);
+        let up = levels(side);
+        if (!around || up <= best) {
+            continue;
+        }
+        let rel = vec3<i32>(s) - vec3<i32>(1) - coarse_base(d, up);
+        let unaligned = rel & vec3<i32>((1 << up) - 1);
+        if (any(unaligned != vec3<i32>(0))) {
+            continue;
+        }
+        best = up;
+        value = coarse_at(side, (rel >> vec3<u32>(up)) + vec3<i32>(1));
+    }
+    return value;
 }
 
 fn cell_of(i: u32) -> vec3<u32> {
@@ -63,7 +148,8 @@ fn crosses(v: array<f32, 8>) -> bool {
     return inside != 0u && inside != 8u;
 }
 
-// The mean of the cell's edge crossings, within the cell, and the gradient as its normal.
+// The mean of the cell's edge crossings, within the cell, and the gradient as its normal. A cell
+// with none, which only a finer neighbour borrows, takes one Newton step from its centre.
 fn place(v: array<f32, 8>) -> array<vec3<f32>, 2> {
     var sum = vec3<f32>(0.0);
     var count = 0.0;
@@ -90,8 +176,48 @@ fn place(v: array<f32, 8>) -> array<vec3<f32>, 2> {
         (v[2] + v[3] + v[6] + v[7]) - (v[0] + v[1] + v[4] + v[5]),
         (v[4] + v[5] + v[6] + v[7]) - (v[0] + v[1] + v[2] + v[3]),
     );
-    let normal = select(vec3<f32>(0.0, 1.0, 0.0), normalize(g), dot(g, g) > 0.0);
-    return array<vec3<f32>, 2>(sum / max(count, 1.0), normal);
+    let still = !(dot(g, g) > 0.0);
+    let normal = select(normalize(g), vec3<f32>(0.0, 1.0, 0.0), still);
+    if (count > 0.0) {
+        return array<vec3<f32>, 2>(sum / count, normal);
+    }
+    var mean = 0.0;
+    for (var k = 0u; k < 8u; k++) {
+        mean += v[k] * 0.125;
+    }
+    // g is four times the gradient across the cell.
+    let newton = select(g * (4.0 * mean / dot(g, g)), vec3<f32>(0.0), still);
+    let inside = clamp(vec3<f32>(0.5) - newton, vec3<f32>(0.0), vec3<f32>(1.0));
+    return array<vec3<f32>, 2>(inside, normal);
+}
+
+// Cell `c`'s vertex, in our samples, and its normal. A cell across a coarser leaf is the coarse cell
+// holding it, placed as that leaf places it.
+fn cell_vertex(c: vec3<u32>) -> array<vec3<f32>, 2> {
+    let d = select(vec3<i32>(0), vec3<i32>(-1), c == vec3<u32>(0u));
+    let side = side_of(d);
+    let up = levels(side);
+    if (borrows == 0u || all(d == vec3<i32>(0)) || up == 0u) {
+        let placed = place(corners(c));
+        return array<vec3<f32>, 2>(vec3<f32>(c) + placed[0], placed[1]);
+    }
+    let base = coarse_base(d, up);
+    let t = ((vec3<i32>(c) - vec3<i32>(1) - base) >> vec3<u32>(up)) + vec3<i32>(1);
+    var v: array<f32, 8>;
+    for (var k = 0u; k < 8u; k++) {
+        let tk = t + vec3<i32>(vec3<u32>(k & 1u, (k >> 1u) & 1u, k >> 2u));
+        // On our border the coarse leaf reads the sample as we do; past it, from its own tile.
+        let s = base + ((tk - vec3<i32>(1)) << vec3<u32>(up)) + vec3<i32>(1);
+        let ours = all(s >= vec3<i32>(1)) && all(s <= vec3<i32>(i32(TILE) - 1));
+        if (ours) {
+            v[k] = at(vec3<u32>(s));
+        } else {
+            v[k] = coarse_at(side, tk);
+        }
+    }
+    let placed = place(v);
+    let first = base + ((t - vec3<i32>(1)) << vec3<u32>(up)) + vec3<i32>(1);
+    return array<vec3<f32>, 2>(vec3<f32>(first) + placed[0] * f32(1u << up), placed[1]);
 }
 
 // Whether the edge from `s` along `axis` changes sign, and if so whether it starts inside.

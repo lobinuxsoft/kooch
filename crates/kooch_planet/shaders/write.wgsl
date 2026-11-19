@@ -143,6 +143,7 @@ fn write_main(
     if (lid == 0u) {
         job = jobs[wid.x];
         corner = tile_corner(job.slot);
+        load_near(job.near);
         atomicStore(&counter, 0u);
         fits = 0u;
     }
@@ -181,10 +182,9 @@ fn write_main(
         if (n == 0u) {
             continue;
         }
-        let c = cell_of(i);
-        let placed = place(corners(c));
+        let placed = cell_vertex(cell_of(i));
         // Sample 1 is the block's corner.
-        let p = (vec3<f32>(c) + placed[0] - vec3<f32>(1.0)) * job.voxel;
+        let p = (placed[0] - vec3<f32>(1.0)) * job.voxel;
         let o = (job.first_vertex + n - 1u) * VERTEX_FLOATS;
         pool_vertices[o] = p.x;
         pool_vertices[o + 1u] = p.y;
