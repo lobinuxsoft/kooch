@@ -5,10 +5,8 @@
 //   PLANET_INPUT_WGSL (the struct the generator reads)
 // + generator fragment (defines `fn planet`)
 // + this file
-
-override TILES_X: u32 = 32u;
-override TILES_Y: u32 = 1u;
-override TILE_DIM: u32 = 18u;
+// after the atlas sizes `TILES_X`, `TILES_Y` and `TILE_DIM` as consts. Not overrides: naga's override
+// pass drops a generator's composed call argument out of scope ("Function 'planet' is invalid").
 
 const WORKGROUP: u32 = 256u;
 // Voxels kept either side of the surface; beyond it a meshing pass needs only the sign, and f16

@@ -38,11 +38,16 @@ const GENERATE_WGSL: &str = include_str!("../shaders/generate.wgsl");
 
 /// Whether `generator` compiles into the generation pass, and if not, why.
 pub fn validate_generator(generator: &str) -> Result<(), String> {
-    validate(&compose(generator))
+    validate(&compose(generator, glam::UVec3::new(32, 1, 1)))
 }
 
-fn compose(generator: &str) -> String {
-    format!("{PLANET_INPUT_WGSL}{generator}\n{GENERATE_WGSL}")
+/// The generate shader for `generator`, over an atlas of `tiles`.
+fn compose(generator: &str, tiles: glam::UVec3) -> String {
+    format!(
+        "const TILES_X: u32 = {}u;\nconst TILES_Y: u32 = {}u;\nconst TILE_DIM: u32 = {TILE_SAMPLES}u;\n\
+         {PLANET_INPUT_WGSL}{generator}\n{GENERATE_WGSL}",
+        tiles.x, tiles.y
+    )
 }
 
 fn validate(source: &str) -> Result<(), String> {
@@ -172,7 +177,7 @@ impl GeneratePass {
         atlas: &BlockAtlas,
         batch: u32,
     ) -> Result<Self, String> {
-        let source = compose(generator);
+        let source = compose(generator, atlas.tiles());
         validate(&source)?;
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("kooch_planet::generate"),
@@ -208,19 +213,13 @@ impl GeneratePass {
             label: Some("kooch_planet::generate"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
-        let tiles = atlas.tiles();
-        let constants: &[(&str, f64)] = &[
-            ("TILES_X", f64::from(tiles.x)),
-            ("TILES_Y", f64::from(tiles.y)),
-            ("TILE_DIM", f64::from(TILE_SAMPLES)),
-        ];
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("kooch_planet::generate"),
             layout: Some(&pipeline_layout),
             module: &module,
             entry_point: Some("generate_main"),
             compilation_options: wgpu::PipelineCompilationOptions {
-                constants,
+                constants: &[],
                 zero_initialize_workgroup_memory: false,
             },
             cache: None,
