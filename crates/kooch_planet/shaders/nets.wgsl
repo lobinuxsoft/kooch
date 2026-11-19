@@ -7,20 +7,24 @@
 //
 // Across a coarser leaf (#313 step 4c) a border cell is the coarse cell holding it, read from the
 // coarse tile, and a sample on the shared border is the coarsest leaf's: every leaf there agrees on
-// its sign.
+// its sign. The finer leaf emits the seam: a block also emits its +plane edges where the leaf past
+// them is coarser, and none whose cells reach a finer one.
 //
 // Meshlets are cut by the grid: the block's 16³ edge starts split into 4³ regions, one meshlet
-// each, and a region too full for one splits into its eight 2³ eighths, which always fit.
+// each, and a region too full for one splits into its eight 2³ eighths, which always fit. The
+// +plane edges take 16 patches a face, one sample deep, which always fit too.
 
 override TILES_X: u32 = 32u;
 override TILES_Y: u32 = 1u;
 
-// The tile is 18 samples: the block's 16, and one either side. Cells sit between samples.
+// The tile is 18 samples: the block's 16, and one either side. Cells sit between samples; cell 17
+// is past the tile, and only a coarser leaf there gives it a vertex.
 const TILE: u32 = 18u;
-const CELLS: u32 = 17u;
-const CELL_COUNT: u32 = 4913u;
+const CELLS: u32 = 18u;
+const CELL_COUNT: u32 = 5832u;
 const WORKGROUP: u32 = 256u;
-const REGIONS: u32 = 64u;
+const INNER: u32 = 64u;
+const REGIONS: u32 = 112u;
 const MAX_TRIANGLES: u32 = 124u;
 const MAX_VERTICES: u32 = 64u;
 
@@ -33,17 +37,21 @@ struct Near {
 }
 
 const SLOT_MASK: u32 = 0xffffffu;
+const FINER: u32 = 0x80000000u;
 
 var<workgroup> near: Near;
-// Whether any side is a coarser leaf: most blocks have none.
+// Whether any side is a coarser leaf, or a finer one: most blocks have neither.
 var<workgroup> borrows: u32;
+var<workgroup> finer: u32;
 
 // Run by one invocation before the barrier that precedes any sample read.
 fn load_near(n: Near) {
     near = n;
     borrows = 0u;
+    finer = 0u;
     for (var d = 0u; d < 26u; d++) {
         borrows |= select(0u, 1u, levels(n.sides[d]) != 0u);
+        finer |= select(0u, 1u, n.sides[d] == FINER);
     }
 }
 
@@ -194,7 +202,7 @@ fn place(v: array<f32, 8>) -> array<vec3<f32>, 2> {
 // Cell `c`'s vertex, in our samples, and its normal. A cell across a coarser leaf is the coarse cell
 // holding it, placed as that leaf places it.
 fn cell_vertex(c: vec3<u32>) -> array<vec3<f32>, 2> {
-    let d = select(vec3<i32>(0), vec3<i32>(-1), c == vec3<u32>(0u));
+    let d = outside(c);
     let side = side_of(d);
     let up = levels(side);
     if (borrows == 0u || all(d == vec3<i32>(0)) || up == 0u) {
@@ -220,6 +228,67 @@ fn cell_vertex(c: vec3<u32>) -> array<vec3<f32>, 2> {
     return array<vec3<f32>, 2>(vec3<f32>(first) + placed[0] * f32(1u << up), placed[1]);
 }
 
+// Which neighbour holds cell `c`, per axis: cell 0 is the − one's, cell 17 the + one's.
+fn outside(c: vec3<u32>) -> vec3<i32> {
+    let low = select(vec3<i32>(0), vec3<i32>(-1), c == vec3<u32>(0u));
+    return select(low, vec3<i32>(1), c == vec3<u32>(CELLS - 1u));
+}
+
+// Whether the block emits the edge from `s` along `axis`: none whose cells reach a finer leaf, which
+// emits it itself, and past the +plane only those whose cells there are a coarser leaf's.
+fn owns(s: vec3<u32>, axis: u32) -> bool {
+    if (s[axis] > 16u) {
+        return false;
+    }
+    if (borrows == 0u && finer == 0u) {
+        return true;
+    }
+    let cells = quad(s, axis);
+    for (var k = 0u; k < 4u; k++) {
+        let d = outside(cells[k]);
+        if (all(d == vec3<i32>(0))) {
+            continue;
+        }
+        let side = side_of(d);
+        if (side == FINER || (any(d == vec3<i32>(1)) && levels(side) == 0u)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// `edge` over the edges the block emits.
+fn emits(s: vec3<u32>, axis: u32) -> vec2<u32> {
+    if (!owns(s, axis)) {
+        return vec2<u32>(0u);
+    }
+    return edge(s, axis);
+}
+
+// Whether cell `c` takes a vertex. Cell 17's samples are past the tile, so it takes one only when an
+// emitted edge reaches it.
+fn has_vertex(c: vec3<u32>) -> bool {
+    if (all(c < vec3<u32>(CELLS - 1u))) {
+        return crosses(corners(c));
+    }
+    if (borrows == 0u) {
+        return false;
+    }
+    for (var axis = 0u; axis < 3u; axis++) {
+        let u = (axis + 1u) % 3u;
+        let v = (axis + 2u) % 3u;
+        for (var k = 0u; k < 4u; k++) {
+            var s = c;
+            s[u] += k & 1u;
+            s[v] += k >> 1u;
+            if (all(s >= vec3<u32>(1u)) && all(s <= vec3<u32>(TILE - 1u)) && emits(s, axis).x != 0u) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 // Whether the edge from `s` along `axis` changes sign, and if so whether it starts inside.
 fn edge(s: vec3<u32>, axis: u32) -> vec2<u32> {
     var e = vec3<u32>(0u);
@@ -239,42 +308,73 @@ fn quad(s: vec3<u32>, axis: u32) -> array<vec3<u32>, 4> {
     return array<vec3<u32>, 4>(s - u - v, s - v, s, s - u);
 }
 
-fn region_base(q: u32) -> vec3<u32> {
-    return vec3<u32>(1u) + 4u * vec3<u32>(q % 4u, (q / 4u) % 4u, q / 16u);
+// Edge starts `base` to `base + size`.
+struct Region {
+    base: vec3<u32>,
+    size: vec3<u32>,
 }
 
-fn eighth_base(base: vec3<u32>, e: u32) -> vec3<u32> {
-    return base + 2u * vec3<u32>(e & 1u, (e >> 1u) & 1u, e >> 2u);
+// The first 64 are the 4³ grid. Then 16 patches a +plane, each face also taking one line of the
+// planes past it, so every start with a 17 in it falls in exactly one: x takes y = 17, y takes z,
+// z takes x.
+fn region(q: u32) -> Region {
+    if (q < INNER) {
+        return Region(vec3<u32>(1u) + 4u * vec3<u32>(q % 4u, (q / 4u) % 4u, q / 16u), vec3<u32>(4u));
+    }
+    let face = (q - INNER) / 16u;
+    let i = (q - INNER) % 4u;
+    let j = ((q - INNER) / 4u) % 4u;
+    let a = (face + 1u) % 3u;
+    let b = (face + 2u) % 3u;
+    var r = Region(vec3<u32>(TILE - 1u), vec3<u32>(1u));
+    r.base[a] = 1u + 4u * i;
+    r.size[a] = 4u + select(0u, 1u, i == 3u);
+    r.base[b] = 1u + 4u * j;
+    r.size[b] = 4u;
+    return r;
 }
 
-// A cell's bit in the mask of the region starting at `base`, whose cells start one sample before.
-fn cell_bit(c: vec3<u32>, base: vec3<u32>, side: u32) -> u32 {
-    let l = c + vec3<u32>(1u) - base;
-    let d = side + 1u;
-    return l.x + l.y * d + l.z * d * d;
+fn eighth(r: Region, e: u32) -> Region {
+    return Region(r.base + 2u * vec3<u32>(e & 1u, (e >> 1u) & 1u, e >> 2u), vec3<u32>(2u));
 }
 
-fn bit_cell(bit: u32, base: vec3<u32>, side: u32) -> vec3<u32> {
-    let d = side + 1u;
-    return base - vec3<u32>(1u) + vec3<u32>(bit % d, (bit / d) % d, bit / (d * d));
+fn start_of(i: u32, r: Region) -> vec3<u32> {
+    return r.base + vec3<u32>(i % r.size.x, (i / r.size.x) % r.size.y, i / (r.size.x * r.size.y));
+}
+
+// A cell's bit in the region's mask; its cells start one sample before its starts.
+fn cell_bit(c: vec3<u32>, r: Region) -> u32 {
+    let l = c + vec3<u32>(1u) - r.base;
+    let d = r.size + vec3<u32>(1u);
+    return l.x + l.y * d.x + l.z * d.x * d.y;
+}
+
+fn bit_cell(bit: u32, r: Region) -> vec3<u32> {
+    let d = r.size + vec3<u32>(1u);
+    return r.base - vec3<u32>(1u) + vec3<u32>(bit % d.x, (bit / d.x) % d.y, bit / (d.x * d.y));
+}
+
+fn bits(r: Region) -> u32 {
+    let d = r.size + vec3<u32>(1u);
+    return d.x * d.y * d.z;
 }
 
 // The region's quads, and in `mask` every cell they touch: at most 5³ = 125 bits.
-fn fill(base: vec3<u32>, side: u32, mask: ptr<function, array<u32, 4>>) -> u32 {
+fn fill(r: Region, mask: ptr<function, array<u32, 4>>) -> u32 {
     for (var w = 0u; w < 4u; w++) {
         (*mask)[w] = 0u;
     }
     var quads = 0u;
-    for (var i = 0u; i < side * side * side; i++) {
-        let s = base + vec3<u32>(i % side, (i / side) % side, i / (side * side));
+    for (var i = 0u; i < r.size.x * r.size.y * r.size.z; i++) {
+        let s = start_of(i, r);
         for (var axis = 0u; axis < 3u; axis++) {
-            if (edge(s, axis).x == 0u) {
+            if (emits(s, axis).x == 0u) {
                 continue;
             }
             quads += 1u;
             let cells = quad(s, axis);
             for (var k = 0u; k < 4u; k++) {
-                let bit = cell_bit(cells[k], base, side);
+                let bit = cell_bit(cells[k], r);
                 (*mask)[bit >> 5u] |= 1u << (bit & 31u);
             }
         }
@@ -310,9 +410,13 @@ struct Plan {
 
 // How region `q` becomes meshlets: one, or one per non-empty eighth when one would not fit.
 fn plan(q: u32) -> Plan {
-    let base = region_base(q);
+    // Only a coarser leaf past it gives a +plane edge to the block.
+    if (q >= INNER && borrows == 0u) {
+        return Plan(0u, 0u, 0u, 0u);
+    }
+    let r = region(q);
     var mask: array<u32, 4>;
-    let quads = fill(base, 4u, &mask);
+    let quads = fill(r, &mask);
     if (quads == 0u) {
         return Plan(0u, 0u, 0u, 0u);
     }
@@ -322,7 +426,7 @@ fn plan(q: u32) -> Plan {
     }
     var p = Plan(0u, 0u, 0u, 1u);
     for (var e = 0u; e < 8u; e++) {
-        let part = fill(eighth_base(base, e), 2u, &mask);
+        let part = fill(eighth(r, e), &mask);
         if (part != 0u) {
             p.meshlets += 1u;
             p.vertices += ones(&mask);

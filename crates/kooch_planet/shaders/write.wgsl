@@ -17,7 +17,7 @@ struct Job {
     _pad: u32,
 }
 
-const MAP_WORDS: u32 = 2457u;
+const MAP_WORDS: u32 = 2916u;
 // `MeshVertex` is eight floats: position, normal, uv. `MeshletDescriptor` is 28 words.
 const VERTEX_FLOATS: u32 = 8u;
 const MESHLET_WORDS: u32 = 28u;
@@ -48,20 +48,20 @@ fn position(v: u32) -> vec3<f32> {
     return vec3<f32>(pool_vertices[o], pool_vertices[o + 1u], pool_vertices[o + 2u]);
 }
 
-// One meshlet from the region at `base`: its vertex set, its triangles, its descriptor.
-fn emit(base: vec3<u32>, side: u32, at: vec3<u32>) {
+// One meshlet from `cut`: its vertex set, its triangles, its descriptor.
+fn emit(cut: Region, at: vec3<u32>) {
     var mask: array<u32, 4>;
-    let quads = fill(base, side, &mask);
+    let quads = fill(cut, &mask);
     let first_mv = job.first_meshlet_vertex + at.y;
     let first_byte = job.first_byte + at.z;
     var lo = vec3<f32>(3.4e38);
     var hi = vec3<f32>(-3.4e38);
     var r = 0u;
-    for (var bit = 0u; bit < 125u; bit++) {
+    for (var bit = 0u; bit < bits(cut); bit++) {
         if (((mask[bit >> 5u] >> (bit & 31u)) & 1u) == 0u) {
             continue;
         }
-        let v = job.first_vertex + vertex_of(cell_index(bit_cell(bit, base, side))) - 1u;
+        let v = job.first_vertex + vertex_of(cell_index(bit_cell(bit, cut))) - 1u;
         pool_meshlet_vertices[first_mv + r] = v;
         let p = position(v);
         lo = min(lo, p);
@@ -71,17 +71,17 @@ fn emit(base: vec3<u32>, side: u32, at: vec3<u32>) {
     var word = 0u;
     var packed = 0u;
     var written = 0u;
-    for (var i = 0u; i < side * side * side; i++) {
-        let s = base + vec3<u32>(i % side, (i / side) % side, i / (side * side));
+    for (var i = 0u; i < cut.size.x * cut.size.y * cut.size.z; i++) {
+        let s = start_of(i, cut);
         for (var axis = 0u; axis < 3u; axis++) {
-            let found = edge(s, axis);
+            let found = emits(s, axis);
             if (found.x == 0u) {
                 continue;
             }
             let cells = quad(s, axis);
             var q: array<u32, 4>;
             for (var k = 0u; k < 4u; k++) {
-                q[k] = rank(&mask, cell_bit(cells[k], base, side));
+                q[k] = rank(&mask, cell_bit(cells[k], cut));
             }
             // Starting inside, the surface faces +axis; outside, the other way.
             var corners6 = array<u32, 6>(q[0], q[1], q[2], q[0], q[2], q[3]);
@@ -153,7 +153,7 @@ fn write_main(
     workgroupBarrier();
 
     for (var i = lid; i < CELL_COUNT; i += WORKGROUP) {
-        if (crosses(corners(cell_of(i)))) {
+        if (has_vertex(cell_of(i))) {
             let n = atomicAdd(&counter, 1u) + 1u;
             atomicOr(&map[i >> 1u], n << ((i & 1u) * 16u));
         }
@@ -199,20 +199,20 @@ fn write_main(
     workgroupBarrier();
 
     if (lid < REGIONS && plans[lid].meshlets != 0u) {
-        let base = region_base(lid);
+        let whole = region(lid);
         let start = starts[lid];
         if (plans[lid].split == 0u) {
-            emit(base, 4u, start);
+            emit(whole, start);
         } else {
             var at = start;
             var mask: array<u32, 4>;
             for (var e = 0u; e < 8u; e++) {
-                let part = eighth_base(base, e);
-                let quads = fill(part, 2u, &mask);
+                let part = eighth(whole, e);
+                let quads = fill(part, &mask);
                 if (quads == 0u) {
                     continue;
                 }
-                emit(part, 2u, at);
+                emit(part, at);
                 at += vec3<u32>(1u, ones(&mask), quad_bytes(quads));
             }
         }
