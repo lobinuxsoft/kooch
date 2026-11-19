@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use glam::{DVec3, IVec3, Vec3};
 use kooch_render::meshlet::{GlobalMeshPool, MeshBounds, PoolBuffers};
@@ -6,7 +6,7 @@ use kooch_render::meshlet::{GlobalMeshPool, MeshBounds, PoolBuffers};
 use super::{COUNT_WGSL, NETS_WGSL, WRITE_WGSL};
 use crate::test_device::try_acquire;
 use crate::{
-    BlockKey, BlockPool, CountedBlock, Limits, Planets, Residency, Shape, Terrain, WriteJob,
+    BlockKey, BlockPool, CountedBlock, Leaves, Limits, Planets, Residency, Shape, Terrain, WriteJob,
 };
 
 const RADIUS: f64 = 6.0;
@@ -68,7 +68,12 @@ fn count_all(device: &wgpu::Device, queue: &wgpu::Queue) -> (Terrain, Vec<Counte
     let mut out = Vec::new();
     let mut all = Vec::new();
     for _ in 0..8 {
-        terrain.update(device, queue, &pool, &planets, &residency, &mut out);
+        let split = HashSet::new();
+        let leaves = Leaves {
+            pool: &pool,
+            split: &split,
+        };
+        terrain.update(device, queue, leaves, &planets, &residency, &mut out);
         residency = Residency::default();
         all.append(&mut out);
         wait(device);
@@ -129,7 +134,7 @@ fn a_meshed_sphere_is_watertight() {
     let jobs: Vec<WriteJob> = blocks
         .iter()
         .zip(&ids)
-        .map(|(b, &id)| WriteJob::new(b.slot, b.voxel, b.sizes, &descriptor(id)))
+        .map(|(b, &id)| WriteJob::new(b.slot, b.voxel, b.sizes, &descriptor(id), b.near))
         .collect();
     terrain.write(&device, &queue, &buffers, &jobs);
     let vertices = read(&device, &queue, &buffers.vertices);

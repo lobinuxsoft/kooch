@@ -10,9 +10,10 @@ use kooch_render::meshlet::{GpuMeshSizes, PoolBuffers};
 
 use super::atlas::BlockAtlas;
 use super::generate::{BARE_SPHERE, Backlog, GeneratePass, Job};
-use super::mesh::{COUNT_WORDS, MeshPass, WriteJob, counts_bytes, sizes_of};
-use super::select::{bounds, voxel_size};
-use super::{BlockKey, BlockPool, Planets, Residency};
+use super::mesh::{COUNT_WORDS, CountJob, MeshPass, WriteJob, counts_bytes, sizes_of};
+use super::seam::near;
+use super::select::{bounds, root_level, voxel_size};
+use super::{BlockKey, BlockPool, Leaves, Near, Planets, Residency};
 
 /// Batches in flight at once; a fourth waits for the first to come back.
 const RING: usize = 3;
@@ -40,6 +41,8 @@ pub struct CountedBlock {
     /// Its planet's revision when it was generated; see [`Terrain::revision`].
     pub revision: u32,
     pub sizes: GpuMeshSizes,
+    /// The neighbours it was counted with, which its write must use too.
+    pub near: Near,
 }
 
 /// What the last batch cost the GPU.
@@ -50,10 +53,18 @@ pub struct GpuTimes {
     pub blocks: u32,
 }
 
+/// One block of a batch, as it was sent.
+struct Sent {
+    slot: u32,
+    key: BlockKey,
+    /// Its planet's revision.
+    revision: u32,
+    near: Near,
+}
+
 struct Flight {
     staging: wgpu::Buffer,
-    /// Slot, block and its planet's revision when it was sent.
-    blocks: Vec<(u32, BlockKey, u32)>,
+    blocks: Vec<Sent>,
     state: Arc<AtomicU8>,
     busy: bool,
 }
@@ -70,7 +81,9 @@ pub struct Terrain {
     mesh: MeshPass,
     backlog: Backlog,
     jobs: Vec<Job>,
-    slots: Vec<u32>,
+    counting: Vec<CountJob>,
+    /// Per slot, the block and revision its tile was last generated for.
+    generated: Vec<Option<(BlockKey, u32)>>,
     flights: Vec<Flight>,
     timer: Option<(wgpu::QuerySet, wgpu::Buffer)>,
     period_ns: f32,
@@ -116,6 +129,7 @@ impl Terrain {
                 });
                 (set, resolve)
             });
+        let generated = vec![None; atlas.capacity() as usize];
         Ok(Self {
             atlas,
             sources: vec![BARE_SPHERE.to_owned()],
@@ -124,8 +138,9 @@ impl Terrain {
             revision: Vec::new(),
             mesh,
             backlog: Backlog::default(),
+            generated,
             jobs: Vec::new(),
-            slots: Vec::new(),
+            counting: Vec::new(),
             flights,
             timer,
             period_ns: queue.get_timestamp_period(),
@@ -211,7 +226,7 @@ impl Terrain {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        pool: &BlockPool,
+        leaves: Leaves,
         planets: &Planets,
         residency: &Residency,
         out: &mut Vec<CountedBlock>,
@@ -220,11 +235,16 @@ impl Terrain {
         self.backlog.push(residency);
         let _ = device.poll(wgpu::PollType::Poll);
         for at in 0..self.flights.len() {
-            self.collect(at, pool, planets, out);
+            self.collect(at, leaves.pool, planets, out);
         }
         if let Some(free) = self.flights.iter().position(|flight| !flight.busy) {
-            self.send(device, queue, free, pool, planets);
+            self.send(device, queue, free, leaves, planets);
         }
+    }
+
+    /// Queues a resident block to be generated and meshed again.
+    pub(crate) fn retry(&mut self, slot: u32) {
+        self.backlog.retry(slot);
     }
 
     /// Fills granted pool ranges with the meshes of blocks counted earlier. Blocks must still hold
@@ -274,9 +294,10 @@ impl Terrain {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         at: usize,
-        pool: &BlockPool,
+        leaves: Leaves,
         planets: &Planets,
     ) {
+        let pool = leaves.pool;
         self.backlog
             .take(pool, planets, MESH_BATCH as usize, &mut self.jobs);
         if self.jobs.is_empty() {
@@ -287,8 +308,6 @@ impl Terrain {
         let pass_of = |job: &Job| passes.get(job.planet as usize).copied().unwrap_or(0);
         self.jobs.sort_by_key(pass_of);
         self.planet_pass = passes;
-        self.slots.clear();
-        self.slots.extend(self.jobs.iter().map(|job| job.slot));
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("kooch_planet::terrain"),
         });
@@ -328,30 +347,53 @@ impl Terrain {
                 writes(0, g == 0, g == last),
             );
         }
+        // Generated before the mesh pass reads it, in this encoder: a neighbour in this batch is ready.
+        let flight = &mut self.flights[at];
+        flight.blocks.clear();
+        for job in &self.jobs {
+            if let Some(key) = pool.key(job.slot) {
+                let revision = revision_of(&self.revision, key.planet);
+                flight.blocks.push(Sent {
+                    slot: job.slot,
+                    key,
+                    revision,
+                    near: Near::default(),
+                });
+                if let Some(held) = self.generated.get_mut(job.slot as usize) {
+                    *held = Some((key, revision));
+                }
+            }
+        }
+        let (generated, revisions) = (&self.generated, &self.revision);
+        let ready = |slot: u32| {
+            let held = generated.get(slot as usize).copied().flatten();
+            pool.key(slot)
+                .is_some_and(|key| held == Some((key, revision_of(revisions, key.planet))))
+        };
+        self.counting.clear();
+        for sent in &mut flight.blocks {
+            let root = planets
+                .shape
+                .get(sent.key.planet as usize)
+                .map_or(0, root_level);
+            sent.near = near(leaves, root, sent.key, ready);
+            self.counting.push(CountJob::new(sent.slot, sent.near));
+        }
         self.mesh.record(
             device,
             queue,
             &mut encoder,
             &self.atlas,
-            &self.slots,
+            &self.counting,
             writes(2, true, true),
         );
         let stamps = counts_bytes(self.mesh.batch);
-        let flight = &mut self.flights[at];
         encoder.copy_buffer_to_buffer(&self.mesh.counts, 0, &flight.staging, 0, stamps);
         if let Some((set, resolve)) = &self.timer {
             encoder.resolve_query_set(set, 0..QUERIES, resolve, 0);
             encoder.copy_buffer_to_buffer(resolve, 0, &flight.staging, stamps, resolve.size());
         }
         queue.submit([encoder.finish()]);
-        flight.blocks.clear();
-        for job in &self.jobs {
-            if let Some(key) = pool.key(job.slot) {
-                flight
-                    .blocks
-                    .push((job.slot, key, revision_of(&self.revision, key.planet)));
-            }
-        }
         flight.state.store(MAPPING, Ordering::Release);
         flight.busy = true;
         let state = flight.state.clone();
@@ -385,8 +427,8 @@ impl Terrain {
             .then(|| flight.staging.slice(..).get_mapped_range().ok())
             .flatten();
         let Some(bytes) = mapped else {
-            for (slot, ..) in blocks {
-                self.backlog.retry(slot);
+            for sent in blocks {
+                self.backlog.retry(sent.slot);
             }
             return;
         };
@@ -397,7 +439,13 @@ impl Terrain {
         if self.timer.is_some() {
             self.times = Some(read.times(self.period_ns, blocks.len() as u32));
         }
-        for (b, (slot, key, revision)) in blocks.into_iter().enumerate() {
+        for (b, sent) in blocks.into_iter().enumerate() {
+            let Sent {
+                slot,
+                key,
+                revision,
+                near,
+            } = sent;
             // Freed, reused or reshaped since it was sent: the backlog has it again if still wanted.
             if pool.key(slot) != Some(key) || revision_of(&self.revision, key.planet) != revision {
                 continue;
@@ -415,6 +463,7 @@ impl Terrain {
                         voxel: voxel_size(shape, key.level) as f32,
                         revision,
                         sizes: sizes_of(counts),
+                        near,
                     });
                 }
                 None => self.backlog.retry(slot),

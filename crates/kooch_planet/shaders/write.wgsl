@@ -13,8 +13,8 @@ struct Job {
     meshlets: u32,
     meshlet_vertices: u32,
     bytes: u32,
-    _pad0: u32,
-    _pad1: u32,
+    near: Near,
+    _pad: u32,
 }
 
 const MAP_WORDS: u32 = 2457u;

@@ -5,8 +5,8 @@
 use bytemuck::{Pod, Zeroable};
 use kooch_render::meshlet::{GpuMeshSizes, MeshDescriptor, PoolBuffers};
 
-use super::TILE_SAMPLES;
 use super::atlas::BlockAtlas;
+use super::{Near, TILE_SAMPLES};
 
 #[cfg(test)]
 mod tests;
@@ -30,7 +30,27 @@ pub(super) fn sizes_of(counts: [u32; 4]) -> GpuMeshSizes {
     }
 }
 
-/// One block for the write pass: where its ranges start, and what the count pass found.
+/// One block for the count pass. Mirrors `CountJob` in `count.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+pub struct CountJob {
+    pub slot: u32,
+    pub near: Near,
+    _pad: [u32; 2],
+}
+
+impl CountJob {
+    pub fn new(slot: u32, near: Near) -> Self {
+        Self {
+            slot,
+            near,
+            _pad: [0; 2],
+        }
+    }
+}
+
+/// One block for the write pass: where its ranges start, what the count pass found, and the
+/// neighbours it counted with.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct WriteJob {
@@ -44,11 +64,18 @@ pub struct WriteJob {
     meshlets: u32,
     meshlet_vertices: u32,
     bytes: u32,
-    _pad: [u32; 2],
+    near: Near,
+    _pad: u32,
 }
 
 impl WriteJob {
-    pub fn new(slot: u32, voxel: f32, sizes: GpuMeshSizes, at: &MeshDescriptor) -> Self {
+    pub fn new(
+        slot: u32,
+        voxel: f32,
+        sizes: GpuMeshSizes,
+        at: &MeshDescriptor,
+        near: Near,
+    ) -> Self {
         Self {
             slot,
             voxel,
@@ -60,7 +87,8 @@ impl WriteJob {
             meshlets: sizes.meshlets,
             meshlet_vertices: sizes.meshlet_vertices,
             bytes: sizes.triangle_bytes,
-            _pad: [0; 2],
+            near,
+            _pad: 0,
         }
     }
 }
@@ -71,7 +99,7 @@ pub struct MeshPass {
     count_layout: wgpu::BindGroupLayout,
     write: wgpu::ComputePipeline,
     write_layout: wgpu::BindGroupLayout,
-    slots: wgpu::Buffer,
+    counting: wgpu::Buffer,
     pub(super) counts: wgpu::Buffer,
     /// Grown to the largest frame of writes seen.
     jobs: Option<wgpu::Buffer>,
@@ -102,9 +130,9 @@ impl MeshPass {
             count_layout,
             write,
             write_layout,
-            slots: buffer(
-                "kooch_planet::mesh::slots",
-                u64::from(batch) * 4,
+            counting: buffer(
+                "kooch_planet::mesh::counting",
+                u64::from(batch) * size_of::<CountJob>() as u64,
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             ),
             counts: buffer(
@@ -117,27 +145,27 @@ impl MeshPass {
         }
     }
 
-    /// Counts the blocks in `slots`, already generated into `atlas` earlier in the same encoder.
+    /// Counts the blocks of `jobs`, already generated into `atlas` earlier in the same encoder.
     pub fn record(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         atlas: &BlockAtlas,
-        slots: &[u32],
+        jobs: &[CountJob],
         timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) {
-        let slots = &slots[..slots.len().min(self.batch as usize)];
-        if slots.is_empty() {
+        let jobs = &jobs[..jobs.len().min(self.batch as usize)];
+        if jobs.is_empty() {
             return;
         }
-        queue.write_buffer(&self.slots, 0, bytemuck::cast_slice(slots));
+        queue.write_buffer(&self.counting, 0, bytemuck::cast_slice(jobs));
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("kooch_planet::mesh::count"),
             layout: &self.count_layout,
             entries: &[
                 atlas_entry(atlas),
-                entry(1, &self.slots),
+                entry(1, &self.counting),
                 entry(2, &self.counts),
             ],
         });
@@ -147,7 +175,7 @@ impl MeshPass {
         });
         pass.set_pipeline(&self.count);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(slots.len() as u32, 1, 1);
+        pass.dispatch_workgroups(jobs.len() as u32, 1, 1);
     }
 
     /// Writes each job's mesh into the pool's buffers and submits at once, so it reaches the
