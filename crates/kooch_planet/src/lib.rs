@@ -10,6 +10,7 @@
 mod atlas;
 mod component;
 mod draw;
+mod eval;
 mod generate;
 mod mesh;
 mod plugin;
@@ -27,6 +28,7 @@ use glam::IVec3;
 
 pub use atlas::BlockAtlas;
 pub use component::{Planet, PlanetBlock};
+pub use eval::Generator;
 pub use generate::{
     BARE_SPHERE, Backlog, GeneratePass, Job, PLANET_INPUT_WGSL, validate_generator,
 };
