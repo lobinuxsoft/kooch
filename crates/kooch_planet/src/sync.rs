@@ -5,6 +5,7 @@
 //! GPU, so the editor draws a playing game's planets itself, as it does a block's mesh.
 
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use glam::{DVec3, Mat4};
 use kooch_core::Guid;
@@ -20,8 +21,9 @@ use kooch_render::material::shader::{Shader, ShaderKind};
 
 use crate::component::Planet;
 use crate::draw::{Blocks, Frame};
+use crate::eval::{Generator, may_cross};
 use crate::roster::{Roster, Signature};
-use crate::select::root_level;
+use crate::select::{root_level, voxel_size};
 use crate::{
     BARE_SPHERE, BlockKey, BlockPool, CountedBlock, DEFAULT_CAPACITY, Limits, Planets, Residency,
     Shape, Terrain, View, select,
@@ -30,9 +32,23 @@ use crate::{
 /// Blocks every planet in view gets before the others compete for the rest of the pool.
 const FLOOR: u32 = 64;
 
-/// Frames an empty block is remembered unasked: a parent that merges and splits back while the
-/// viewer moves would otherwise generate and count its empty children again.
-const EMPTY_GRACE: u32 = 600;
+/// Frames a block's surface answer is remembered unasked: a parent that merges and splits back
+/// while the viewer moves would otherwise bound, generate and count its children again.
+const KNOWN_GRACE: u32 = 600;
+
+/// CPU time a frame spends bounding blocks the selection has not met; the rest wait, holding a
+/// slot meanwhile, so entering a new region never stalls a frame.
+const RANGE_BUDGET: Duration = Duration::from_millis(1);
+
+/// Whether a block can hold surface, as the generator's range or its count answered.
+#[derive(Clone, Copy)]
+struct Known {
+    /// Its planet's revision when answered.
+    revision: u32,
+    /// The last frame the selection asked.
+    seen: u32,
+    surface: bool,
+}
 
 /// What the planets cost this frame, for whatever shows it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -76,10 +92,11 @@ pub struct PlanetTerrain {
     wanted: Vec<BlockKey>,
     /// Every block the pool held a descendant of last frame, for the selection's hysteresis.
     split: HashSet<BlockKey>,
-    /// Blocks counted with no surface: they take no slot. Per block, its planet's revision and
-    /// the last frame the selection asked, so what roaming leaves behind is dropped after
-    /// [`EMPTY_GRACE`].
-    empty: HashMap<BlockKey, (u32, u32)>,
+    /// Blocks the generator bounded or the GPU counted. One with no surface takes no slot; what
+    /// roaming leaves behind is dropped after [`KNOWN_GRACE`].
+    known: HashMap<BlockKey, Known>,
+    /// Per planet index, its generator on the CPU; `None` keeps every block a candidate.
+    generators: Vec<Option<Generator>>,
     frame: u32,
     planets: Planets,
     roster: Roster,
@@ -97,7 +114,8 @@ impl Default for PlanetTerrain {
             residency: Residency::default(),
             wanted: Vec::new(),
             split: HashSet::new(),
-            empty: HashMap::new(),
+            known: HashMap::new(),
+            generators: Vec::new(),
             frame: 0,
             planets: Planets::default(),
             roster: Roster::default(),
@@ -155,14 +173,16 @@ pub fn sync_planets(resources: &mut Resources) {
                     "its generator is not a `planet` shader; drawing the bare sphere",
                 );
             }
-            let source = source.as_deref().unwrap_or(BARE_SPHERE);
+            let mut source = source.as_deref().unwrap_or(BARE_SPHERE);
             if let Err(why) = terrain.set_generator(&device, &state.pool, index, source) {
                 tracing::error!(
                     target: "kooch_planet",
                     planet = %planet.entity,
                     "its generator does not compile; drawing the bare sphere:\n{why}",
                 );
+                source = BARE_SPHERE;
             }
+            set_generator(&mut state.generators, index, source);
         }
     }
     placed.truncate(state.roster.len());
@@ -174,28 +194,42 @@ pub fn sync_planets(resources: &mut Resources) {
             state.wanted.clear();
             0.0
         }
-        false => select(
-            &state.planets,
-            &view,
-            DEFAULT_CAPACITY,
-            |key, _, _| {
-                let revision = state.terrain.as_ref().map_or(0, |t| t.revision(key.planet));
-                match state.empty.get_mut(&key) {
-                    Some((r, seen)) if *r == revision => {
-                        *seen = state.frame;
-                        false
+        false => {
+            let started = Instant::now();
+            select(
+                &state.planets,
+                &view,
+                DEFAULT_CAPACITY,
+                |key, min, max| {
+                    let revision = state.terrain.as_ref().map_or(0, |t| t.revision(key.planet));
+                    let frame = state.frame;
+                    if let Some(known) = state.known.get_mut(&key)
+                        && known.revision == revision
+                    {
+                        known.seen = frame;
+                        return known.surface;
                     }
-                    _ => true,
-                }
-            },
-            |key| state.split.contains(&key),
-            &mut state.wanted,
-        ),
+                    if started.elapsed() > RANGE_BUDGET {
+                        return true;
+                    }
+                    let surface = crosses(&state.generators, &state.planets, key, min, max);
+                    let known = Known {
+                        revision,
+                        seen: frame,
+                        surface,
+                    };
+                    state.known.insert(key, known);
+                    surface
+                },
+                |key| state.split.contains(&key),
+                &mut state.wanted,
+            )
+        }
     };
     let frame = state.frame;
     state
-        .empty
-        .retain(|_, (_, seen)| frame.wrapping_sub(*seen) < EMPTY_GRACE);
+        .known
+        .retain(|_, known| frame.wrapping_sub(known.seen) < KNOWN_GRACE);
     state.frame = frame.wrapping_add(1);
     state.pool.apply(&state.wanted, &mut state.residency);
     let mut meshed = std::mem::take(&mut state.meshed);
@@ -210,7 +244,12 @@ pub fn sync_planets(resources: &mut Resources) {
         );
     }
     for block in meshed.iter().filter(|b| b.sizes.meshlets == 0) {
-        state.empty.insert(block.key, (block.revision, state.frame));
+        let known = Known {
+            revision: block.revision,
+            seen: state.frame,
+            surface: false,
+        };
+        state.known.insert(block.key, known);
     }
     let mut blocks = std::mem::take(&mut state.blocks);
     if !state.residency.added.is_empty() || !state.residency.removed.is_empty() {
@@ -245,6 +284,39 @@ pub fn sync_planets(resources: &mut Resources) {
     state.meshed = meshed;
     resources.insert(state);
     resources.insert(stats);
+}
+
+/// The CPU twin of what the GPU now generates for planet `index`.
+fn set_generator(generators: &mut Vec<Option<Generator>>, index: u32, source: &str) {
+    let index = index as usize;
+    if generators.len() <= index {
+        generators.resize_with(index + 1, || None);
+    }
+    generators[index] = Generator::parse(source)
+        .inspect_err(|why| tracing::debug!(target: "kooch_planet", "no CPU generator: {why}"))
+        .ok();
+}
+
+/// Whether the generator leaves `key`'s tile a chance of holding surface. The tile reaches one
+/// sample past the block on every side, so its border is bounded too.
+fn crosses(
+    generators: &[Option<Generator>],
+    planets: &Planets,
+    key: BlockKey,
+    min: DVec3,
+    max: DVec3,
+) -> bool {
+    let planet = key.planet as usize;
+    let (Some(Some(generator)), Some(shape)) = (generators.get(planet), planets.shape.get(planet))
+    else {
+        return true;
+    };
+    let voxel = voxel_size(shape, key.level);
+    let pad = DVec3::splat(voxel);
+    may_cross(
+        generator.range(shape, min - pad, max + pad, key.planet),
+        voxel,
+    )
 }
 
 fn gather(resources: &Resources) -> Vec<Found> {

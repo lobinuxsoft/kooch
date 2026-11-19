@@ -28,6 +28,11 @@ regenerates; a generator that does not compile draws the bare sphere and says wh
 and `radius + relief`, so a mountain taller than `relief` is cut flat at the top. Bigger costs
 blocks, so keep them as small as the shape allows.
 
+**A bounded generator costs fewer blocks.** Before giving a block a slot, the engine runs the
+generator on the CPU over the whole block at once and skips it when the result cannot cross zero.
+`clamp`, `min`, `max`, `smoothstep` and noise that stays in a known range all help; a `tan`, a loop
+whose length depends on the position or a texture read make every block in the band a candidate.
+
 ## What it costs
 
 Every planet in the scene shares one pool of 6144 voxel blocks, 68 MiB of GPU memory. The pool
