@@ -11,7 +11,7 @@ use kooch_render::meshlet::{GpuMeshSizes, PoolBuffers};
 use super::atlas::BlockAtlas;
 use super::generate::{BARE_SPHERE, Backlog, GeneratePass, Job};
 use super::mesh::{COUNT_WORDS, CountJob, MeshPass, WriteJob, counts_bytes, sizes_of};
-use super::seam::near;
+use super::seam::{Stale, near};
 use super::select::{bounds, root_level, voxel_size};
 use super::{BlockKey, BlockPool, Leaves, Near, Planets, Residency};
 
@@ -20,6 +20,9 @@ const RING: usize = 3;
 
 /// Blocks generated and meshed per batch.
 pub const MESH_BATCH: u32 = 128;
+
+/// Slots checked for changed neighbours per update, while anything changes.
+const SWEEP: u32 = 256;
 
 /// Two passes, a timestamp either side of each.
 const QUERIES: u32 = 4;
@@ -84,6 +87,8 @@ pub struct Terrain {
     counting: Vec<CountJob>,
     /// Per slot, the block and revision its tile was last generated for.
     generated: Vec<Option<(BlockKey, u32)>>,
+    stale: Stale,
+    again: Vec<u32>,
     flights: Vec<Flight>,
     timer: Option<(wgpu::QuerySet, wgpu::Buffer)>,
     period_ns: f32,
@@ -139,6 +144,8 @@ impl Terrain {
             mesh,
             backlog: Backlog::default(),
             generated,
+            stale: Stale::default(),
+            again: Vec::new(),
             jobs: Vec::new(),
             counting: Vec::new(),
             flights,
@@ -233,6 +240,12 @@ impl Terrain {
     ) {
         out.clear();
         self.backlog.push(residency);
+        if !residency.added.is_empty() || !residency.removed.is_empty() {
+            self.stale.touch(leaves.pool);
+        }
+        let (generated, revisions, pool) = (&self.generated, &self.revision, leaves.pool);
+        let ready = |slot| is_ready(generated, revisions, pool, slot);
+        self.stale.sweep(leaves, planets, ready, SWEEP);
         let _ = device.poll(wgpu::PollType::Poll);
         for at in 0..self.flights.len() {
             self.collect(at, leaves.pool, planets, out);
@@ -242,9 +255,9 @@ impl Terrain {
         }
     }
 
-    /// Queues a resident block to be generated and meshed again.
-    pub(crate) fn retry(&mut self, slot: u32) {
-        self.backlog.retry(slot);
+    /// Queues a resident block to be meshed again from the tile it holds.
+    pub(crate) fn remesh(&mut self, slot: u32) {
+        self.stale.queue(slot);
     }
 
     /// Fills granted pool ranges with the meshes of blocks counted earlier. Blocks must still hold
@@ -300,7 +313,16 @@ impl Terrain {
         let pool = leaves.pool;
         self.backlog
             .take(pool, planets, MESH_BATCH as usize, &mut self.jobs);
-        if self.jobs.is_empty() {
+        self.again.clear();
+        while self.jobs.len() + self.again.len() < MESH_BATCH as usize {
+            let Some(slot) = self.stale.pop() else {
+                break;
+            };
+            if !self.jobs.iter().any(|job| job.slot == slot) && !self.again.contains(&slot) {
+                self.again.push(slot);
+            }
+        }
+        if self.jobs.is_empty() && self.again.is_empty() {
             return;
         }
         // Grouped by generator: one dispatch per pipeline, in the order the mesh pass reads them.
@@ -364,12 +386,23 @@ impl Terrain {
                 }
             }
         }
+        if !self.jobs.is_empty() {
+            self.stale.touch(pool);
+        }
         let (generated, revisions) = (&self.generated, &self.revision);
-        let ready = |slot: u32| {
-            let held = generated.get(slot as usize).copied().flatten();
-            pool.key(slot)
-                .is_some_and(|key| held == Some((key, revision_of(revisions, key.planet))))
-        };
+        let ready = |slot: u32| is_ready(generated, revisions, pool, slot);
+        // Only a block whose tile is current meshes from it; one queued since is generated anyway.
+        for &slot in &self.again {
+            if let Some(key) = pool.key(slot).filter(|_| ready(slot)) {
+                let revision = revision_of(revisions, key.planet);
+                flight.blocks.push(Sent {
+                    slot,
+                    key,
+                    revision,
+                    near: Near::default(),
+                });
+            }
+        }
         self.counting.clear();
         for sent in &mut flight.blocks {
             let root = planets
@@ -377,6 +410,7 @@ impl Terrain {
                 .get(sent.key.planet as usize)
                 .map_or(0, root_level);
             sent.near = near(leaves, root, sent.key, ready);
+            self.stale.counted(sent.slot, sent.near);
             self.counting.push(CountJob::new(sent.slot, sent.near));
         }
         self.mesh.record(
@@ -472,6 +506,18 @@ impl Terrain {
         drop(bytes);
         flight.staging.unmap();
     }
+}
+
+/// Whether `slot`'s tile holds its block at its planet's current revision.
+fn is_ready(
+    generated: &[Option<(BlockKey, u32)>],
+    revision: &[u32],
+    pool: &BlockPool,
+    slot: u32,
+) -> bool {
+    let held = generated.get(slot as usize).copied().flatten();
+    pool.key(slot)
+        .is_some_and(|key| held == Some((key, revision_of(revision, key.planet))))
 }
 
 fn revision_of(revision: &[u32], planet: u32) -> u32 {

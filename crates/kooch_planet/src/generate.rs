@@ -123,6 +123,15 @@ impl Backlog {
         self.queue.is_empty()
     }
 
+    /// The oldest slot, out of the queue.
+    pub fn pop(&mut self) -> Option<u32> {
+        let slot = self.queue.pop_front()?;
+        if let Some(flag) = self.queued.get_mut(slot as usize) {
+            *flag = false;
+        }
+        Some(slot)
+    }
+
     /// Up to `max` jobs, built from what each slot holds now: a slot freed since it was queued is
     /// dropped, one reused is generated for its new block.
     pub fn take(&mut self, pool: &BlockPool, planets: &Planets, max: usize, out: &mut Vec<Job>) {
