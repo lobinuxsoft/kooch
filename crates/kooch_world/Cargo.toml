@@ -11,8 +11,6 @@ authors.workspace = true
 kooch_core.workspace = true
 kooch_ecs.workspace = true
 wgpu.workspace = true
-# Checks a generator before a pipeline is built from it; the same naga wgpu links.
-naga = { version = "30", features = ["wgsl-in"] }
 glam.workspace = true
 bytemuck.workspace = true
 tracing.workspace = true

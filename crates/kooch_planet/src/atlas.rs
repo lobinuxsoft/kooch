@@ -3,7 +3,8 @@
 
 use glam::UVec3;
 
-use crate::voxel::{POOL_TEXTURE_FORMAT, SUBGRID_TILE_DIM};
+use super::TILE_SAMPLES;
+use kooch_world::voxel::POOL_TEXTURE_FORMAT;
 
 /// Tiles along X and Z; Y grows with the capacity.
 const TILES_ACROSS: u32 = 32;
@@ -18,9 +19,9 @@ impl BlockAtlas {
     /// Room for `capacity` blocks, rounded up to whole layers of 32 × 32 tiles.
     pub fn new(device: &wgpu::Device, capacity: u32) -> Self {
         let tiles = tiles_for(capacity);
-        let size = tiles * SUBGRID_TILE_DIM;
+        let size = tiles * TILE_SAMPLES;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("kooch_world::planet::atlas"),
+            label: Some("kooch_planet::atlas"),
             size: wgpu::Extent3d {
                 width: size.x,
                 height: size.y,
@@ -60,7 +61,7 @@ impl BlockAtlas {
             (slot / self.tiles.x) % self.tiles.y,
             slot / (self.tiles.x * self.tiles.y),
         );
-        tile * SUBGRID_TILE_DIM
+        tile * TILE_SAMPLES
     }
 
     pub fn texture(&self) -> &wgpu::Texture {

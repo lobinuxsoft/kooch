@@ -35,7 +35,7 @@ fn solar_system(height: f64) -> Planets {
             floor: 64,
             ceiling: DEFAULT_CAPACITY,
         };
-        planets.push(shape, viewer, limits);
+        planets.push(shape, &[viewer], limits);
     }
     planets
 }
@@ -70,6 +70,7 @@ fn the_solar_system_fits() {
             &view,
             DEFAULT_CAPACITY,
             hills(&planets),
+            |_| false,
             &mut wanted,
         );
         let mut per_planet = [0u32; SOLAR_SYSTEM.len()];

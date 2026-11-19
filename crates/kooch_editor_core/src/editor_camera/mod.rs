@@ -116,6 +116,19 @@ pub(crate) fn find_editor_camera_entity(resources: &Resources) -> Option<kooch_e
         .find_map(|arch| arch.entities().first().copied())
 }
 
+/// Points the planets' detail at the camera being looked through: only the editor's while editing,
+/// only the game's while playing.
+pub fn planet_viewers_system(resources: &mut Resources) {
+    let viewers = match find_editor_camera_entity(resources) {
+        None => kooch_planet::PlanetViewers::Every,
+        Some(camera) if crate::ui_preview::remote_playing(resources) => {
+            kooch_planet::PlanetViewers::Except(camera)
+        }
+        Some(camera) => kooch_planet::PlanetViewers::Only(camera),
+    };
+    resources.insert(viewers);
+}
+
 /// Computes the initial world `Transform` from the controller's defaults.
 fn initial_transform(controller: &EditorCameraController) -> Transform {
     let view = glam::camera::rh::view::look_at_mat4(DEFAULT_EYE, controller.focus_point, Vec3::Y);

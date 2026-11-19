@@ -21,6 +21,7 @@ members = [
     "crates/kooch_gravity",
     "crates/kooch_character",
     "crates/kooch_world",
+    "crates/kooch_planet",
     "crates/kooch_audio",
     "crates/kooch_ecs_macros",
     "crates/kooch_pack",
@@ -32,7 +33,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.98.204"
+version = "0.98.205"
 edition = "2024"
 license = "LicenseRef-Proprietary"
 repository = "https://github.com/lobinuxsoft/kooch"
@@ -218,6 +219,7 @@ kooch_camera = { path = "crates/kooch_camera" }
 kooch_gravity = { path = "crates/kooch_gravity" }
 kooch_character = { path = "crates/kooch_character" }
 kooch_world = { path = "crates/kooch_world" }
+kooch_planet = { path = "crates/kooch_planet" }
 kooch_audio = { path = "crates/kooch_audio" }
 kooch_remote = { path = "crates/kooch_remote" }
 kooch_editor_core = { path = "crates/kooch_editor_core" }
@@ -248,6 +250,7 @@ kooch_camera = { workspace = true, optional = true }
 kooch_gravity = { workspace = true, optional = true }
 kooch_character = { workspace = true, optional = true }
 kooch_world = { workspace = true, optional = true }
+kooch_planet = { workspace = true, optional = true }
 kooch_remote = { workspace = true, optional = true }
 kooch_blockmesh = { workspace = true, optional = true }
 kooch_ui = { workspace = true, optional = true }
@@ -293,6 +296,8 @@ gravity = ["dep:kooch_gravity", "physics", "kooch_camera?/gravity"]
 # is up. Neither is optional for it, so the feature pulls both.
 character = ["dep:kooch_character", "gravity"]
 world = ["dep:kooch_world"]
+# Voxel planets (#313). Generated and meshed on the GPU, so it needs the renderer.
+planet = ["dep:kooch_planet", "render", "world"]
 # Remote editor server: lets a project expose its ECS over HTTP so the
 # standalone editor can drive it. Pulled in by projects that run in
 # `--remote` mode; independent of the embedded `editor`.

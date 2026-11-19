@@ -15,7 +15,7 @@ pub(crate) struct RemoteUi {
     pass: Option<UiPass>,
 }
 
-fn remote_playing(resources: &Resources) -> bool {
+pub(crate) fn remote_playing(resources: &Resources) -> bool {
     resources
         .get::<RemoteState>()
         .is_some_and(|state| state.session.is_some() && state.playing)

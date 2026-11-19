@@ -8,7 +8,6 @@ pub mod focus;
 pub mod focus_cache;
 pub mod lod;
 pub mod manager;
-pub mod planet;
 pub mod plugin;
 pub mod voxel;
 

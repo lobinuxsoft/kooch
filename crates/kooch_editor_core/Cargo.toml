@@ -37,6 +37,8 @@ kooch_gravity.workspace = true
 kooch_character.workspace = true
 kooch_window.workspace = true
 kooch_world.workspace = true
+# Planets are drawn where the frame is, so the editor runs their plugin whole (#313).
+kooch_planet.workspace = true
 kooch_remote.workspace = true
 # Writing and verifying a shipped game's asset packs (#758).
 kooch_pack.workspace = true

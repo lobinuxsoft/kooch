@@ -1,9 +1,9 @@
 use glam::IVec3;
 
 use super::{BARE_SPHERE as SPHERE, GeneratePass, Job};
-use crate::planet::{BlockAtlas, BlockKey, Shape};
-use crate::voxel::SUBGRID_TILE_DIM;
-use crate::voxel::test_device::try_acquire;
+use crate::TILE_SAMPLES;
+use crate::test_device::try_acquire;
+use crate::{BlockAtlas, BlockKey, Shape};
 
 const EARTH: f64 = 6_371_000.0;
 
@@ -34,7 +34,7 @@ fn read_tile(
     atlas: &BlockAtlas,
     slot: u32,
 ) -> Vec<f32> {
-    let dim = SUBGRID_TILE_DIM;
+    let dim = TILE_SAMPLES;
     let row = 256u32;
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
@@ -119,12 +119,12 @@ fn earth_altitude_stays_exact() {
     let slot = 7;
     let job = Job::new(key, slot, &shape);
     let mut encoder = device.create_command_encoder(&Default::default());
-    pass.record(&device, &queue, &mut encoder, &atlas, &[job]);
+    pass.record(&device, &queue, &mut encoder, &atlas, &[job], None);
     queue.submit([encoder.finish()]);
 
     let tile = read_tile(&device, &queue, &atlas, slot);
-    let origin = key.cell.as_dvec3() * 8.0;
-    let dim = SUBGRID_TILE_DIM as usize;
+    let origin = key.cell.as_dvec3() * 8.0 - glam::DVec3::splat(0.5);
+    let dim = TILE_SAMPLES as usize;
     let mut worst = 0.0f64;
     let mut near = 0;
     for (i, &got) in tile.iter().enumerate() {

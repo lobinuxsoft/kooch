@@ -217,6 +217,17 @@ pub(crate) fn draw_performance_content(
                 },
             );
 
+            if let Some(stats) = perf_stats.planets {
+                section(
+                    ui,
+                    &mut hud_visibility.pinned.planets,
+                    surface,
+                    "Planets",
+                    true,
+                    |ui| planet_readout(ui, stats),
+                );
+            }
+
             section(
                 ui,
                 &mut hud_visibility.pinned.meshlet,
@@ -505,10 +516,12 @@ pub(crate) enum PerfSurface {
 }
 
 mod debug;
+mod planets;
 mod shadow_pages;
 mod widgets;
 
 use debug::*;
+use planets::planet_readout;
 use shadow_pages::*;
 pub(crate) use widgets::stack_card;
 use widgets::*;

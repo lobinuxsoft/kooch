@@ -118,6 +118,9 @@ impl Plugin for EditorPlugin {
         // is generated rather than loaded, so the editor that draws it
         // is the one that has to run the generation. Nothing else will.
         app.add_plugin(kooch_blockmesh::BlockPlugin);
+        // Whole too, for the same reason: a planet's blocks are generated on the GPU that draws
+        // them, and while a game plays remotely that GPU is this process's.
+        app.add_plugin(kooch_planet::PlanetPlugin);
         app.add_plugin(kooch_character::CharacterComponentsPlugin);
         // Same split again: the editor authors camera behaviour and never
         // runs it. A vcam driving a camera here would fight the editor's
@@ -235,6 +238,8 @@ impl Plugin for EditorPlugin {
             editor_camera::register_ephemeral_markers_system,
         );
         app.add_system(Stage::Startup, editor_camera::spawn_editor_camera_system);
+        // Before `Stage::Gpu`, where the planets pick their blocks for these cameras.
+        app.add_system(Stage::PostUpdate, editor_camera::planet_viewers_system);
 
         // editor render invocations and update FPS instant/avg. Runs in PreRender so the timestamp
         // it captures matches the frame the Render stage is about to start.
