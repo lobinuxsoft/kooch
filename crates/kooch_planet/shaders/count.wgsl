@@ -27,6 +27,9 @@ fn count_main(
     if (lid < 4u) {
         atomicStore(&totals[lid], 0u);
     }
+    clear_edges(lid);
+    workgroupBarrier();
+    mark_edges(lid);
     workgroupBarrier();
     for (var i = lid; i < CELL_COUNT; i += WORKGROUP) {
         if (has_vertex(cell_of(i))) {

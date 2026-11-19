@@ -122,6 +122,7 @@ impl Blocks {
         self.built[s] = false;
         self.left[s] = None;
         self.triangles[s] = 0;
+        self.meshlets[s] = 0;
         self.free.push(i);
     }
 }

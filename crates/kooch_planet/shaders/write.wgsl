@@ -48,29 +48,61 @@ fn position(v: u32) -> vec3<f32> {
     return vec3<f32>(pool_vertices[o], pool_vertices[o + 1u], pool_vertices[o + 2u]);
 }
 
-// One meshlet from `cut`: its vertex set, its triangles, its descriptor.
+// A meshlet's triangles as bytes, packed four to a word from `first_byte`.
+struct Strip {
+    first: u32,
+    word: u32,
+    packed: u32,
+    written: u32,
+}
+
+fn put_quad(t: ptr<function, Strip>, q: array<u32, 4>, inside: bool) {
+    // Starting inside, the surface faces +axis; outside, the other way.
+    var corners6 = array<u32, 6>(q[0], q[1], q[2], q[0], q[2], q[3]);
+    if (!inside) {
+        corners6 = array<u32, 6>(q[0], q[2], q[1], q[0], q[3], q[2]);
+    }
+    for (var k = 0u; k < 6u; k++) {
+        (*t).packed |= corners6[k] << (8u * ((*t).written & 3u));
+        (*t).written += 1u;
+        if (((*t).written & 3u) == 0u) {
+            pool_triangles[((*t).first >> 2u) + (*t).word] = (*t).packed;
+            (*t).word += 1u;
+            (*t).packed = 0u;
+        }
+    }
+}
+
+fn end_strip(t: ptr<function, Strip>) {
+    if (((*t).written & 3u) != 0u) {
+        pool_triangles[((*t).first >> 2u) + (*t).word] = (*t).packed;
+    }
+}
+
+// The meshlet's vertex `r`: the pool vertex of cell `c`, grown into the bounds.
+fn put_vertex(first_mv: u32, r: u32, c: vec3<u32>, lo: ptr<function, vec3<f32>>, hi: ptr<function, vec3<f32>>) {
+    let v = job.first_vertex + vertex_of(cell_index(c)) - 1u;
+    pool_meshlet_vertices[first_mv + r] = v;
+    let p = position(v);
+    *lo = min(*lo, p);
+    *hi = max(*hi, p);
+}
+
+// One patch as a meshlet: its vertex set, its triangles, its descriptor.
 fn emit(cut: Region, at: vec3<u32>) {
     var mask: array<u32, 4>;
     let quads = fill(cut, &mask);
     let first_mv = job.first_meshlet_vertex + at.y;
-    let first_byte = job.first_byte + at.z;
     var lo = vec3<f32>(3.4e38);
     var hi = vec3<f32>(-3.4e38);
     var r = 0u;
     for (var bit = 0u; bit < bits(cut); bit++) {
-        if (((mask[bit >> 5u] >> (bit & 31u)) & 1u) == 0u) {
-            continue;
+        if (((mask[bit >> 5u] >> (bit & 31u)) & 1u) != 0u) {
+            put_vertex(first_mv, r, bit_cell(bit, cut), &lo, &hi);
+            r += 1u;
         }
-        let v = job.first_vertex + vertex_of(cell_index(bit_cell(bit, cut))) - 1u;
-        pool_meshlet_vertices[first_mv + r] = v;
-        let p = position(v);
-        lo = min(lo, p);
-        hi = max(hi, p);
-        r += 1u;
     }
-    var word = 0u;
-    var packed = 0u;
-    var written = 0u;
+    var t = Strip(job.first_byte + at.z, 0u, 0u, 0u);
     for (var i = 0u; i < cut.size.x * cut.size.y * cut.size.z; i++) {
         let s = start_of(i, cut);
         for (var axis = 0u; axis < 3u; axis++) {
@@ -83,27 +115,54 @@ fn emit(cut: Region, at: vec3<u32>) {
             for (var k = 0u; k < 4u; k++) {
                 q[k] = rank(&mask, cell_bit(cells[k], cut));
             }
-            // Starting inside, the surface faces +axis; outside, the other way.
-            var corners6 = array<u32, 6>(q[0], q[1], q[2], q[0], q[2], q[3]);
-            if (found.y == 0u) {
-                corners6 = array<u32, 6>(q[0], q[2], q[1], q[0], q[3], q[2]);
-            }
-            for (var k = 0u; k < 6u; k++) {
-                packed |= corners6[k] << (8u * (written & 3u));
-                written += 1u;
-                if ((written & 3u) == 0u) {
-                    pool_triangles[(first_byte >> 2u) + word] = packed;
-                    word += 1u;
-                    packed = 0u;
+            put_quad(&t, q, found.y != 0u);
+        }
+    }
+    end_strip(&t);
+    describe(at.x, first_mv, t.first, r, quads, lo, hi);
+}
+
+// One packed meshlet of the region at `origin`.
+fn emit_pack(origin: vec3<u32>, p: ptr<function, Pack>, at: vec3<u32>) {
+    let first_mv = job.first_meshlet_vertex + at.y;
+    var lo = vec3<f32>(3.4e38);
+    var hi = vec3<f32>(-3.4e38);
+    var r = 0u;
+    for (var w = 0u; w < PACK_WORDS; w++) {
+        var word = (*p).mask[w];
+        while (word != 0u) {
+            let bit = w * 32u + countTrailingZeros(word);
+            word &= word - 1u;
+            let c = origin - vec3<u32>(1u) + vec3<u32>(bit % 9u, (bit / 9u) % 9u, bit / 81u);
+            put_vertex(first_mv, r, c, &lo, &hi);
+            r += 1u;
+        }
+    }
+    var t = Strip(job.first_byte + at.z, 0u, 0u, 0u);
+    for (var n = 0u; n < (*p).count; n++) {
+        let b = brick_base(origin, (*p).bricks[n]);
+        for (var i = 0u; i < 8u; i++) {
+            let s = b + vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u);
+            for (var axis = 0u; axis < 3u; axis++) {
+                if (!has_edge(s, axis)) {
+                    continue;
                 }
+                let cells = quad(s, axis);
+                var q: array<u32, 4>;
+                for (var k = 0u; k < 4u; k++) {
+                    q[k] = pack_rank(p, pack_bit(cells[k], origin));
+                }
+                put_quad(&t, q, edge(s, axis).y != 0u);
             }
         }
     }
-    if ((written & 3u) != 0u) {
-        pool_triangles[(first_byte >> 2u) + word] = packed;
-    }
+    end_strip(&t);
+    describe(at.x, first_mv, t.first, r, (*p).quads, lo, hi);
+}
+
+fn describe(index: u32, first_mv: u32, first_byte: u32, r: u32, quads: u32, lo: vec3<f32>, hi: vec3<f32>) {
     let center = (lo + hi) * 0.5;
-    let o = (job.first_meshlet + at.x) * MESHLET_WORDS;
+    let o = (job.first_meshlet + index) * MESHLET_WORDS;
     pool_meshlets[o] = first_mv;
     pool_meshlets[o + 1u] = first_byte;
     pool_meshlets[o + 2u] = r;
@@ -150,6 +209,9 @@ fn write_main(
     for (var i = lid; i < MAP_WORDS; i += WORKGROUP) {
         atomicStore(&map[i], 0u);
     }
+    clear_edges(lid);
+    workgroupBarrier();
+    mark_edges(lid);
     workgroupBarrier();
 
     for (var i = lid; i < CELL_COUNT; i += WORKGROUP) {
@@ -199,21 +261,16 @@ fn write_main(
     workgroupBarrier();
 
     if (lid < REGIONS && plans[lid].meshlets != 0u) {
-        let whole = region(lid);
         let start = starts[lid];
-        if (plans[lid].split == 0u) {
-            emit(whole, start);
+        if (lid >= INNER) {
+            emit(region(lid), start);
         } else {
+            let origin = region(lid).base;
+            var p: Pack;
             var at = start;
-            var mask: array<u32, 4>;
-            for (var e = 0u; e < 8u; e++) {
-                let part = eighth(whole, e);
-                let quads = fill(part, &mask);
-                if (quads == 0u) {
-                    continue;
-                }
-                emit(part, at);
-                at += vec3<u32>(1u, ones(&mask), quad_bytes(quads));
+            while (next_meshlet(origin, &p)) {
+                emit_pack(origin, &p, at);
+                at += vec3<u32>(1u, p.cells, quad_bytes(p.quads));
             }
         }
     }
