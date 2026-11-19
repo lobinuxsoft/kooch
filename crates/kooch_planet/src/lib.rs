@@ -16,6 +16,7 @@ mod mesh;
 mod plugin;
 mod pool;
 mod roster;
+mod seam;
 mod select;
 mod sync;
 mod terrain;
@@ -32,9 +33,10 @@ pub use eval::Generator;
 pub use generate::{
     BARE_SPHERE, Backlog, GeneratePass, Job, PLANET_INPUT_WGSL, validate_generator,
 };
-pub use mesh::{MeshPass, WriteJob};
+pub use mesh::{CountJob, MeshPass, WriteJob};
 pub use plugin::PlanetPlugin;
 pub use pool::{BlockPool, Residency};
+pub use seam::{Leaves, Near};
 pub use select::{Limits, Planets, Shape, View, select};
 pub use sync::{PlanetStats, PlanetTerrain, PlanetViewers, sync_planets};
 pub use terrain::{CountedBlock, GpuTimes, MESH_BATCH, Terrain};

@@ -139,7 +139,14 @@ impl Blocks {
                 meshes.release(mesh);
                 continue;
             }
-            jobs.push(WriteJob::new(block.slot, block.voxel, block.sizes, &at));
+            // A tile it borrowed changed hands since the count: the write would mesh otherwise.
+            if !block.near.holds(frame.pool, block.key) {
+                meshes.release(mesh);
+                terrain.retry(block.slot);
+                continue;
+            }
+            let job = WriteJob::new(block.slot, block.voxel, block.sizes, &at, block.near);
+            jobs.push(job);
             done.push((s, mesh, block));
         }
         if let Some(buffers) = &buffers {

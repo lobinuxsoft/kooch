@@ -22,6 +22,12 @@ const MAX_VERTICES: u32 = 64u;
 
 @group(0) @binding(0) var atlas: texture_3d<f32>;
 
+// Who holds the cells past each of the block's 26 neighbour directions; see `seam.rs`.
+struct Near {
+    cell: array<i32, 3>,
+    sides: array<u32, 26>,
+}
+
 var<workgroup> corner: vec3<i32>;
 
 fn tile_corner(slot: u32) -> vec3<i32> {

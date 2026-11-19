@@ -25,8 +25,8 @@ use crate::eval::{Generator, may_cross};
 use crate::roster::{Roster, Signature};
 use crate::select::{root_level, voxel_size};
 use crate::{
-    BARE_SPHERE, BlockKey, BlockPool, CountedBlock, DEFAULT_CAPACITY, Limits, Planets, Residency,
-    Shape, Terrain, View, select,
+    BARE_SPHERE, BlockKey, BlockPool, CountedBlock, DEFAULT_CAPACITY, Leaves, Limits, Planets,
+    Residency, Shape, Terrain, View, select,
 };
 
 /// Blocks every planet in view gets before the others compete for the rest of the pool.
@@ -188,7 +188,6 @@ pub fn sync_planets(resources: &mut Resources) {
     placed.truncate(state.roster.len());
     let (viewers, view) = viewers(resources);
     fill_planets(&mut state.planets, &placed, &found, &viewers);
-    fill_split(&mut state.split, &state.pool, &state.planets);
     let worst = match viewers.is_empty() {
         true => {
             state.wanted.clear();
@@ -232,12 +231,19 @@ pub fn sync_planets(resources: &mut Resources) {
         .retain(|_, known| frame.wrapping_sub(known.seen) < KNOWN_GRACE);
     state.frame = frame.wrapping_add(1);
     state.pool.apply(&state.wanted, &mut state.residency);
+    // After the pool changes, so the meshes see this frame's leaves; the next selection's
+    // hysteresis reads the same set, as nothing moves the pool in between.
+    fill_split(&mut state.split, &state.pool, &state.planets);
     let mut meshed = std::mem::take(&mut state.meshed);
     if let Some(terrain) = &mut state.terrain {
+        let leaves = Leaves {
+            pool: &state.pool,
+            split: &state.split,
+        };
         terrain.update(
             &device,
             &queue,
-            &state.pool,
+            leaves,
             &state.planets,
             &state.residency,
             &mut meshed,

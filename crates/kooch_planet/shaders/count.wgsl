@@ -1,7 +1,14 @@
 // Planet meshing, first pass (#313): what each block's mesh will take of the pool, so its ranges
 // can be reserved before the write pass fills them. Appended to nets.wgsl.
 
-@group(0) @binding(1) var<storage, read> jobs: array<u32>;
+struct CountJob {
+    slot: u32,
+    near: Near,
+    _pad0: u32,
+    _pad1: u32,
+}
+
+@group(0) @binding(1) var<storage, read> jobs: array<CountJob>;
 // Per block: vertices, meshlets, meshlet vertices, triangle bytes.
 @group(0) @binding(2) var<storage, read_write> counts: array<u32>;
 
@@ -14,7 +21,7 @@ fn count_main(
 ) {
     let block = wid.x;
     if (lid == 0u) {
-        corner = tile_corner(jobs[block]);
+        corner = tile_corner(jobs[block].slot);
     }
     if (lid < 4u) {
         atomicStore(&totals[lid], 0u);
