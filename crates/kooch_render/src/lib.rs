@@ -35,7 +35,7 @@ pub use meshlet::{
     build_meshlets_from_mesh,
 };
 pub use perf::EngineVramTracker;
-pub use plugin::RenderPlugin;
+pub use plugin::{RenderCorePlugin, RenderPlugin};
 pub use projection::perspective_rh_reverse_z;
 pub use sky::{ActiveSky, DEFAULT_SKY_SHADER, SkyPreview, SkyRenderPass, SkyTarget};
 pub use texture::{GpuTexture, Image, ImageFormat, ImageLoader};

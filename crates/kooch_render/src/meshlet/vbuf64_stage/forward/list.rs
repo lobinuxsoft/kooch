@@ -4,7 +4,7 @@ use glam::Vec3;
 
 use crate::meshlet::MeshDescriptor;
 use crate::meshlet::asset::MeshletDescriptor;
-use crate::meshlet::scene::{MeshInstance, encode_scene_visible_id};
+use crate::meshlet::scene::MeshInstance;
 
 /// A stretch of the list drawn with one material's pipeline.
 #[derive(Debug, Clone, PartialEq)]
@@ -13,11 +13,11 @@ pub struct Run {
     pub range: std::ops::Range<u32>,
 }
 
-/// The packed `(instance, meshlet)` entries the forward frame reads, far to near, and the runs that
+/// The `[instance, meshlet]` entries the forward frame reads, far to near, and the runs that
 /// share a pipeline. Kept between frames so the vectors are reused.
 #[derive(Default, Clone)]
 pub struct ForwardList {
-    pub entries: Vec<u32>,
+    pub entries: Vec<[u32; 2]>,
     pub runs: Vec<Run>,
 }
 
@@ -61,7 +61,7 @@ impl ForwardList {
                 // The finest level alone: a transparent surface drawn from two levels at once
                 // would blend the same area twice.
                 if meshlets.get(id as usize).is_some_and(|m| m.lod_level == 0) {
-                    self.entries.push(encode_scene_visible_id(index as u32, id));
+                    self.entries.push([index as u32, id]);
                 }
             }
             let end = self.entries.len() as u32;

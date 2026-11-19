@@ -25,22 +25,6 @@ fn mesh_instance_round_trip_transform() {
     assert_eq!(inst.material_id, 11);
 }
 
-#[test]
-fn encode_decode_round_trip() {
-    for instance_id in [0u32, 1, 42, 0xFFFF] {
-        for meshlet_id in [0u32, 1, 100, 0xFFFF] {
-            let packed = encode_scene_visible_id(instance_id, meshlet_id);
-            assert_eq!(decode_scene_visible_id(packed), (instance_id, meshlet_id));
-        }
-    }
-}
-
-#[test]
-fn decode_extracts_high_low_halves() {
-    let packed = (5u32 << 16) | 12u32;
-    assert_eq!(decode_scene_visible_id(packed), (5, 12));
-}
-
 /// The culls are handed everything before the first transparent instance.
 #[test]
 fn transparent_instances_are_counted_out() {

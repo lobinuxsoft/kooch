@@ -8,6 +8,7 @@ use crate::meshlet::asset::{
 };
 
 use super::descriptor::{MeshDescriptor, MeshHandle};
+use super::gpu_owned::Move;
 use super::slots::{Dirty, Holes, Slot, Span, Touched};
 use bytemuck::Zeroable;
 use glam::{Mat4, Vec3};
@@ -67,16 +68,18 @@ pub struct GlobalMeshPool {
     /// `group_max_err` buffer the 2-pass cull (#465) indexes by `MeshletDescriptor::group_index`.
     pub group_capacity: u32,
     /// Where each mesh sits, parallel to `mesh_descriptors`. A dead entry is a hole.
-    slots: Vec<Slot>,
-    free_vertices: Holes,
-    free_meshlet_vertices: Holes,
-    free_triangles: Holes,
-    free_meshlets: Holes,
+    pub(super) slots: Vec<Slot>,
+    pub(super) free_vertices: Holes,
+    pub(super) free_meshlet_vertices: Holes,
+    pub(super) free_triangles: Holes,
+    pub(super) free_meshlets: Holes,
     free_groups: Holes,
     /// `mesh_descriptors` indices a released mesh gave back.
-    free_ids: Vec<u32>,
+    pub(super) free_ids: Vec<u32>,
+    /// GPU-written meshes a repack moved, for the mirror to carry before anything reads them.
+    pub(super) moves: Vec<Move>,
     /// What each array owes the GPU since the last sync (#1558).
-    dirty: Dirty,
+    pub(super) dirty: Dirty,
 }
 
 impl Default for GlobalMeshPool {
@@ -98,6 +101,7 @@ impl Default for GlobalMeshPool {
             free_meshlets: Holes::aligned(1),
             free_groups: Holes::aligned(1),
             free_ids: Vec::new(),
+            moves: Vec::new(),
             dirty: Dirty::default(),
         }
     }
@@ -160,17 +164,22 @@ impl GlobalMeshPool {
     }
 
     /// Repacks the pool down to `live`, dropping everything else, and returns each kept mesh's
-    /// new id in the order given.
+    /// new id in the order given; `None` for one that was not in the pool.
     ///
     /// 🔴 Ids move. Every `MeshInstance::mesh_id` is resolved from the registry each frame, so the
     /// caller only has to repoint the registry in the same breath — nothing else holds an id
     /// across frames.
-    pub fn retain(&mut self, live: &[u32]) -> Vec<u32> {
-        let kept: Vec<MeshletMesh> = live.iter().filter_map(|id| self.extract(*id)).collect();
-        *self = Self::new();
-        let moved = kept
+    ///
+    /// A GPU-written mesh gets new ranges like the rest, and its payload a [`Move`] for the
+    /// mirror to carry, since only the GPU holds it.
+    pub fn retain(&mut self, live: &[u32]) -> Vec<Option<u32>> {
+        let old = std::mem::take(self);
+        let moved = live
             .iter()
-            .map(|mesh| self.register(mesh).mesh_id)
+            .map(|&id| match old.gpu_owned(id) {
+                true => self.carry(&old, id),
+                false => old.extract(id).map(|mesh| self.register(&mesh).mesh_id),
+            })
             .collect();
         // A repack moves everything, so the mirror owes a full copy. Whatever the smaller pool
         // leaves behind in the buffer is stale, and unread: every lookup is bounded by a
@@ -179,11 +188,19 @@ impl GlobalMeshPool {
         moved
     }
 
+    /// The moves the mirror owes since the last call.
+    pub(super) fn take_moves(&mut self) -> Vec<Move> {
+        std::mem::take(&mut self.moves)
+    }
+
     /// One mesh lifted back out of the pool, with every offset returned to mesh-local.
     ///
     /// Goes back through [`Self::register`] on the way in, so the rebasing arithmetic lives in
     /// one place and cannot drift between the two directions.
     fn extract(&self, mesh_id: u32) -> Option<MeshletMesh> {
+        if self.gpu_owned(mesh_id) {
+            return None;
+        }
         let range = self.ranges(mesh_id)?;
         let descriptor = &self.mesh_descriptors[mesh_id as usize];
         let mut aabb = crate::mesh::Aabb::empty();
@@ -245,6 +262,10 @@ impl GlobalMeshPool {
             + self.free_ids.len() as u64 * std::mem::size_of::<MeshDescriptor>() as u64
     }
 
+    pub(super) fn slots(&self) -> &[Slot] {
+        &self.slots
+    }
+
     /// Marks every array in full, for when the pool was rebuilt rather than edited.
     pub(super) fn mark_all(&mut self) {
         self.dirty = Dirty {
@@ -279,6 +300,7 @@ impl GlobalMeshPool {
         self.free_triangles.give(slot.triangles);
         self.free_meshlets.give(slot.meshlets);
         self.free_groups.give(slot.groups);
+        self.trim();
         // A hole still ships to the GPU, so it has to cull to nothing: zero meshlets.
         self.mesh_descriptors[mesh_id as usize] = MeshDescriptor::zeroed();
         self.mesh_bounds[mesh_id as usize] = MeshBounds::default();
@@ -289,21 +311,39 @@ impl GlobalMeshPool {
         });
     }
 
+    /// Shrinks every array past its last live range.
+    fn trim(&mut self) {
+        let len = self.free_vertices.trim(self.vertices.len() as u32);
+        self.vertices.truncate(len as usize);
+        let len = self
+            .free_meshlet_vertices
+            .trim(self.meshlet_vertices.len() as u32);
+        self.meshlet_vertices.truncate(len as usize);
+        let len = self
+            .free_triangles
+            .trim(self.meshlet_triangles.len() as u32);
+        self.meshlet_triangles.truncate(len as usize);
+        let len = self.free_meshlets.trim(self.meshlets.len() as u32);
+        self.meshlets.truncate(len as usize);
+    }
+
     /// Puts `mesh` in the pool, reusing the ranges a released mesh left wherever they fit.
     /// Returns the handle whose `mesh_id` the caller should write into `MeshInstance::mesh_id`.
     pub fn register(&mut self, mesh: &MeshletMesh) -> MeshHandle {
         let slot = self.reserve(mesh);
-        let mesh_id = match self.free_ids.pop() {
-            Some(id) => id,
-            None => {
-                self.mesh_descriptors.push(MeshDescriptor::zeroed());
-                self.mesh_bounds.push(MeshBounds::default());
-                self.slots.push(Slot::default());
-                self.mesh_descriptors.len() as u32 - 1
-            }
-        };
+        let mesh_id = self.next_id();
         self.write(mesh_id, mesh, slot);
         MeshHandle { mesh_id }
+    }
+
+    /// A released id, or a new one at the end of the parallel arrays.
+    pub(super) fn next_id(&mut self) -> u32 {
+        self.free_ids.pop().unwrap_or_else(|| {
+            self.mesh_descriptors.push(MeshDescriptor::zeroed());
+            self.mesh_bounds.push(MeshBounds::default());
+            self.slots.push(Slot::default());
+            self.mesh_descriptors.len() as u32 - 1
+        })
     }
 
     /// One range per array for `mesh`: out of the holes when it fits, off the end when it does not.
@@ -352,6 +392,7 @@ impl GlobalMeshPool {
             meshlets,
             groups,
             live: true,
+            gpu: false,
         }
     }
 
@@ -408,7 +449,7 @@ impl GlobalMeshPool {
 
 /// A span out of `holes`, or one appended to `array` — which grows with filler the write
 /// overwrites.
-fn take<T: Copy>(holes: &mut Holes, array: &mut Vec<T>, len: usize, filler: T) -> Span {
+pub(super) fn take<T: Copy>(holes: &mut Holes, array: &mut Vec<T>, len: usize, filler: T) -> Span {
     let len = holes.rounded(len as u32);
     if let Some(span) = holes.take(len) {
         return span;

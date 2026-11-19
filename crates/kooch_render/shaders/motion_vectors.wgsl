@@ -61,9 +61,9 @@ fn fs_motion_vectors(in: Varyings) -> @location(0) vec2<f32> {
     let visible_slot = payload >> 7u;
     let tri_idx = payload & 0x7Fu;
 
-    let packed_visible = visible_meshlets[visible_slot];
-    let inst_id = packed_visible >> 16u;
-    let meshlet_id = packed_visible & 0xffffu;
+    let visible = visible_meshlets[visible_slot];
+    let inst_id = visible.x;
+    let meshlet_id = visible.y;
     let inst = instances[inst_id];
     let desc = descriptors[meshlet_id];
 

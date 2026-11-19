@@ -91,10 +91,9 @@ fn run_cull_scene_pool(thread_id: u32) {
         return;
     }
 
-    // Pack: instance_id (high 16) | global_meshlet_idx (low 16).
-    // Caps: 64K instances, 64K meshlets in the entire pool.
+    // A word each, so neither the instance nor the pool's meshlet count has a ceiling (#773).
     let slot = atomicAdd(&visible_count, 1u);
-    visible_meshlets[slot] = (instance_id << 16u) | (global_meshlet_idx & 0xffffu);
+    visible_meshlets[slot] = vec2<u32>(instance_id, global_meshlet_idx);
 }
 
 @compute @workgroup_size(64, 1, 1)

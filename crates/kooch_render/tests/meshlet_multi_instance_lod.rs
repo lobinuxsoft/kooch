@@ -9,7 +9,7 @@ use kooch_render::mesh::{Mesh, MeshVertex};
 use kooch_render::meshlet::{
     CullParams, DEFAULT_MAX_TRIANGLES, DEFAULT_MAX_VERTICES, GlobalMeshPool, LodConfig,
     MeshInstance, MeshletCull, MeshletCullPipelines, MeshletScene, SceneCullParams,
-    build_meshlets_lod_chain, decode_scene_visible_id,
+    build_meshlets_lod_chain,
 };
 use std::collections::BTreeSet;
 
@@ -53,7 +53,7 @@ fn read_visible_meshlets(
     if count == 0 {
         return Vec::new();
     }
-    let bytes = (count as u64) * 4;
+    let bytes = (count as u64) * 8;
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("multi_inst_lod_staging"),
         size: bytes,
@@ -175,8 +175,8 @@ fn three_instances_pick_distinct_lod_bands() {
 
     // Partition visible packed ids by instance.
     let mut sets: [BTreeSet<u32>; 3] = Default::default();
-    for packed in &visible {
-        let (inst, mid) = decode_scene_visible_id(*packed);
+    for pair in visible.chunks_exact(2) {
+        let (inst, mid) = (pair[0], pair[1]);
         assert!(
             inst < instances.len() as u32,
             "decoded instance_id {inst} out of range"

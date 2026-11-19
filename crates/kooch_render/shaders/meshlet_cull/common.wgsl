@@ -69,7 +69,7 @@ struct MeshletDescriptor {
 
 @group(0) @binding(0) var<uniform> params: CullParams;
 @group(0) @binding(1) var<storage, read> descriptors: array<MeshletDescriptor>;
-@group(0) @binding(2) var<storage, read_write> visible_meshlets: array<u32>;
+@group(0) @binding(2) var<storage, read_write> visible_meshlets: array<vec2<u32>>;
 @group(0) @binding(3) var<storage, read_write> visible_count: atomic<u32>;
 
 // group(1) — only bound when running cs_cull_hi_z.

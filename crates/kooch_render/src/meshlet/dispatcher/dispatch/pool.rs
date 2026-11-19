@@ -8,8 +8,8 @@ use super::super::pipelines::MeshletCullPipelines;
 
 impl MeshletCull {
     /// Multi-mesh scene cull (#446). One dispatch covers every instance × meshlet across the entire
-    /// [`GpuGlobalMeshPool`]. Visible pairs land in `visible_meshlets[]` packed as `(instance_id <<
-    /// 16) | global_meshlet_idx` (pool-relative — not per-mesh as in [`Self::dispatch_scene`]).
+    /// [`GpuGlobalMeshPool`]. Visible pairs land in `visible_meshlets[]` as `vec2<u32>(instance_id,
+    /// global_meshlet_idx)` (pool-relative — not per-mesh as in [`Self::dispatch_scene`]).
     #[allow(clippy::too_many_arguments)]
     pub fn dispatch_scene_pool(
         &self,

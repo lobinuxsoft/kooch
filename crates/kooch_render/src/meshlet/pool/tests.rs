@@ -188,3 +188,26 @@ fn an_edit_dirties_only_its_ranges() {
         Some(edited as usize..edited as usize + 1),
     );
 }
+
+#[test]
+fn pinned_slots_are_never_owed() {
+    use super::slots::{Span, outside};
+    let pins = [Span { start: 2, len: 2 }, Span { start: 6, len: 1 }];
+    let owed: Vec<_> = outside(0..10, &pins).collect();
+    assert_eq!(owed, [0..2, 4..6, 7..10]);
+}
+
+/// The arrays shrink when the last mesh in them goes: their length is what is live, not the most
+/// the pool ever held.
+#[test]
+fn releasing_the_tail_shrinks() {
+    let mesh = build_default_meshlets(&cube_mesh()).expect("build");
+    let mut pool = GlobalMeshPool::new();
+    let first = pool.register(&mesh).mesh_id;
+    let held = pool.meshlets.len();
+    let last = pool.register(&mesh).mesh_id;
+    pool.release(last);
+    assert_eq!(pool.meshlets.len(), held);
+    pool.release(first);
+    assert!(pool.meshlets.is_empty() && pool.vertices.is_empty());
+}

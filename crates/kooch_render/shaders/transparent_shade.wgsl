@@ -19,7 +19,7 @@ fn cs_shade(@builtin(global_invocation_id) id: vec3<u32>) {
             continue;
         }
         let slot = key_slot(key);
-        if (instances[visible_meshlets[slot] >> 16u].material_id != screen.material_id) {
+        if (instances[visible_meshlets[slot].x].material_id != screen.material_id) {
             continue;
         }
         // A clip only the shared insert let through, when the material's own did not build.

@@ -40,7 +40,7 @@ impl MeshletCull {
 
         let visible_meshlets = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_visible_ids"),
-            size: capacity as u64 * 4,
+            size: capacity as u64 * 8,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -59,7 +59,7 @@ impl MeshletCull {
         // appends; pass B drains via the atomic counter.
         let culled_meshlets = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_culled_ids"),
-            size: capacity as u64 * 4,
+            size: capacity as u64 * 8,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,

@@ -41,8 +41,8 @@ struct MeshInstance {
 }
 
 @group(0) @binding(0) var<uniform> raster: PageRaster;
-// 🔴 FOUR words a pair — the virtual page, its physical slot, the cull's packed `(instance,
-// meshlet)`, and a spare.
+// 🔴 FOUR words a pair — the virtual page, its physical slot, then the cull's instance
+// and meshlet.
 @group(0) @binding(2) var<storage, read> pairs: array<vec4<u32>>;
 // 🔴 A lamp's page is a frustum from the light's own position, so its transform cannot come from a
 // uniform the way the sun's does: apex, axis and reach are all properties of the light the page
@@ -102,8 +102,8 @@ fn page_geometry(vertex_index: u32, instance_index: u32) -> PageGeom {
     out.uv = vec2<f32>(0.0);
     out.material = 0u;
     let pair = pairs[instance_index];
-    let inst_id = pair.z >> 16u;
-    let meshlet_id = pair.z & 0xffffu;
+    let inst_id = pair.z;
+    let meshlet_id = pair.w;
     let desc = descriptors[meshlet_id];
 
     let id = page_decode(

@@ -8,7 +8,6 @@ use glam::{Mat4, Vec3};
 use kooch_render::meshlet::{
     CullParams, DEFAULT_MAX_TRIANGLES, GlobalMeshPool, MeshInstance, MeshletCull,
     MeshletCullPipelines, MeshletScene, SceneCullParams, build_default_meshlets,
-    decode_scene_visible_id,
 };
 use std::collections::BTreeSet;
 
@@ -92,7 +91,7 @@ fn atomic_pool_cull_drops_off_frustum_aabb() {
     );
 
     let visible: Vec<u32> = {
-        let byte_count = (visible_count as u64) * 4;
+        let byte_count = (visible_count as u64) * 8;
         let staging = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("atomic_pool_cull_visible_staging"),
             size: byte_count,
@@ -121,8 +120,8 @@ fn atomic_pool_cull_drops_off_frustum_aabb() {
     };
 
     let mut unique_instances = BTreeSet::new();
-    for packed in &visible {
-        let (instance_id, _) = decode_scene_visible_id(*packed);
+    for pair in visible.chunks_exact(2) {
+        let (instance_id, _) = (pair[0], pair[1]);
         unique_instances.insert(instance_id);
     }
 

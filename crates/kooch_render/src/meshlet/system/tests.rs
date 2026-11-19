@@ -405,9 +405,10 @@ fn a_sweep_compacts_the_holes() {
     }
     assert_eq!(pipeline.sweep(&[kept], 4).len(), 8);
 
+    // Released ids stay for reuse; the ranges they held must not.
     assert_eq!(
-        pipeline.dead_bytes(),
-        0,
+        pipeline.pool().meshlets.len(),
+        mesh.meshlets.len(),
         "the released ranges stayed as holes"
     );
     let handle = pipeline

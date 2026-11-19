@@ -47,7 +47,7 @@ struct MeshletDescriptor {
 @group(1) @binding(2) var<storage, read> meshlet_triangles: array<u32>;
 @group(1) @binding(3) var<storage, read> descriptors: array<MeshletDescriptor>;
 
-@group(2) @binding(0) var<storage, read> visible_meshlets: array<u32>;
+@group(2) @binding(0) var<storage, read> visible_meshlets: array<vec2<u32>>;
 
 // Scene-path bind group — only bound for vs_vbuf_scene / fs_vbuf_scene. Must mirror the cull-side
 // struct (stride 96 B) so `instances[i]` reads from the correct byte offset.
@@ -87,7 +87,7 @@ fn vs_vbuf(
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
 ) -> VsOut {
-    let meshlet_id = visible_meshlets[instance_index];
+    let meshlet_id = visible_meshlets[instance_index].y;
     let desc = descriptors[meshlet_id];
 
     let triangle_idx = vertex_index / 3u;
@@ -122,9 +122,9 @@ fn vs_vbuf_scene(
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
 ) -> VsOut {
-    let packed_visible = visible_meshlets[instance_index];
-    let inst_id = packed_visible >> 16u;
-    let meshlet_id = packed_visible & 0xffffu;
+    let visible = visible_meshlets[instance_index];
+    let inst_id = visible.x;
+    let meshlet_id = visible.y;
 
     let inst = instances[inst_id];
     let desc = descriptors[meshlet_id];

@@ -18,7 +18,7 @@ const CHUNK_LIST: u32 = 6u;
 
 // A chunk word packs the instance in the high 24 bits and the chunk index within that instance in
 // the low 8. 256 chunks is 16 384 meshlets in one mesh, over three times the heaviest asset in the
-// tree, and the instance field is wider than the 16 bits `visible_meshlets` already caps at.
+// tree.
 const CHUNK_INDEX_BITS: u32 = 8u;
 const CHUNK_INDEX_MASK: u32 = 255u;
 const MAX_CHUNKS_PER_INSTANCE: u32 = 256u;
