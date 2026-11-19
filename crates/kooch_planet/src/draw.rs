@@ -36,6 +36,7 @@ pub(crate) struct Blocks {
     origin: Vec<DVec3>,
     /// About how many: counted from triangle bytes, which round up per meshlet.
     triangles: Vec<u32>,
+    meshlets: Vec<u32>,
     /// The mesh on screen.
     mesh: Vec<Option<Guid>>,
     /// Written and waiting for its swap.
@@ -104,6 +105,7 @@ impl Blocks {
             self.asked[s] = None;
             self.built[s] = true;
             self.triangles[s] = 0;
+            self.meshlets[s] = 0;
             self.drop_meshes(resources, s, meshes);
             return;
         }
@@ -180,6 +182,7 @@ impl Blocks {
         self.settled = false;
         self.built[s] = true;
         self.triangles[s] = block.sizes.triangle_bytes / 3;
+        self.meshlets[s] = block.sizes.meshlets;
         let visible = self.shown[s];
         let held = match visible {
             true => &mut self.mesh[s],
@@ -259,6 +262,15 @@ impl Blocks {
             .sum()
     }
 
+    /// Meshlets on screen, lingering blocks included.
+    pub(crate) fn meshlets(&self) -> u64 {
+        let shown = self.meshlets.iter().zip(&self.shown);
+        shown
+            .filter(|(_, on)| **on)
+            .map(|(&m, _)| u64::from(m))
+            .sum()
+    }
+
     /// Whether `key`'s mesh is in hand.
     fn built(&self, key: BlockKey) -> bool {
         self.of_key
@@ -276,6 +288,7 @@ impl Blocks {
             self.key.push(None);
             self.origin.push(DVec3::ZERO);
             self.triangles.push(0);
+            self.meshlets.push(0);
             self.mesh.push(None);
             self.staged.push(None);
             self.asked.push(None);

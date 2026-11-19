@@ -28,6 +28,15 @@ pub(super) fn planet_readout(ui: &mut egui::Ui, stats: PlanetStats) {
         );
         metric(ui, "Meshed (total)", &stats.meshed.to_string());
         metric(ui, "Triangles", &stats.triangles.to_string());
+        if stats.meshlets > 0 {
+            let fill = stats.triangles as f64 / stats.meshlets as f64;
+            metric_with_tooltip(
+                ui,
+                "Triangles / meshlet",
+                &format!("{fill:.1} of 124"),
+                "Mean over the meshlets on screen: how full the mesher packs them",
+            );
+        }
         match stats.gpu {
             Some(gpu) => {
                 metric_with_tooltip(
