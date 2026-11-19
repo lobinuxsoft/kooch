@@ -51,29 +51,6 @@ impl Mesh {
         }
     }
 
-    /// A mesh from positions with their own normals, as a generator that knows the surface's
-    /// gradient gives them: they stay smooth across the edge of a chunk, which face normals do not.
-    pub fn with_normals(positions: &[[f32; 3]], normals: &[[f32; 3]], indices: Vec<u32>) -> Self {
-        let mut aabb = Aabb::empty();
-        let vertices = positions
-            .iter()
-            .zip(normals)
-            .map(|(position, normal)| {
-                aabb.expand(glam::Vec3::from(*position));
-                MeshVertex {
-                    position: *position,
-                    normal: *normal,
-                    uv: [0.0, 0.0],
-                }
-            })
-            .collect();
-        Self {
-            vertices,
-            indices,
-            aabb,
-        }
-    }
-
     /// Empty mesh (no vertices, no indices). Useful as a placeholder while
     /// async loads complete.
     pub fn empty() -> Self {
