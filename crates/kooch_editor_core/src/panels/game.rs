@@ -144,6 +144,7 @@ fn view_menu(ui: &mut egui::Ui, origin: egui::Pos2, hud: &mut crate::perf::HudVi
                         (&mut pins.project, "Project"),
                         (&mut pins.system, "System"),
                         (&mut pins.render, "Render"),
+                        (&mut pins.planets, "Planets"),
                         (&mut pins.meshlet, "Meshlet pipeline"),
                         (&mut pins.cpu_frame, "CPU frame"),
                         (&mut pins.remote, "Remote"),
