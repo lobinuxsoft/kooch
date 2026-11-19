@@ -3,7 +3,7 @@ use glam::{Mat4, Vec3};
 use super::list::{ForwardList, Run};
 use crate::meshlet::MeshDescriptor;
 use crate::meshlet::asset::MeshletDescriptor;
-use crate::meshlet::scene::{MeshInstance, decode_scene_visible_id};
+use crate::meshlet::scene::MeshInstance;
 use crate::shadow::InstanceBounds;
 
 fn meshlet(lod_level: u32) -> MeshletDescriptor {
@@ -53,11 +53,7 @@ fn far_glass_draws_first() {
         &[mesh(0, 1)],
         &[meshlet(0)],
     );
-    let order: Vec<u32> = list
-        .entries
-        .iter()
-        .map(|&e| decode_scene_visible_id(e).0)
-        .collect();
+    let order: Vec<u32> = list.entries.iter().map(|e| e[0]).collect();
     assert_eq!(order, [2, 3, 1]);
 }
 
@@ -68,11 +64,7 @@ fn coarse_levels_are_skipped() {
     let mut list = ForwardList::default();
     let meshlets = [meshlet(0), meshlet(0), meshlet(1)];
     list.rebuild(&instances, 3, &bounds, Vec3::ZERO, &[mesh(0, 3)], &meshlets);
-    let ids: Vec<u32> = list
-        .entries
-        .iter()
-        .map(|&e| decode_scene_visible_id(e).1)
-        .collect();
+    let ids: Vec<u32> = list.entries.iter().map(|e| e[1]).collect();
     assert_eq!(ids, [0, 1]);
 }
 

@@ -27,7 +27,7 @@ const INSTANCE_MASKED: u32 = 8u;
 const GROUP: u32 = 64u;
 const MAX_GROUPS: u32 = 65535u;
 
-@group(0) @binding(0) var<storage, read> visible_meshlets: array<u32>;
+@group(0) @binding(0) var<storage, read> visible_meshlets: array<vec2<u32>>;
 // The cull's draw: vertices per meshlet, then how many survived.
 @group(0) @binding(1) var<storage, read> cull_args: array<u32>;
 @group(0) @binding(2) var<storage, read> instances: array<MeshInstance>;
@@ -49,7 +49,7 @@ fn visible() -> u32 {
 
 // The bin a visible slot draws in, or BINS when it is not masked.
 fn bin_at(slot: u32) -> u32 {
-    let inst = instances[visible_meshlets[slot] >> 16u];
+    let inst = instances[visible_meshlets[slot].x];
     if ((inst.flags & INSTANCE_MASKED) == 0u || inst.material_id >= arrayLength(&bin_of)) {
         return BINS;
     }

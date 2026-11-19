@@ -1,6 +1,6 @@
 //! Scene-builder system: ECS query → MeshInstance buffer.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use glam::Mat4;
 use kooch_core::Guid;
@@ -12,7 +12,7 @@ use kooch_ecs::mesh_renderer::MeshRenderer;
 use kooch_ecs::query::Query;
 
 use super::asset::MeshletMesh;
-use super::pool::{GlobalMeshPool, MeshHandle};
+use super::pool::{GlobalMeshPool, GpuMeshSizes, MeshBounds, MeshDescriptor, MeshHandle};
 use super::scene::{LOD_FORCE_NONE, MeshInstance};
 use super::trim::{AlphaTrim, TrimPair};
 
@@ -25,6 +25,9 @@ pub struct MeshletPipeline {
     registry: HashMap<Guid, MeshHandle>,
     /// The frame each registered GUID was last asked to draw. See [`Self::sweep`].
     asked: HashMap<Guid, u32>,
+    /// Meshes a compute pass writes. Their producer frees them, never the sweep: only the GPU
+    /// holds their data, so a swept one could not be uploaded back.
+    owned: HashSet<Guid>,
     /// Counts up for the life of the process, bumped once per sweep.
     frame: u32,
     /// Which masked pairs draw a cut mesh instead of discarding per pixel (#452).
@@ -82,10 +85,46 @@ impl MeshletPipeline {
         if let Some(stale) = self.registry.get(&guid).copied() {
             self.pool.release(stale.mesh_id);
         }
+        self.owned.remove(&guid);
         let mesh_handle = self.pool.register(mesh);
         self.registry.insert(guid, mesh_handle);
+        // 🔴 Publishing counts as asking. A renderer spawned with its mesh has no GlobalTransform
+        // until the next propagation, and a GUID never asked was swept that same frame — for ever,
+        // since a generated mesh has no file to load back.
+        self.asked.insert(guid, self.frame);
         self.defragment();
         mesh_handle
+    }
+
+    /// Reserves ranges under `guid` for a compute pass to fill, replacing whatever it held, and
+    /// returns where they start.
+    pub fn reserve_gpu(
+        &mut self,
+        guid: Guid,
+        sizes: GpuMeshSizes,
+        bounds: MeshBounds,
+    ) -> Option<MeshDescriptor> {
+        if let Some(stale) = self.registry.get(&guid).copied() {
+            self.pool.release(stale.mesh_id);
+        }
+        let handle = self.pool.reserve_gpu(sizes, bounds);
+        self.registry.insert(guid, handle);
+        self.owned.insert(guid);
+        self.pool
+            .mesh_descriptors
+            .get(handle.mesh_id as usize)
+            .copied()
+    }
+
+    /// Frees a mesh [`Self::reserve_gpu`] took. A GUID it did not take is left alone.
+    pub fn release_gpu(&mut self, guid: Guid) {
+        if !self.owned.remove(&guid) {
+            return;
+        }
+        if let Some(handle) = self.registry.remove(&guid) {
+            self.pool.release(handle.mesh_id);
+        }
+        self.asked.remove(&guid);
     }
 
     /// Records this frame's ask and releases whatever has gone unasked for [`MESH_MAX_AGE`].
@@ -107,6 +146,7 @@ impl MeshletPipeline {
         let stale: Vec<Guid> = self
             .registry
             .keys()
+            .filter(|guid| !self.owned.contains(*guid))
             .filter(|guid| {
                 let last = self.asked.get(*guid).copied().unwrap_or(0);
                 self.frame.saturating_sub(last) > max_age
@@ -131,10 +171,10 @@ impl MeshletPipeline {
 
     /// Repacks the pool once its holes outweigh what is in use.
     ///
-    /// Rare by design: a same-size republish reuses its own ranges, so this only fires when edits
-    /// keep changing a mesh's size and leave holes nothing fits in. It is a scene-wide re-upload,
-    /// so it is the fallback, not the mechanism.
-    fn defragment(&mut self) {
+    /// Fires when edits keep changing a mesh's size and leave holes nothing fits in, or when a
+    /// producer's GPU meshes churn (#773). It re-uploads every CPU mesh and moves every GPU one,
+    /// so it waits until the holes outweigh what is live.
+    pub(crate) fn defragment(&mut self) {
         let free = self.pool.free_bytes();
         if free <= self.pool.byte_size().saturating_sub(free) {
             return;
@@ -147,8 +187,11 @@ impl MeshletPipeline {
         let moved = self
             .pool
             .retain(&live.iter().map(|(_, id)| *id).collect::<Vec<_>>());
-        for ((guid, _), mesh_id) in live.iter().zip(moved) {
-            self.registry.insert(*guid, MeshHandle { mesh_id });
+        for ((guid, _), moved) in live.iter().zip(moved) {
+            match moved {
+                Some(mesh_id) => self.registry.insert(*guid, MeshHandle { mesh_id }),
+                None => self.registry.remove(guid),
+            };
         }
     }
 

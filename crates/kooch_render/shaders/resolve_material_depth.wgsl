@@ -16,7 +16,7 @@ struct MeshInstance {
 }
 
 @group(0) @binding(0) var vbuf64: texture_storage_2d<r64uint, read>;
-@group(0) @binding(1) var<storage, read> visible_meshlets: array<u32>;
+@group(0) @binding(1) var<storage, read> visible_meshlets: array<vec2<u32>>;
 @group(0) @binding(2) var<storage, read> instances: array<MeshInstance>;
 
 struct FsInput {
@@ -41,7 +41,7 @@ fn fs_resolve_material_depth(in: FsInput) -> @builtin(frag_depth) f32 {
         discard;
     }
     let visible_slot = u32(visibility) >> 7u;
-    let inst_id = visible_meshlets[visible_slot] >> 16u;
+    let inst_id = visible_meshlets[visible_slot].x;
     let material_id = instances[inst_id].material_id;
     return f32(material_id) / 65535.0;
 }

@@ -1,7 +1,7 @@
 
 // Hi-Z 2-pass scene-pool cull (#445).
 
-@group(0) @binding(4) var<storage, read_write> culled_meshlets: array<u32>;
+@group(0) @binding(4) var<storage, read_write> culled_meshlets: array<vec2<u32>>;
 @group(0) @binding(5) var<storage, read_write> culled_count: atomic<u32>;
 @group(2) @binding(2) var<uniform> hi_z_params_atomic: HiZParams;
 @group(2) @binding(3) var hi_z_pyramid_atomic: texture_2d<f32>;
@@ -250,7 +250,7 @@ fn run_cull_scene_pool_atomic_hi_z(thread_id: u32) {
         return;
     }
 
-    let packed = (instance_id << 16u) | (global_meshlet_idx & 0xffffu);
+    let packed = vec2<u32>(instance_id, global_meshlet_idx);
 
     if (occluded_by_hi_z_atomic(inst.transform, m.aabb_min, m.aabb_max)) {
         // Hi-Z reject: defer to pass B with this frame's pyramid.
@@ -279,8 +279,8 @@ fn run_cull_pass_b(thread_id: u32) {
         return;
     }
     let packed = culled_meshlets[thread_id];
-    let instance_id = packed >> 16u;
-    let global_meshlet_idx = packed & 0xffffu;
+    let instance_id = packed.x;
+    let global_meshlet_idx = packed.y;
 
     let inst = instances[instance_id];
     let m = pool_meshlets[global_meshlet_idx];

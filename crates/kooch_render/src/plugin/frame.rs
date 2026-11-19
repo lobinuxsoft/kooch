@@ -20,7 +20,7 @@ pub(super) struct FrameSetup {
 
 pub(super) fn prepare_frame_system(resources: &mut Resources) {
     if resources.get::<MeshletRenderStage>().is_none() {
-        super::init_renderers(resources);
+        super::core::init_renderers(resources);
     }
     let Some(gpu) = resources.remove::<GpuContext>() else {
         return;

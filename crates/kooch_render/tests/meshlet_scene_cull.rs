@@ -6,7 +6,7 @@ use common::{build_cube_mesh, try_acquire_device};
 use glam::{Mat4, Vec3};
 use kooch_render::meshlet::{
     CullParams, DEFAULT_MAX_TRIANGLES, MeshInstance, MeshletCull, MeshletCullPipelines,
-    MeshletScene, SceneCullParams, build_default_meshlets, decode_scene_visible_id,
+    MeshletScene, SceneCullParams, build_default_meshlets,
 };
 use std::collections::BTreeSet;
 
@@ -19,7 +19,7 @@ fn read_visible_meshlets(
     if count == 0 {
         return Vec::new();
     }
-    let byte_count = (count as u64) * 4;
+    let byte_count = (count as u64) * 8;
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("scene_cull_visible_staging"),
         size: byte_count,
@@ -103,8 +103,8 @@ fn scene_cull_visits_each_instance_once_when_all_in_frustum() {
 
     let visible = read_visible_meshlets(&device, &queue, &cull, visible_count);
     let mut unique_instances = BTreeSet::new();
-    for packed in &visible {
-        let (instance_id, meshlet_id) = decode_scene_visible_id(*packed);
+    for pair in visible.chunks_exact(2) {
+        let (instance_id, meshlet_id) = (pair[0], pair[1]);
         assert!(
             instance_id < instances.len() as u32,
             "decoded instance_id {instance_id} out of range"
@@ -178,8 +178,8 @@ fn scene_cull_drops_off_screen_instances() {
     let visible = read_visible_meshlets(&device, &queue, &cull, visible_count);
 
     let mut unique_instances = BTreeSet::new();
-    for packed in &visible {
-        let (instance_id, _) = decode_scene_visible_id(*packed);
+    for pair in visible.chunks_exact(2) {
+        let (instance_id, _) = (pair[0], pair[1]);
         unique_instances.insert(instance_id);
     }
     // Instances 2 and 3 must be culled — they are outside the frustum.
@@ -303,8 +303,8 @@ fn a_camera_keeps_only_its_layers() {
         let count = common::read_u32(&device, &queue, cull.visible_count_buffer(), 0);
         let visible = read_visible_meshlets(&device, &queue, &cull, count);
         visible
-            .iter()
-            .map(|packed| decode_scene_visible_id(*packed).0)
+            .chunks_exact(2)
+            .map(|pair| pair[0])
             .collect::<BTreeSet<u32>>()
     };
 

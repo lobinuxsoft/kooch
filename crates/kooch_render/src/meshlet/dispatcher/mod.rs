@@ -234,7 +234,7 @@ impl MeshletCull {
         })
     }
 
-    /// Grows `visible_meshlets` so it can hold at least `required` surviving meshlets. No-op when
+    /// Grows `visible_meshlets` and `culled_meshlets` so each can hold at least `required` surviving meshlets. No-op when
     /// current capacity already covers the request. Growth is geometric (doubles) and rounds up to
     /// the next power of two to absorb subsequent jumps without reallocating every frame.
     pub fn ensure_capacity(&mut self, device: &wgpu::Device, required: u32) {
@@ -244,7 +244,7 @@ impl MeshletCull {
         let new_capacity = kooch_core::gpu::grown(required, self.capacity);
         let visible_meshlets = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("meshlet_visible_ids"),
-            size: new_capacity as u64 * 4,
+            size: new_capacity as u64 * 8,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -265,14 +265,24 @@ impl MeshletCull {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // Pass A queues every occluded meshlet here: a queue left at the first capacity drops them.
+        let culled_meshlets = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("meshlet_culled_ids"),
+            size: new_capacity as u64 * 8,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         tracing::debug!(
             target: "kooch_render::meshlet::cull",
             old_capacity = self.capacity,
             new_capacity,
             required,
-            "grew visible_meshlets + reject_reasons buffers to fit scene",
+            "grew the visible, culled and reject_reasons buffers to fit scene",
         );
         self.visible_meshlets = visible_meshlets;
+        self.culled_meshlets = culled_meshlets;
         self.reject_reasons = reject_reasons;
         self.capacity = new_capacity;
     }
@@ -291,8 +301,8 @@ impl MeshletCull {
         &self.indirect_args
     }
 
-    /// `wgpu::Buffer` holding `array<u32>` of meshlet ids that survived
-    /// culling. Length is `visible_count` (read from the atomic). The
+    /// `wgpu::Buffer` holding the `vec2<u32>(instance, meshlet)` pairs that
+    /// survived culling. Length is `visible_count` (read from the atomic). The
     /// rasterizer binds this and indexes by `@builtin(instance_index)`.
     pub fn visible_meshlets_buffer(&self) -> &wgpu::Buffer {
         &self.visible_meshlets

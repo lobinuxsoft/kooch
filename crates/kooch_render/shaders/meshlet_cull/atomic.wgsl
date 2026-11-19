@@ -228,7 +228,7 @@ fn cull_pool_atomic(thread_id: u32, instance_id: u32, meshlet_offset: u32) {
     record_reject(thread_id, REJECT_REASON_PASSED);
     record_stage_survivor(STAGE_TOTAL_VISIBLE);
     let slot = atomicAdd(&visible_count, 1u);
-    visible_meshlets[slot] = (instance_id << 16u) | (global_meshlet_idx & 0xffffu);
+    visible_meshlets[slot] = vec2<u32>(instance_id, global_meshlet_idx);
 }
 
 @compute @workgroup_size(64, 1, 1)

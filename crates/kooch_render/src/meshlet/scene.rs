@@ -286,21 +286,6 @@ impl MeshletScene {
     }
 }
 
-/// Decodes the packed `(instance_id, meshlet_id)` value the scene cull shader writes into
-/// `visible_meshlets`. CPU mirror of the WGSL extract logic so tests can verify expected pairs
-/// without reimplementing the bit math.
-pub fn decode_scene_visible_id(packed: u32) -> (u32, u32) {
-    // bit 16..32 = instance_id, bit 0..16 = meshlet_id
-    (packed >> 16, packed & 0xFFFF)
-}
-
-/// Inverse of [`decode_scene_visible_id`]. Both must be < 0x1_0000.
-pub fn encode_scene_visible_id(instance_id: u32, meshlet_id: u32) -> u32 {
-    debug_assert!(instance_id < (1 << 16));
-    debug_assert!(meshlet_id < (1 << 16));
-    (instance_id << 16) | meshlet_id
-}
-
 #[cfg(test)]
 mod tests;
 

@@ -89,10 +89,10 @@ impl Rig {
         )
     }
 
-    /// Runs one cull and reads back the packed survivors, sorted so two
+    /// Runs one cull and reads back the `(instance, meshlet)` survivors, sorted so two
     /// runs are comparable — the atomic append order is not stable and
     /// is not supposed to be.
-    fn survivors(&self, two_level: bool, min_pixels: f32) -> Vec<u32> {
+    fn survivors(&self, two_level: bool, min_pixels: f32) -> Vec<(u32, u32)> {
         let (cull_params, scene_params) = self.params(min_pixels);
         let mut encoder = self
             .device
@@ -130,12 +130,13 @@ impl Rig {
             self.cull.visible_count_buffer(),
             0,
         );
-        let mut ids: Vec<u32> = common::read_buffer_to_vec(
+        let words: Vec<u32> = common::read_buffer_to_vec(
             &self.device,
             &self.queue,
             self.cull.visible_meshlets_buffer(),
-            count as u64,
+            count as u64 * 2,
         );
+        let mut ids: Vec<(u32, u32)> = words.chunks_exact(2).map(|p| (p[0], p[1])).collect();
         ids.sort_unstable();
         ids
     }

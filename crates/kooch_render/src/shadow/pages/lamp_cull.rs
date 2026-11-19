@@ -181,7 +181,7 @@ impl LampCull {
             group_rows: 1,
             survivors: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("lamp_cull_survivors"),
-                size: LAMP_CULLS as u64 * LAMP_SURVIVORS as u64 * 4,
+                size: LAMP_CULLS as u64 * LAMP_SURVIVORS as u64 * 8,
                 usage: wgpu::BufferUsages::STORAGE,
                 mapped_at_creation: false,
             }),

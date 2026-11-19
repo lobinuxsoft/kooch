@@ -1,5 +1,5 @@
 // transparent_vertex.wgsl — the vertex stage every transparent pass rasterises with (#452).
-// `visible_meshlets` is the forward list here, not the cull's: one packed (instance, meshlet) per
+// `visible_meshlets` is the forward list here, not the cull's: one (instance, meshlet) pair per
 // draw instance.
 
 struct ForwardOut {
@@ -21,8 +21,8 @@ fn vs_forward(
     @builtin(instance_index) slot: u32,
 ) -> ForwardOut {
     let packed = visible_meshlets[slot];
-    let inst = instances[packed >> 16u];
-    let desc = descriptors[packed & 0xffffu];
+    let inst = instances[packed.x];
+    let desc = descriptors[packed.y];
     let triangle = vertex_index / 3u;
 
     var out: ForwardOut;

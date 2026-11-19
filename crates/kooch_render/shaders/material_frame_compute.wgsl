@@ -186,7 +186,7 @@ fn cs_shade_tile(
     var my_slot = 0u;
     if (covered) {
         let visible_slot = u32(visibility) >> 7u;
-        let inst_id = visible_meshlets[visible_slot] >> 16u;
+        let inst_id = visible_meshlets[visible_slot].x;
         if (instances[inst_id].material_id == screen.material_id) {
             mine = true;
             my_slot = visible_slot;

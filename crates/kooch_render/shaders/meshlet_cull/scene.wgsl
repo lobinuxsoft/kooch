@@ -106,10 +106,8 @@ fn run_cull_scene(thread_id: u32) {
         return;
     }
 
-    // Pack: instance_id (high 16 bits) | meshlet_idx (low 16 bits).
-    // Caps: 64K instances, 64K meshlets per mesh.
     let slot = atomicAdd(&visible_count, 1u);
-    visible_meshlets[slot] = (instance_id << 16u) | (meshlet_idx & 0xffffu);
+    visible_meshlets[slot] = vec2<u32>(instance_id, meshlet_idx);
 }
 
 @compute @workgroup_size(64, 1, 1)

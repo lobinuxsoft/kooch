@@ -27,23 +27,32 @@ impl MeshletRenderStage {
         // "the frame" — rather than for the function, because a flamegraph of function names tells
         // nobody which part of the engine to open.
         profiling::scope!("frame");
-        if self.pool_dirty || self.gpu_pool.is_none() {
-            if self.pipeline.registered_count() == 0 {
-                return MeshletRenderStats::default();
-            }
-            match self.gpu_pool.as_mut() {
-                Some(gpu) => gpu.sync(device, queue, self.pipeline.pool_mut()),
-                None => self.gpu_pool = Some(self.pipeline.pool_mut().upload(device, queue)),
-            }
-            self.pool_dirty = false;
-            tracing::debug!(
-                target: "kooch_render::meshlet::render",
-                meshes = self.pipeline.registered_count(),
-                meshlets = self.pipeline.pool().meshlets.len(),
-                "rebuilt GpuGlobalMeshPool",
-            );
+        if !self.sync_pool(device, queue) {
+            return MeshletRenderStats::default();
         }
         self.render(view_id, device, queue, resources, camera, aspect)
+    }
+
+    /// Brings the GPU pool up to the CPU one when it changed. Whether there is a pool to draw.
+    pub(crate) fn sync_pool(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
+        if !self.pool_dirty && self.gpu_pool.is_some() {
+            return true;
+        }
+        if self.pipeline.registered_count() == 0 {
+            return false;
+        }
+        match self.gpu_pool.as_mut() {
+            Some(gpu) => gpu.sync(device, queue, self.pipeline.pool_mut()),
+            None => self.gpu_pool = Some(self.pipeline.pool_mut().upload(device, queue)),
+        }
+        self.pool_dirty = false;
+        tracing::debug!(
+            target: "kooch_render::meshlet::render",
+            meshes = self.pipeline.registered_count(),
+            meshlets = self.pipeline.pool().meshlets.len(),
+            "rebuilt GpuGlobalMeshPool",
+        );
+        true
     }
 
     /// Same as [`Self::render_with_assets`], for this stage's primary

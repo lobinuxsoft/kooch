@@ -2,11 +2,13 @@
 
 pub mod assets;
 
+mod core;
 mod frame;
 mod meshlets;
 mod present;
 
 pub use assets::AssetPlugin;
+pub use core::{RenderCorePlugin, init_renderers};
 
 use kooch_core::app::App;
 use kooch_core::gpu::{GpuContext, TargetDesc, TargetId, TargetPool};
@@ -16,20 +18,14 @@ use kooch_core::schedule::Order;
 use kooch_core::stage::Stage;
 
 use crate::VIEWPORT_DEPTH_FORMAT;
-use crate::meshlet::{MeshletBlit, MeshletDebugCaps, MeshletRenderStage, MeshletRenderStageConfig};
-use crate::sky::SkyRenderPass;
-use crate::vbuf64::Vbuf64Support;
 
-/// Plugin that installs the full render pipeline.
+/// The game's render: [`RenderCorePlugin`], and the frame that draws its cameras to the window.
 #[derive(Default)]
 pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        // 🔴 Inserted here, not by whoever generates a mesh: the store belongs to this crate and the
-        // drain is in this crate's meshlet sync.
-        app.insert_resource(crate::meshlet::GeneratedMeshes::new());
-        app.add_system(Stage::Startup, init_renderers);
+        app.add_plugin(RenderCorePlugin);
         // Before the frame, and in `Render` rather than `Update`: the resource it reads is written
         // by `apply_render_settings_system` in `Update`, and a stage boundary is the only ordering
         // between two plugins that does not depend on which one registered first.
@@ -111,55 +107,6 @@ impl GameDepth {
 fn depth_desc(size: (u32, u32)) -> TargetDesc {
     TargetDesc::attachment(size, VIEWPORT_DEPTH_FORMAT)
         .with_usage(wgpu::TextureUsages::RENDER_ATTACHMENT)
-}
-
-fn init_renderers(resources: &mut Resources) {
-    if resources.get::<MeshletRenderStage>().is_some() {
-        return;
-    }
-    let Some(gpu) = resources.get::<GpuContext>() else {
-        // The same ordinary path as the material pipeline's: the
-        // context is built after Startup and the retry picks this up.
-        tracing::debug!("RenderPlugin: GpuContext not up yet, deferring init to the retry");
-        return;
-    };
-    let vbuf64 = Vbuf64Support::detect(gpu.device());
-    let debug_caps = MeshletDebugCaps::detect(gpu.device());
-    let sky_pass = SkyRenderPass::new(gpu.device(), gpu.format());
-    let mut pool = TargetPool::new(gpu.device());
-    let depth = GameDepth::new(&mut pool, gpu.size());
-    let meshlet_stage = MeshletRenderStage::new(
-        gpu.device(),
-        MeshletRenderStageConfig {
-            size: gpu.size(),
-            vbuf64,
-            debug_caps,
-            ..Default::default()
-        },
-    );
-    let mut meshlet_stage = meshlet_stage;
-    // The editor did this at its own startup and a game never did, so the
-    // GPU frame time existed on this adapter and was reported by nobody.
-    // A no-op on adapters without `TIMESTAMP_QUERY`.
-    meshlet_stage.enable_gpu_timers(gpu.device(), gpu.queue(), gpu.adapter());
-
-    let meshlet_blit = MeshletBlit::new(gpu.device(), gpu.format(), VIEWPORT_DEPTH_FORMAT);
-    // #785 — per-pass GPU timings. `None` in a build without the
-    // `gpu-profiler` feature, and the render code below asks for the
-    // resource the same way either way.
-    let gpu_scopes = kooch_core::gpu::GpuScopes::new(gpu.device(), gpu.queue());
-    resources.insert(vbuf64);
-    resources.insert(debug_caps);
-    resources.insert(sky_pass);
-    resources.insert(pool);
-    resources.insert(depth);
-    resources.insert(meshlet_stage);
-    resources.insert(meshlet_blit);
-    if let Some(gpu_scopes) = gpu_scopes {
-        resources.insert(gpu_scopes);
-        tracing::info!("RenderPlugin: GPU scopes enabled");
-    }
-    tracing::info!("RenderPlugin: renderers initialized (sky + meshlet)");
 }
 
 #[cfg(test)]

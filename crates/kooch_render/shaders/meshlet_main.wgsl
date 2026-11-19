@@ -53,7 +53,7 @@ struct MeshletDescriptor {
 @group(1) @binding(3) var<storage, read> descriptors: array<MeshletDescriptor>;
 
 // group(2) carries the cull pass's surviving-meshlet list.
-@group(2) @binding(0) var<storage, read> visible_meshlets: array<u32>;
+@group(2) @binding(0) var<storage, read> visible_meshlets: array<vec2<u32>>;
 
 struct VsOut {
     @builtin(position) clip_position: vec4<f32>,
@@ -72,7 +72,7 @@ fn vs_meshlet(
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
 ) -> VsOut {
-    let meshlet_id = visible_meshlets[instance_index];
+    let meshlet_id = visible_meshlets[instance_index].y;
     let desc = descriptors[meshlet_id];
 
     let triangle_idx = vertex_index / 3u;

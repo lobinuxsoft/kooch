@@ -41,8 +41,8 @@ fn vs_masked(
 ) -> MaskedOut {
     let slot = masked_slots[masked_bases[screen.bin] + instance];
     let packed = visible_meshlets[slot];
-    let inst = instances[packed >> 16u];
-    let desc = descriptors[packed & 0xffffu];
+    let inst = instances[packed.x];
+    let desc = descriptors[packed.y];
     let triangle = vertex_index / 3u;
 
     var out: MaskedOut;

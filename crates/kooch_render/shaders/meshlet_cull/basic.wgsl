@@ -14,7 +14,7 @@ fn run_cull_basic(meshlet_id: u32) {
     }
 
     let slot = atomicAdd(&visible_count, 1u);
-    visible_meshlets[slot] = meshlet_id;
+    visible_meshlets[slot] = vec2<u32>(0u, meshlet_id);
 }
 
 fn run_cull_with_hi_z(meshlet_id: u32) {
@@ -35,7 +35,7 @@ fn run_cull_with_hi_z(meshlet_id: u32) {
     }
 
     let slot = atomicAdd(&visible_count, 1u);
-    visible_meshlets[slot] = meshlet_id;
+    visible_meshlets[slot] = vec2<u32>(0u, meshlet_id);
 }
 
 @compute @workgroup_size(64, 1, 1)

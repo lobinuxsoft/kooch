@@ -4,9 +4,11 @@
 use bytemuck::Pod;
 
 use super::GlobalMeshPool;
+use super::relocate::Mover;
+use super::slots::{Pins, Span, outside};
 
 /// How much slack a reallocation takes, so a pool that keeps growing stops reallocating.
-const GROWTH: u64 = 2;
+pub(super) const GROWTH: u64 = 2;
 
 impl GlobalMeshPool {
     /// Allocates the GPU mirror and copies the whole pool into it. Keep the result alive across
@@ -21,6 +23,7 @@ impl GlobalMeshPool {
             mesh_bounds: empty(device, "global_pool_mesh_bounds"),
             mesh_count: 0,
             max_meshlets_per_mesh: 0,
+            mover: None,
         };
         self.mark_all();
         gpu.sync(device, queue, self);
@@ -38,47 +41,43 @@ impl GpuGlobalMeshPool {
     pub fn sync(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, pool: &mut GlobalMeshPool) {
         self.mesh_count = pool.mesh_count();
         self.max_meshlets_per_mesh = pool.max_meshlets_per_mesh();
+        let moves = pool.take_moves();
+        if !moves.is_empty() {
+            self.relocate(device, queue, pool, &moves);
+        }
         let mut dirty = pool.take_dirty();
+        let pins = Pins::of(pool.slots());
+        let gpu = Gpu { device, queue };
 
-        write(
-            device,
-            queue,
+        gpu.write(
             &mut self.vertices,
             &pool.vertices,
-            dirty.vertices.take(),
+            (dirty.vertices.take(), &pins.vertices),
             "global_pool_vertices",
         );
-        write(
-            device,
-            queue,
+        gpu.write(
             &mut self.meshlet_vertices,
             &pool.meshlet_vertices,
-            dirty.meshlet_vertices.take(),
+            (dirty.meshlet_vertices.take(), &pins.meshlet_vertices),
             "global_pool_meshlet_vertices",
         );
-        write(
-            device,
-            queue,
+        gpu.write(
             &mut self.meshlet_triangles,
             &pool.meshlet_triangles,
-            dirty.triangles.take(),
+            (dirty.triangles.take(), &pins.triangles),
             "global_pool_meshlet_triangles",
         );
-        write(
-            device,
-            queue,
+        gpu.write(
             &mut self.meshlets,
             &pool.meshlets,
-            dirty.meshlets.take(),
+            (dirty.meshlets.take(), &pins.meshlets),
             "global_pool_meshlets",
         );
         let descriptors = dirty.descriptors.take();
-        write(
-            device,
-            queue,
+        gpu.write(
             &mut self.mesh_descriptors,
             &pool.mesh_descriptors,
-            descriptors.clone(),
+            (descriptors.clone(), &[]),
             "global_pool_mesh_descriptors",
         );
         // One vec4 per mesh, parallel to the descriptors, for the lamp cull's light/instance
@@ -88,60 +87,82 @@ impl GpuGlobalMeshPool {
             .iter()
             .map(|b| [b.center.x, b.center.y, b.center.z, b.radius])
             .collect();
-        write(
-            device,
-            queue,
+        gpu.write(
             &mut self.mesh_bounds,
             &bounds,
-            descriptors,
+            (descriptors, &[]),
             "global_pool_mesh_bounds",
         );
     }
 }
 
-/// Writes `range` of `data` into `buffer`, or reallocates and writes all of it when `data` has
-/// outgrown what is there.
-fn write<T: Pod>(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    buffer: &mut wgpu::Buffer,
-    data: &[T],
-    range: Option<std::ops::Range<usize>>,
-    label: &str,
-) {
-    let stride = std::mem::size_of::<T>() as u64;
-    let needed = (data.len() as u64 * stride).max(4).next_multiple_of(4);
-    if buffer.size() < needed {
-        *buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
-            size: needed * GROWTH,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(buffer, 0, &padded(data));
-        return;
-    }
-    let Some(range) = range.filter(|range| range.end <= data.len()) else {
-        return;
-    };
-    // `write_buffer` wants both offset and length on a 4-byte boundary. Every array but the
-    // triangle bytes has a stride of at least 4, and the triangle spans are reserved in whole
-    // words for the same reason the shader needs them to be.
-    let offset = range.start as u64 * stride;
-    let bytes = bytemuck::cast_slice(&data[range]);
-    if offset % 4 == 0 && bytes.len() % 4 == 0 {
-        queue.write_buffer(buffer, offset, bytes);
-    } else {
-        queue.write_buffer(buffer, 0, &padded(data));
+struct Gpu<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+}
+
+/// The slots of an array the CPU owes the GPU, and the spans the GPU writes itself.
+type Owed<'a> = (Option<std::ops::Range<usize>>, &'a [Span]);
+
+impl Gpu<'_> {
+    /// Writes the owed slots of `data` into `buffer` around the pinned spans. Outgrowing the
+    /// buffer, or shrinking far under it, moves its contents GPU to GPU, because the pinned spans
+    /// exist nowhere else.
+    fn write<T: Pod>(&self, buffer: &mut wgpu::Buffer, data: &[T], owed: Owed, label: &str) {
+        let (range, pinned) = owed;
+        let stride = std::mem::size_of::<T>();
+        let needed = (data.len() as u64 * stride as u64)
+            .max(4)
+            .next_multiple_of(4);
+        // Shrinking waits for twice the growth slack, so a pool hovering at one size never
+        // reallocates back and forth.
+        let size = buffer.size();
+        if size < needed || size > needed * GROWTH * 2 {
+            let grown = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: needed * GROWTH,
+                usage: USAGE,
+                mapped_at_creation: false,
+            });
+            let mut encoder = self.device.create_command_encoder(&Default::default());
+            encoder.copy_buffer_to_buffer(buffer, 0, &grown, 0, size.min(needed));
+            // Submitted now so the copy runs before the writes below, which land at the next
+            // submit.
+            self.queue.submit([encoder.finish()]);
+            *buffer = grown;
+        }
+        // A range marked before the array shrank keeps only what is still there.
+        let range = range.map(|range| range.start.min(data.len())..range.end.min(data.len()));
+        let Some(range) = range.filter(|range| !range.is_empty()) else {
+            return;
+        };
+        let bytes: &[u8] = bytemuck::cast_slice(data);
+        for owed in outside(range, pinned) {
+            // `write_buffer` wants words. Rounding out stays off the pins, which sit on words too.
+            let start = (owed.start * stride) & !3;
+            let end = (owed.end * stride).next_multiple_of(4);
+            match bytes.get(start..end) {
+                Some(slice) => self.queue.write_buffer(buffer, start as u64, slice),
+                None => {
+                    let mut tail = bytes.get(start..).unwrap_or_default().to_vec();
+                    tail.resize(end - start, 0);
+                    self.queue.write_buffer(buffer, start as u64, &tail);
+                }
+            }
+        }
     }
 }
+
+pub(super) const USAGE: wgpu::BufferUsages = wgpu::BufferUsages::STORAGE
+    .union(wgpu::BufferUsages::COPY_DST)
+    .union(wgpu::BufferUsages::COPY_SRC);
 
 /// A one-record buffer: a storage binding cannot be empty, and the pool starts out so.
 fn empty(device: &wgpu::Device, label: &str) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(label),
         size: 4,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        usage: USAGE,
         mapped_at_creation: false,
     })
 }
@@ -161,12 +182,13 @@ pub struct GpuGlobalMeshPool {
     pub mesh_bounds: wgpu::Buffer,
     pub mesh_count: u32,
     pub max_meshlets_per_mesh: u32,
+    pub(super) mover: Option<Mover>,
 }
 
 impl GpuGlobalMeshPool {
     /// What the six buffers actually hold, which is what a VRAM figure means.
     ///
-    /// 🔴 Not `GlobalMeshPool::byte_size`: the buffers carry `GROWTH` slack and never shrink, so
+    /// 🔴 Not `GlobalMeshPool::byte_size`: the buffers carry `GROWTH` slack, so
     /// the CPU pool's size is neither what was allocated nor what is still held.
     pub fn bytes(&self) -> u64 {
         self.mesh_descriptors.size()
@@ -238,14 +260,5 @@ fn entry(binding: u32, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
         visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::VERTEX,
         ty,
         count: None,
-    }
-}
-
-/// Pads an empty slice to a single zero record so wgpu storage bindings stay non-empty.
-fn padded<T: Pod>(slice: &[T]) -> Vec<u8> {
-    if slice.is_empty() {
-        vec![0u8; std::mem::size_of::<T>().max(4)]
-    } else {
-        bytemuck::cast_slice(slice).to_vec()
     }
 }
