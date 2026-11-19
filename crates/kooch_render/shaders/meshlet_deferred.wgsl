@@ -155,9 +155,9 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
         // entirely rather than compute attributes nothing reads.
         var rgb: vec3<f32>;
         if (screen.debug_mode == 1u || screen.debug_mode == 2u) {
-            let packed_visible = visible_meshlets[visible_slot];
-            let inst_id = packed_visible >> 16u;
-            let meshlet_id = packed_visible & 0xffffu;
+            let visible = visible_meshlets[visible_slot];
+            let inst_id = visible.x;
+            let meshlet_id = visible.y;
             // MeshletIds uses the global descriptor index so two instances of the same mesh share
             // the cluster colour (the cluster identity is what is being visualized); InstanceIds
             // colours by entity coverage.

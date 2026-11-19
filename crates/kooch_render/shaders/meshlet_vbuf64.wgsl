@@ -56,7 +56,7 @@ struct MeshInstance {
 @group(1) @binding(2) var<storage, read> meshlet_triangles: array<u32>;
 @group(1) @binding(3) var<storage, read> descriptors: array<MeshletDescriptor>;
 
-@group(2) @binding(0) var<storage, read> visible_meshlets: array<u32>;
+@group(2) @binding(0) var<storage, read> visible_meshlets: array<vec2<u32>>;
 
 @group(3) @binding(0) var<storage, read> instances: array<MeshInstance>;
 
@@ -84,9 +84,9 @@ fn vs_vbuf64_scene(
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
 ) -> VsOut {
-    let packed_visible = visible_meshlets[instance_index];
-    let inst_id = packed_visible >> 16u;
-    let meshlet_id = packed_visible & 0xffffu;
+    let visible = visible_meshlets[instance_index];
+    let inst_id = visible.x;
+    let meshlet_id = visible.y;
 
     let inst = instances[inst_id];
     let desc = descriptors[meshlet_id];

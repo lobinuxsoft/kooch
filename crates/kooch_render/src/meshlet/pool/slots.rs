@@ -30,6 +30,8 @@ pub(super) struct Slot {
     pub meshlets: Span,
     pub groups: Span,
     pub live: bool,
+    /// The GPU writes this mesh's vertices, meshlets and triangles; the CPU never uploads them.
+    pub gpu: bool,
 }
 
 /// First-fit allocator over one array's holes.
@@ -93,6 +95,19 @@ impl Holes {
         self.free = merged;
     }
 
+    /// Drops the hole that reaches the end of an array `len` long, and returns the length the
+    /// array shrinks to. Without it the array only grows: its length is the most it ever held.
+    pub fn trim(&mut self, len: u32) -> u32 {
+        match self.free.last() {
+            Some(last) if last.end() >= len => {
+                let start = last.start;
+                self.free.pop();
+                start
+            }
+            _ => len,
+        }
+    }
+
     /// `len` rounded up to the alignment, which is the size actually reserved.
     pub fn rounded(&self, len: u32) -> u32 {
         len.next_multiple_of(self.align)
@@ -101,6 +116,67 @@ impl Holes {
     /// Slots the holes are holding — what a fragmented pool is wasting.
     pub fn free_slots(&self) -> u64 {
         self.free.iter().map(|hole| hole.len as u64).sum()
+    }
+}
+
+/// The parts of `range` no span of `pinned` (sorted by start) covers.
+pub(super) fn outside(
+    range: std::ops::Range<usize>,
+    pinned: &[Span],
+) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    let mut at = range.start;
+    let end = range.end;
+    let mut pins = pinned
+        .iter()
+        .map(|span| span.range())
+        .filter(|pin| !pin.is_empty());
+    std::iter::from_fn(move || {
+        while at < end {
+            let Some(pin) = pins.next() else {
+                let rest = at..end;
+                at = end;
+                return Some(rest);
+            };
+            if pin.end <= at {
+                continue;
+            }
+            let gap = at..pin.start.min(end);
+            at = at.max(pin.end);
+            if !gap.is_empty() {
+                return Some(gap);
+            }
+        }
+        None
+    })
+}
+
+/// Where the GPU-written meshes sit in each array, sorted by start, for the mirror to skip.
+#[derive(Debug, Default)]
+pub(super) struct Pins {
+    pub vertices: Vec<Span>,
+    pub meshlet_vertices: Vec<Span>,
+    pub triangles: Vec<Span>,
+    pub meshlets: Vec<Span>,
+}
+
+impl Pins {
+    pub fn of(slots: &[Slot]) -> Self {
+        let mut pins = Self::default();
+        for slot in slots.iter().filter(|slot| slot.live && slot.gpu) {
+            pins.vertices.push(slot.vertices);
+            pins.meshlet_vertices.push(slot.meshlet_vertices);
+            pins.triangles.push(slot.triangles);
+            pins.meshlets.push(slot.meshlets);
+        }
+        for spans in [
+            &mut pins.vertices,
+            &mut pins.meshlet_vertices,
+            &mut pins.triangles,
+            &mut pins.meshlets,
+        ] {
+            spans.sort_unstable_by_key(|span| span.start);
+        }
+        pins
     }
 }
 

@@ -79,7 +79,7 @@ struct LampCullUniform {
 // `[slot * group_capacity + group]`: max parent pixel error, f32 bits.
 @group(0) @binding(8) var<storage, read_write> lamp_group_err: array<atomic<u32>>;
 // `[slot * LAMP_SURVIVORS ..]`: the lamp's packed survivors.
-@group(0) @binding(9) var<storage, read_write> lamp_survivors: array<u32>;
+@group(0) @binding(9) var<storage, read_write> lamp_survivors: array<vec2<u32>>;
 // The page raster's `visible_counts`, written at `[chain.x + slot]` — the same words
 // `cs_expand_args` sizes the expansion from, so a lamp's survivors need no copy to be consumed.
 // Uncapped; readers clamp to `LAMP_SURVIVORS`.
@@ -294,5 +294,5 @@ fn cs_lamp_cull(
         return;
     }
     lamp_survivors[slot * LAMP_SURVIVORS + count] =
-        (instance << 16u) | (global_index & 0xffffu);
+        vec2<u32>(instance, global_index);
 }

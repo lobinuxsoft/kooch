@@ -16,7 +16,7 @@ struct ScreenUniforms {
 @group(0) @binding(0) var vbuf64: texture_storage_2d<r64uint, read>;
 @group(0) @binding(1) var<uniform> screen: ScreenUniforms;
 @group(0) @binding(2) var density_accumulator: texture_storage_2d<r32uint, read>;
-@group(0) @binding(3) var<storage, read> visible_meshlets: array<u32>;
+@group(0) @binding(3) var<storage, read> visible_meshlets: array<vec2<u32>>;
 
 struct FsInput {
     @builtin(position) position: vec4<f32>,
@@ -96,9 +96,9 @@ fn fs_debug(in: FsInput) -> @location(0) vec4<f32> {
 
     let packed_ids = u32(packed);
     let visible_slot = packed_ids >> 7u;
-    let packed_visible = visible_meshlets[visible_slot];
-    let inst_id = packed_visible >> 16u;
-    let meshlet_id = packed_visible & 0xffffu;
+    let visible = visible_meshlets[visible_slot];
+    let inst_id = visible.x;
+    let meshlet_id = visible.y;
 
     var rgb: vec3<f32>;
     if (screen.debug_mode == 1u) {

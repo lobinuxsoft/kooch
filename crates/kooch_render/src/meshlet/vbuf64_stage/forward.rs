@@ -90,7 +90,7 @@ impl Uniforms {
     }
 
     fn write(&mut self, frame: &ForwardFrame<'_>, list: &ForwardList) {
-        let bytes = (list.entries.len() * 4) as u64;
+        let bytes = std::mem::size_of_val(list.entries.as_slice()) as u64;
         if self.list.size() < bytes {
             self.list = list_buffer(frame.device, bytes.next_power_of_two());
         }

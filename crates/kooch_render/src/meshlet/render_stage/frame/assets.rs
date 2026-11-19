@@ -41,9 +41,67 @@ impl MeshletRenderStage {
         self.pipeline.registered_count()
     }
 
+    /// Grants what a compute producer asked for. A pool that is now mostly holes is repacked first,
+    /// so the grants land in the packed layout.
+    fn serve_gpu_meshes(&mut self, resources: &mut Resources) {
+        let Some(mut meshes) = resources.remove::<crate::meshlet::GpuMeshes>() else {
+            return;
+        };
+        let (released, reserved) = meshes.take_asked();
+        self.pool_dirty |= !released.is_empty() || !reserved.is_empty();
+        for guid in released {
+            self.pipeline.release_gpu(guid);
+        }
+        self.pipeline.defragment();
+        for (guid, sizes, bounds) in reserved {
+            if let Some(descriptor) = self.pipeline.reserve_gpu(guid, sizes, bounds) {
+                meshes.grant(guid, descriptor);
+            }
+        }
+        resources.insert(meshes);
+    }
+
+    /// Syncs the pool and hands the producer the buffers and grants as they stand at the end of
+    /// the asset sync.
+    ///
+    /// 🔴 Last, after the sweep and the loads: either may repack or grow the pool, and the
+    /// producer writes next frame into whatever was published here. Published any earlier, it
+    /// writes a moved grant into a buffer the repack already left.
+    fn publish_gpu_meshes(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        resources: &mut Resources,
+    ) {
+        let Some(mut meshes) = resources.remove::<crate::meshlet::GpuMeshes>() else {
+            return;
+        };
+        if self.sync_pool(device, queue)
+            && let Some(pool) = &self.gpu_pool
+        {
+            meshes.publish(crate::meshlet::PoolBuffers::of(pool));
+        }
+        let pool = self.pipeline.pool();
+        meshes.refresh(|guid| {
+            let handle = self.pipeline.lookup(guid)?;
+            pool.mesh_descriptors.get(handle.mesh_id as usize).copied()
+        });
+        resources.insert(meshes);
+    }
+
     /// Resolves every visible `MeshRenderer.mesh` GUID through the `AssetServer`, fetches the
     /// meshlet asset from `Assets<MeshletMesh>`, and uploads any GUID that is not yet GPU-resident.
     pub fn sync_assets_to_gpu(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        resources: &mut Resources,
+    ) {
+        self.sync_assets(device, queue, resources);
+        self.publish_gpu_meshes(device, queue, resources);
+    }
+
+    fn sync_assets(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -81,6 +139,8 @@ impl MeshletRenderStage {
             }
             resources.insert(generated);
         }
+
+        self.serve_gpu_meshes(resources);
 
         let referenced = self.pipeline.collect_referenced_guids(resources);
         let pending: Vec<Guid> = referenced

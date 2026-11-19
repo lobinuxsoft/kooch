@@ -106,7 +106,7 @@ fn two_tiles(
         queue.write_buffer(&buffer, 0, bytemuck::cast_slice(words));
         buffer
     };
-    let visible_meshlets = storage(&[0, 1 << 16]);
+    let visible_meshlets = storage(&[0, 0, 1, 0]);
     // Two 96-byte instances; `material_id` is the word after the 64-byte transform and `mesh_id`.
     let mut instances = [0u32; 48];
     instances[17] = 1;
@@ -275,7 +275,7 @@ fn a_busy_screen_bins_exactly() {
         queue.write_buffer(&buffer, 0, bytemuck::cast_slice(words));
         buffer
     };
-    let meshlets: Vec<u32> = (0..INSTANCES).map(|i| i << 16).collect();
+    let meshlets: Vec<u32> = (0..INSTANCES).flat_map(|i| [i, 0]).collect();
     let visible_meshlets = storage(&meshlets);
     let mut instances = vec![0u32; 24 * INSTANCES as usize];
     for i in 0..INSTANCES {

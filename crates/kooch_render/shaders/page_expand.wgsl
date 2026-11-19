@@ -48,8 +48,8 @@ struct ExpandLevel {
 @group(0) @binding(0) var<uniform> raster: PageRaster;
 @group(0) @binding(1) var<storage, read> page_list: array<vec4<u32>>;
 @group(0) @binding(2) var<storage, read_write> page_counts: array<atomic<u32>>;
-// x the index into `page_list`, y the cull's packed `(instance, meshlet)`.
-// Four words: the page, its slot, the cull's packed pair, a spare.
+// x the index into `page_list`, y the cull's `(instance, meshlet)`.
+// Four words: the page, its slot, the cull's instance and meshlet.
 @group(0) @binding(3) var<storage, read_write> pairs: array<vec4<u32>>;
 @group(0) @binding(4) var<storage, read> visible_counts: array<u32>;
 @group(0) @binding(5) var<uniform> expand: ExpandLevel;
@@ -62,7 +62,7 @@ struct ExpandLevel {
 @group(0) @binding(7) var page_pyramid: texture_2d_array<u32>;
 
 @group(1) @binding(0) var<storage, read> descriptors: array<MeshletDescriptor>;
-@group(2) @binding(0) var<storage, read> visible_meshlets: array<u32>;
+@group(2) @binding(0) var<storage, read> visible_meshlets: array<vec2<u32>>;
 @group(3) @binding(0) var<storage, read> instances: array<MeshInstance>;
 
 const EXPAND_GROUP: u32 = 64u;
@@ -87,7 +87,7 @@ fn sun_pair(
     level: u32,
     cell: vec2<u32>,
     buckets: u32,
-    packed: u32,
+    packed: vec2<u32>,
     bounds: vec3<f32>,
     radius: f32,
     basis: mat3x3<f32>,
@@ -113,7 +113,7 @@ fn sun_pair(
         atomicAdd(&page_counts[buckets + 3u], 1u);
         return;
     }
-    pairs[slot] = vec4<u32>(entry.x, entry.y, packed, 0u);
+    pairs[slot] = vec4<u32>(entry.x, entry.y, packed.x, packed.y);
 }
 
 /// Walks the pyramid down to the listed pages under `rect`, and pairs the meshlet with each.
@@ -122,7 +122,7 @@ fn expand_descend(
     level: u32,
     mips: u32,
     buckets: u32,
-    packed: u32,
+    packed: vec2<u32>,
     bounds: vec3<f32>,
     radius: f32,
     basis: mat3x3<f32>,
@@ -194,7 +194,7 @@ fn expand_descend(
 fn expand_geometry(
     level: u32,
     buckets: u32,
-    packed: u32,
+    packed: vec2<u32>,
     bounds: vec3<f32>,
     radius: f32,
 ) {
@@ -280,8 +280,8 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
             return;
         }
         let packed = visible_meshlets[survivor_base + gid.x];
-        let inst = instances[packed >> 16u];
-        let desc = descriptors[packed & 0xffffu];
+        let inst = instances[packed.x];
+        let desc = descriptors[packed.y];
         let bounds = (inst.transform * vec4<f32>(desc.bounds_center, 1.0)).xyz;
         let radius = desc.bounding_radius * transform_scale(inst.transform);
         count_scatter(level, buckets, bounds, radius);
@@ -296,8 +296,8 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     let entry = page_list[level * raster.chain.z + gid.x / meshlets];
     let packed = visible_meshlets[survivor_base + gid.x % meshlets];
 
-    let inst = instances[packed >> 16u];
-    let desc = descriptors[packed & 0xffffu];
+    let inst = instances[packed.x];
+    let desc = descriptors[packed.y];
     let bounds = (inst.transform * vec4<f32>(desc.bounds_center, 1.0)).xyz;
     let radius = desc.bounding_radius * transform_scale(inst.transform);
 
@@ -337,7 +337,7 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
             atomicAdd(&page_counts[buckets + 3u], 1u);
             return;
         }
-        pairs[slot] = vec4<u32>(entry.x, entry.y, packed, 0u);
+        pairs[slot] = vec4<u32>(entry.x, entry.y, packed.x, packed.y);
         return;
     }
 

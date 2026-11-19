@@ -46,7 +46,7 @@ const ROW: u32 = 4096u;
 const CHUNK: u32 = 64u;
 
 @group(0) @binding(0) var vbuf64: texture_storage_2d<r64uint, read>;
-@group(0) @binding(1) var<storage, read> visible_meshlets: array<u32>;
+@group(0) @binding(1) var<storage, read> visible_meshlets: array<vec2<u32>>;
 @group(0) @binding(2) var<storage, read> instances: array<MeshInstance>;
 @group(0) @binding(3) var<uniform> params: BinParams;
 @group(0) @binding(4) var<storage, read_write> tile_bits: array<u32>;
@@ -77,7 +77,7 @@ fn cs_classify(
         if (cand.x < params.size.x && cand.y < params.size.y) {
             let packed = textureLoad(vbuf64, cand).x;
             if ((packed >> 32u) != 0lu) {
-                let inst_id = visible_meshlets[u32(packed) >> 7u] >> 16u;
+                let inst_id = visible_meshlets[u32(packed) >> 7u].x;
                 slot = instances[inst_id].material_id;
                 break;
             }

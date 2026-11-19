@@ -13,7 +13,7 @@ pub struct MaskedBins {
     bases: wgpu::Buffer,
     args: wgpu::Buffer,
     dispatch: wgpu::Buffer,
-    /// Slots into the cull's visible list, as long as it.
+    /// Slots into the cull's visible list, one word per pair.
     slots: wgpu::Buffer,
 }
 
@@ -40,10 +40,11 @@ impl MaskedBins {
     }
 
     fn fit(&mut self, device: &wgpu::Device, visible: &wgpu::Buffer) {
-        if self.slots.size() < visible.size() {
+        let bytes = visible.size() / 2;
+        if self.slots.size() < bytes {
             self.slots = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("masked_slots"),
-                size: visible.size(),
+                size: bytes,
                 usage: wgpu::BufferUsages::STORAGE,
                 mapped_at_creation: false,
             });

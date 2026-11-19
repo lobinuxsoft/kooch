@@ -49,7 +49,7 @@ struct MeshInstance {
 @group(1) @binding(2) var<storage, read> meshlet_triangles: array<u32>;
 @group(1) @binding(3) var<storage, read> descriptors: array<MeshletDescriptor>;
 
-@group(3) @binding(0) var<storage, read> visible_meshlets: array<u32>;
+@group(3) @binding(0) var<storage, read> visible_meshlets: array<vec2<u32>>;
 @group(3) @binding(1) var<storage, read> instances: array<MeshInstance>;
 
 /// Reconstructed per-fragment surface attributes.
@@ -194,9 +194,9 @@ fn global_vertex_id(desc: MeshletDescriptor, tri_idx: u32, corner: u32) -> u32 {
 /// Full attribute reconstruction for an already-decoded visibility sample. `frag_coord` is in
 /// pixels.
 fn resolve_surface(visible_slot: u32, tri_idx: u32, frag_coord: vec2<f32>) -> VertexOutput {
-    let packed_visible = visible_meshlets[visible_slot];
-    let inst_id = packed_visible >> 16u;
-    let meshlet_id = packed_visible & 0xffffu;
+    let visible = visible_meshlets[visible_slot];
+    let inst_id = visible.x;
+    let meshlet_id = visible.y;
 
     let inst = instances[inst_id];
     let desc = descriptors[meshlet_id];
