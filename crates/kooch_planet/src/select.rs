@@ -8,6 +8,10 @@ use glam::{DVec3, IVec3};
 
 use super::{BLOCK_SAMPLES, BlockKey};
 
+/// How much a block split last frame overstates its error: it merges back only once it is well under
+/// the target, so a block at the threshold does not split and merge on alternate frames.
+const KEEP_SPLIT: f64 = 1.5;
+
 /// What a planet is made of, in metres.
 #[derive(Clone, Copy, Debug)]
 pub struct Shape {
@@ -91,7 +95,8 @@ pub struct View {
     pub proj_scale: f64,
     /// A block at or under this error stops splitting, even with pool to spare.
     pub target_px: f64,
-    /// A planet drawn smaller than this gets no blocks; its impostor (#342) draws it.
+    /// A planet drawn smaller than this keeps its root blocks and stops refining; its impostor
+    /// (#342) will draw it instead.
     pub impostor_px: f64,
 }
 
@@ -111,12 +116,14 @@ impl View {
 ///
 /// `surface(key, min, max)` is the generator's answer to "can this block hold surface?": false
 /// for a block it proves uniform (all rock or all air), which then takes no slot. Zylann answers it
-/// with interval range analysis of the graph.
+/// with interval range analysis of the graph. `split(key)` says whether the block was split last
+/// frame, for the hysteresis.
 pub fn select(
     planets: &Planets,
     view: &View,
     capacity: u32,
-    surface: impl Fn(BlockKey, DVec3, DVec3) -> bool,
+    surface: impl FnMut(BlockKey, DVec3, DVec3) -> bool,
+    split: impl Fn(BlockKey) -> bool,
     out: &mut Vec<BlockKey>,
 ) -> f64 {
     out.clear();
@@ -125,6 +132,7 @@ pub fn select(
         view,
         capacity,
         surface,
+        split,
         counts: vec![0; planets.len()],
         total: 0,
         out,
@@ -175,17 +183,18 @@ impl Ord for Node {
     }
 }
 
-struct Refine<'a, S> {
+struct Refine<'a, S, K> {
     planets: &'a Planets,
     view: &'a View,
     capacity: u32,
     surface: S,
+    split: K,
     counts: Vec<u32>,
     total: u32,
     out: &'a mut Vec<BlockKey>,
 }
 
-impl<S: Fn(BlockKey, DVec3, DVec3) -> bool> Refine<'_, S> {
+impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'_, S, K> {
     /// The root blocks of a planet in view: eight around its centre, those that touch the shell.
     fn seed(&mut self, planet: usize, heap: &mut BinaryHeap<Node>) {
         let shape = self.planets.shape[planet];
@@ -196,10 +205,11 @@ impl<S: Fn(BlockKey, DVec3, DVec3) -> bool> Refine<'_, S> {
             .iter()
             .map(|viewer| viewer.length())
             .fold(f64::INFINITY, f64::min);
-        if distance > outer && 2.0 * outer / distance * self.view.proj_scale < self.view.impostor_px
-        {
+        if !distance.is_finite() {
             return;
         }
+        let small = distance > outer
+            && 2.0 * outer / distance * self.view.proj_scale < self.view.impostor_px;
         let level = root_level(&shape);
         for i in 0..8 {
             let cell = IVec3::new(i & 1, (i >> 1) & 1, (i >> 2) & 1) - IVec3::ONE;
@@ -211,7 +221,11 @@ impl<S: Fn(BlockKey, DVec3, DVec3) -> bool> Refine<'_, S> {
             if self.total < self.capacity && self.touches(&shape, key) {
                 self.total += 1;
                 self.counts[planet] += 1;
-                self.place(key, heap);
+                // Until its impostor exists, a distant planet keeps its root blocks, not nothing.
+                match small {
+                    true => self.out.push(key),
+                    false => self.place(key, heap),
+                }
             }
         }
     }
@@ -247,7 +261,7 @@ impl<S: Fn(BlockKey, DVec3, DVec3) -> bool> Refine<'_, S> {
     }
 
     /// The children of a block that can hold surface.
-    fn children(&self, shape: &Shape, key: BlockKey) -> ([BlockKey; 8], usize) {
+    fn children(&mut self, shape: &Shape, key: BlockKey) -> ([BlockKey; 8], usize) {
         let mut out = [key; 8];
         let mut count = 0;
         for i in 0..8 {
@@ -266,19 +280,41 @@ impl<S: Fn(BlockKey, DVec3, DVec3) -> bool> Refine<'_, S> {
     }
 
     /// The planet-wide band first, as it costs nothing; then the generator.
-    fn touches(&self, shape: &Shape, key: BlockKey) -> bool {
+    fn touches(&mut self, shape: &Shape, key: BlockKey) -> bool {
         let (min, max) = bounds(shape, key);
         touches_shell(shape, min, max) && (self.surface)(key, min, max)
     }
 
     /// Queues a block that can still split, or keeps it as a finished leaf.
     fn place(&mut self, key: BlockKey, heap: &mut BinaryHeap<Node>) {
-        let error = self.error(key);
-        if key.level > 0 && error > self.view.target_px {
+        let kept = (self.split)(key);
+        let error = match kept {
+            true => self.error(key) * KEEP_SPLIT,
+            false => self.error(key),
+        };
+        if key.level > 0 && error > self.view.target_px && !self.hidden(key, kept) {
             heap.push(Node { error, key });
         } else {
             self.out.push(key);
         }
+    }
+
+    /// Whether the solid core hides the whole block from every viewer: its bounding sphere, shrunk
+    /// into the core, is behind the core's horizon. Such a block stays coarse and holds its slot.
+    /// A block split last frame must hide a sphere [`KEEP_SPLIT`] times larger to merge, so a
+    /// viewer jittering on the horizon does not split and merge it on alternate frames.
+    fn hidden(&self, key: BlockKey, kept: bool) -> bool {
+        let planet = key.planet as usize;
+        let shape = self.planets.shape[planet];
+        let (min, max) = bounds(&shape, key);
+        let center = (min + max) * 0.5;
+        let grow = if kept { KEEP_SPLIT } else { 1.0 };
+        let reach = shape.radius - shape.depth - (max - min).length() * 0.5 * grow;
+        if !(reach > 0.0) {
+            return false;
+        }
+        let viewers = self.planets.viewers(planet);
+        !viewers.is_empty() && viewers.iter().all(|&v| behind_core(v, center, reach))
     }
 
     /// One voxel of `key`, in pixels, seen from the closest point of the block.
@@ -296,8 +332,20 @@ impl<S: Fn(BlockKey, DVec3, DVec3) -> bool> Refine<'_, S> {
     }
 }
 
+/// Whether the segment from `viewer` to `point` passes within `reach` of the centre between its
+/// ends: then any point within `core − reach` of `point` is cut off by a core of radius `core`.
+fn behind_core(viewer: DVec3, point: DVec3, reach: f64) -> bool {
+    let along = point - viewer;
+    let length = along.length_squared();
+    if !(length > 0.0) {
+        return false;
+    }
+    let t = -viewer.dot(along) / length;
+    t > 0.0 && t < 1.0 && (viewer + along * t).length() < reach
+}
+
 /// The coarsest level: the first whose block reaches past the relief from the centre.
-fn root_level(shape: &Shape) -> u8 {
+pub(crate) fn root_level(shape: &Shape) -> u8 {
     let outer = shape.radius + shape.relief;
     let mut level = 0;
     while level < 62 && block_side(shape, level) < outer {

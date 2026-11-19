@@ -6,12 +6,7 @@ use kooch_core::gpu::GpuContext;
 use kooch_core::raw_event::RawEventHandler;
 use kooch_core::resource::Resources;
 use kooch_gizmos::{GizmoBatch, GizmoRenderer, MeshBatch, MeshGizmoRenderer};
-use kooch_render::SkyRenderPass;
-use kooch_render::Vbuf64Support;
-use kooch_render::meshlet::{
-    MeshletBlit, MeshletDebugCaps, MeshletDebugMode, MeshletLodSettings, MeshletRenderStage,
-    MeshletRenderStageConfig,
-};
+use kooch_render::meshlet::{MeshletDebugMode, MeshletLodSettings, MeshletRenderStage};
 
 use crate::state::{EditorOverlay, EguiEventHandler};
 use crate::style::{configure_fonts, configure_style};
@@ -24,6 +19,13 @@ const INITIAL_VIEWPORT_SIZE: (u32, u32) = (512, 512);
 /// Startup system: creates the egui context, winit state, wgpu renderer,
 /// and configures fonts and dock layout.
 pub(crate) fn editor_startup_system(resources: &mut Resources) {
+    // Before the GPU borrow: the Game view below is a view of this stage, and the plugin's own
+    // Startup system may not have run yet.
+    kooch_render::plugin::init_renderers(resources);
+    let Some(mut meshlet_stage) = resources.remove::<MeshletRenderStage>() else {
+        tracing::error!("editor: no meshlet stage; add RenderCorePlugin and WindowPlugin first");
+        return;
+    };
     let gpu = resources
         .get::<GpuContext>()
         .expect("GpuContext not found — add WindowPlugin before EditorPlugin");
@@ -52,7 +54,6 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     );
 
     let pipeline_cache = gpu.pipeline_cache();
-    let sky_pass = SkyRenderPass::new(gpu.device(), gpu.format());
     let gizmo_renderer = GizmoRenderer::new(gpu.device(), gpu.format(), pipeline_cache);
     let mesh_gizmo_renderer = MeshGizmoRenderer::new(gpu.device(), gpu.format(), pipeline_cache);
     let viewport = ViewportTarget::new(
@@ -62,33 +63,10 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
         INITIAL_VIEWPORT_SIZE,
     );
 
-    let vbuf64 = Vbuf64Support::detect(gpu.device());
-    let debug_caps = MeshletDebugCaps::detect(gpu.device());
-    let mut meshlet_stage = MeshletRenderStage::new(
-        gpu.device(),
-        MeshletRenderStageConfig {
-            size: INITIAL_VIEWPORT_SIZE,
-            vbuf64,
-            debug_caps,
-            ..Default::default()
-        },
-    );
-    // #463.4 — opt the editor in to GPU timestamp queries. No-op
-    // when the adapter does not expose `Features::TIMESTAMP_QUERY`;
-    // the perf HUD then reports "GPU: n/a".
-    meshlet_stage.enable_gpu_timers(gpu.device(), gpu.queue(), gpu.adapter());
     // bumps the counter on every persistent allocation it owns (pool register, render-target
     // resize, …). The Arc is also inserted as a Resource further down so the perf HUD's update path
     // reads from the same shared counter.
     let vram_tracker = std::sync::Arc::new(kooch_render::EngineVramTracker::new());
-    let meshlet_blit = MeshletBlit::new(
-        gpu.device(),
-        gpu.format(),
-        kooch_render::VIEWPORT_DEPTH_FORMAT,
-    );
-    // #785 — per-pass GPU timings for the editor. Built here, while the
-    // `gpu` borrow is alive, and inserted below with the rest.
-    let gpu_scopes = kooch_core::gpu::GpuScopes::new(gpu.device(), gpu.queue());
 
     // The Game panel's view. A second view of this stage rather than a
     // second stage: it shares the mesh pool, the scene instances and the
@@ -145,7 +123,6 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     resources
         .get_or_default::<kooch_core::raw_event::RawEventHandlers>()
         .push(handler);
-    resources.insert(sky_pass);
     resources.insert(gizmo_renderer);
     resources.insert(mesh_gizmo_renderer);
     resources.insert(GizmoBatch::default());
@@ -153,25 +130,12 @@ pub(crate) fn editor_startup_system(resources: &mut Resources) {
     resources.insert(viewport);
     resources.insert(game_view);
     resources.insert(shader_preview);
-    // Beside the stage, because the stage's own asset sync is what drains it.
-    resources.insert(kooch_render::meshlet::GeneratedMeshes::new());
     resources.insert(meshlet_stage);
-    resources.insert(meshlet_blit);
     resources.insert(vram_tracker);
-    // The stage's own scopes (`shadows`, `cull`, `raster + shade`) are recorded by `kooch_render`
-    // the moment this resource exists; without it the editor could profile its CPU and nothing
-    // else, which is half the question when the thing being authored is a frame.
-    if let Some(scopes) = gpu_scopes {
-        resources.insert(scopes);
-        tracing::info!("editor: GPU scopes enabled");
-    }
     // Debug-view selector for the meshlet pipeline (#451). Default
     // Off keeps the production normal-debug path; the View toolbar
     // dropdown writes through this resource per-frame.
     resources.insert(MeshletDebugMode::default());
-    // Capability probe for the advanced debug modes (#454). The dropdown filter consults this so a
-    // device missing `TEXTURE_ATOMIC` never lists a mode whose pipeline would fail validation.
-    resources.insert(debug_caps);
     // Continuous-LOD threshold (#462). Default 1.0 px is the production target; the View toolbar
     // exposes a slider so artists can crank it higher to force coarser LOD selection at editor
     // distances and visually sanity-check the chain.

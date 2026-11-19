@@ -30,12 +30,12 @@ pub use component::{Planet, PlanetBlock};
 pub use generate::{
     BARE_SPHERE, Backlog, GeneratePass, Job, PLANET_INPUT_WGSL, validate_generator,
 };
-pub use mesh::MeshPass;
+pub use mesh::{MeshPass, WriteJob};
 pub use plugin::PlanetPlugin;
 pub use pool::{BlockPool, Residency};
 pub use select::{Limits, Planets, Shape, View, select};
-pub use sync::{PlanetStats, PlanetTerrain, sync_planets};
-pub use terrain::{GpuTimes, MESH_BATCH, MeshedBlock, Terrain};
+pub use sync::{PlanetStats, PlanetTerrain, PlanetViewers, sync_planets};
+pub use terrain::{CountedBlock, GpuTimes, MESH_BATCH, Terrain};
 
 use kooch_world::voxel::SUBGRID_DIM;
 
@@ -59,4 +59,23 @@ pub struct BlockKey {
     pub planet: u32,
     pub level: u8,
     pub cell: IVec3,
+}
+
+impl BlockKey {
+    /// The block one level coarser that holds this one.
+    pub fn parent(self) -> Self {
+        Self {
+            planet: self.planet,
+            level: self.level.saturating_add(1),
+            cell: self.cell.div_euclid(IVec3::splat(2)),
+        }
+    }
+
+    /// Every coarser block holding this one, nearest first, up to the planet's `root` level.
+    pub fn ancestors(self, root: u8) -> impl Iterator<Item = BlockKey> {
+        std::iter::successors(Some(self), move |key| {
+            (key.level < root).then(|| key.parent())
+        })
+        .skip(1)
+    }
 }

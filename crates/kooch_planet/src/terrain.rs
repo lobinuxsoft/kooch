@@ -1,15 +1,16 @@
 //! The planet terrain's GPU side (#313): the shared atlas, generation and meshing of the blocks
-//! the pool just took, and their meshes read back a frame or two later through a ring, so the CPU
-//! never waits on the GPU.
+//! the pool just took. What each mesh takes of the meshlet pool is read back a frame or two later
+//! through a ring, so the CPU never waits on the GPU; the mesh itself never leaves it.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use glam::DVec3;
+use kooch_render::meshlet::{GpuMeshSizes, PoolBuffers};
 
 use super::atlas::BlockAtlas;
 use super::generate::{BARE_SPHERE, Backlog, GeneratePass, Job};
-use super::mesh::{MeshPass, VERTEX_FLOATS, header_bytes};
+use super::mesh::{COUNT_WORDS, MeshPass, WriteJob, counts_bytes, sizes_of};
 use super::select::{bounds, voxel_size};
 use super::{BlockKey, BlockPool, Planets, Residency};
 
@@ -17,10 +18,7 @@ use super::{BlockKey, BlockPool, Planets, Residency};
 const RING: usize = 3;
 
 /// Blocks generated and meshed per batch.
-pub const MESH_BATCH: u32 = 32;
-
-const VERTEX_CAP: u32 = 65_536;
-const INDEX_CAP: u32 = 393_216;
+pub const MESH_BATCH: u32 = 128;
 
 /// Two passes, a timestamp either side of each.
 const QUERIES: u32 = 4;
@@ -29,15 +27,19 @@ const MAPPING: u8 = 0;
 const MAPPED: u8 = 1;
 const LOST: u8 = 2;
 
-/// One block's surface, in metres from its corner, in the planet's own space.
-pub struct MeshedBlock {
+/// One block whose mesh was counted: what to reserve for it in the meshlet pool, and what the
+/// write pass needs to fill it.
+#[derive(Clone, Copy, Debug)]
+pub struct CountedBlock {
     pub slot: u32,
     pub key: BlockKey,
     /// The block's corner from the planet's centre.
     pub origin: DVec3,
-    pub positions: Vec<[f32; 3]>,
-    pub normals: Vec<[f32; 3]>,
-    pub indices: Vec<u32>,
+    /// Metres per voxel at the block's level.
+    pub voxel: f32,
+    /// Its planet's revision when it was generated; see [`Terrain::revision`].
+    pub revision: u32,
+    pub sizes: GpuMeshSizes,
 }
 
 /// What the last batch cost the GPU.
@@ -82,8 +84,8 @@ impl Terrain {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, capacity: u32) -> Result<Self, String> {
         let atlas = BlockAtlas::new(device, capacity);
         let bare = GeneratePass::new(device, BARE_SPHERE, &atlas, MESH_BATCH)?;
-        let mesh = MeshPass::new(device, &atlas, MESH_BATCH, VERTEX_CAP, INDEX_CAP);
-        let size = layout(&mesh).3 + u64::from(QUERIES) * 8;
+        let mesh = MeshPass::new(device, &atlas, MESH_BATCH);
+        let size = counts_bytes(mesh.batch) + u64::from(QUERIES) * 8;
         let flights = (0..RING)
             .map(|_| Flight {
                 staging: device.create_buffer(&wgpu::BufferDescriptor {
@@ -203,7 +205,7 @@ impl Terrain {
         self.planet_pass.get(planet as usize).copied().unwrap_or(0)
     }
 
-    /// Queues what the pool just took, hands back the meshes that came back, and sends the next
+    /// Queues what the pool just took, hands back the counts that came back, and sends the next
     /// batch if a staging buffer is free.
     pub fn update(
         &mut self,
@@ -212,7 +214,7 @@ impl Terrain {
         pool: &BlockPool,
         planets: &Planets,
         residency: &Residency,
-        out: &mut Vec<MeshedBlock>,
+        out: &mut Vec<CountedBlock>,
     ) {
         out.clear();
         self.backlog.push(residency);
@@ -223,6 +225,23 @@ impl Terrain {
         if let Some(free) = self.flights.iter().position(|flight| !flight.busy) {
             self.send(device, queue, free, pool, planets);
         }
+    }
+
+    /// Fills granted pool ranges with the meshes of blocks counted earlier. Blocks must still hold
+    /// their slot at the revision they were counted at, or their tile is no longer their mesh.
+    pub fn write(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        pool: &PoolBuffers,
+        jobs: &[WriteJob],
+    ) {
+        self.mesh.write(device, queue, &self.atlas, pool, jobs);
+    }
+
+    /// A count bumped whenever `planet`'s generator or shape changes.
+    pub fn revision(&self, planet: u32) -> u32 {
+        revision_of(&self.revision, planet)
     }
 
     /// The atlas the blocks live in.
@@ -317,23 +336,9 @@ impl Terrain {
             &self.slots,
             writes(2, true, true),
         );
-        let (header, vertices, indices, stamps) = layout(&self.mesh);
+        let stamps = counts_bytes(self.mesh.batch);
         let flight = &mut self.flights[at];
-        encoder.copy_buffer_to_buffer(&self.mesh.header, 0, &flight.staging, 0, header);
-        encoder.copy_buffer_to_buffer(
-            &self.mesh.vertices,
-            0,
-            &flight.staging,
-            header,
-            vertices - header,
-        );
-        encoder.copy_buffer_to_buffer(
-            &self.mesh.indices,
-            0,
-            &flight.staging,
-            vertices,
-            indices - vertices,
-        );
+        encoder.copy_buffer_to_buffer(&self.mesh.counts, 0, &flight.staging, 0, stamps);
         if let Some((set, resolve)) = &self.timer {
             encoder.resolve_query_set(set, 0..QUERIES, resolve, 0);
             encoder.copy_buffer_to_buffer(resolve, 0, &flight.staging, stamps, resolve.size());
@@ -364,7 +369,7 @@ impl Terrain {
         at: usize,
         pool: &BlockPool,
         planets: &Planets,
-        out: &mut Vec<MeshedBlock>,
+        out: &mut Vec<CountedBlock>,
     ) {
         let flight = &mut self.flights[at];
         if !flight.busy {
@@ -387,9 +392,7 @@ impl Terrain {
         };
         let read = Readback {
             bytes: &bytes,
-            layout: layout(&self.mesh),
-            vertex_cap: self.mesh.vertex_cap,
-            index_cap: self.mesh.index_cap,
+            stamps: counts_bytes(self.mesh.batch),
         };
         if self.timer.is_some() {
             self.times = Some(read.times(self.period_ns, blocks.len() as u32));
@@ -402,16 +405,16 @@ impl Terrain {
             let Some(shape) = planets.shape.get(key.planet as usize) else {
                 continue;
             };
-            match read.block(b, voxel_size(shape, key.level) as f32) {
-                Some((positions, normals, indices)) => {
+            match read.counts(b) {
+                Some(counts) => {
                     self.meshed += 1;
-                    out.push(MeshedBlock {
+                    out.push(CountedBlock {
                         slot,
                         key,
                         origin: bounds(shape, key).0,
-                        positions,
-                        normals,
-                        indices,
+                        voxel: voxel_size(shape, key.level) as f32,
+                        revision,
+                        sizes: sizes_of(counts),
                     });
                 }
                 None => self.backlog.retry(slot),
@@ -426,19 +429,10 @@ fn revision_of(revision: &[u32], planet: u32) -> u32 {
     revision.get(planet as usize).copied().unwrap_or(0)
 }
 
-/// Where each part sits in a staging buffer: header end, vertices end, indices end, timestamps.
-fn layout(mesh: &MeshPass) -> (u64, u64, u64, u64) {
-    let header = header_bytes(mesh.batch);
-    let vertices = header + u64::from(mesh.vertex_cap) * VERTEX_FLOATS * 4;
-    let indices = vertices + u64::from(mesh.index_cap) * 4;
-    (header, vertices, indices, indices)
-}
-
 struct Readback<'a> {
     bytes: &'a [u8],
-    layout: (u64, u64, u64, u64),
-    vertex_cap: u32,
-    index_cap: u32,
+    /// Where the timestamps start, after every block's counts.
+    stamps: u64,
 }
 
 impl Readback<'_> {
@@ -448,46 +442,21 @@ impl Readback<'_> {
         Some(u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]))
     }
 
-    fn float(&self, at: u64) -> Option<f32> {
-        self.word(at).map(f32::from_bits)
-    }
-
-    /// Block `b`'s mesh, positions scaled to metres; `None` when it did not fit its batch.
-    #[allow(clippy::type_complexity)]
-    fn block(&self, b: usize, voxel: f32) -> Option<(Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>)> {
-        let entry = (2 + 4 * b as u64) * 4;
-        let first_vertex = self.word(entry)?;
-        let vertex_count = self.word(entry + 4)?;
-        let first_index = self.word(entry + 8)?;
-        let index_count = self.word(entry + 12)?;
-        if first_vertex.checked_add(vertex_count)? > self.vertex_cap
-            || first_index.checked_add(index_count)? > self.index_cap
-        {
-            return None;
-        }
-        let mut positions = Vec::with_capacity(vertex_count as usize);
-        let mut normals = Vec::with_capacity(vertex_count as usize);
-        for v in first_vertex..first_vertex + vertex_count {
-            let at = self.layout.0 + u64::from(v) * VERTEX_FLOATS * 4;
-            let f = |k: u64| self.float(at + k * 4);
-            positions.push([f(0)? * voxel, f(1)? * voxel, f(2)? * voxel]);
-            normals.push([f(3)?, f(4)?, f(5)?]);
-        }
-        let mut indices = Vec::with_capacity(index_count as usize);
-        for i in first_index..first_index + index_count {
-            let index = self.word(self.layout.1 + u64::from(i) * 4)?;
-            if index >= vertex_count {
-                return None;
-            }
-            indices.push(index);
-        }
-        Some((positions, normals, indices))
+    /// Block `b`'s counts: vertices, meshlets, meshlet vertices, triangle bytes.
+    fn counts(&self, b: usize) -> Option<[u32; 4]> {
+        let entry = b as u64 * COUNT_WORDS * 4;
+        Some([
+            self.word(entry)?,
+            self.word(entry + 4)?,
+            self.word(entry + 8)?,
+            self.word(entry + 12)?,
+        ])
     }
 
     fn times(&self, period_ns: f32, blocks: u32) -> GpuTimes {
         let stamp = |k: u64| {
-            let lo = self.word(self.layout.3 + k * 8).unwrap_or(0);
-            let hi = self.word(self.layout.3 + k * 8 + 4).unwrap_or(0);
+            let lo = self.word(self.stamps + k * 8).unwrap_or(0);
+            let hi = self.word(self.stamps + k * 8 + 4).unwrap_or(0);
             u64::from(lo) | (u64::from(hi) << 32)
         };
         let ms = |from: u64, to: u64| (to.saturating_sub(from)) as f32 * period_ns / 1e6;

@@ -51,6 +51,9 @@ pub fn run_editor_with<P: Plugin + 'static>(project: P) {
     // project is opened.
     app.add_plugin(AssetPlugin::new().with_root(engine_root().join("assets")));
     app.add_plugin(WorldStreamingPlugin);
+    // The stage and its stores, as a game has them; the editor drives its own views, not the
+    // game's window frame (#1928).
+    app.add_plugin(kooch_render::RenderCorePlugin);
     app.add_plugin(EditorPlugin);
     // After EditorPlugin on purpose: both register a raw-event handler in Startup, and the first
     // one registered gets first refusal on a keystroke. egui has to be able to keep what a focused

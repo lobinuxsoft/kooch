@@ -52,6 +52,11 @@ impl BlockPool {
         self.slots.get(&key).copied()
     }
 
+    /// Every resident block, in no order.
+    pub fn keys(&self) -> impl Iterator<Item = BlockKey> + '_ {
+        self.slots.keys().copied()
+    }
+
     /// The slots `planet` holds, in no order.
     pub fn slots_of(&self, planet: u32) -> impl Iterator<Item = u32> + '_ {
         self.slots
