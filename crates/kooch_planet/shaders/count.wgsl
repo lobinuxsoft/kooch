@@ -29,7 +29,7 @@ fn count_main(
     }
     workgroupBarrier();
     for (var i = lid; i < CELL_COUNT; i += WORKGROUP) {
-        if (crosses(corners(cell_of(i)))) {
+        if (has_vertex(cell_of(i))) {
             atomicAdd(&totals[0], 1u);
         }
     }

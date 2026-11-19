@@ -7,7 +7,9 @@ use std::collections::HashSet;
 use bytemuck::{Pod, Zeroable};
 use glam::IVec3;
 
-use super::{BlockKey, BlockPool};
+use super::generate::Backlog;
+use super::select::root_level;
+use super::{BlockKey, BlockPool, Planets};
 
 #[cfg(test)]
 mod tests;
@@ -66,6 +68,72 @@ pub fn direction(d: usize) -> IVec3 {
 /// Levels up to the coarser leaf a side borrows from; zero when it borrows none.
 pub fn levels(side: u32) -> u32 {
     (side >> SLOT_BITS) & 0x7f
+}
+
+/// Meshed blocks whose neighbours changed since they were counted (#313 step 4c piece 5): a leaf
+/// that appeared, left or finished generating. A sweep finds them while anything changes, so a
+/// still pool costs nothing; they mesh again from the tile they hold, never generated again.
+#[derive(Default)]
+pub(crate) struct Stale {
+    /// Per slot, the neighbours its mesh was counted with.
+    meshed: Vec<Near>,
+    queue: Backlog,
+    cursor: u32,
+    left: u32,
+}
+
+impl Stale {
+    pub fn counted(&mut self, slot: u32, near: Near) {
+        let i = slot as usize;
+        if self.meshed.len() <= i {
+            self.meshed.resize(i + 1, Near::default());
+        }
+        self.meshed[i] = near;
+    }
+
+    /// Something changed: every slot is checked once more.
+    pub fn touch(&mut self, pool: &BlockPool) {
+        self.left = pool.capacity();
+    }
+
+    /// Queues the slot to mesh again.
+    pub fn queue(&mut self, slot: u32) {
+        self.queue.retry(slot);
+    }
+
+    pub fn pop(&mut self) -> Option<u32> {
+        self.queue.pop()
+    }
+
+    /// Checks up to `budget` slots, queueing those whose neighbours differ from their mesh's.
+    pub fn sweep(
+        &mut self,
+        leaves: Leaves,
+        planets: &Planets,
+        ready: impl Fn(u32) -> bool,
+        budget: u32,
+    ) {
+        let capacity = leaves.pool.capacity();
+        if capacity == 0 {
+            return;
+        }
+        for _ in 0..budget.min(self.left) {
+            let slot = self.cursor;
+            self.cursor = (self.cursor + 1) % capacity;
+            self.left -= 1;
+            // A slot not generated yet meshes when it is, with the neighbours of then.
+            let Some(key) = leaves.pool.key(slot).filter(|_| ready(slot)) else {
+                continue;
+            };
+            let Some(was) = self.meshed.get(slot as usize) else {
+                continue;
+            };
+            let root = planets.shape.get(key.planet as usize).map_or(0, root_level);
+            if near(leaves, root, key, &ready) != *was {
+                self.queue.retry(slot);
+            }
+        }
+    }
 }
 
 /// `key`'s neighbours among `leaves`. A coarser leaf whose tile is not `ready` counts as
