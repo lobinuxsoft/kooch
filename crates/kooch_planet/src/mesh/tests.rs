@@ -134,7 +134,7 @@ fn a_meshed_sphere_is_watertight() {
     let jobs: Vec<WriteJob> = blocks
         .iter()
         .zip(&ids)
-        .map(|(b, &id)| WriteJob::new(b.slot, b.voxel, b.sizes, &descriptor(id), b.near))
+        .map(|(b, &id)| WriteJob::new(b.slot, b.voxel, b.sizes, &descriptor(id), b.near, b.cuts))
         .collect();
     terrain.write(&device, &queue, &buffers, &jobs);
     let vertices = read(&device, &queue, &buffers.vertices);

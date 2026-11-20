@@ -11,12 +11,23 @@ use super::{Near, TILE_SAMPLES};
 #[cfg(test)]
 mod tests;
 
-const NETS_WGSL: &str = include_str!("../shaders/nets.wgsl");
+const NETS_WGSL: &str = concat!(
+    include_str!("../shaders/nets.wgsl"),
+    include_str!("../shaders/pack.wgsl")
+);
 const COUNT_WGSL: &str = include_str!("../shaders/count.wgsl");
 const WRITE_WGSL: &str = include_str!("../shaders/write.wgsl");
 
 /// Words the count pass gives a block: vertices, meshlets, meshlet vertices, triangle bytes.
-pub(super) const COUNT_WORDS: u64 = 4;
+pub(super) const COUNT_WORDS: u64 = 20;
+
+/// Workgroup memory the write pass declares, summed by hand from `write.wgsl` + `nets.wgsl`. wgpu
+/// does not check a shader against the device's limit, so the terrain does (#1938).
+pub(super) const WRITE_SHARED_BYTES: u32 = 30_600;
+
+/// Per inner region, the bricks its meshlets start at: what the count pass packed, so the write
+/// pass does not pack again (#1938).
+pub type Cuts = [u32; 16];
 
 const _: () = assert!(TILE_SAMPLES == 18, "nets.wgsl hard-codes an 18³ tile");
 
@@ -65,6 +76,7 @@ pub struct WriteJob {
     meshlet_vertices: u32,
     bytes: u32,
     near: Near,
+    cuts: Cuts,
     _pad: u32,
 }
 
@@ -75,6 +87,7 @@ impl WriteJob {
         sizes: GpuMeshSizes,
         at: &MeshDescriptor,
         near: Near,
+        cuts: Cuts,
     ) -> Self {
         Self {
             slot,
@@ -88,6 +101,7 @@ impl WriteJob {
             meshlet_vertices: sizes.meshlet_vertices,
             bytes: sizes.triangle_bytes,
             near,
+            cuts,
             _pad: 0,
         }
     }

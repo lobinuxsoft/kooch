@@ -34,7 +34,7 @@ pub use eval::Generator;
 pub use generate::{
     BARE_SPHERE, Backlog, GeneratePass, Job, PLANET_INPUT_WGSL, validate_generator,
 };
-pub use mesh::{CountJob, MeshPass, WriteJob};
+pub use mesh::{CountJob, Cuts, MeshPass, WriteJob};
 pub use plugin::PlanetPlugin;
 pub use pool::{BlockPool, Residency};
 pub use recent::{BatchMean, RECENT};

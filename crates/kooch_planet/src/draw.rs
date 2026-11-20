@@ -148,7 +148,14 @@ impl Blocks {
                 terrain.remesh(block.slot);
                 continue;
             }
-            let job = WriteJob::new(block.slot, block.voxel, block.sizes, &at, block.near);
+            let job = WriteJob::new(
+                block.slot,
+                block.voxel,
+                block.sizes,
+                &at,
+                block.near,
+                block.cuts,
+            );
             jobs.push(job);
             done.push((s, mesh, block));
         }

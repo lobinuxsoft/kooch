@@ -14,6 +14,8 @@ struct Job {
     meshlet_vertices: u32,
     bytes: u32,
     near: Near,
+    // Per region, the bricks its meshlets start at, as the count pass packed them.
+    cuts: array<u32, CUT_WORDS>,
     _pad: u32,
 }
 
@@ -32,14 +34,44 @@ const NONE: u32 = 0xffffffffu;
 // Cell → its vertex + 1, two 16-bit entries per word; 0 is no vertex.
 var<workgroup> map: array<atomic<u32>, MAP_WORDS>;
 var<workgroup> counter: atomic<u32>;
-var<workgroup> plans: array<Plan, REGIONS>;
-// Per region: its first meshlet, meshlet vertex and triangle byte, within the block.
-var<workgroup> starts: array<vec3<u32>, REGIONS>;
 var<workgroup> fits: u32;
 var<workgroup> job: Job;
-// Per region, the set bits of its pack's mask before each word: a corner's rank in one popcount
-// instead of a walk over 23 words, which cost ~0.75 ms a batch (#1938).
-var<workgroup> before: array<array<u32, PACK_WORDS>, INNER>;
+
+// Every meshlet of the block, one a thread (#1938): a region's meshlets hold two bricks or more
+// but the last, so 8 × 33, and a patch each.
+const MAX_PACKS: u32 = 312u;
+// Region 6 bits, first brick 6, end 7, quads 6, cells 7.
+var<workgroup> packs: array<u32, MAX_PACKS>;
+// Its first meshlet vertex (15 bits) and triangle byte (17), within the block.
+var<workgroup> pack_at: array<u32, MAX_PACKS>;
+// Per patch, its cells and bytes << 8; zero when it has no meshlet.
+var<workgroup> patch_sizes: array<u32, 48>;
+var<workgroup> listed: u32;
+// Per mask slot, its set bits before each word: a corner's rank in one popcount.
+var<workgroup> before: array<Mask, MASK_SLOTS>;
+
+// Builds meshlet `t`'s mask and ranks in `slot`; its quads and cells.
+fn build_pack(t: u32, slot: u32) -> vec2<u32> {
+    let info = packs[t];
+    let origin = region(info & 63u).base;
+    for (var w = 0u; w < PACK_WORDS; w++) {
+        masks[slot][w] = 0u;
+    }
+    var quads = 0u;
+    for (var m = (info >> 6u) & 63u; m < ((info >> 12u) & 127u); m++) {
+        quads += add_brick(origin, m, slot);
+    }
+    var cells = 0u;
+    for (var w = 0u; w < PACK_WORDS; w++) {
+        before[slot][w] = cells;
+        cells += countOneBits(masks[slot][w]);
+    }
+    return vec2<u32>(quads, cells);
+}
+
+fn pack_info(q: u32, first: u32, next: u32, quads: u32, cells: u32) -> u32 {
+    return q | (first << 6u) | (next << 12u) | (quads << 19u) | (cells << 25u);
+}
 
 fn vertex_of(i: u32) -> u32 {
     let word = atomicLoad(&map[i >> 1u]);
@@ -125,15 +157,16 @@ fn emit(cut: Region, at: vec3<u32>) {
     describe(at.x, first_mv, t.first, r, quads, lo, hi);
 }
 
-// One packed meshlet of the region at `origin`.
-fn emit_pack(origin: vec3<u32>, p: ptr<function, Pack>, at: vec3<u32>) {
+// Meshlet `at.x`: bricks `first..next` of region `q`, its cells in mask `slot` and their ranks in
+// `before[slot]`.
+fn emit_pack(q: u32, first: u32, next: u32, quads: u32, at: vec3<u32>, slot: u32) {
+    let origin = region(q).base;
     let first_mv = job.first_meshlet_vertex + at.y;
     var lo = vec3<f32>(3.4e38);
     var hi = vec3<f32>(-3.4e38);
     var r = 0u;
     for (var w = 0u; w < PACK_WORDS; w++) {
-        before[(*p).region][w] = r;
-        var word = pack_masks[(*p).region][w];
+        var word = masks[slot][w];
         while (word != 0u) {
             let bit = w * 32u + countTrailingZeros(word);
             word &= word - 1u;
@@ -143,24 +176,58 @@ fn emit_pack(origin: vec3<u32>, p: ptr<function, Pack>, at: vec3<u32>) {
         }
     }
     var t = Strip(job.first_byte + at.z, 0u, 0u, 0u);
-    for (var m = (*p).first; m < (*p).next; m++) {
+    for (var m = first; m < next; m++) {
         let b = brick_base(origin, m);
         var word = brick_edges(b);
+        let inside = brick_inside(b);
         while (word != 0u) {
-            let e = brick_edge(b, countTrailingZeros(word));
+            let bit = countTrailingZeros(word);
+            let e = brick_edge(b, bit);
             word &= word - 1u;
             let cells = quad(e.xyz, e.w);
-            var q: array<u32, 4>;
+            var corners: array<u32, 4>;
             for (var k = 0u; k < 4u; k++) {
-                let bit = pack_bit(cells[k], origin);
-                let low = pack_masks[(*p).region][bit >> 5u] & ((1u << (bit & 31u)) - 1u);
-                q[k] = before[(*p).region][bit >> 5u] + countOneBits(low);
+                let cell = pack_bit(cells[k], origin);
+                let low = masks[slot][cell >> 5u] & ((1u << (cell & 31u)) - 1u);
+                corners[k] = before[slot][cell >> 5u] + countOneBits(low);
             }
-            put_quad(&t, q, edge(e.xyz, e.w).y != 0u);
+            put_quad(&t, corners, ((inside >> (bit & 7u)) & 1u) != 0u);
         }
     }
     end_strip(&t);
-    describe(at.x, first_mv, t.first, r, (*p).quads, lo, hi);
+    describe(at.x, first_mv, t.first, r, quads, lo, hi);
+}
+
+// The block's inner meshlets: those its cuts start.
+fn inner_count() -> u32 {
+    var n = 0u;
+    for (var w = 0u; w < CUT_WORDS; w++) {
+        n += countOneBits(job.cuts[w]);
+    }
+    return n;
+}
+
+// Lists region `q`'s meshlets from its cuts, each running to the next cut or the region's end.
+fn list_region(q: u32) {
+    var n = 0u;
+    for (var w = 0u; w < 2u * q; w++) {
+        n += countOneBits(job.cuts[w]);
+    }
+    let cuts = vec2<u32>(job.cuts[2u * q], job.cuts[2u * q + 1u]);
+    var first = 64u;
+    for (var m = 0u; m < 64u; m++) {
+        if (((cuts[m >> 5u] >> (m & 31u)) & 1u) == 0u) {
+            continue;
+        }
+        if (first < 64u) {
+            packs[n] = pack_info(q, first, m, 0u, 0u);
+            n += 1u;
+        }
+        first = m;
+    }
+    if (first < 64u) {
+        packs[n] = pack_info(q, first, 64u, 0u, 0u);
+    }
 }
 
 fn describe(index: u32, first_mv: u32, first_byte: u32, r: u32, quads: u32, lo: vec3<f32>, hi: vec3<f32>) {
@@ -216,6 +283,8 @@ fn write_main(
     workgroupBarrier();
     mark_edges(lid);
     workgroupBarrier();
+    mark_bricks(lid);
+    workgroupBarrier();
 
     for (var i = lid; i < CELL_COUNT; i += WORKGROUP) {
         if (has_vertex(cell_of(i))) {
@@ -223,19 +292,46 @@ fn write_main(
             atomicOr(&map[i >> 1u], n << ((i & 1u) * 16u));
         }
     }
-    if (lid < REGIONS) {
-        plans[lid] = plan(lid);
+    let inner = inner_count();
+    if (lid < INNER) {
+        list_region(lid);
+    } else if (lid < REGIONS) {
+        var unused = vec2<u32>(0u);
+        let p = plan(lid, &unused);
+        patch_sizes[lid - INNER] = select(0u, p.vertices | (p.bytes << 8u), p.meshlets != 0u);
+    }
+    workgroupBarrier();
+    // Each meshlet's quads and cells, one a slot. With no more meshlets than slots, the masks stay
+    // for the emit below; past that, each is built again there.
+    for (var t = lid; lid < MASK_SLOTS && t < min(inner, MAX_PACKS); t += MASK_SLOTS) {
+        let size = build_pack(t, lid);
+        packs[t] |= (size.x << 19u) | (size.y << 25u);
     }
     workgroupBarrier();
     if (lid == 0u) {
-        var at = vec3<u32>(0u);
-        for (var q = 0u; q < REGIONS; q++) {
-            starts[q] = at;
-            at += vec3<u32>(plans[q].meshlets, plans[q].vertices, plans[q].bytes);
+        var n = min(inner, MAX_PACKS);
+        var mv = 0u;
+        var bytes = 0u;
+        for (var t = 0u; t < n; t++) {
+            pack_at[t] = mv | (bytes << 15u);
+            mv += packs[t] >> 25u;
+            bytes += quad_bytes((packs[t] >> 19u) & 63u);
         }
+        for (var k = 0u; k < 48u; k++) {
+            let size = patch_sizes[k];
+            if (size == 0u || n >= MAX_PACKS) {
+                continue;
+            }
+            packs[n] = pack_info(INNER + k, 0u, 0u, 0u, 0u);
+            pack_at[n] = mv | (bytes << 15u);
+            mv += size & 0xffu;
+            bytes += size >> 8u;
+            n += 1u;
+        }
+        listed = n;
         let reserved = vec4<u32>(job.vertices, job.meshlets, job.meshlet_vertices, job.bytes);
-        let found = vec4<u32>(atomicLoad(&counter), at);
-        fits = select(0u, 1u, all(found == reserved));
+        let found = vec4<u32>(atomicLoad(&counter), n, mv, bytes);
+        fits = select(0u, 1u, all(found == reserved) && inner <= MAX_PACKS);
     }
     // Writing past what was counted would land in another mesh's ranges.
     if (workgroupUniformLoad(&fits) == 0u) {
@@ -263,18 +359,17 @@ fn write_main(
     storageBarrier();
     workgroupBarrier();
 
-    if (lid < REGIONS && plans[lid].meshlets != 0u) {
-        let start = starts[lid];
-        if (lid >= INNER) {
-            emit(region(lid), start);
-        } else {
-            let origin = region(lid).base;
-            var p = Pack(lid, 0u, 0u, 0u, 0u);
-            var at = start;
-            while (next_meshlet(origin, &p)) {
-                emit_pack(origin, &p, at);
-                at += vec3<u32>(1u, p.cells, quad_bytes(p.quads));
-            }
+    for (var t = lid; lid < MASK_SLOTS && t < listed; t += MASK_SLOTS) {
+        let info = packs[t];
+        let q = info & 63u;
+        let at = vec3<u32>(t, pack_at[t] & 0x7fffu, pack_at[t] >> 15u);
+        if (q >= INNER) {
+            emit(region(q), at);
+            continue;
         }
+        if (inner > MASK_SLOTS) {
+            build_pack(t, lid);
+        }
+        emit_pack(q, (info >> 6u) & 63u, (info >> 12u) & 127u, (info >> 19u) & 63u, at, lid);
     }
 }
