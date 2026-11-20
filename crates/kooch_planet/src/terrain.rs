@@ -25,8 +25,9 @@ pub const MESH_BATCH: u32 = 128;
 /// Slots checked for changed neighbours per update, while anything changes.
 const SWEEP: u32 = 256;
 
-/// Two passes, a timestamp either side of each.
-const QUERIES: u32 = 4;
+/// Generate, count and write, a timestamp either side of each. The write follows the count's
+/// readback, so it is resolved with the next batch.
+const QUERIES: u32 = 6;
 
 const MAPPING: u8 = 0;
 const MAPPED: u8 = 1;
@@ -54,7 +55,10 @@ pub struct CountedBlock {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GpuTimes {
     pub generate_ms: f32,
+    /// The count pass.
     pub mesh_ms: f32,
+    /// The write pass of the batch before, which may have held other blocks.
+    pub write_ms: f32,
     pub blocks: u32,
     pub mean: BatchMean,
 }
@@ -274,7 +278,16 @@ impl Terrain {
         pool: &PoolBuffers,
         jobs: &[WriteJob],
     ) {
-        self.mesh.write(device, queue, &self.atlas, pool, jobs);
+        let stamps = self
+            .timer
+            .as_ref()
+            .map(|(set, _)| wgpu::ComputePassTimestampWrites {
+                query_set: set,
+                beginning_of_pass_write_index: Some(4),
+                end_of_pass_write_index: Some(5),
+            });
+        self.mesh
+            .write(device, queue, &self.atlas, pool, jobs, stamps);
     }
 
     /// A count bumped whenever `planet`'s generator or shape changes.
@@ -565,6 +578,7 @@ impl Readback<'_> {
         GpuTimes {
             generate_ms: ms(stamp(0), stamp(1)),
             mesh_ms: ms(stamp(2), stamp(3)),
+            write_ms: ms(stamp(4), stamp(5)),
             blocks,
             mean: BatchMean::default(),
         }

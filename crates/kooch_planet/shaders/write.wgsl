@@ -37,6 +37,9 @@ var<workgroup> plans: array<Plan, REGIONS>;
 var<workgroup> starts: array<vec3<u32>, REGIONS>;
 var<workgroup> fits: u32;
 var<workgroup> job: Job;
+// Per region, the set bits of its pack's mask before each word: a corner's rank in one popcount
+// instead of a walk over 23 words, which cost ~0.75 ms a batch (#1938).
+var<workgroup> before: array<array<u32, PACK_WORDS>, INNER>;
 
 fn vertex_of(i: u32) -> u32 {
     let word = atomicLoad(&map[i >> 1u]);
@@ -129,6 +132,7 @@ fn emit_pack(origin: vec3<u32>, p: ptr<function, Pack>, at: vec3<u32>) {
     var hi = vec3<f32>(-3.4e38);
     var r = 0u;
     for (var w = 0u; w < PACK_WORDS; w++) {
+        before[(*p).region][w] = r;
         var word = pack_masks[(*p).region][w];
         while (word != 0u) {
             let bit = w * 32u + countTrailingZeros(word);
@@ -148,7 +152,9 @@ fn emit_pack(origin: vec3<u32>, p: ptr<function, Pack>, at: vec3<u32>) {
             let cells = quad(e.xyz, e.w);
             var q: array<u32, 4>;
             for (var k = 0u; k < 4u; k++) {
-                q[k] = pack_rank((*p).region, pack_bit(cells[k], origin));
+                let bit = pack_bit(cells[k], origin);
+                let low = pack_masks[(*p).region][bit >> 5u] & ((1u << (bit & 31u)) - 1u);
+                q[k] = before[(*p).region][bit >> 5u] + countOneBits(low);
             }
             put_quad(&t, q, edge(e.xyz, e.w).y != 0u);
         }

@@ -47,7 +47,8 @@ pub(super) fn planet_readout(ui: &mut egui::Ui, stats: PlanetStats) {
                      this is also the most the terrain adds to one frame's GPU time.",
                 );
                 metric(ui, "  · generate", &format!("{:.3} ms", gpu.generate_ms));
-                metric(ui, "  · mesh", &format!("{:.3} ms", gpu.mesh_ms));
+                metric(ui, "  · count", &format!("{:.3} ms", gpu.mesh_ms));
+                metric(ui, "  · write", &format!("{:.3} ms", gpu.write_ms));
                 let mean = gpu.mean;
                 metric_with_tooltip(
                     ui,
@@ -59,7 +60,8 @@ pub(super) fn planet_readout(ui: &mut egui::Ui, stats: PlanetStats) {
                     ),
                 );
                 metric(ui, "  · generate", &format!("{:.3} ms", mean.generate_ms));
-                metric(ui, "  · mesh", &format!("{:.3} ms", mean.mesh_ms));
+                metric(ui, "  · count", &format!("{:.3} ms", mean.mesh_ms));
+                metric(ui, "  · write", &format!("{:.3} ms", mean.write_ms));
             }
             None => metric(ui, "GPU per batch", "no timestamps"),
         }
