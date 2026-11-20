@@ -338,32 +338,47 @@ fn region(q: u32) -> Region {
     return r;
 }
 
-// Per axis, whether the block emits the edge from each of its 16³ starts: found once, read by
-// every brick that packs and every meshlet that writes.
-var<workgroup> edges: array<atomic<u32>, 384>;
+// Per 2³ brick of the block's 16³ starts, the edges it emits: bit `axis * 8 + start`. Found once,
+// so packing a brick reads one word instead of 24 (#1935).
+var<workgroup> edges: array<atomic<u32>, 512>;
 
 fn clear_edges(lid: u32) {
-    for (var w = lid; w < 384u; w += WORKGROUP) {
+    for (var w = lid; w < 512u; w += WORKGROUP) {
         atomicStore(&edges[w], 0u);
     }
+}
+
+// The brick holding start `s`, and the start's bit within it before the axis offset.
+fn edge_bit(s: vec3<u32>) -> vec2<u32> {
+    let l = s - vec3<u32>(1u);
+    let b = l >> vec3<u32>(1u);
+    let i = l & vec3<u32>(1u);
+    return vec2<u32>(b.x + b.y * 8u + b.z * 64u, i.x | (i.y << 1u) | (i.z << 2u));
 }
 
 fn mark_edges(lid: u32) {
     for (var i = lid; i < 4096u; i += WORKGROUP) {
         let s = vec3<u32>(1u) + vec3<u32>(i % 16u, (i / 16u) % 16u, i / 256u);
+        let at = edge_bit(s);
+        var word = 0u;
         for (var axis = 0u; axis < 3u; axis++) {
-            if (emits(s, axis).x != 0u) {
-                let n = axis * 4096u + i;
-                atomicOr(&edges[n >> 5u], 1u << (n & 31u));
-            }
+            word |= select(0u, 1u << (axis * 8u + at.y), emits(s, axis).x != 0u);
+        }
+        if (word != 0u) {
+            atomicOr(&edges[at.x], word);
         }
     }
 }
 
-fn has_edge(s: vec3<u32>, axis: u32) -> bool {
-    let l = s - vec3<u32>(1u);
-    let n = axis * 4096u + l.x + l.y * 16u + l.z * 256u;
-    return ((atomicLoad(&edges[n >> 5u]) >> (n & 31u)) & 1u) != 0u;
+// The edges of the brick based at `b`.
+fn brick_edges(b: vec3<u32>) -> u32 {
+    return atomicLoad(&edges[edge_bit(b).x]);
+}
+
+// An edge of a brick's word: its start and axis.
+fn brick_edge(b: vec3<u32>, bit: u32) -> vec4<u32> {
+    let i = bit & 7u;
+    return vec4<u32>(b + vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u), bit >> 3u);
 }
 
 // Brick `m` of the region at `origin`, in Morton order so consecutive bricks touch.
@@ -376,20 +391,16 @@ fn brick_base(origin: vec3<u32>, m: u32) -> vec3<u32> {
 
 // A brick's quads, and its 3³ cells they touch as bits.
 fn brick(b: vec3<u32>) -> vec2<u32> {
-    var quads = 0u;
+    var word = brick_edges(b);
+    let quads = countOneBits(word);
     var cells = 0u;
-    for (var i = 0u; i < 8u; i++) {
-        let s = b + vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u);
-        for (var axis = 0u; axis < 3u; axis++) {
-            if (!has_edge(s, axis)) {
-                continue;
-            }
-            quads += 1u;
-            let around = quad(s, axis);
-            for (var k = 0u; k < 4u; k++) {
-                let l = around[k] + vec3<u32>(1u) - b;
-                cells |= 1u << (l.x + 3u * l.y + 9u * l.z);
-            }
+    while (word != 0u) {
+        let e = brick_edge(b, countTrailingZeros(word));
+        word &= word - 1u;
+        let around = quad(e.xyz, e.w);
+        for (var k = 0u; k < 4u; k++) {
+            let l = around[k] + vec3<u32>(1u) - b;
+            cells |= 1u << (l.x + 3u * l.y + 9u * l.z);
         }
     }
     return vec2<u32>(quads, cells);

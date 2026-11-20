@@ -141,19 +141,16 @@ fn emit_pack(origin: vec3<u32>, p: ptr<function, Pack>, at: vec3<u32>) {
     var t = Strip(job.first_byte + at.z, 0u, 0u, 0u);
     for (var n = 0u; n < (*p).count; n++) {
         let b = brick_base(origin, (*p).bricks[n]);
-        for (var i = 0u; i < 8u; i++) {
-            let s = b + vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u);
-            for (var axis = 0u; axis < 3u; axis++) {
-                if (!has_edge(s, axis)) {
-                    continue;
-                }
-                let cells = quad(s, axis);
-                var q: array<u32, 4>;
-                for (var k = 0u; k < 4u; k++) {
-                    q[k] = pack_rank(p, pack_bit(cells[k], origin));
-                }
-                put_quad(&t, q, edge(s, axis).y != 0u);
+        var word = brick_edges(b);
+        while (word != 0u) {
+            let e = brick_edge(b, countTrailingZeros(word));
+            word &= word - 1u;
+            let cells = quad(e.xyz, e.w);
+            var q: array<u32, 4>;
+            for (var k = 0u; k < 4u; k++) {
+                q[k] = pack_rank(p, pack_bit(cells[k], origin));
             }
+            put_quad(&t, q, edge(e.xyz, e.w).y != 0u);
         }
     }
     end_strip(&t);
