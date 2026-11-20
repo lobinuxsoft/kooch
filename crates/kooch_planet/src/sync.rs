@@ -61,6 +61,8 @@ pub struct PlanetStats {
     pub in_flight: u32,
     pub meshed: u64,
     pub triangles: u64,
+    /// Over `triangles`, how full the mesher fills them (#1935).
+    pub meshlets: u64,
     /// The last batch's GPU cost; `None` without timestamps.
     pub gpu: Option<crate::GpuTimes>,
 }
@@ -284,6 +286,7 @@ pub fn sync_planets(resources: &mut Resources) {
         in_flight: state.terrain.as_ref().map_or(0, |t| t.in_flight() as u32),
         meshed: state.terrain.as_ref().map_or(0, Terrain::meshed),
         triangles: blocks.triangles(),
+        meshlets: blocks.meshlets(),
         gpu: state.terrain.as_ref().and_then(Terrain::times),
     };
     state.blocks = blocks;

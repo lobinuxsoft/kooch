@@ -11,6 +11,7 @@ use kooch_render::meshlet::{GpuMeshSizes, PoolBuffers};
 use super::atlas::BlockAtlas;
 use super::generate::{BARE_SPHERE, Backlog, GeneratePass, Job};
 use super::mesh::{COUNT_WORDS, CountJob, MeshPass, WriteJob, counts_bytes, sizes_of};
+use super::recent::{BatchMean, Recent};
 use super::seam::{Stale, near};
 use super::select::{bounds, root_level, voxel_size};
 use super::{BlockKey, BlockPool, Leaves, Near, Planets, Residency};
@@ -48,12 +49,14 @@ pub struct CountedBlock {
     pub near: Near,
 }
 
-/// What the last batch cost the GPU.
+/// What the last batch cost the GPU, and the mean of the last [`RECENT`](crate::RECENT) batches: one batch
+/// swings with where the camera is.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GpuTimes {
     pub generate_ms: f32,
     pub mesh_ms: f32,
     pub blocks: u32,
+    pub mean: BatchMean,
 }
 
 /// One block of a batch, as it was sent.
@@ -93,6 +96,7 @@ pub struct Terrain {
     timer: Option<(wgpu::QuerySet, wgpu::Buffer)>,
     period_ns: f32,
     times: Option<GpuTimes>,
+    recent: Recent,
     meshed: u64,
 }
 
@@ -152,6 +156,7 @@ impl Terrain {
             timer,
             period_ns: queue.get_timestamp_period(),
             times: None,
+            recent: Recent::default(),
             meshed: 0,
         })
     }
@@ -471,7 +476,9 @@ impl Terrain {
             stamps: counts_bytes(self.mesh.batch),
         };
         if self.timer.is_some() {
-            self.times = Some(read.times(self.period_ns, blocks.len() as u32));
+            let mut times = read.times(self.period_ns, blocks.len() as u32);
+            times.mean = self.recent.push(times);
+            self.times = Some(times);
         }
         for (b, sent) in blocks.into_iter().enumerate() {
             let Sent {
@@ -559,6 +566,7 @@ impl Readback<'_> {
             generate_ms: ms(stamp(0), stamp(1)),
             mesh_ms: ms(stamp(2), stamp(3)),
             blocks,
+            mean: BatchMean::default(),
         }
     }
 }

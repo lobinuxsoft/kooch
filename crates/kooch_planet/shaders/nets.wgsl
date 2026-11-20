@@ -10,9 +10,10 @@
 // its sign. The finer leaf emits the seam: a block also emits its +plane edges where the leaf past
 // them is coarser, and none whose cells reach a finer one.
 //
-// Meshlets are cut by the grid: the block's 16³ edge starts split into 4³ regions, one meshlet
-// each, and a region too full for one splits into its eight 2³ eighths, which always fit. The
-// +plane edges take 16 patches a face, one sample deep, which always fit too.
+// Meshlets are packed, not cut at fixed planes (#1935): the block's 16³ edge starts are 2³ bricks,
+// and each 8³ region packs its non-empty bricks in Morton order into a meshlet until the next one
+// would pass 62 quads or 64 cells. A brick alone always fits. The +plane edges take 16 patches a
+// face, one sample deep, one meshlet each.
 
 override TILES_X: u32 = 32u;
 override TILES_Y: u32 = 1u;
@@ -23,8 +24,11 @@ const TILE: u32 = 18u;
 const CELLS: u32 = 18u;
 const CELL_COUNT: u32 = 5832u;
 const WORKGROUP: u32 = 256u;
-const INNER: u32 = 64u;
-const REGIONS: u32 = 112u;
+const INNER: u32 = 8u;
+const REGIONS: u32 = 56u;
+const MAX_QUADS: u32 = 62u;
+// An 8³ region's cells, 9³ bits.
+const PACK_WORDS: u32 = 23u;
 const MAX_TRIANGLES: u32 = 124u;
 const MAX_VERTICES: u32 = 64u;
 
@@ -314,12 +318,12 @@ struct Region {
     size: vec3<u32>,
 }
 
-// The first 64 are the 4³ grid. Then 16 patches a +plane, each face also taking one line of the
+// The first 8 are the 8³ regions. Then 16 patches a +plane, each face also taking one line of the
 // planes past it, so every start with a 17 in it falls in exactly one: x takes y = 17, y takes z,
 // z takes x.
 fn region(q: u32) -> Region {
     if (q < INNER) {
-        return Region(vec3<u32>(1u) + 4u * vec3<u32>(q % 4u, (q / 4u) % 4u, q / 16u), vec3<u32>(4u));
+        return Region(vec3<u32>(1u) + 8u * vec3<u32>(q & 1u, (q >> 1u) & 1u, q >> 2u), vec3<u32>(8u));
     }
     let face = (q - INNER) / 16u;
     let i = (q - INNER) % 4u;
@@ -334,15 +338,146 @@ fn region(q: u32) -> Region {
     return r;
 }
 
-fn eighth(r: Region, e: u32) -> Region {
-    return Region(r.base + 2u * vec3<u32>(e & 1u, (e >> 1u) & 1u, e >> 2u), vec3<u32>(2u));
+// Per 2³ brick of the block's 16³ starts, the edges it emits: bit `axis * 8 + start`. Found once,
+// so packing a brick reads one word instead of 24 (#1935).
+var<workgroup> edges: array<atomic<u32>, 512>;
+
+fn clear_edges(lid: u32) {
+    for (var w = lid; w < 512u; w += WORKGROUP) {
+        atomicStore(&edges[w], 0u);
+    }
+}
+
+// The brick holding start `s`, and the start's bit within it before the axis offset.
+fn edge_bit(s: vec3<u32>) -> vec2<u32> {
+    let l = s - vec3<u32>(1u);
+    let b = l >> vec3<u32>(1u);
+    let i = l & vec3<u32>(1u);
+    return vec2<u32>(b.x + b.y * 8u + b.z * 64u, i.x | (i.y << 1u) | (i.z << 2u));
+}
+
+fn mark_edges(lid: u32) {
+    for (var i = lid; i < 4096u; i += WORKGROUP) {
+        let s = vec3<u32>(1u) + vec3<u32>(i % 16u, (i / 16u) % 16u, i / 256u);
+        let at = edge_bit(s);
+        var word = 0u;
+        for (var axis = 0u; axis < 3u; axis++) {
+            word |= select(0u, 1u << (axis * 8u + at.y), emits(s, axis).x != 0u);
+        }
+        if (word != 0u) {
+            atomicOr(&edges[at.x], word);
+        }
+    }
+}
+
+// The edges of the brick based at `b`.
+fn brick_edges(b: vec3<u32>) -> u32 {
+    return atomicLoad(&edges[edge_bit(b).x]);
+}
+
+// An edge of a brick's word: its start and axis.
+fn brick_edge(b: vec3<u32>, bit: u32) -> vec4<u32> {
+    let i = bit & 7u;
+    return vec4<u32>(b + vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u), bit >> 3u);
+}
+
+// Brick `m` of the region at `origin`, in Morton order so consecutive bricks touch.
+fn brick_base(origin: vec3<u32>, m: u32) -> vec3<u32> {
+    let x = (m & 1u) | ((m >> 2u) & 2u);
+    let y = ((m >> 1u) & 1u) | ((m >> 3u) & 2u);
+    let z = ((m >> 2u) & 1u) | ((m >> 4u) & 2u);
+    return origin + 2u * vec3<u32>(x, y, z);
+}
+
+// A brick's quads, and its 3³ cells they touch as bits.
+fn brick(b: vec3<u32>) -> vec2<u32> {
+    var word = brick_edges(b);
+    let quads = countOneBits(word);
+    var cells = 0u;
+    while (word != 0u) {
+        let e = brick_edge(b, countTrailingZeros(word));
+        word &= word - 1u;
+        let around = quad(e.xyz, e.w);
+        for (var k = 0u; k < 4u; k++) {
+            let l = around[k] + vec3<u32>(1u) - b;
+            cells |= 1u << (l.x + 3u * l.y + 9u * l.z);
+        }
+    }
+    return vec2<u32>(quads, cells);
+}
+
+// A cell's bit among the 9³ cells of the region at `origin`.
+fn pack_bit(c: vec3<u32>, origin: vec3<u32>) -> u32 {
+    let l = c + vec3<u32>(1u) - origin;
+    return l.x + 9u * l.y + 81u * l.z;
+}
+
+// One meshlet of a region: its bricks and cells, and the brick to start the next from.
+struct Pack {
+    next: u32,
+    quads: u32,
+    cells: u32,
+    count: u32,
+    bricks: array<u32, 64>,
+    mask: array<u32, PACK_WORDS>,
+}
+
+// Packs the next meshlet of the region at `origin` into `p`; false once its bricks are spent.
+fn next_meshlet(origin: vec3<u32>, p: ptr<function, Pack>) -> bool {
+    (*p).quads = 0u;
+    (*p).cells = 0u;
+    (*p).count = 0u;
+    for (var w = 0u; w < PACK_WORDS; w++) {
+        (*p).mask[w] = 0u;
+    }
+    while ((*p).next < 64u) {
+        let b = brick_base(origin, (*p).next);
+        let found = brick(b);
+        if (found.x == 0u) {
+            (*p).next += 1u;
+            continue;
+        }
+        var fresh = 0u;
+        for (var k = 0u; k < 27u; k++) {
+            if (((found.y >> k) & 1u) == 0u) {
+                continue;
+            }
+            let bit = pack_bit(b - vec3<u32>(1u) + vec3<u32>(k % 3u, (k / 3u) % 3u, k / 9u), origin);
+            fresh += 1u - (((*p).mask[bit >> 5u] >> (bit & 31u)) & 1u);
+        }
+        let full = (*p).quads + found.x > MAX_QUADS || (*p).cells + fresh > MAX_VERTICES;
+        if ((*p).count > 0u && full) {
+            break;
+        }
+        for (var k = 0u; k < 27u; k++) {
+            if (((found.y >> k) & 1u) != 0u) {
+                let bit = pack_bit(b - vec3<u32>(1u) + vec3<u32>(k % 3u, (k / 3u) % 3u, k / 9u), origin);
+                (*p).mask[bit >> 5u] |= 1u << (bit & 31u);
+            }
+        }
+        (*p).quads += found.x;
+        (*p).cells += fresh;
+        (*p).bricks[(*p).count] = (*p).next;
+        (*p).count += 1u;
+        (*p).next += 1u;
+    }
+    return (*p).count > 0u;
+}
+
+// The bit's position among the pack's set bits: the cell's index in its meshlet.
+fn pack_rank(p: ptr<function, Pack>, bit: u32) -> u32 {
+    var r = countOneBits((*p).mask[bit >> 5u] & ((1u << (bit & 31u)) - 1u));
+    for (var w = 0u; w < (bit >> 5u); w++) {
+        r += countOneBits((*p).mask[w]);
+    }
+    return r;
 }
 
 fn start_of(i: u32, r: Region) -> vec3<u32> {
     return r.base + vec3<u32>(i % r.size.x, (i / r.size.x) % r.size.y, i / (r.size.x * r.size.y));
 }
 
-// A cell's bit in the region's mask; its cells start one sample before its starts.
+// A cell's bit in a patch's mask; its cells start one sample before its starts.
 fn cell_bit(c: vec3<u32>, r: Region) -> u32 {
     let l = c + vec3<u32>(1u) - r.base;
     let d = r.size + vec3<u32>(1u);
@@ -359,7 +494,7 @@ fn bits(r: Region) -> u32 {
     return d.x * d.y * d.z;
 }
 
-// The region's quads, and in `mask` every cell they touch: at most 5³ = 125 bits.
+// A patch's quads, and in `mask` every cell they touch: at most 2 × 6 × 5 = 60 bits.
 fn fill(r: Region, mask: ptr<function, array<u32, 4>>) -> u32 {
     for (var w = 0u; w < 4u; w++) {
         (*mask)[w] = 0u;
@@ -405,33 +540,29 @@ struct Plan {
     meshlets: u32,
     vertices: u32,
     bytes: u32,
-    split: u32,
 }
 
-// How region `q` becomes meshlets: one, or one per non-empty eighth when one would not fit.
+// What region `q` takes of the pool: a region its packed meshlets, a patch one or none.
 fn plan(q: u32) -> Plan {
-    // Only a coarser leaf past it gives a +plane edge to the block.
-    if (q >= INNER && borrows == 0u) {
-        return Plan(0u, 0u, 0u, 0u);
-    }
-    let r = region(q);
-    var mask: array<u32, 4>;
-    let quads = fill(r, &mask);
-    if (quads == 0u) {
-        return Plan(0u, 0u, 0u, 0u);
-    }
-    let cells = ones(&mask);
-    if (quads * 2u <= MAX_TRIANGLES && cells <= MAX_VERTICES) {
-        return Plan(1u, cells, quad_bytes(quads), 0u);
-    }
-    var p = Plan(0u, 0u, 0u, 1u);
-    for (var e = 0u; e < 8u; e++) {
-        let part = fill(eighth(r, e), &mask);
-        if (part != 0u) {
-            p.meshlets += 1u;
-            p.vertices += ones(&mask);
-            p.bytes += quad_bytes(part);
+    var out = Plan(0u, 0u, 0u);
+    if (q < INNER) {
+        var p: Pack;
+        let origin = region(q).base;
+        while (next_meshlet(origin, &p)) {
+            out.meshlets += 1u;
+            out.vertices += p.cells;
+            out.bytes += quad_bytes(p.quads);
         }
+        return out;
     }
-    return p;
+    // Only a coarser leaf past it gives a +plane edge to the block.
+    if (borrows == 0u) {
+        return out;
+    }
+    var mask: array<u32, 4>;
+    let quads = fill(region(q), &mask);
+    if (quads != 0u) {
+        out = Plan(1u, ones(&mask), quad_bytes(quads));
+    }
+    return out;
 }

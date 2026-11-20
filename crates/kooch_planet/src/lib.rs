@@ -15,6 +15,7 @@ mod generate;
 mod mesh;
 mod plugin;
 mod pool;
+mod recent;
 mod roster;
 mod seam;
 mod select;
@@ -36,6 +37,7 @@ pub use generate::{
 pub use mesh::{CountJob, MeshPass, WriteJob};
 pub use plugin::PlanetPlugin;
 pub use pool::{BlockPool, Residency};
+pub use recent::{BatchMean, RECENT};
 pub use seam::{Leaves, Near};
 pub use select::{Limits, Planets, Shape, View, select};
 pub use sync::{PlanetStats, PlanetTerrain, PlanetViewers, sync_planets};
