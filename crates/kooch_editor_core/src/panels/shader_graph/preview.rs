@@ -1,7 +1,7 @@
 //! The preview column: the graph's shader on a shape, beside the nodes (#1159).
 
 use super::PreviewView;
-use crate::shader_graph::subgraph::NO_SHAPE;
+use crate::shader_graph::subgraph::{NO_PLANET_PREVIEW, NO_SHAPE};
 
 /// The preview column: the shader on a shape, and which shape that is.
 pub(super) fn draw_preview(ui: &mut egui::Ui, preview: PreviewView<'_>) {
@@ -50,8 +50,8 @@ pub(super) fn draw_preview(ui: &mut egui::Ui, preview: PreviewView<'_>) {
             // says so instead of showing the last shader that did, which would be a lie about what
             // is on the canvas.
             match preview.refusal {
-                Some(NO_SHAPE) => {
-                    ui.weak(NO_SHAPE);
+                Some(why @ (NO_SHAPE | NO_PLANET_PREVIEW)) => {
+                    ui.weak(why);
                 }
                 Some(why) => {
                     ui.colored_label(ui.visuals().error_fg_color, "This graph does not compile");

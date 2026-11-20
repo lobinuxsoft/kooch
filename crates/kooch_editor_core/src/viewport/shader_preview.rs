@@ -303,8 +303,7 @@ impl ShaderPreview {
             return;
         }
         if source.contains("fn planet(") {
-            return self
-                .refuse("A planet shape has no preview yet: it shows on the planet.".into());
+            return self.refuse(crate::shader_graph::subgraph::NO_PLANET_PREVIEW.into());
         }
         if source.contains("fn ui(") {
             let ui = self

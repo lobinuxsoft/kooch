@@ -162,7 +162,10 @@ pub(super) fn curve_editor(ui: &mut egui::Ui, node: egui_snarl::NodeId, curve: &
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let size = egui::vec2(FIELD * 2.0, FIELD * 1.4);
-    ui.allocate_ui(size, |ui| {
+    // Top-down, whatever the footer's layout: in a row the canvas came after the editor's header
+    // with no width left, and a zero-width canvas maps every point to infinity.
+    let top_down = egui::Layout::top_down(egui::Align::Min);
+    ui.allocate_ui_with_layout(size, top_down, |ui| {
         ui.set_min_size(size);
         view.ui(ui, &mut curve.0, None);
     })
