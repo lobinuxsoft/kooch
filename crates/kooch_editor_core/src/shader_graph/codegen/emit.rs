@@ -3,6 +3,7 @@
 mod call;
 mod looped;
 mod noise;
+mod shaping;
 mod uv;
 
 use std::collections::{HashMap, HashSet};
@@ -325,6 +326,10 @@ impl Body<'_> {
                      vec4<f32>(({to}.y - {to}.x) / max(abs({from}.y - {from}.x), 0.00001))"
                 )
             }
+            Node::SmoothMin => self.smooth(id, false)?,
+            Node::SmoothMax => self.smooth(id, true)?,
+            Node::Terrace => self.terrace(id)?,
+            Node::Curve(curve) => self.curve(id, curve)?,
             Node::Cross => {
                 let (a, b) = (argument(self, 0)?, argument(self, 1)?);
                 format!("vec4<f32>(cross({a}.xyz, {b}.xyz), 0.0)")

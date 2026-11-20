@@ -4,7 +4,9 @@ use egui::emath::TSTransform;
 use egui_snarl::ui::SnarlViewer;
 use egui_snarl::{InPin, NodeId, OutPin, Snarl};
 
-use super::editors::{FIELD, choice, components, name_field, number_editor, pin_field};
+use super::editors::{
+    FIELD, choice, components, curve_editor, name_field, number_editor, pin_field,
+};
 use super::framed;
 use super::pin::{NamedPin, Side, label, reserve};
 use crate::panels::inspector::AssetCatalogEntry;
@@ -167,6 +169,11 @@ impl SnarlViewer<GraphNode> for Viewer<'_> {
         let Some(node) = snarl.get_node_mut(id) else {
             return;
         };
+        // Wider than the column: a curve squeezed to a field's width cannot be drawn on.
+        if let Node::Curve(curve) = &mut node.node {
+            curve_editor(ui, id, curve);
+            return;
+        }
         // Capped: a top-down layout claims all the width it is offered, and inside a snarl node that
         // is everything up to the panel's edge.
         let column = egui::vec2(FIELD + 16.0, 0.0);
@@ -460,6 +467,7 @@ fn has_fields(node: &Node) -> bool {
             | Node::ConstColor(_)
             | Node::Swizzle { .. }
             | Node::Blend { .. }
+            | Node::Curve(_)
             | Node::ShaderOutput { .. }
     )
 }

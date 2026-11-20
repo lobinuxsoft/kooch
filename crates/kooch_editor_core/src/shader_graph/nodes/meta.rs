@@ -156,6 +156,10 @@ impl Node {
             Self::Saturate => "Saturate".to_owned(),
             Self::Remap => "Remap".to_owned(),
             Self::Mix => "Mix".to_owned(),
+            Self::SmoothMin => "Smooth Min".to_owned(),
+            Self::SmoothMax => "Smooth Max".to_owned(),
+            Self::Terrace => "Terrace".to_owned(),
+            Self::Curve(_) => "Curve".to_owned(),
             Self::Dot => "Dot".to_owned(),
             Self::Cross => "Cross".to_owned(),
             Self::Normalize => "Normalize".to_owned(),
@@ -262,6 +266,9 @@ impl Node {
             Self::Step => &["edge", "value"],
             Self::Smoothstep => &["low", "high", "value"],
             Self::Remap => &["value", "from", "to"],
+            Self::SmoothMin | Self::SmoothMax => &["a", "b", "k"],
+            Self::Terrace => &["value", "step", "softness"],
+            Self::Curve(_) => &["value"],
             Self::Mix => &["a", "b", "t"],
             Self::Reflect => &["incident", "normal"],
             Self::Combine => &["x", "y", "z", "w"],
@@ -500,7 +507,11 @@ impl Node {
             | Self::Saturate
             | Self::Remap
             | Self::Mix
-            | Self::MulAdd => Category::Math,
+            | Self::MulAdd
+            | Self::SmoothMin
+            | Self::SmoothMax
+            | Self::Terrace
+            | Self::Curve(_) => Category::Math,
             Self::Dot
             | Self::Cross
             | Self::Normalize

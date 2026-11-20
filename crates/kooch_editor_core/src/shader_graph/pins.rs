@@ -97,6 +97,9 @@ impl Node {
             (Self::LightBand, "direction") => Some([0.8, 0.6, 0.0, 0.0]),
             (Self::LightBand, "width") => splat(0.15),
             (Self::MulAdd, "scale") => splat(1.0),
+            (Self::SmoothMin | Self::SmoothMax, "k") => splat(1.0),
+            (Self::Terrace, "step") => splat(1.0),
+            (Self::Terrace, "softness") => splat(0.5),
             _ => splat(0.0),
         }
     }

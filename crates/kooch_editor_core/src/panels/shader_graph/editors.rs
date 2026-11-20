@@ -1,8 +1,9 @@
 //! The fields a node draws for what it holds, laid out as a column (#1170).
 
+use bevy_lookup_curve::prelude::LookupCurveEguiEditor;
 use egui_snarl::InPinId;
 
-use crate::shader_graph::{GraphNode, Width};
+use crate::shader_graph::{GraphCurve, GraphNode, Width};
 
 /// How wide a node's fields are. Narrow on purpose: a node reads as a column, not a long row.
 pub(super) const FIELD: f32 = 110.0;
@@ -142,4 +143,33 @@ pub(super) fn number_editor(
     if whole {
         *default = default.round();
     }
+}
+
+/// A curve node's editor, sized to read inside a node. Its view (pan, zoom) is widget state, kept
+/// in egui's memory by node so it never reaches the saved graph.
+pub(super) fn curve_editor(ui: &mut egui::Ui, node: egui_snarl::NodeId, curve: &mut GraphCurve) {
+    type View = std::sync::Arc<std::sync::Mutex<LookupCurveEguiEditor>>;
+    let id = ui.id().with(("curve view", node));
+    let view: View = ui.ctx().data_mut(|data| {
+        data.get_temp_mut_or_insert_with(id, || {
+            View::new(std::sync::Mutex::new(
+                LookupCurveEguiEditor::fitted_to_curve(&curve.0),
+            ))
+        })
+        .clone()
+    });
+    let mut view = view
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let size = egui::vec2(FIELD * 2.0, FIELD * 1.4);
+    ui.allocate_ui(size, |ui| {
+        ui.set_min_size(size);
+        view.ui(ui, &mut curve.0, None);
+    })
+    .response
+    .on_hover_text(
+        "Drag a knot to move it, drag the background to pan, scroll to zoom. Right-click the \
+         background to add a knot, or a knot for its interpolation, tangents or to delete it. \
+         Outside the knots the curve holds its end values.",
+    );
 }

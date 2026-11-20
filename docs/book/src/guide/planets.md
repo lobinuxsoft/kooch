@@ -33,6 +33,27 @@ generator on the CPU over the whole block at once and skips it when the result c
 `clamp`, `min`, `max`, `smoothstep` and noise that stays in a known range all help; a `tan`, a loop
 whose length depends on the position or a texture read make every block in the band a candidate.
 
+## Shaping the relief
+
+One noise gives hills everywhere. A planet with somewhere to go is a few height layers in metres,
+combined, and subtracted from **Altitude** at the end:
+
+| Feature | Graph |
+|---|---|
+| Continents and ocean floor | a low-scale noise on **Planet Direction** through a **Curve** that is flat across the coast — the flat stretch is the beach |
+| Mountain ranges | a **ridged** noise, multiplied by the continent value so ranges stay inland |
+| Valleys | what lies between ranges once they are masked; a **Curve** that dips before rising widens them |
+| Canyons | a ridged noise turned into a floor (One Minus, times the depth) and joined to the height with **Smooth Min**, so the rim is rounded, not a crease |
+| Mesas, stepped slopes | **Terrace** on a layer, `softness` near 0.3 |
+
+Two limits keep the ground smooth:
+
+- **A wave needs two voxels.** The finest octave is `scale × 2^(octaves − 1)` waves per unit of
+  direction; at `radius` that is a wavelength of `radius / (scale × 2^(octaves − 1))` metres. Under
+  twice the planet's `voxel` the mesher draws it as teeth.
+- **`distortion` folds.** A warp strong enough to fold the noise onto itself leaves knife ridges in
+  the field, which no shading hides. Raise it a little at a time.
+
 ## What it costs
 
 Every planet in the scene shares one pool of 6144 voxel blocks, 68 MiB of GPU memory. The pool
