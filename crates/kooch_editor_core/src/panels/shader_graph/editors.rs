@@ -162,17 +162,35 @@ pub(super) fn curve_editor(ui: &mut egui::Ui, node: egui_snarl::NodeId, curve: &
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let size = egui::vec2(FIELD * 2.0, FIELD * 1.4);
-    // Top-down, whatever the footer's layout: in a row the canvas came after the editor's header
-    // with no width left, and a zero-width canvas maps every point to infinity.
-    let top_down = egui::Layout::top_down(egui::Align::Min);
-    ui.allocate_ui_with_layout(size, top_down, |ui| {
-        ui.set_min_size(size);
-        view.ui(ui, &mut curve.0, None);
-    })
-    .response
-    .on_hover_text(
+    // A fixed rect the editor cannot grow: its header prints the hovered point unrounded, and a
+    // node that widened with it moved the canvas under the mouse, which changed the point again.
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let builder = egui::UiBuilder::new()
+        .max_rect(rect)
+        .layout(egui::Layout::top_down(egui::Align::Min));
+    let mut inner = ui.new_child(builder);
+    inner.set_clip_rect(rect.intersect(ui.clip_rect()));
+    view.grid_step_x = grid_step(view.scale.x);
+    view.grid_step_y = grid_step(view.scale.y);
+    view.ui(&mut inner, &mut curve.0, None);
+    response.on_hover_text(
         "Drag a knot to move it, drag the background to pan, scroll to zoom. Right-click the \
          background to add a knot, or a knot for its interpolation, tangents or to delete it. \
          Outside the knots the curve holds its end values.",
     );
+}
+
+/// A round grid step giving about four lines across `span`: the editor's fixed 0.1 drew a hundred
+/// labels over a curve ten units tall.
+fn grid_step(span: f32) -> f32 {
+    let rough = span.abs() / 4.0;
+    if !(rough > 0.0) || !rough.is_finite() {
+        return 0.1;
+    }
+    let decade = 10f32.powf(rough.log10().floor());
+    let nice = [1.0, 2.0, 5.0, 10.0]
+        .into_iter()
+        .find(|m| m * decade >= rough)
+        .unwrap_or(10.0);
+    nice * decade
 }
