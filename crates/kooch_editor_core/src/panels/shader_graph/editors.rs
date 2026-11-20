@@ -145,11 +145,16 @@ pub(super) fn number_editor(
     }
 }
 
-/// A curve node's editor, sized to read inside a node. Its view (pan, zoom) is widget state, kept
-/// in egui's memory by node so it never reaches the saved graph.
-pub(super) fn curve_editor(ui: &mut egui::Ui, node: egui_snarl::NodeId, curve: &mut GraphCurve) {
+/// A curve node's editor, `width` wide. Its view (pan, zoom) is widget state, kept in egui's memory
+/// by node so it never reaches the saved graph.
+pub(super) fn curve_editor(
+    ui: &mut egui::Ui,
+    node: egui_snarl::NodeId,
+    curve: &mut GraphCurve,
+    width: f32,
+) {
     type View = std::sync::Arc<std::sync::Mutex<LookupCurveEguiEditor>>;
-    let id = ui.id().with(("curve view", node));
+    let id = egui::Id::new(("curve view", node));
     let view: View = ui.ctx().data_mut(|data| {
         data.get_temp_mut_or_insert_with(id, || {
             View::new(std::sync::Mutex::new(
@@ -161,10 +166,13 @@ pub(super) fn curve_editor(ui: &mut egui::Ui, node: egui_snarl::NodeId, curve: &
     let mut view = view
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let size = egui::vec2(FIELD * 2.0, FIELD * 1.4);
+    let size = egui::vec2(width, width * 0.75);
     // A fixed rect the editor cannot grow: its header prints the hovered point unrounded, and a
-    // node that widened with it moved the canvas under the mouse, which changed the point again.
+    // panel that widened with it moved the canvas under the mouse, which changed the point again.
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let hovered = response.contains_pointer();
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(curve_hover_id(), hovered));
     let builder = egui::UiBuilder::new()
         .max_rect(rect)
         .layout(egui::Layout::top_down(egui::Align::Min));
@@ -173,11 +181,54 @@ pub(super) fn curve_editor(ui: &mut egui::Ui, node: egui_snarl::NodeId, curve: &
     view.grid_step_x = grid_step(view.scale.x);
     view.grid_step_y = grid_step(view.scale.y);
     view.ui(&mut inner, &mut curve.0, None);
-    response.on_hover_text(
+    ui.weak(
         "Drag a knot to move it, drag the background to pan, scroll to zoom. Right-click the \
          background to add a knot, or a knot for its interpolation, tangents or to delete it. \
          Outside the knots the curve holds its end values.",
     );
+}
+
+/// Where the curve editor says the pointer is over it, so the column around it does not scroll on
+/// the wheel that zooms the curve.
+pub(super) fn curve_hover_id() -> egui::Id {
+    egui::Id::new("shader_graph_curve_hovered")
+}
+
+/// The curve drawn small and still, for the node on the canvas.
+pub(super) fn curve_thumbnail(ui: &mut egui::Ui, curve: &GraphCurve) {
+    const SAMPLES: usize = 48;
+    let size = egui::vec2(FIELD + 16.0, FIELD * 0.6);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 2.0, ui.visuals().extreme_bg_color);
+    if let Some(((x0, _), (x1, _))) = curve.ends() {
+        let span = (x1 - x0).max(1e-5);
+        let ys: Vec<f32> = (0..=SAMPLES)
+            .map(|i| curve.0.lookup(x0 + span * i as f32 / SAMPLES as f32))
+            .collect();
+        let (lo, hi) = ys
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), y| {
+                (lo.min(*y), hi.max(*y))
+            });
+        let inset = rect.shrink(4.0);
+        let height = (hi - lo).max(1e-5);
+        let points = ys
+            .iter()
+            .enumerate()
+            .map(|(i, y)| {
+                let t = i as f32 / SAMPLES as f32;
+                egui::pos2(
+                    inset.left() + t * inset.width(),
+                    inset.bottom() - (y - lo) / height * inset.height(),
+                )
+            })
+            .collect();
+        let stroke = egui::Stroke::new(1.5, ui.visuals().selection.stroke.color);
+        painter.add(egui::Shape::line(points, stroke));
+    }
+    response
+        .on_hover_text("Select the node to edit its curve in the inspector, right of the graph");
 }
 
 /// A round grid step giving about four lines across `span`: the editor's fixed 0.1 drew a hundred

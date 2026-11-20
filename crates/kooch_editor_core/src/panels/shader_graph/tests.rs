@@ -88,7 +88,8 @@ fn pin_names_sit_beside_their_pins() {
     let mut frame = None;
     // egui-snarl sizes a node from the frame before, so the answer is read once it has settled.
     for _ in 0..4 {
-        frame = Some(ctx.run_ui(
+        frame = Some(settled(
+            &ctx,
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 2000.0))),
                 ..Default::default()
@@ -182,7 +183,8 @@ fn a_resting_pointer_explains_pins() {
     graph.insert_node(Pos2::new(40.0, 40.0), Node::Panner.into());
     let ctx = egui::Context::default();
     let mut run = |time: f64, events: Vec<egui::Event>| {
-        ctx.run_ui(
+        settled(
+            &ctx,
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 1100.0))),
                 time: Some(time),
@@ -300,7 +302,8 @@ impl Harness {
         self.time += 0.1;
         let (graph, annotations, to_screen) =
             (&mut self.graph, &mut self.annotations, &mut self.to_screen);
-        let _ = self.ctx.run_ui(
+        let _ = settled(
+            &self.ctx,
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 700.0))),
                 time: Some(self.time),
@@ -542,4 +545,15 @@ fn a_note_edits_from_its_menu() {
     harness.run(vec![egui::Event::Text("!".to_owned())]);
     harness.run(vec![]);
     assert!(harness.annotations.notes[0].text.contains('!'));
+}
+
+/// A frame whose textures nobody uploads: epaint 0.36 panics on a delta dropped unapplied (#1901).
+fn settled(
+    ctx: &egui::Context,
+    input: egui::RawInput,
+    draw: impl FnMut(&mut egui::Ui),
+) -> egui::FullOutput {
+    let mut output = ctx.run_ui(input, draw);
+    output.textures_delta.clear();
+    output
 }

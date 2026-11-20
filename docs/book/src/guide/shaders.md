@@ -487,8 +487,9 @@ The menu groups the nodes the way the panels do:
 | **Noise** | Value Noise, Gradient Noise, Simplex Noise (fBm, turbulence, ridged), White Noise, Voronoi |
 | **Output** | Output, with a **kind**: `surface` takes base colour, normal, metallic, roughness, emissive; `transparent` the same plus alpha; `unlit` takes color and alpha |
 
-- **Curve** reshapes a value by a curve drawn in the node itself: drag a knot, right-click the
-  background to add one or a knot to change its interpolation or delete it. Outside its knots the
+- **Curve** reshapes a value by a curve. The node shows it small; select the node and edit it in the
+  **Node** inspector: drag a knot, right-click the background to add one or a knot to change its
+  interpolation or delete it. Outside its knots the
   curve holds the end values. **Smooth Min / Smooth Max** round the meeting of two values over `k`,
   and **Terrace** cuts a value into flat steps; [Planets](planets.md#shaping-the-relief) uses all
   three.
@@ -569,6 +570,12 @@ An unconnected output keeps a usable default: the geometric normal, roughness `0
 rest — so half a graph still renders. Unconnected *inputs* read as zero, and every node is written so
 that zero is never a NaN: a divide by zero is zero, `normalize` of nothing points up, and two equal
 `smoothstep` edges are pushed apart.
+
+### The node inspector
+
+Under the preview, the **Node** section shows the one selected node: what it does, each pin with its
+value and what it means, and the node's own fields. Edits there are the same edits as on the node,
+and one Ctrl+Z undoes them. Drag the column's left edge to widen it; a Curve gets the whole width.
 
 ### The preview
 
