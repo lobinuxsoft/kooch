@@ -375,8 +375,9 @@ fn draw_ranged(
                 slider = slider.step_by(range.step);
             }
             // Compared in f32: snapping 0.2f32 to a 0.01 step in f64 reads as a change on every
-            // draw, and selecting an entity dirtied its scene.
-            let moved = ui.add(slider).changed();
+            // draw, and selecting an entity dirtied its scene. And only when touched: egui snaps an
+            // off-step value (0.51 on a 0.05 step) just by drawing it.
+            let moved = touched(&ui.add(slider));
             let changed = moved && val as f32 != *v;
             Some(changed.then(|| ReflectValue::F32(val as f32)))
         }
@@ -386,11 +387,21 @@ fn draw_ranged(
             if range.step > 0.0 {
                 slider = slider.step_by(range.step);
             }
-            let moved = ui.add(slider).changed();
+            let moved = touched(&ui.add(slider));
             let snapped = val.round().max(0.0) as u32;
             let changed = moved && snapped != *v;
             Some(changed.then_some(ReflectValue::U32(snapped)))
         }
         _ => None,
     }
+}
+
+/// A change the author made: egui also reports one when drawing snaps the value to the step.
+fn touched(response: &egui::Response) -> bool {
+    response.changed()
+        && (response.dragged()
+            || response.drag_stopped()
+            || response.clicked()
+            || response.has_focus()
+            || response.lost_focus())
 }
