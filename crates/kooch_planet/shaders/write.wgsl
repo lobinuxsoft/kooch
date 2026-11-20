@@ -37,6 +37,9 @@ var<workgroup> plans: array<Plan, REGIONS>;
 var<workgroup> starts: array<vec3<u32>, REGIONS>;
 var<workgroup> fits: u32;
 var<workgroup> job: Job;
+// Per region, the set bits of its pack's mask before each word: a corner's rank in one popcount
+// instead of a walk over 23 words, which cost ~0.75 ms a batch (#1938).
+var<workgroup> before: array<array<u32, PACK_WORDS>, INNER>;
 
 fn vertex_of(i: u32) -> u32 {
     let word = atomicLoad(&map[i >> 1u]);
@@ -129,7 +132,8 @@ fn emit_pack(origin: vec3<u32>, p: ptr<function, Pack>, at: vec3<u32>) {
     var hi = vec3<f32>(-3.4e38);
     var r = 0u;
     for (var w = 0u; w < PACK_WORDS; w++) {
-        var word = (*p).mask[w];
+        before[(*p).region][w] = r;
+        var word = pack_masks[(*p).region][w];
         while (word != 0u) {
             let bit = w * 32u + countTrailingZeros(word);
             word &= word - 1u;
@@ -139,8 +143,8 @@ fn emit_pack(origin: vec3<u32>, p: ptr<function, Pack>, at: vec3<u32>) {
         }
     }
     var t = Strip(job.first_byte + at.z, 0u, 0u, 0u);
-    for (var n = 0u; n < (*p).count; n++) {
-        let b = brick_base(origin, (*p).bricks[n]);
+    for (var m = (*p).first; m < (*p).next; m++) {
+        let b = brick_base(origin, m);
         var word = brick_edges(b);
         while (word != 0u) {
             let e = brick_edge(b, countTrailingZeros(word));
@@ -148,7 +152,9 @@ fn emit_pack(origin: vec3<u32>, p: ptr<function, Pack>, at: vec3<u32>) {
             let cells = quad(e.xyz, e.w);
             var q: array<u32, 4>;
             for (var k = 0u; k < 4u; k++) {
-                q[k] = pack_rank(p, pack_bit(cells[k], origin));
+                let bit = pack_bit(cells[k], origin);
+                let low = pack_masks[(*p).region][bit >> 5u] & ((1u << (bit & 31u)) - 1u);
+                q[k] = before[(*p).region][bit >> 5u] + countOneBits(low);
             }
             put_quad(&t, q, edge(e.xyz, e.w).y != 0u);
         }
@@ -263,7 +269,7 @@ fn write_main(
             emit(region(lid), start);
         } else {
             let origin = region(lid).base;
-            var p: Pack;
+            var p = Pack(lid, 0u, 0u, 0u, 0u);
             var at = start;
             while (next_meshlet(origin, &p)) {
                 emit_pack(origin, &p, at);

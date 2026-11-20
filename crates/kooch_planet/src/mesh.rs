@@ -187,6 +187,7 @@ impl MeshPass {
         atlas: &BlockAtlas,
         pool: &PoolBuffers,
         jobs: &[WriteJob],
+        timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) {
         if jobs.is_empty() {
             return;
@@ -222,7 +223,7 @@ impl MeshPass {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("kooch_planet::mesh::write"),
-                timestamp_writes: None,
+                timestamp_writes: timestamps,
             });
             pass.set_pipeline(&self.write);
             pass.set_bind_group(0, &group, &[]);

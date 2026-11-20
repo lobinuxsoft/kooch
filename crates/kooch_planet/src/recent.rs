@@ -9,6 +9,7 @@ pub const RECENT: usize = 32;
 pub struct BatchMean {
     pub generate_ms: f32,
     pub mesh_ms: f32,
+    pub write_ms: f32,
     pub blocks: f32,
     /// How many batches it spans, up to [`RECENT`].
     pub batches: u32,
@@ -34,6 +35,7 @@ impl Recent {
         BatchMean {
             generate_ms: sum(|t| t.generate_ms),
             mesh_ms: sum(|t| t.mesh_ms),
+            write_ms: sum(|t| t.write_ms),
             blocks: sum(|t| t.blocks as f32),
             batches: self.batches.len() as u32,
         }
