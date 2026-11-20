@@ -412,23 +412,28 @@ fn pack_bit(c: vec3<u32>, origin: vec3<u32>) -> u32 {
     return l.x + 9u * l.y + 81u * l.z;
 }
 
-// One meshlet of a region: its bricks and cells, and the brick to start the next from.
+// Each region's cells of the meshlet it is packing, 9³ bits. In workgroup memory: a thread's own
+// array indexed at run time spills to scratch, which set a ~0.6 ms floor a batch (#1938).
+var<workgroup> pack_masks: array<array<u32, PACK_WORDS>, INNER>;
+
+// One meshlet of a region: bricks `first..next` in Morton order, and its counts. An empty brick in
+// the range has no edges, so walking it costs a load.
 struct Pack {
+    region: u32,
+    first: u32,
     next: u32,
     quads: u32,
     cells: u32,
-    count: u32,
-    bricks: array<u32, 64>,
-    mask: array<u32, PACK_WORDS>,
 }
 
-// Packs the next meshlet of the region at `origin` into `p`; false once its bricks are spent.
+// Packs the next meshlet of region `(*p).region` at `origin`; false once its bricks are spent.
 fn next_meshlet(origin: vec3<u32>, p: ptr<function, Pack>) -> bool {
+    let q = (*p).region;
+    (*p).first = (*p).next;
     (*p).quads = 0u;
     (*p).cells = 0u;
-    (*p).count = 0u;
     for (var w = 0u; w < PACK_WORDS; w++) {
-        (*p).mask[w] = 0u;
+        pack_masks[q][w] = 0u;
     }
     while ((*p).next < 64u) {
         let b = brick_base(origin, (*p).next);
@@ -443,32 +448,30 @@ fn next_meshlet(origin: vec3<u32>, p: ptr<function, Pack>) -> bool {
                 continue;
             }
             let bit = pack_bit(b - vec3<u32>(1u) + vec3<u32>(k % 3u, (k / 3u) % 3u, k / 9u), origin);
-            fresh += 1u - (((*p).mask[bit >> 5u] >> (bit & 31u)) & 1u);
+            fresh += 1u - ((pack_masks[q][bit >> 5u] >> (bit & 31u)) & 1u);
         }
         let full = (*p).quads + found.x > MAX_QUADS || (*p).cells + fresh > MAX_VERTICES;
-        if ((*p).count > 0u && full) {
+        if ((*p).quads > 0u && full) {
             break;
         }
         for (var k = 0u; k < 27u; k++) {
             if (((found.y >> k) & 1u) != 0u) {
                 let bit = pack_bit(b - vec3<u32>(1u) + vec3<u32>(k % 3u, (k / 3u) % 3u, k / 9u), origin);
-                (*p).mask[bit >> 5u] |= 1u << (bit & 31u);
+                pack_masks[q][bit >> 5u] |= 1u << (bit & 31u);
             }
         }
         (*p).quads += found.x;
         (*p).cells += fresh;
-        (*p).bricks[(*p).count] = (*p).next;
-        (*p).count += 1u;
         (*p).next += 1u;
     }
-    return (*p).count > 0u;
+    return (*p).quads > 0u;
 }
 
 // The bit's position among the pack's set bits: the cell's index in its meshlet.
-fn pack_rank(p: ptr<function, Pack>, bit: u32) -> u32 {
-    var r = countOneBits((*p).mask[bit >> 5u] & ((1u << (bit & 31u)) - 1u));
+fn pack_rank(q: u32, bit: u32) -> u32 {
+    var r = countOneBits(pack_masks[q][bit >> 5u] & ((1u << (bit & 31u)) - 1u));
     for (var w = 0u; w < (bit >> 5u); w++) {
-        r += countOneBits((*p).mask[w]);
+        r += countOneBits(pack_masks[q][w]);
     }
     return r;
 }
@@ -546,7 +549,7 @@ struct Plan {
 fn plan(q: u32) -> Plan {
     var out = Plan(0u, 0u, 0u);
     if (q < INNER) {
-        var p: Pack;
+        var p = Pack(q, 0u, 0u, 0u, 0u);
         let origin = region(q).base;
         while (next_meshlet(origin, &p)) {
             out.meshlets += 1u;
