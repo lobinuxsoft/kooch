@@ -9,8 +9,10 @@ struct CountJob {
 }
 
 @group(0) @binding(1) var<storage, read> jobs: array<CountJob>;
-// Per block: vertices, meshlets, meshlet vertices, triangle bytes.
+// Per block: vertices, meshlets, meshlet vertices, triangle bytes, then each region's cuts.
 @group(0) @binding(2) var<storage, read_write> counts: array<u32>;
+
+const COUNT_WORDS: u32 = 20u;
 
 var<workgroup> totals: array<atomic<u32>, 4>;
 
@@ -31,19 +33,26 @@ fn count_main(
     workgroupBarrier();
     mark_edges(lid);
     workgroupBarrier();
+    mark_bricks(lid);
+    workgroupBarrier();
     for (var i = lid; i < CELL_COUNT; i += WORKGROUP) {
         if (has_vertex(cell_of(i))) {
             atomicAdd(&totals[0], 1u);
         }
     }
     if (lid < REGIONS) {
-        let p = plan(lid);
+        var cuts = vec2<u32>(0u);
+        let p = plan(lid, &cuts);
         atomicAdd(&totals[1], p.meshlets);
         atomicAdd(&totals[2], p.vertices);
         atomicAdd(&totals[3], p.bytes);
+        if (lid < INNER) {
+            counts[block * COUNT_WORDS + 4u + 2u * lid] = cuts.x;
+            counts[block * COUNT_WORDS + 5u + 2u * lid] = cuts.y;
+        }
     }
     workgroupBarrier();
     if (lid < 4u) {
-        counts[block * 4u + lid] = atomicLoad(&totals[lid]);
+        counts[block * COUNT_WORDS + lid] = atomicLoad(&totals[lid]);
     }
 }

@@ -10,9 +10,14 @@ use kooch_render::meshlet::{GpuMeshSizes, PoolBuffers};
 
 use super::atlas::BlockAtlas;
 use super::generate::{BARE_SPHERE, Backlog, GeneratePass, Job};
-use super::mesh::{COUNT_WORDS, CountJob, MeshPass, WriteJob, counts_bytes, sizes_of};
+use super::mesh::{
+    COUNT_WORDS, CountJob, Cuts, MeshPass, WRITE_SHARED_BYTES, WriteJob, counts_bytes, sizes_of,
+};
 use super::recent::{BatchMean, Recent};
 use super::seam::{Stale, near};
+use readback::Readback;
+
+mod readback;
 use super::select::{bounds, root_level, voxel_size};
 use super::{BlockKey, BlockPool, Leaves, Near, Planets, Residency};
 
@@ -48,6 +53,7 @@ pub struct CountedBlock {
     pub sizes: GpuMeshSizes,
     /// The neighbours it was counted with, which its write must use too.
     pub near: Near,
+    pub cuts: Cuts,
 }
 
 /// What the last batch cost the GPU, and the mean of the last [`RECENT`](crate::RECENT) batches: one batch
@@ -108,6 +114,13 @@ impl Terrain {
     /// An atlas of `capacity` blocks. Every planet starts as its bare sphere; see
     /// [`set_generator`](Self::set_generator).
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, capacity: u32) -> Result<Self, String> {
+        let shared = device.limits().max_compute_workgroup_storage_size;
+        if shared < WRITE_SHARED_BYTES {
+            return Err(format!(
+                "planet meshing needs {WRITE_SHARED_BYTES} bytes of workgroup memory, the device \
+                 gives {shared}"
+            ));
+        }
         let atlas = BlockAtlas::new(device, capacity);
         let bare = GeneratePass::new(device, BARE_SPHERE, &atlas, MESH_BATCH)?;
         let mesh = MeshPass::new(device, &atlas, MESH_BATCH);
@@ -507,8 +520,8 @@ impl Terrain {
             let Some(shape) = planets.shape.get(key.planet as usize) else {
                 continue;
             };
-            match read.counts(b) {
-                Some(counts) => {
+            match read.counts(b).zip(read.cuts(b)) {
+                Some((counts, cuts)) => {
                     self.meshed += 1;
                     out.push(CountedBlock {
                         slot,
@@ -518,6 +531,7 @@ impl Terrain {
                         revision,
                         sizes: sizes_of(counts),
                         near,
+                        cuts,
                     });
                 }
                 None => self.backlog.retry(slot),
@@ -542,45 +556,4 @@ fn is_ready(
 
 fn revision_of(revision: &[u32], planet: u32) -> u32 {
     revision.get(planet as usize).copied().unwrap_or(0)
-}
-
-struct Readback<'a> {
-    bytes: &'a [u8],
-    /// Where the timestamps start, after every block's counts.
-    stamps: u64,
-}
-
-impl Readback<'_> {
-    fn word(&self, at: u64) -> Option<u32> {
-        let at = usize::try_from(at).ok()?;
-        let raw = self.bytes.get(at..at + 4)?;
-        Some(u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]))
-    }
-
-    /// Block `b`'s counts: vertices, meshlets, meshlet vertices, triangle bytes.
-    fn counts(&self, b: usize) -> Option<[u32; 4]> {
-        let entry = b as u64 * COUNT_WORDS * 4;
-        Some([
-            self.word(entry)?,
-            self.word(entry + 4)?,
-            self.word(entry + 8)?,
-            self.word(entry + 12)?,
-        ])
-    }
-
-    fn times(&self, period_ns: f32, blocks: u32) -> GpuTimes {
-        let stamp = |k: u64| {
-            let lo = self.word(self.stamps + k * 8).unwrap_or(0);
-            let hi = self.word(self.stamps + k * 8 + 4).unwrap_or(0);
-            u64::from(lo) | (u64::from(hi) << 32)
-        };
-        let ms = |from: u64, to: u64| (to.saturating_sub(from)) as f32 * period_ns / 1e6;
-        GpuTimes {
-            generate_ms: ms(stamp(0), stamp(1)),
-            mesh_ms: ms(stamp(2), stamp(3)),
-            write_ms: ms(stamp(4), stamp(5)),
-            blocks,
-            mean: BatchMean::default(),
-        }
-    }
 }
