@@ -118,6 +118,13 @@ impl CameraLookahead {
 pub struct Leads(pub(crate) HashMap<Entity, Lead>);
 
 impl Leads {
+    /// Carries every lead's last target with the world on a rebase (#51).
+    pub(crate) fn shift(&mut self, by: Vec3) {
+        for lead in self.0.values_mut() {
+            lead.last += by;
+        }
+    }
+
     /// The lead a vcam is carrying, for anything that draws it.
     pub fn of(&self, vcam: Entity) -> Option<Lead> {
         self.0.get(&vcam).copied()

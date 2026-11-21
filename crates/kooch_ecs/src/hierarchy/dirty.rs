@@ -23,6 +23,8 @@ pub struct PropagationCache {
     /// The registry's last removal as of the last pass. A removal can be a rebuild (Stop's restore)
     /// that resets `GlobalTransform` on entities whose pose did not change, so it forces a full pass.
     removed: u64,
+    /// The origin and grid cells as of the last pass; see [`super::grid`].
+    pub(super) anchors: u64,
 }
 
 /// The roots to republish, or `None` when only a full pass is right: the first pass, a removal since

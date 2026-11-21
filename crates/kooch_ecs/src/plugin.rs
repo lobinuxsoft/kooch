@@ -42,6 +42,8 @@ fn register_builtin_components(resources: &mut kooch_core::resource::Resources) 
         registry.register_cpu_reflected::<crate::order::Order>();
         registry.register_cpu_reflected::<Parent>();
         registry.register_cpu_reflected::<crate::hierarchy::PositionOnly>();
+        registry.register_cpu_reflected::<crate::hierarchy::GridCell>();
+        registry.register_cpu_reflected::<crate::hierarchy::FloatingOrigin>();
         registry.register_cpu_reflected::<Children>();
         registry.register_cpu_reflected::<GlobalTransform>();
         registry.register_cpu_reflected::<PerspectiveCamera>();
@@ -102,6 +104,10 @@ impl Plugin for EcsPlugin {
         // Before anything reads a mask: a legacy field the author cannot see must not outrank the
         // one they can (#1320).
         app.add_system(Stage::First, crate::mesh_renderer::migrate_renderer_layers);
+        // 🔴 First of the frame, so everything after reads a recentred world; whatever caches a world
+        // position orders itself after this and reads `OriginShift` (#51).
+        app.insert_resource(crate::hierarchy::OriginShift::default());
+        app.add_system(Stage::First, crate::hierarchy::grid::rebase_origin);
         // 🔴 Propagation runs TWICE, and both passes are load-bearing (#1316). This one resolves
         // the world the solver is about to read; the `PostUpdate` one below publishes what the
         // solver just wrote, so the frame draws the step it simulated instead of the previous one.

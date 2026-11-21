@@ -81,6 +81,10 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// move. For kinematic bodies this is the standard way to drive them.
     fn set_transform(&mut self, handle: BodyHandle, position: Vec3, rotation: Quat);
 
+    /// Moves every body by `by` and keeps its velocity: the floating origin recentring the world
+    /// (#51). A kinematic body must not read this as motion.
+    fn shift_origin(&mut self, by: Vec3);
+
     /// What the body actually weighs in kg, `None` if stale — the descriptor is the request, this
     /// is what was built (#618).
     fn mass(&self, handle: BodyHandle) -> Option<f32>;

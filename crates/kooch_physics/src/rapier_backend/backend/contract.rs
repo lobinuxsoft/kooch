@@ -193,6 +193,23 @@ impl PhysicsBackend for RapierBackend {
         self.publish_body_aabbs(rb_handle);
     }
 
+    fn shift_origin(&mut self, by: Vec3) {
+        let moved: Vec<RigidBodyHandle> = self.bodies.iter().map(|(handle, _)| handle).collect();
+        for handle in moved {
+            let Some(body) = self.bodies.get_mut(handle) else {
+                continue;
+            };
+            let mut pose = *body.position();
+            pose.translation += by;
+            body.set_position(pose, false);
+            // Pinned as well, or the step derives the shift as a velocity.
+            if body.is_kinematic() {
+                body.set_next_kinematic_position(pose);
+            }
+            self.publish_body_aabbs(handle);
+        }
+    }
+
     fn mass(&self, handle: BodyHandle) -> Option<f32> {
         let rb_handle = *self.handles.get(handle)?;
         Some(self.bodies.get(rb_handle)?.mass())

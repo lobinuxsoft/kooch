@@ -104,6 +104,13 @@ struct Arm {
 }
 
 impl Arms {
+    /// Carries every arm's unobstructed position with the world on a rebase (#51).
+    pub(crate) fn shift(&mut self, by: Vec3) {
+        for arm in self.0.values_mut() {
+            arm.free += by;
+        }
+    }
+
     /// Where the rig's damping continues from for `vcam`: the unobstructed position when a wall has
     /// been deciding, or `None` for a vcam no collision has touched.
     pub(crate) fn free_of(&self, vcam: Entity) -> Option<Vec3> {

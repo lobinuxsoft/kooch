@@ -67,6 +67,14 @@ impl StepPoses {
         self.poses.retain(|entity, _| alive.contains(entity));
     }
 
+    /// Carries both steps with the world when the origin moves (#51).
+    pub fn shift(&mut self, by: Vec3) {
+        for step in self.poses.values_mut() {
+            step.from.0 += by;
+            step.to.0 += by;
+        }
+    }
+
     /// Where `entity` is drawn at `alpha` through the step.
     fn at(&self, entity: Entity, alpha: f32) -> Option<(Vec3, Quat)> {
         let step = self.poses.get(&entity)?;
@@ -130,6 +138,19 @@ pub fn interpolate_bodies(resources: &mut Resources) {
     // Only these subtrees. A full pass rebuilds two maps over every entity in the scene to
     // republish the handful that moved.
     kooch_ecs::hierarchy::propagate_subtrees(resources, &moved);
+}
+
+/// Moves the solver and the drawn poses with the world on a rebase (#51).
+pub fn follow_origin(resources: &mut Resources) {
+    let Some(by) = kooch_ecs::hierarchy::OriginShift::of(resources) else {
+        return;
+    };
+    if let Some(world) = resources.get_mut::<super::PhysicsWorld>() {
+        world.shift(by);
+    }
+    if let Some(poses) = resources.get_mut::<StepPoses>() {
+        poses.shift(by);
+    }
 }
 
 #[cfg(test)]

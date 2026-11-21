@@ -318,6 +318,13 @@ pub struct Tracked {
 }
 
 impl Tracked {
+    /// Carries every tracked point with the world on a rebase (#51).
+    pub(crate) fn shift(&mut self, by: Vec3) {
+        for framed in self.points.values_mut() {
+            framed.last += by;
+        }
+    }
+
     /// This vcam's framing, or `None` on its first framed step.
     pub fn of(&self, entity: Entity) -> Option<Framed> {
         self.points.get(&entity).copied()

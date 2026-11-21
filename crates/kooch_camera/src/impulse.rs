@@ -80,6 +80,13 @@ struct Live {
 pub struct Impulses(Vec<Live>);
 
 impl Impulses {
+    /// Carries every impulse's source with the world on a rebase (#51).
+    pub(crate) fn shift(&mut self, by: Vec3) {
+        for live in &mut self.0 {
+            live.at += by;
+        }
+    }
+
     /// Takes one impulse off the bus.
     pub fn hear(&mut self, impulse: Impulse) {
         if !(impulse.duration > 0.0) {
