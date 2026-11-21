@@ -126,6 +126,11 @@ impl Plugin for CameraPlugin {
         app.insert_resource(CameraRig::standard());
         // Before anything reads a duration, and before an author can edit a field a switch overrode.
         app.add_system(Stage::First, crate::framing::migrate_soft_time);
+        app.add_ordered(
+            Stage::First,
+            Order::after("rebase_origin"),
+            origin::follow_origin,
+        );
         app.add_system(Stage::First, crate::virtual_camera::migrate_bodies);
         app.add_system(Stage::First, crate::virtual_camera::report_moved_blends);
         app.add_system(Stage::First, crate::rig::report_orphans);
@@ -424,6 +429,8 @@ fn camera_pose(resources: &Resources, camera: Entity) -> Option<(Vec3, glam::Qua
     let transform = registry.get_cpu::<Transform>()?.get(camera)?;
     Some((transform.position, transform.rotation))
 }
+
+mod origin;
 
 #[cfg(test)]
 mod aim_tests;

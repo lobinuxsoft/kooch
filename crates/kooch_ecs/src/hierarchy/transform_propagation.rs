@@ -9,6 +9,7 @@ use crate::entity::Entity;
 use super::children::Children;
 use super::dirty::{PropagationCache, moved_roots};
 use super::global_transform::GlobalTransform;
+use super::grid::{GridCell, root_matrix};
 use super::parent::Parent;
 use super::position_only::{PositionOnly, parent_frame};
 
@@ -18,7 +19,12 @@ pub fn transform_propagation_system(resources: &mut kooch_core::resource::Resour
     let mut cache = resources.remove::<PropagationCache>().unwrap_or_default();
     let roots = resources
         .get::<crate::component::ComponentRegistry>()
-        .and_then(|registry| moved_roots(registry, &mut cache));
+        .and_then(|registry| {
+            // A rebase or a re-anchored root moves what no pose diff sees.
+            let anchors = super::grid::anchors(registry);
+            let held = std::mem::replace(&mut cache.anchors, anchors) == anchors;
+            moved_roots(registry, &mut cache).filter(|_| held)
+        });
     resources.insert(cache);
     match roots {
         Some(roots) => propagate_subtrees(resources, &roots),
@@ -77,10 +83,14 @@ fn full_pass(resources: &mut kooch_core::resource::Resources) {
     // BFS propagation.
     let mut queue: std::collections::VecDeque<(Entity, Mat4)> = std::collections::VecDeque::new();
 
-    // Seed roots.
-    for &root in &roots {
-        let matrix = transform_map[&root].to_matrix();
-        queue.push_back((root, matrix));
+    // Seed roots, each carried from its cell to the origin's.
+    {
+        let origin = super::grid::origin_cell(&registry);
+        let cells = registry.get_cpu::<GridCell>();
+        for &root in &roots {
+            let cell = cells.as_ref().and_then(|c| c.get(root)).map(|c| c.cell());
+            queue.push_back((root, root_matrix(&transform_map[&root], cell, origin)));
+        }
     }
 
     // Get Children storage for traversal (read-only snapshot of entity lists).
@@ -171,6 +181,8 @@ pub fn propagate_subtrees(resources: &mut kooch_core::resource::Resources, roots
         };
         let parents = registry.get_cpu::<Parent>();
         let children = registry.get_cpu::<Children>();
+        let cells = registry.get_cpu::<GridCell>();
+        let origin = super::grid::origin_cell(&registry);
         let position_only = registry.get_cpu::<PositionOnly>();
         let rides = |entity: Entity| {
             position_only
@@ -188,14 +200,25 @@ pub fn propagate_subtrees(resources: &mut kooch_core::resource::Resources, roots
             };
             // The parent's published global, not a recomputed one: it did not move this step, and
             // recomputing it is the full pass this exists to avoid.
-            let above = parents
+            let parent = parents
+                .as_ref()
                 .and_then(|storage| storage.get(root))
                 .map(|parent| parent.entity)
-                .filter(|parent| parent.is_valid() && *parent != root)
-                .and_then(|parent| globals.get(parent))
-                .map(|global| parent_frame(global.matrix, rides(root)))
-                .unwrap_or(Mat4::IDENTITY);
-            queue.push_back((root, above * local.to_matrix()));
+                .filter(|parent| parent.is_valid() && *parent != root);
+            let matrix = match parent {
+                Some(parent) => {
+                    let above = globals
+                        .get(parent)
+                        .map(|global| parent_frame(global.matrix, rides(root)))
+                        .unwrap_or(Mat4::IDENTITY);
+                    above * local.to_matrix()
+                }
+                None => {
+                    let cell = cells.as_ref().and_then(|c| c.get(root)).map(|c| c.cell());
+                    root_matrix(local, cell, origin)
+                }
+            };
+            queue.push_back((root, matrix));
         }
 
         // 🔴 Bounded by the subtree, not by the scene. A cycle in the hierarchy would still spin

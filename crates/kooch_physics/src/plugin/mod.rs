@@ -144,6 +144,11 @@ impl Plugin for PhysicsPlugin {
         app.add_system(Stage::Physics, run_if_playing(physics_step_system));
         app.add_system(Stage::PostPhysics, run_if_playing(physics_writeback_system));
         app.insert_resource(interpolation::StepPoses::default());
+        app.add_ordered(
+            Stage::First,
+            Order::after("rebase_origin"),
+            interpolation::follow_origin,
+        );
         // 🔴 Once per frame at the head of `PostUpdate`: after the step wrote its poses, before
         // transform propagation publishes what the renderer reads, and **before the camera rig
         // looks at its target** — a camera following an un-interpolated target is the stutter this

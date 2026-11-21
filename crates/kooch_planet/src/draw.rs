@@ -353,10 +353,12 @@ fn put(
     Some(entity)
 }
 
-/// A block's transform: its corner carried by the planet's.
+/// A block's transform: its corner carried by the planet's. In f64 until the sum is near the origin:
+/// the corner is a planet radius out, where f32 steps half a metre (#51).
 fn place(world: Mat4, origin: DVec3) -> Transform {
     let (scale, rotation, _) = world.to_scale_rotation_translation();
-    Transform::new(world.transform_point3(origin.as_vec3()), rotation, scale)
+    let corner = world.as_dmat4().transform_point3(origin).as_vec3();
+    Transform::new(corner, rotation, scale)
 }
 
 const PREFIX: &[u8; 8] = b"kooch:pl";

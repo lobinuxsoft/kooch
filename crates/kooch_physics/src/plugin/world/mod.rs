@@ -393,6 +393,15 @@ impl PhysicsWorld {
         backend.set_angular_velocity(handle, Vec3::ZERO);
     }
 
+    /// Recentres the solver with the world when the origin moves (#51), authored poses included so
+    /// the shift is not read as an author moving every body.
+    pub fn shift(&mut self, by: Vec3) {
+        self.backend.shift_origin(by);
+        for slot in &mut self.slots {
+            slot.authored.0 += by;
+        }
+    }
+
     /// Spin in rad/s, the twin of [`set_linear_velocity`](Self::set_linear_velocity), with the same
     /// warning.
     pub fn set_angular_velocity(&mut self, body: SolverBody, velocity: Vec3) {
