@@ -9,9 +9,9 @@ use std::collections::VecDeque;
 
 use bytemuck::{Pod, Zeroable};
 
-use super::TILE_SAMPLES;
 use super::atlas::BlockAtlas;
 use super::select::{bounds, voxel_size};
+use super::{BLOCK_SAMPLES, TILE_SAMPLES};
 use super::{BlockKey, BlockPool, Planets, Residency, Shape};
 use kooch_world::voxel::POOL_TEXTURE_FORMAT;
 
@@ -71,6 +71,10 @@ pub struct Job {
     pub excess: f32,
     pub slot: u32,
     pub planet: u32,
+    /// The tile's first sample on the planet's grid, in voxels of its level: neighbours derive a
+    /// shared sample's position from the same integers, so they agree on it bit for bit (#1933).
+    pub index: [i32; 3],
+    pub _pad: u32,
 }
 
 impl Job {
@@ -86,6 +90,8 @@ impl Job {
             excess: (origin.length_squared() - shape.radius * shape.radius) as f32,
             slot,
             planet: key.planet,
+            index: (key.cell * BLOCK_SAMPLES as i32 - 1).to_array(),
+            _pad: 0,
         }
     }
 }

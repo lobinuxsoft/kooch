@@ -22,6 +22,8 @@ struct Job {
     excess: f32,
     slot: u32,
     planet: u32,
+    // The tile's first sample on the planet's grid, in voxels of this level.
+    index: vec3<i32>,
 }
 
 @group(0) @binding(0) var<storage, read> jobs: array<Job>;
@@ -50,7 +52,9 @@ fn generate_main(
         }
         let v = vec3<u32>(i % TILE_DIM, (i / TILE_DIM) % TILE_DIM, i / (TILE_DIM * TILE_DIM));
         let local = vec3<f32>(v) * job.voxel;
-        let position = job.origin + local;
+        // From the grid index, not `origin + local`: a neighbour reaches the same sample through
+        // the same integers, so both get the same f32 and agree on its sign (#1933).
+        let position = vec3<f32>(job.index + vec3<i32>(v)) * job.voxel;
         let distance = length(position);
         // |o + l| − R = (|o|² − R² + 2o·l + l²) / (|o + l| + R): no f32 radius is subtracted.
         let altitude = (job.excess + 2.0 * dot(job.origin, local) + dot(local, local))
