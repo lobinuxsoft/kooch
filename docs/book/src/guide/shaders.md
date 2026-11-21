@@ -536,6 +536,10 @@ The menu groups the nodes the way the panels do:
   - Outputs: **value** in 0..1, and **color**, three unrelated samples for tinting.
 
   Distortion, phase and color each cost extra samples, paid only while they are wired.
+
+  Noise is the same on every GPU and on the CPU: the random value of each cell comes from integer
+  arithmetic, not from `sin`, whose precision GPUs leave open, so the CPU rebuilds exactly the ground
+  that is drawn.
 - **White Noise** is one random value per cell.
 - **Voronoi** has a **metric** dropdown (euclidean round cells, manhattan diamonds, chebyshev
   squares) and the inputs **randomness** (0 a regular grid, 1 fully random), **phase** (wire **Time**
