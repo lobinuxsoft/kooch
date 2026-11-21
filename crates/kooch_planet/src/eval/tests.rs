@@ -1,15 +1,17 @@
-use glam::DVec3;
+use glam::{DVec3, Vec3};
 
 use super::{Generator, may_cross};
 use crate::generate::{GeneratePass, Job};
 use crate::select::{bounds, voxel_size};
 use crate::test_device::{read_tile, try_acquire};
-use crate::{BARE_SPHERE, BlockAtlas, BlockKey, Shape};
+use crate::{BARE_SPHERE, BlockAtlas, BlockKey, Shape, TILE_SAMPLES};
 
-/// The shader graph's hash on `sin`, whose GPU precision WGSL leaves open (#1930), summed in a loop.
-const NOISY: &str = r#"
+/// The shader graph's own 3D hash, so the parity below holds the hash every noise node uses (#1930).
+const NOISY: &str = concat!(
+    include_str!("../../../kooch_editor_core/src/shader_graph/codegen/helpers/hash3.wgsl"),
+    r#"
 fn hash3(p: vec3<f32>) -> f32 {
-    return fract(sin(dot(p, vec3<f32>(127.1, 311.7, 74.7))) * 43758.5453);
+    return graph_hash3(p);
 }
 fn noise(p: vec3<f32>) -> f32 {
     let i = floor(p);
@@ -32,7 +34,8 @@ fn planet(input: PlanetInput) -> f32 {
     }
     return input.altitude - 6.0 * h;
 }
-"#;
+"#
+);
 
 fn small() -> Shape {
     Shape {
@@ -48,6 +51,39 @@ fn tile_range(generator: &Generator, shape: &Shape, key: BlockKey) -> Option<(f6
     let (min, max) = bounds(shape, key);
     let pad = DVec3::splat(voxel_size(shape, key.level));
     generator.range(shape, min - pad, max + pad, key.planet)
+}
+
+/// Blocks below, across and above the noisy ground, generated on the GPU into an atlas.
+fn generate(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    shape: &Shape,
+) -> (BlockAtlas, Vec<BlockKey>, Vec<Job>) {
+    let atlas = BlockAtlas::new(device, 64);
+    let pass = GeneratePass::new(device, NOISY, &atlas, 16).unwrap();
+    let directions = [
+        DVec3::new(1.0, 0.3, -0.2),
+        DVec3::new(-0.4, 1.0, 0.7),
+        DVec3::new(0.2, -0.6, -1.0),
+        DVec3::new(-1.0, -1.0, 1.0),
+    ];
+    let mut keys = Vec::new();
+    for direction in directions {
+        for height in [-2.0, 3.0, 8.0, 14.0] {
+            keys.push(key_at(
+                shape,
+                direction.normalize() * (shape.radius + height),
+            ));
+        }
+    }
+    let jobs: Vec<Job> = (0u32..)
+        .zip(&keys)
+        .map(|(slot, &k)| Job::new(k, slot, shape))
+        .collect();
+    let mut encoder = device.create_command_encoder(&Default::default());
+    pass.record(device, queue, &mut encoder, &atlas, &jobs, None);
+    queue.submit([encoder.finish()]);
+    (atlas, keys, jobs)
 }
 
 fn key_at(shape: &Shape, point: DVec3) -> BlockKey {
@@ -84,30 +120,7 @@ fn gpu_samples_stay_in_range() {
     };
     let shape = small();
     let generator = Generator::parse(NOISY).unwrap();
-    let atlas = BlockAtlas::new(&device, 64);
-    let pass = GeneratePass::new(&device, NOISY, &atlas, 16).unwrap();
-    let directions = [
-        DVec3::new(1.0, 0.3, -0.2),
-        DVec3::new(-0.4, 1.0, 0.7),
-        DVec3::new(0.2, -0.6, -1.0),
-        DVec3::new(-1.0, -1.0, 1.0),
-    ];
-    let mut keys = Vec::new();
-    for direction in directions {
-        for height in [-2.0, 3.0, 8.0, 14.0] {
-            keys.push(key_at(
-                &shape,
-                direction.normalize() * (shape.radius + height),
-            ));
-        }
-    }
-    let jobs: Vec<Job> = (0u32..)
-        .zip(&keys)
-        .map(|(slot, &k)| Job::new(k, slot, &shape))
-        .collect();
-    let mut encoder = device.create_command_encoder(&Default::default());
-    pass.record(&device, &queue, &mut encoder, &atlas, &jobs, None);
-    queue.submit([encoder.finish()]);
+    let (atlas, keys, _) = generate(&device, &queue, &shape);
 
     let mut bounded = 0;
     for (slot, key) in (0u32..).zip(&keys) {
@@ -125,4 +138,40 @@ fn gpu_samples_stay_in_range() {
         }
     }
     assert_eq!(bounded, keys.len(), "the noise was not bounded");
+}
+
+/// The CPU twin samples a noisy generator where the GPU does and lands on the same side of the
+/// surface: collision meshes the ground from it, so a flip is a hill the player walks on unseen.
+#[test]
+fn cpu_twin_matches_gpu() {
+    let Some((device, queue)) = try_acquire() else {
+        return;
+    };
+    let shape = small();
+    let generator = Generator::parse(NOISY).unwrap();
+    let (atlas, _, jobs) = generate(&device, &queue, &shape);
+    let dim = TILE_SAMPLES as usize;
+    let (mut flipped, mut total) = (0, 0);
+    for job in &jobs {
+        for (i, got) in read_tile(&device, &queue, &atlas, job.slot)
+            .into_iter()
+            .enumerate()
+        {
+            let cell = Vec3::new(
+                (i % dim) as f32,
+                (i / dim % dim) as f32,
+                (i / (dim * dim)) as f32,
+            );
+            let point = (Vec3::from(job.origin) + cell * job.voxel).as_dvec3();
+            let cpu = generator.sample(&shape, point, 0).expect("a point sample");
+            let cpu = (cpu / job.voxel).clamp(-64.0, 64.0);
+            total += 1;
+            // f16 storage and the GPU's f32 altitude move a sample by a hair: only one clear of the
+            // surface counts.
+            if cpu.abs() > 0.5 && (cpu > 0.0) != (got > 0.0) {
+                flipped += 1;
+            }
+        }
+    }
+    assert_eq!(flipped, 0, "{flipped} of {total} samples flipped sign");
 }

@@ -107,6 +107,11 @@ fn integer(op: Bin, kind: Kind, x: Num, y: Num) -> Num {
         Bin::Divide if y.lo > 0.0 || y.hi < 0.0 => x.div(y).rising(f64::trunc),
         Bin::Modulo if x.lo >= 0.0 && y.lo > 0.0 => Num::new(0.0, x.hi.min(y.hi - 1.0)),
         Bin::And if kind == Kind::U32 => Num::new(0.0, x.hi.min(y.hi)),
+        // Shifting a u32 right is monotonic: the noise hashes keep their top bits this way (#1930).
+        Bin::ShiftRight if kind == Kind::U32 && y.is_point() => {
+            let s = y.lo as u32 & 31;
+            Num::new(((x.lo as u64) >> s) as f64, ((x.hi as u64) >> s) as f64)
+        }
         _ => return kind.full(),
     };
     let full = kind.full();
