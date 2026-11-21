@@ -251,7 +251,12 @@ pub fn sync_planets(resources: &mut Resources) {
             &mut meshed,
         );
     }
-    for block in meshed.iter().filter(|b| b.sizes.meshlets == 0) {
+    // Only the finest level's empty count is final: a coarser block samples every 2^level voxels
+    // and misses a ridge thinner than that, and calling it empty would prune its children (#1945).
+    for block in meshed
+        .iter()
+        .filter(|b| b.sizes.meshlets == 0 && b.key.level == 0)
+    {
         let known = Known {
             revision: block.revision,
             seen: state.frame,
