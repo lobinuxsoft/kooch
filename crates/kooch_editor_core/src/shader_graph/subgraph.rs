@@ -15,6 +15,10 @@ use super::{Graph, Node, extract, functions};
 pub(crate) const NO_SHAPE: &str =
     "A subgraph has no shape of its own: it shows in the shaders using it.";
 
+/// What the preview says for a planet's generator, which is no failure either.
+pub(crate) const NO_PLANET_PREVIEW: &str =
+    "A planet shape has no preview yet: it shows on the planet.";
+
 /// The Argument a Loop fills with the round.
 pub(crate) const INDEX: &str = "index";
 

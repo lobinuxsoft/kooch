@@ -4,15 +4,13 @@ use egui::emath::TSTransform;
 use egui_snarl::ui::SnarlViewer;
 use egui_snarl::{InPin, NodeId, OutPin, Snarl};
 
-use super::editors::{FIELD, choice, components, name_field, number_editor, pin_field};
+use super::editors::{FIELD, curve_thumbnail, pin_field};
+use super::fields::{node_fields, trim_pins};
 use super::framed;
 use super::pin::{NamedPin, Side, label, reserve};
 use crate::panels::inspector::AssetCatalogEntry;
 use crate::shader_graph::subgraph::{call_node, is_subgraph, relative};
-use crate::shader_graph::{
-    BLEND_MODES, Category, GraphNode, NOISE_BASES, NOISE_FRACTALS, Node, OUTPUT_KINDS,
-    TEXTURE_FALLBACKS, VORONOI_METRICS, Width, functions, palette,
-};
+use crate::shader_graph::{Category, GraphNode, Node, Width, functions, palette};
 
 /// How the nodes draw and connect.
 pub(super) struct Viewer<'a> {
@@ -157,114 +155,28 @@ impl SnarlViewer<GraphNode> for Viewer<'_> {
     fn show_footer(
         &mut self,
         id: NodeId,
-        inputs: &[InPin],
+        _inputs: &[InPin],
         _outputs: &[OutPin],
         ui: &mut egui::Ui,
         snarl: &mut Snarl<GraphNode>,
     ) {
-        // A value node carries its own value, so the node itself is where it is edited.
         let catalog = self.catalog;
         let Some(node) = snarl.get_node_mut(id) else {
             return;
         };
+        // The canvas only shows the curve: it is edited in the inspector, where it has room.
+        if let Node::Curve(curve) = &node.node {
+            curve_thumbnail(ui, curve);
+            return;
+        }
         // Capped: a top-down layout claims all the width it is offered, and inside a snarl node that
         // is everything up to the panel's edge.
         let column = egui::vec2(FIELD + 16.0, 0.0);
         let top_down = egui::Layout::top_down(egui::Align::Min);
         ui.allocate_ui_with_layout(column, top_down, |ui| {
-            match &mut node.node {
-                Node::Argument { name } | Node::Result { name } => name_field(ui, name),
-                Node::Float {
-                    name,
-                    default,
-                    range,
-                } => number_editor(ui, name, default, range, false),
-                Node::Int {
-                    name,
-                    default,
-                    range,
-                } => number_editor(ui, name, default, range, true),
-                Node::Vector {
-                    name,
-                    width,
-                    default,
-                    point,
-                } => {
-                    name_field(ui, name);
-                    components(ui, &mut default[..(*width).clamp(2, 4) as usize]);
-                    if *width == 2 {
-                        ui.checkbox(point, "Point")
-                            .on_hover_text("A position across the node, dragged in the UI Builder");
-                    }
-                }
-                Node::Color { name, default } => {
-                    name_field(ui, name);
-                    ui.color_edit_button_rgba_unmultiplied(default);
-                }
-                Node::Texture {
-                    name,
-                    fallback,
-                    preview,
-                } => {
-                    name_field(ui, name);
-                    choice(ui, "fallback", fallback, &TEXTURE_FALLBACKS);
-                    // Seen in the preview only; a material still starts from `fallback`.
-                    ui.weak("preview");
-                    let picked = ui
-                        .push_id("preview", |ui| {
-                            crate::panels::inspector::draw_asset_picker(
-                                ui,
-                                *preview,
-                                crate::panels::inspector::IMAGE_TYPE,
-                                catalog,
-                            )
-                        })
-                        .inner;
-                    if let Some(kooch_ecs::reflect::ReflectValue::AssetRef { guid, .. }) = picked {
-                        *preview = guid;
-                    }
-                }
-                Node::ConstFloat(value) => {
-                    ui.add(crate::numeric::drag(value).speed(0.01));
-                }
-                Node::ConstInt(value) => {
-                    ui.add(egui::DragValue::new(value).speed(1.0).fixed_decimals(0));
-                    *value = value.round();
-                }
-                Node::ConstVector { width, value } => {
-                    components(ui, &mut value[..(*width).clamp(2, 4) as usize]);
-                }
-                Node::Constant(value) => components(ui, value),
-                Node::ConstColor(value) => {
-                    ui.color_edit_button_rgba_unmultiplied(value);
-                }
-                Node::Swizzle { pattern } => {
-                    ui.add(
-                        egui::TextEdit::singleline(pattern)
-                            .desired_width(FIELD)
-                            .hint_text("xyzw"),
-                    );
-                }
-                Node::Blend { mode } => choice(ui, "blend", mode, &BLEND_MODES),
-                Node::FractalNoise { basis, fractal } => {
-                    choice(ui, "basis", basis, &NOISE_BASES);
-                    choice(ui, "fractal", fractal, &NOISE_FRACTALS);
-                }
-                Node::VoronoiNoise { metric } => choice(ui, "metric", metric, &VORONOI_METRICS),
-                Node::ShaderOutput { kind } => choice(ui, "kind", kind, &OUTPUT_KINDS),
-                _ => {}
-            }
+            node_fields(ui, &mut node.node, catalog);
         });
-        // A kind with fewer pins drops the wires and values of the ones it no longer has.
-        let count = snarl.get_node(id).map_or(0, |n| n.inputs().len());
-        if let Some(node) = snarl.get_node_mut(id) {
-            node.pins.retain(|&input, _| input < count);
-        }
-        for pin in inputs.iter().filter(|pin| pin.id.input >= count) {
-            for &remote in &pin.remotes {
-                snarl.disconnect(remote, pin.id);
-            }
-        }
+        trim_pins(snarl, id);
     }
 
     /// One wire per input: a second one replaces the first, which is what every graph tool does.
@@ -441,7 +353,7 @@ fn offered_functions(
 }
 
 /// Whether a node draws fields of its own beside its first output.
-fn has_fields(node: &Node) -> bool {
+pub(super) fn has_fields(node: &Node) -> bool {
     matches!(
         node,
         Node::Argument { .. }
@@ -460,6 +372,7 @@ fn has_fields(node: &Node) -> bool {
             | Node::ConstColor(_)
             | Node::Swizzle { .. }
             | Node::Blend { .. }
+            | Node::Curve(_)
             | Node::ShaderOutput { .. }
     )
 }

@@ -20,8 +20,8 @@ pub(crate) mod subgraph;
 pub(crate) use arrange::{NODE_SIZE, arrange};
 pub(crate) use codegen::{generate, generate_file};
 pub(crate) use nodes::{
-    BLEND_MODES, Category, NOISE_BASES, NOISE_COLOUR, NOISE_DISTORTION, NOISE_FRACTALS,
-    NOISE_PHASE, NOISE_TILING, Node, OUTPUT_KINDS, TEXTURE_FALLBACKS, VORONOI_BORDER,
+    BLEND_MODES, Category, GraphCurve, NOISE_BASES, NOISE_COLOUR, NOISE_DISTORTION, NOISE_FRACTALS,
+    NOISE_PHASE, NOISE_TILING, Node, OUTPUT_KINDS, Piece, TEXTURE_FALLBACKS, VORONOI_BORDER,
     VORONOI_METRICS, VORONOI_TILING, WHITE_TILING, Width, palette,
 };
 pub(crate) use pins::GraphNode;

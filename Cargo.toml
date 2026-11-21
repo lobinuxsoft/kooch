@@ -33,7 +33,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.98.211"
+version = "0.98.212"
 edition = "2024"
 license = "LicenseRef-Proprietary"
 repository = "https://github.com/lobinuxsoft/kooch"
@@ -143,6 +143,8 @@ egui_dock = { version = "0.21", features = ["serde"] }
 # Node graphs for egui (#1159). MIT/Apache-2.0.
 # In-tree fork: the published crate has no selection setter and no node sizes (#1211).
 egui-snarl = { path = "crates/egui_snarl", features = ["serde"] }
+# The curve editor and model; `ron` stays off, it wants 0.12 and the workspace is on 0.11.
+bevy_lookup_curve = { version = "0.13", default-features = false, features = ["serialize", "editor_egui"] }
 # Arithmetic in numeric fields: `9/2` instead of 4.5. MIT/Apache, and its
 # two deps (regex, smallvec) were already in the tree.
 exmex = "0.21"

@@ -128,6 +128,14 @@ impl Node {
             Self::Saturate => "Holds a value between 0 and 1.",
             Self::Remap => "Moves a value from one range to another.",
             Self::Mix => "Blends from a to b as t goes from 0 to 1.",
+            Self::SmoothMin => "The smaller of a and b, rounded where they meet: a smooth union.",
+            Self::SmoothMax => "The larger of a and b, rounded where they meet: a smooth cut.",
+            Self::Terrace => {
+                "Cuts a value into flat steps joined by ramps: mesas, stepped valleys."
+            }
+            Self::Curve(_) => {
+                "Reshapes a value by the curve drawn in the node: flat coasts, plateaus."
+            }
             Self::Dot => "How much a and b point the same way.",
             Self::Cross => "The direction square to both a and b.",
             Self::Normalize => "The same direction, length 1.",
@@ -202,6 +210,20 @@ impl Node {
                 (Two, "The range it is in: x low, y high."),
                 (Two, "The range it goes to: x low, y high."),
             ],
+            Self::SmoothMin | Self::SmoothMax => &[
+                (Any, "The first value."),
+                (Any, "The second value."),
+                (
+                    One,
+                    "How wide the rounding is, in the values' units. 0 is a plain min or max.",
+                ),
+            ],
+            Self::Terrace => &[
+                (Any, "The value to cut into steps."),
+                (One, "How high each step is."),
+                (One, "How much of each step is ramp: 0 cliffs, 1 all ramp."),
+            ],
+            Self::Curve(_) => &[(Any, "The value looked up on the curve, per component.")],
             Self::Mix => &[
                 (Any, "What t 0 gives."),
                 (Any, "What t 1 gives."),

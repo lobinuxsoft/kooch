@@ -7,12 +7,15 @@ use crate::panels::inspector::AssetCatalogEntry;
 
 mod canvas;
 mod editors;
+mod fields;
 mod keys;
+mod node_inspector;
 mod pin;
 mod preview;
 mod viewer;
 
 use crate::shader_graph::{Graph, arrange};
+use node_inspector::draw_node_inspector;
 use preview::draw_preview;
 use viewer::Viewer;
 
@@ -63,7 +66,8 @@ pub(crate) fn draw_shader_graph_content(
         ui.label("Create one in the Asset Browser: New Shader Graph, or open a .shgraph.");
         return actions;
     };
-    draw_preview(ui, view.preview);
+    let snarl_id = egui::Id::new("shader_graph");
+    side_column(ui, view.preview, graph, snarl_id, view.catalog);
 
     let mut refit = false;
     ui.horizontal(|ui| {
@@ -126,7 +130,6 @@ pub(crate) fn draw_shader_graph_content(
 
     let area = ui.available_rect_before_wrap();
     let backdrop = canvas::reserve(ui);
-    let snarl_id = egui::Id::new("shader_graph");
     // Transparent: the canvas paints the fill itself, underneath the groups.
     let style = egui_snarl::ui::SnarlStyle {
         bg_frame: Some(egui::Frame::canvas(ui.style()).fill(egui::Color32::TRANSPARENT)),
@@ -161,6 +164,43 @@ pub(crate) fn draw_shader_graph_content(
         look_at(ui, at);
     }
     actions
+}
+
+/// The column right of the canvas: the preview on top, the selected node under it. Resizable and
+/// scrolled, so a curve can be edited as wide as the user wants it.
+fn side_column(
+    ui: &mut egui::Ui,
+    preview: PreviewView<'_>,
+    graph: &mut Graph,
+    snarl_id: egui::Id,
+    catalog: &[AssetCatalogEntry],
+) {
+    // `Panel::right` rather than `SidePanel`: egui 0.35 folded the four side/top/bottom builders
+    // into one `Panel`, as `input_map` already found out.
+    egui::Panel::right("shader_graph_preview")
+        .resizable(true)
+        .default_size(280.0)
+        .size_range(180.0..=720.0)
+        .show(ui, |ui| {
+            let zooming = ui.ctx().data_mut(|d| {
+                d.remove_temp::<bool>(editors::curve_hover_id())
+                    .unwrap_or(false)
+            });
+            let wheel = egui::scroll_area::ScrollSource {
+                mouse_wheel: !zooming,
+                ..egui::scroll_area::ScrollSource::default()
+            };
+            egui::ScrollArea::vertical()
+                .scroll_source(wheel)
+                .show(ui, |ui| {
+                    egui::CollapsingHeader::new("Preview")
+                        .default_open(true)
+                        .show(ui, |ui| draw_preview(ui, preview));
+                    egui::CollapsingHeader::new("Node")
+                        .default_open(true)
+                        .show(ui, |ui| draw_node_inspector(ui, graph, snarl_id, catalog));
+                });
+        });
 }
 
 /// The view that shows all of `bounds` centred in `panel`: zoomed out far enough to hold every node,

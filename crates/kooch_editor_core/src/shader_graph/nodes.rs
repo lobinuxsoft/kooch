@@ -9,11 +9,13 @@ use serde::{Deserialize, Serialize};
 
 use super::FunctionPin;
 
+mod curve;
 mod docs;
 mod kinds;
 mod meta;
 mod params;
 
+pub(crate) use curve::{GraphCurve, Piece};
 pub(crate) use docs::Width;
 
 /// One node of a graph.
@@ -166,6 +168,14 @@ pub(crate) enum Node {
     Mix,
     /// `value * scale + offset`.
     MulAdd,
+    /// A `min` that meets in a fillet of radius `k`: two shapes join without a crease (#1943).
+    SmoothMin,
+    /// A `max` with the same fillet: what cuts one shape from another without a crease.
+    SmoothMax,
+    /// Flat steps `step` high, each rising over the last `softness` of its width.
+    Terrace,
+    /// Each component looked up on a curve drawn in the node.
+    Curve(GraphCurve),
 
     // -- Vector ---------------------------------------------------------
     /// `dot(a.xyz, b.xyz)`, in every component.
@@ -458,6 +468,10 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::Remap,
         Node::Mix,
         Node::MulAdd,
+        Node::SmoothMin,
+        Node::SmoothMax,
+        Node::Terrace,
+        Node::Curve(GraphCurve::default()),
         Node::Dot,
         Node::Cross,
         Node::Normalize,

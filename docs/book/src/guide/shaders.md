@@ -479,7 +479,7 @@ The menu groups the nodes the way the panels do:
 |---|---|
 | **Input** | UV, World Normal, World Position, View Direction, **Time**, Float, Int, Vector 2, Vector 3, Vector 4, Color, Texture |
 | **Constants** | Float, Int, Vector 2, Vector 3, Vector 4, Color |
-| **Math** | Add, Subtract, Multiply, Divide, One Minus, Abs, Floor, Fract, Sine, Cosine, Min, Max, Clamp, Step, Smoothstep, Power, Saturate, Remap, Mix |
+| **Math** | Add, Subtract, Multiply, Divide, One Minus, Abs, Floor, Fract, Sine, Cosine, Min, Max, Clamp, Step, Smoothstep, Power, Saturate, Remap, Mix, Smooth Min, Smooth Max, Terrace, Curve |
 | **Vector** | Dot, Cross, Normalize, Length, Distance, Reflect, Swizzle, Combine, Split |
 | **UV** | Panner, Rotator, Tiling, Polar Coordinates, Twirl, Radial Shear, Spherize |
 | **Effects** | Fresnel, Unpack Normal, Desaturate, Blend |
@@ -487,6 +487,12 @@ The menu groups the nodes the way the panels do:
 | **Noise** | Value Noise, Gradient Noise, Simplex Noise (fBm, turbulence, ridged), White Noise, Voronoi |
 | **Output** | Output, with a **kind**: `surface` takes base colour, normal, metallic, roughness, emissive; `transparent` the same plus alpha; `unlit` takes color and alpha |
 
+- **Curve** reshapes a value by a curve. The node shows it small; select the node and edit it in the
+  **Node** inspector: drag a knot, right-click the background to add one or a knot to change its
+  interpolation or delete it. Outside its knots the
+  curve holds the end values. **Smooth Min / Smooth Max** round the meeting of two values over `k`,
+  and **Terrace** cuts a value into flat steps; [Planets](planets.md#shaping-the-relief) uses all
+  three.
 - **Float, Int, Vector 2/3/4 and Color** are the material's parameters — each one member of
   `SurfaceParams`, with its name and starting value, edited in the node the way the material's
   Inspector will show it: a slider when a Float or Int has a range, a colour picker for a Color.
@@ -564,6 +570,12 @@ An unconnected output keeps a usable default: the geometric normal, roughness `0
 rest — so half a graph still renders. Unconnected *inputs* read as zero, and every node is written so
 that zero is never a NaN: a divide by zero is zero, `normalize` of nothing points up, and two equal
 `smoothstep` edges are pushed apart.
+
+### The node inspector
+
+Under the preview, the **Node** section shows the one selected node: what it does, each pin with its
+value and what it means, and the node's own fields. Edits there are the same edits as on the node,
+and one Ctrl+Z undoes them. Drag the column's left edge to widen it; a Curve gets the whole width.
 
 ### The preview
 
