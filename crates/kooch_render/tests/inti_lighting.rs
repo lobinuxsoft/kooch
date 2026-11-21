@@ -111,7 +111,7 @@ fn add_coloured(resources: &mut Resources, direction: Vec3, intensity: f32, colo
             intensity,
             cast_shadows: false,
             contact_shadows: false,
-                ..Default::default()
+            ..Default::default()
         })
         .insert(GlobalTransform {
             matrix: Mat4::from_quat(rotation),

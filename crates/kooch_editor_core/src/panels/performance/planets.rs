@@ -14,6 +14,18 @@ pub(super) fn planet_readout(ui: &mut egui::Ui, stats: PlanetStats) {
             "Voxel blocks every planet holds out of the one pool they share, and the atlas \
              memory they take. The pool never grows: a far planet gives up blocks to a near one.",
         );
+        let limited = match stats.budget < stats.capacity {
+            true => " · limited by mesh memory",
+            false => "",
+        };
+        metric_with_tooltip(
+            ui,
+            "Budget",
+            &format!("{}{limited}", stats.budget),
+            "Blocks the shared mesh pool can hold at what a block costs right now. Dense relief \
+             costs more per block, so near this limit the ground gets coarser instead of the \
+             render failing.",
+        );
         metric_with_tooltip(
             ui,
             "Worst error",

@@ -48,7 +48,7 @@ pub use dispatcher::{
 };
 pub use drawer::MeshletDrawer;
 pub use generated::GeneratedMeshes;
-pub use gpu_meshes::{GpuMeshes, PoolBuffers};
+pub use gpu_meshes::{GpuMeshes, PoolBuffers, PoolUsage};
 pub use gpu_meshlet::{
     GpuMeshletMesh, PoolBinding, PoolKeys, binding, meshlet_bind_group, meshlet_bind_group_layout,
     pool_meshlet_bind_group,

@@ -64,6 +64,51 @@ impl GlobalMeshPool {
         MeshHandle { mesh_id }
     }
 
+    /// Whether a mesh of `sizes` still fits every array under [`Self::ceiling`]. Counts only the
+    /// arrays' ends, not their holes: a refusal costs a coarser block, a yes past the ceiling costs
+    /// every mesh in the scene (#1968).
+    pub fn admits(&self, sizes: GpuMeshSizes) -> bool {
+        let room = self.room();
+        let used = self.ends();
+        sizes.vertices <= room.vertices.saturating_sub(used.vertices)
+            && sizes.meshlet_vertices <= room.meshlet_vertices.saturating_sub(used.meshlet_vertices)
+            && sizes.triangle_bytes <= room.triangle_bytes.saturating_sub(used.triangle_bytes)
+            && sizes.meshlets <= room.meshlets.saturating_sub(used.meshlets)
+    }
+
+    /// How long each array is, holes included: where the next append lands.
+    pub fn ends(&self) -> GpuMeshSizes {
+        GpuMeshSizes {
+            vertices: self.vertices.len() as u32,
+            meshlet_vertices: self.meshlet_vertices.len() as u32,
+            triangle_bytes: self.meshlet_triangles.len() as u32,
+            meshlets: self.meshlets.len() as u32,
+        }
+    }
+
+    /// What live meshes hold, holes left out: a producer's cost per mesh, not the pool's history.
+    pub fn live(&self) -> GpuMeshSizes {
+        let mut sum = GpuMeshSizes::default();
+        for slot in self.slots.iter().filter(|slot| slot.live) {
+            sum.vertices += slot.vertices.len;
+            sum.meshlet_vertices += slot.meshlet_vertices.len;
+            sum.triangle_bytes += slot.triangles.len;
+            sum.meshlets += slot.meshlets.len;
+        }
+        sum
+    }
+
+    /// How long each array may grow before its binding is refused.
+    pub fn room(&self) -> GpuMeshSizes {
+        let of = |stride: usize| (self.ceiling / stride as u64).min(u32::MAX as u64) as u32;
+        GpuMeshSizes {
+            vertices: of(std::mem::size_of::<MeshVertex>()),
+            meshlet_vertices: of(std::mem::size_of::<u32>()),
+            triangle_bytes: of(1),
+            meshlets: of(std::mem::size_of::<MeshletDescriptor>()),
+        }
+    }
+
     /// Whether the GPU writes this mesh's payload.
     pub fn gpu_owned(&self, mesh_id: u32) -> bool {
         self.slots

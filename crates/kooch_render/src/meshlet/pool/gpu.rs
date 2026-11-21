@@ -25,6 +25,7 @@ impl GlobalMeshPool {
             max_meshlets_per_mesh: 0,
             mover: None,
         };
+        self.ceiling = device.limits().max_storage_buffer_binding_size;
         self.mark_all();
         gpu.sync(device, queue, self);
         gpu
@@ -118,9 +119,16 @@ impl Gpu<'_> {
         // reallocates back and forth.
         let size = buffer.size();
         if size < needed || size > needed * GROWTH * 2 {
+            // 🔴 The slack stops at the binding limit: doubled, 70 MB of vertices asked for a
+            // 140 MB buffer no bind group accepts, and nothing drew (#1968).
+            let ceiling = self
+                .device
+                .limits()
+                .max_storage_buffer_binding_size
+                .max(needed);
             let grown = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
-                size: needed * GROWTH,
+                size: (needed * GROWTH).min(ceiling),
                 usage: USAGE,
                 mapped_at_creation: false,
             });

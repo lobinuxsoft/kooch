@@ -100,7 +100,7 @@ fn render(second_range: Option<f32>) -> Option<Vec<u8>> {
             radius: 0.0,
             cast_shadows: false,
             contact_shadows: false,
-                ..Default::default()
+            ..Default::default()
         })
         .insert(GlobalTransform {
             matrix: Mat4::from_translation(KEY_POSITION),

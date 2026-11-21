@@ -8,6 +8,7 @@
 //! many planets exist.
 
 mod atlas;
+mod budget;
 mod component;
 mod draw;
 mod eval;

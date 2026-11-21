@@ -106,6 +106,11 @@ impl MeshletPipeline {
     ) -> Option<MeshDescriptor> {
         if let Some(stale) = self.registry.get(&guid).copied() {
             self.pool.release(stale.mesh_id);
+            self.registry.remove(&guid);
+            self.owned.remove(&guid);
+        }
+        if !self.pool.admits(sizes) {
+            return None;
         }
         let handle = self.pool.reserve_gpu(sizes, bounds);
         self.registry.insert(guid, handle);

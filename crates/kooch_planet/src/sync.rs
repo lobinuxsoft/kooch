@@ -18,6 +18,7 @@ use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_ecs::perspective_camera::{PerspectiveCamera, ViewSize};
 use kooch_ecs::query::Query;
 use kooch_render::material::shader::{Shader, ShaderKind};
+use kooch_render::meshlet::GpuMeshes;
 
 use crate::component::Planet;
 use crate::draw::{Blocks, Frame};
@@ -55,6 +56,9 @@ struct Known {
 pub struct PlanetStats {
     pub resident: u32,
     pub capacity: u32,
+    /// Blocks the meshlet pool's bindings hold at the current cost per block; below `capacity`
+    /// when the pool's bytes are the limit (#1968).
+    pub budget: u32,
     /// The worst error the pool left, in pixels.
     pub worst_px: f32,
     pub waiting: u32,
@@ -189,6 +193,13 @@ pub fn sync_planets(resources: &mut Resources) {
     }
     placed.truncate(state.roster.len());
     let (viewers, view) = viewers(resources);
+    // The pool's bytes, not its block count, are what runs out first on dense relief (#1968).
+    let budget = resources
+        .get::<GpuMeshes>()
+        .and_then(GpuMeshes::usage)
+        .map_or(DEFAULT_CAPACITY, |usage| {
+            crate::budget::blocks_within(state.pool.resident(), usage, DEFAULT_CAPACITY)
+        });
     fill_planets(&mut state.planets, &placed, &found, &viewers);
     let worst = match viewers.is_empty() {
         true => {
@@ -200,7 +211,7 @@ pub fn sync_planets(resources: &mut Resources) {
             select(
                 &state.planets,
                 &view,
-                DEFAULT_CAPACITY,
+                budget,
                 |key, min, max| {
                     let revision = state.terrain.as_ref().map_or(0, |t| t.revision(key.planet));
                     let frame = state.frame;
@@ -286,6 +297,7 @@ pub fn sync_planets(resources: &mut Resources) {
     let stats = PlanetStats {
         resident: state.pool.resident(),
         capacity: state.pool.capacity(),
+        budget,
         worst_px: worst as f32,
         waiting: state.terrain.as_ref().map_or(0, |t| t.waiting() as u32),
         in_flight: state.terrain.as_ref().map_or(0, |t| t.in_flight() as u32),
