@@ -240,6 +240,7 @@ impl Plugin for EditorPlugin {
         app.add_system(Stage::Startup, editor_camera::spawn_editor_camera_system);
         // Before `Stage::Gpu`, where the planets pick their blocks for these cameras.
         app.add_system(Stage::PostUpdate, editor_camera::planet_viewers_system);
+        app.add_system(Stage::PostUpdate, editor_camera::origin_anchor_system);
 
         // editor render invocations and update FPS instant/avg. Runs in PreRender so the timestamp
         // it captures matches the frame the Render stage is about to start.

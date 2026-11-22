@@ -84,3 +84,52 @@ fn an_f32_position_still_loads() {
         .expect("an f32 position was refused");
     assert_eq!(transform.position, DVec3::new(1.5, -2.0, 3.25));
 }
+
+fn published(resources: &Resources, entity: Entity) -> IVec3 {
+    let registry = resources.get::<ComponentRegistry>().unwrap();
+    registry
+        .get_cpu::<FloatingOrigin>()
+        .unwrap()
+        .get(entity)
+        .unwrap()
+        .cell()
+}
+
+/// Play → Stop → Play: Stop's restore writes the authored cell back while the origin stays far.
+#[test]
+fn a_replay_republishes_the_cell() {
+    let mut resources = world();
+    let player = spawn(&mut resources, DVec3::new(0.0, 6_371_007.0, 0.0));
+    let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+    let origin = FloatingOrigin::default();
+    registry
+        .get_cpu_mut::<FloatingOrigin>()
+        .unwrap()
+        .insert(player, origin);
+    hierarchy_sync_system(&mut resources);
+    transform_propagation_system(&mut resources);
+    rebase_origin(&mut resources);
+    let far = IVec3::new(0, 3111, 0);
+
+    // Stop: the snapshot restores the authored cell.
+    let registry = resources.get_mut::<ComponentRegistry>().unwrap();
+    registry
+        .get_cpu_mut::<FloatingOrigin>()
+        .unwrap()
+        .insert(player, FloatingOrigin::default());
+    rebase_origin(&mut resources);
+    assert_eq!(resources.get::<WorldOrigin>().unwrap().cell, far);
+    assert_eq!(published(&resources, player), far);
+}
+
+/// With nothing to follow (game stopped, or a scene without a FloatingOrigin) the origin goes home.
+#[test]
+fn no_anchor_returns_home() {
+    let mut resources = world();
+    resources.insert(WorldOrigin {
+        cell: IVec3::new(0, 3111, 0),
+    });
+    resources.insert(Playing(false));
+    rebase_origin(&mut resources);
+    assert_eq!(resources.get::<WorldOrigin>().unwrap().cell, IVec3::ZERO);
+}

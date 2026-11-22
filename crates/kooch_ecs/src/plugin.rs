@@ -108,6 +108,18 @@ impl Plugin for EcsPlugin {
         // position orders itself after this and reads `OriginShift` (#51).
         app.insert_resource(crate::hierarchy::OriginShift::default());
         app.insert_resource(crate::hierarchy::WorldOrigin::default());
+        // The cell a playing game publishes; a watching editor draws with it (#1972).
+        app.add_system(
+            Stage::Startup,
+            |resources: &mut kooch_core::resource::Resources| {
+                if !resources.contains::<crate::StreamedComponents>() {
+                    resources.insert(crate::StreamedComponents::new());
+                }
+                if let Some(streamed) = resources.get_mut::<crate::StreamedComponents>() {
+                    streamed.add::<crate::hierarchy::FloatingOrigin>();
+                }
+            },
+        );
         app.insert_resource(crate::hierarchy::OriginAnchor::default());
         app.add_system(Stage::First, crate::hierarchy::grid::rebase_origin);
         // 🔴 Propagation runs TWICE, and both passes are load-bearing (#1316). This one resolves

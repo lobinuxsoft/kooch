@@ -154,22 +154,19 @@ pub fn rebase_origin(resources: &mut Resources) {
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return;
     };
-    let now = match Mirrored::is_mirrored(resources) {
-        true => first_origin(registry).map(|(_, origin)| origin.cell()),
-        false => anchor(resources, registry)
-            .and_then(|entity| straying(registry, entity))
-            .map(|cells| was.cell + cells),
+    let mirrored = Mirrored::is_mirrored(resources);
+    let now = match anchor(resources, registry, mirrored) {
+        Some(entity) => was.cell + straying(registry, entity).unwrap_or_default(),
+        None if mirrored => first_origin(registry).map_or(IVec3::ZERO, |(_, o)| o.cell()),
+        // Nothing to follow: a scene without a FloatingOrigin, or the game after Stop.
+        None => IVec3::ZERO,
     };
-    let Some(now) = now.filter(|now| *now != was.cell) else {
+    // Every frame, not only on a move: Stop's restore writes the authored cell back over it.
+    if !mirrored && Playing::is_playing(resources) {
+        publish(resources, now);
+    }
+    if now == was.cell {
         return;
-    };
-    let publish = !Mirrored::is_mirrored(resources) && Playing::is_playing(resources);
-    if publish
-        && let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(mut origins) = registry.get_cpu_mut::<FloatingOrigin>()
-        && let Some((_, mut origin)) = origins.iter_mut().next()
-    {
-        (origin.x, origin.y, origin.z) = (now.x, now.y, now.z);
     }
     resources.insert(WorldOrigin { cell: now });
     resources.insert(OriginShift {
@@ -178,11 +175,27 @@ pub fn rebase_origin(resources: &mut Resources) {
     super::transform_propagation_system(resources);
 }
 
-/// The entity the origin follows: the player while playing, the editor camera otherwise.
-fn anchor(resources: &Resources, registry: &ComponentRegistry) -> Option<Entity> {
-    match Playing::is_playing(resources) {
+/// The entity the origin follows: the player while playing, the editor camera otherwise. A mirror
+/// without an editor anchor (the source is playing) takes the cell its source publishes.
+fn anchor(resources: &Resources, registry: &ComponentRegistry, mirrored: bool) -> Option<Entity> {
+    match !mirrored && Playing::is_playing(resources) {
         true => first_origin(registry).map(|(entity, _)| entity),
         false => resources.get::<OriginAnchor>().and_then(|anchor| anchor.0),
+    }
+}
+
+/// Writes the origin's cell onto the `FloatingOrigin`, so a mirror of this world can follow it.
+fn publish(resources: &mut Resources, now: IVec3) {
+    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
+        return;
+    };
+    let Some(mut origins) = registry.get_cpu_mut::<FloatingOrigin>() else {
+        return;
+    };
+    if let Some((_, mut origin)) = origins.iter_mut().next()
+        && origin.cell() != now
+    {
+        (origin.x, origin.y, origin.z) = (now.x, now.y, now.z);
     }
 }
 
