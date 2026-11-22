@@ -122,6 +122,19 @@ impl Blocks {
         terrain: &mut Terrain,
         meshes: &mut GpuMeshes,
     ) {
+        // A refused ask would cross a binding: its block is counted again once the budget has
+        // made room, instead of waiting for a grant that never comes (#1968).
+        for mesh in meshes.take_refused() {
+            let Some(s) = index_in(mesh) else {
+                continue;
+            };
+            if let Some(Some(asked)) = self.asked.get(s).copied()
+                && asked.mesh == mesh
+            {
+                self.asked[s] = None;
+                terrain.remesh(asked.block.slot);
+            }
+        }
         let granted = meshes.take_granted();
         let buffers = meshes.buffers().cloned();
         let mut jobs = Vec::with_capacity(granted.len());

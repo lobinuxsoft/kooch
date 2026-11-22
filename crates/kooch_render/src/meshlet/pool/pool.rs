@@ -80,6 +80,8 @@ pub struct GlobalMeshPool {
     pub(super) moves: Vec<Move>,
     /// What each array owes the GPU since the last sync (#1558).
     pub(super) dirty: Dirty,
+    /// Bytes one array may hold: the device's storage binding limit, set on upload (#1968).
+    pub ceiling: u64,
 }
 
 impl Default for GlobalMeshPool {
@@ -92,6 +94,7 @@ impl Default for GlobalMeshPool {
             meshlet_triangles: Vec::new(),
             mesh_bounds: Vec::new(),
             group_capacity: 0,
+            ceiling: 128 << 20,
             slots: Vec::new(),
             free_vertices: Holes::aligned(1),
             free_meshlet_vertices: Holes::aligned(1),

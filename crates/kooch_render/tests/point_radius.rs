@@ -111,7 +111,7 @@ fn rig(radius: f32) -> Option<Rig> {
             radius,
             cast_shadows: false,
             contact_shadows: false,
-                ..Default::default()
+            ..Default::default()
         })
         .insert(GlobalTransform {
             matrix: Mat4::from_translation(LIGHT_POSITION),

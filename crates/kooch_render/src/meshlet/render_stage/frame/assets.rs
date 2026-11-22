@@ -54,8 +54,9 @@ impl MeshletRenderStage {
         }
         self.pipeline.defragment();
         for (guid, sizes, bounds) in reserved {
-            if let Some(descriptor) = self.pipeline.reserve_gpu(guid, sizes, bounds) {
-                meshes.grant(guid, descriptor);
+            match self.pipeline.reserve_gpu(guid, sizes, bounds) {
+                Some(descriptor) => meshes.grant(guid, descriptor),
+                None => meshes.refuse(guid),
             }
         }
         resources.insert(meshes);
@@ -82,6 +83,10 @@ impl MeshletRenderStage {
             meshes.publish(crate::meshlet::PoolBuffers::of(pool));
         }
         let pool = self.pipeline.pool();
+        meshes.publish_usage(crate::meshlet::PoolUsage {
+            used: pool.live(),
+            room: pool.room(),
+        });
         meshes.refresh(|guid| {
             let handle = self.pipeline.lookup(guid)?;
             pool.mesh_descriptors.get(handle.mesh_id as usize).copied()

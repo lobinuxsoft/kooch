@@ -35,7 +35,17 @@ pub struct GpuMeshes {
     reserve: Vec<(Guid, GpuMeshSizes, MeshBounds)>,
     release: Vec<Guid>,
     granted: Vec<(Guid, MeshDescriptor)>,
+    refused: Vec<Guid>,
     buffers: Option<PoolBuffers>,
+    usage: Option<PoolUsage>,
+}
+
+/// How full the pool's arrays are against what their bindings accept, so a producer can budget
+/// what it asks for (#1968).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PoolUsage {
+    pub used: GpuMeshSizes,
+    pub room: GpuMeshSizes,
 }
 
 impl GpuMeshes {
@@ -57,6 +67,24 @@ impl GpuMeshes {
     /// The ranges granted since the last call; each descriptor names where its arrays start.
     pub fn take_granted(&mut self) -> Vec<(Guid, MeshDescriptor)> {
         std::mem::take(&mut self.granted)
+    }
+
+    /// The asks the pool turned down since the last call: granting them would cross a binding.
+    pub fn take_refused(&mut self) -> Vec<Guid> {
+        std::mem::take(&mut self.refused)
+    }
+
+    /// The pool's fill as of the last sync; `None` before the first.
+    pub fn usage(&self) -> Option<PoolUsage> {
+        self.usage
+    }
+
+    pub(crate) fn refuse(&mut self, guid: Guid) {
+        self.refused.push(guid);
+    }
+
+    pub(crate) fn publish_usage(&mut self, usage: PoolUsage) {
+        self.usage = Some(usage);
     }
 
     /// The buffers to write the granted ranges into; `None` before the pool first syncs.

@@ -235,7 +235,7 @@ fn a_short_range_lamp_still_casts() {
             radius: 0.0,
             cast_shadows: true,
             contact_shadows: false,
-                ..Default::default()
+            ..Default::default()
         })
         .insert(GlobalTransform {
             matrix: Mat4::from_translation(light),
