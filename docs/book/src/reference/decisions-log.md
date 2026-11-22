@@ -63,6 +63,16 @@ Format:
 > boundaries, but precision stays bounded inside each scale. Locks in
 > design for camera-relative transforms (#51), sector boundaries (#52),
 > world streaming (#54), and navigation (#90).
+>
+> **2026-11 · Issue #1972** *(epic #1971)*
+>
+> **Decision:** One `Transform` type with an f64 position, not one type
+> per scale. `GlobalTransform` stays f32 but relative to a `WorldOrigin`
+> that moves by 2048 m cells after the play anchor or the editor camera.
+> GPU and Rapier see origin-relative f32: no double-float shader path.
+> **Why:** f64 alone holds a solar system to sub-millimetre; the cell
+> machinery is only needed for the narrowing, and keeping the GPU in f32
+> costs nothing on the handheld. Sector cells (`GridCell`) stay for #1977.
 
 ---
 

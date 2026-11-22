@@ -189,6 +189,7 @@ pub(crate) fn collect_sources(resources: &Resources) -> Field {
     let globals = registry.get_cpu::<GlobalTransform>();
     let transforms = registry.get_cpu::<Transform>();
     let priorities = registry.get_cpu::<GravityPriority>();
+    let origin = kooch_ecs::hierarchy::WorldOrigin::of(resources);
 
     // No `GlobalTransform` falls back to `Transform`, then the origin, so a freshly spawned planet
     // is not inert for a frame.
@@ -196,7 +197,11 @@ pub(crate) fn collect_sources(resources: &Resources) -> Field {
         globals
             .and_then(|storage| storage.get(entity))
             .map(|global| global.matrix.to_scale_rotation_translation().2)
-            .or_else(|| transforms.and_then(|s| s.get(entity)).map(|t| t.position))
+            .or_else(|| {
+                transforms
+                    .and_then(|s| s.get(entity))
+                    .map(|t| (t.position - origin).as_vec3())
+            })
             .unwrap_or(Vec3::ZERO)
     };
     let matrix_of = |entity: Entity| -> Mat4 {
@@ -206,7 +211,7 @@ pub(crate) fn collect_sources(resources: &Resources) -> Field {
             .or_else(|| {
                 transforms
                     .and_then(|s| s.get(entity))
-                    .map(|t| Mat4::from_scale_rotation_translation(t.scale, t.rotation, t.position))
+                    .map(|t| t.matrix_from(origin))
             })
             .unwrap_or(Mat4::IDENTITY)
     };

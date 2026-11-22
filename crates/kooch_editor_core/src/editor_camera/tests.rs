@@ -4,7 +4,7 @@ use super::*;
 fn initial_transform_places_camera_at_default_eye() {
     let controller = EditorCameraController::default();
     let t = initial_transform(&controller);
-    let delta = (t.position - DEFAULT_EYE).length();
+    let delta = (t.position - DEFAULT_EYE.as_dvec3()).length();
     assert!(
         delta < 1e-4,
         "expected position {DEFAULT_EYE:?}, got {:?}",
@@ -19,7 +19,7 @@ fn initial_transform_looks_at_focus_point() {
     // Camera-forward in glam right-handed view space is -Z, so the
     // world-space forward direction is `rotation * -Z`.
     let forward = (t.rotation * -Vec3::Z).normalize();
-    let expected = (controller.focus_point - t.position).normalize();
+    let expected = (controller.focus_point - t.position.as_vec3()).normalize();
     let dot = forward.dot(expected);
     assert!(
         dot > 0.999,

@@ -43,7 +43,7 @@ fn position(resources: &Resources, entity: Entity) -> Option<glam::Vec3> {
         .get::<ComponentRegistry>()?
         .get_cpu::<Transform>()?
         .get(entity)
-        .map(|t| t.position)
+        .map(|t| t.position.as_vec3())
 }
 
 /// The point of the whole type: handles *and* iteration order

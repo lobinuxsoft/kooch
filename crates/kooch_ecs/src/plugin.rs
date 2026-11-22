@@ -107,6 +107,8 @@ impl Plugin for EcsPlugin {
         // 🔴 First of the frame, so everything after reads a recentred world; whatever caches a world
         // position orders itself after this and reads `OriginShift` (#51).
         app.insert_resource(crate::hierarchy::OriginShift::default());
+        app.insert_resource(crate::hierarchy::WorldOrigin::default());
+        app.insert_resource(crate::hierarchy::OriginAnchor::default());
         app.add_system(Stage::First, crate::hierarchy::grid::rebase_origin);
         // 🔴 Propagation runs TWICE, and both passes are load-bearing (#1316). This one resolves
         // the world the solver is about to read; the `PostUpdate` one below publishes what the

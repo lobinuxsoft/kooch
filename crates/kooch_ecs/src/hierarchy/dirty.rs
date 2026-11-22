@@ -16,7 +16,7 @@ const MAX_DEPTH: u32 = 256;
 #[derive(Default)]
 pub struct PropagationCache {
     generation: Vec<u32>,
-    pose: Vec<[u32; 10]>,
+    pose: Vec<[u64; 10]>,
     parent: Vec<Entity>,
     /// Scratch: which indices changed this pass.
     moved: Vec<bool>,
@@ -128,9 +128,9 @@ pub fn moved_roots(
 }
 
 /// The pose bit for bit: `Transform` has no `PartialEq`.
-fn bits(t: &Transform) -> [u32; 10] {
+fn bits(t: &Transform) -> [u64; 10] {
     let [px, py, pz] = t.position.to_array();
-    let [rx, ry, rz, rw] = t.rotation.to_array();
-    let [sx, sy, sz] = t.scale.to_array();
-    [px, py, pz, rx, ry, rz, rw, sx, sy, sz].map(f32::to_bits)
+    let [rx, ry, rz, rw] = t.rotation.to_array().map(f64::from);
+    let [sx, sy, sz] = t.scale.to_array().map(f64::from);
+    [px, py, pz, rx, ry, rz, rw, sx, sy, sz].map(f64::to_bits)
 }

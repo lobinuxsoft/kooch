@@ -90,7 +90,7 @@ fn a_transform_drag_records_only_what_moved() {
     let (resources, _, child) = world_with_an_instance();
     let before = Transform::default();
     let after = Transform {
-        position: glam::Vec3::X,
+        position: glam::Vec3::X.into(),
         ..Transform::default()
     };
     let edit = EditorAction::TransformEdit {

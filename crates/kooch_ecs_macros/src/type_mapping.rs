@@ -22,6 +22,7 @@ pub(crate) fn type_mapping(ty: &Type) -> Option<(&'static str, &'static str, boo
         "String" => Some(("String", "String", true)),
         "Vec2" => Some(("Vec2", "Vec2", false)),
         "Vec3" => Some(("Vec3", "Vec3", false)),
+        "DVec3" => Some(("DVec3", "DVec3", false)),
         "Vec4" => Some(("Vec4", "Vec4", false)),
         "Quat" => Some(("Quat", "Quat", false)),
         "Mat4" => Some(("Mat4", "Mat4", false)),

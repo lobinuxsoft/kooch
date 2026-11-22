@@ -77,6 +77,9 @@ pub fn spawn_editor_camera_system(resources: &mut Resources) {
         .insert(StreamingFocus::default());
     commands.apply(resources);
     resources.insert(commands);
+    // The origin follows the editor's view while editing, so far edits keep f32 precision (#1972).
+    let camera = find_editor_camera_entity(resources);
+    resources.insert(kooch_ecs::hierarchy::OriginAnchor(camera));
 
     tracing::info!(
         position = ?transform.position,

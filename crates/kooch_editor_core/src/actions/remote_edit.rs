@@ -41,13 +41,13 @@ pub(crate) fn dispatch(resources: &mut Resources, action: &EditorAction) -> bool
     // has to load the asset to learn its GUID, and loading mutates the `AssetServer`, which `send`
     // cannot do from an immutable world. Handled here, before `classify`.
     if let EditorAction::SpawnMesh { path, name, at } = action {
-        let at = crate::viewport_pick::resolve(resources, *at);
+        let at = crate::viewport_pick::resolve_absolute(resources, *at);
         spawn_mesh(resources, path, name, at);
         return true;
     }
 
     if let EditorAction::SpawnBlock { shape, at, .. } = action {
-        let at = crate::viewport_pick::resolve(resources, *at);
+        let at = crate::viewport_pick::resolve_absolute(resources, *at);
         spawn_block(resources, *shape, at);
         return true;
     }
@@ -371,7 +371,7 @@ enum Edit<'a> {
         into: crate::actions::SpawnTarget,
         /// Resolved HERE, not sent as a drop point: unprojecting a cursor needs the editor's
         /// camera, which the project does not have.
-        at: Option<glam::Vec3>,
+        at: Option<glam::DVec3>,
     },
     /// Every field of a `Transform`, from a gizmo drag.
     TransformEdit {
@@ -420,7 +420,7 @@ enum Edit<'a> {
         path: std::path::PathBuf,
         /// Already resolved to a world position: `classify` runs with the
         /// world available and `dispatch` only has the wire.
-        at: Option<glam::Vec3>,
+        at: Option<glam::DVec3>,
     },
     /// Start or stop the project's gameplay systems in place.
     SetPlaying(bool),
@@ -522,7 +522,7 @@ fn classify<'a>(action: &'a EditorAction, resources: &mut Resources) -> Option<E
             name: name.clone(),
             extra: extra.clone(),
             fields: fields.clone(),
-            at: crate::viewport_pick::resolve(resources, *at),
+            at: crate::viewport_pick::resolve_absolute(resources, *at),
         }),
         // SpawnMesh is reduced in `dispatch`, not here: resolving its
         // asset mutates the AssetServer, and an `Edit` has to be
@@ -553,7 +553,7 @@ fn classify<'a>(action: &'a EditorAction, resources: &mut Resources) -> Option<E
                 .map(|entry| entry.path.clone())?;
             Some(Edit::InstantiatePrefab {
                 path,
-                at: crate::viewport_pick::resolve(resources, *at),
+                at: crate::viewport_pick::resolve_absolute(resources, *at),
             })
         }
         EditorAction::RevertToPrefab { entity, component } => {

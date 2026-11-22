@@ -31,6 +31,7 @@ fn vec3_of(c: &ComponentDescription, key: &str) -> Vec3 {
         .find(|(name, _)| name == key)
         .and_then(|(_, v)| match v {
             ReflectValue::Vec3(x) => Some(*x),
+            ReflectValue::DVec3(x) => Some(x.as_vec3()),
             _ => None,
         })
         .unwrap_or_default()
@@ -169,7 +170,7 @@ fn main() {
             &mut resources,
             entity,
             Transform {
-                position,
+                position: position.as_dvec3(),
                 rotation,
                 scale,
             },

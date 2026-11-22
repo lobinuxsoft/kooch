@@ -339,7 +339,9 @@ fn list_moved(
             .filter(|(entity, _)| live(**entity))
             .map(|(&entity, transform)| MovedTransform {
                 id: entity.into(),
-                matrix: transform.to_matrix().to_cols_array(),
+                position: transform.position.to_array(),
+                rotation: transform.rotation.to_array(),
+                scale: transform.scale.to_array(),
             })
             .collect();
         // The cache compares by id, and a HashMap hands them out in an

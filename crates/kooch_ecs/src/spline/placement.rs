@@ -351,7 +351,7 @@ fn pose_at(spline: &super::Spline, placement: &SplinePlacement, distance: f32) -
     Transform {
         // In the instance's own axes, so an offset holds its side of the path around a corner
         // instead of swinging across it.
-        position: position + rotation * placement.offset,
+        position: (position + rotation * placement.offset).as_dvec3(),
         rotation,
         scale: Vec3::ONE,
     }

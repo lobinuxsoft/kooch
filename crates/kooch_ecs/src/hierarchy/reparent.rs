@@ -6,7 +6,7 @@ use crate::component::ComponentRegistry;
 use crate::entity::Entity;
 use crate::hierarchy::{Parent, PositionOnly};
 use crate::transform::Transform;
-use glam::{Quat, Vec3};
+use glam::{DVec3, Quat, Vec3};
 use kooch_core::resource::Resources;
 
 /// Rewrites an entity's local `Transform` so its world-space TRS
@@ -22,9 +22,9 @@ pub(super) fn rewrite_local_transform_for_reparent(
     };
     let (parent_wp, parent_wr, parent_ws) = match new_parent {
         Some(p) => {
-            compute_world_trs(resources, p).unwrap_or((Vec3::ZERO, Quat::IDENTITY, Vec3::ONE))
+            compute_world_trs(resources, p).unwrap_or((DVec3::ZERO, Quat::IDENTITY, Vec3::ONE))
         }
-        None => (Vec3::ZERO, Quat::IDENTITY, Vec3::ONE),
+        None => (DVec3::ZERO, Quat::IDENTITY, Vec3::ONE),
     };
 
     // A `PositionOnly` child is in world axes: only the parent's position comes off.
@@ -41,7 +41,9 @@ pub(super) fn rewrite_local_transform_for_reparent(
         safe_inv(parent_ws.y),
         safe_inv(parent_ws.z),
     );
-    let new_local_pos = (parent_rot_inv * (child_wp - parent_wp)) * inv_parent_scale;
+    // The difference first, in f64: both ends can be a planet radius out.
+    let new_local_pos =
+        (parent_rot_inv.as_dquat() * (child_wp - parent_wp)) * inv_parent_scale.as_dvec3();
     let new_local_rot = parent_rot_inv * child_wr;
     let new_local_scale = child_ws * inv_parent_scale;
 
@@ -57,7 +59,7 @@ pub(super) fn rewrite_local_transform_for_reparent(
 fn write_local(
     resources: &mut Resources,
     entity: Entity,
-    position: Vec3,
+    position: DVec3,
     rotation: Quat,
     scale: Vec3,
 ) {
@@ -80,7 +82,7 @@ fn rides(resources: &Resources, entity: Entity) -> bool {
 
 /// Walks up the parent chain from `entity` to a root, composing TRS per component. Returns the
 /// world-space `(translation, rotation, scale)` or `None` if the entity has no `Transform`.
-fn compute_world_trs(resources: &Resources, entity: Entity) -> Option<(Vec3, Quat, Vec3)> {
+fn compute_world_trs(resources: &Resources, entity: Entity) -> Option<(DVec3, Quat, Vec3)> {
     let registry = resources.get::<ComponentRegistry>()?;
     let transform_storage = registry.get_cpu::<Transform>()?;
     let parent_storage = registry.get_cpu::<Parent>();
@@ -97,7 +99,7 @@ fn compute_world_trs(resources: &Resources, entity: Entity) -> Option<(Vec3, Qua
     }
     chain.reverse();
 
-    let mut world_pos = Vec3::ZERO;
+    let mut world_pos = DVec3::ZERO;
     let mut world_rot = Quat::IDENTITY;
     let mut world_scale = Vec3::ONE;
     let position_only = registry.get_cpu::<PositionOnly>();
@@ -107,7 +109,7 @@ fn compute_world_trs(resources: &Resources, entity: Entity) -> Option<(Vec3, Qua
             world_rot = Quat::IDENTITY;
             world_scale = Vec3::ONE;
         }
-        let new_pos = world_pos + world_rot * (world_scale * t.position);
+        let new_pos = world_pos + world_rot.as_dquat() * (world_scale.as_dvec3() * t.position);
         let new_rot = world_rot * t.rotation;
         let new_scale = world_scale * t.scale;
         world_pos = new_pos;

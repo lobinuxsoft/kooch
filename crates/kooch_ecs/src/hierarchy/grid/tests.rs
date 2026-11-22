@@ -1,4 +1,4 @@
-use glam::{IVec3, Vec3};
+use glam::{DVec3, IVec3, Vec3};
 use kooch_core::resource::Resources;
 use kooch_core::run_state::Playing;
 
@@ -6,7 +6,7 @@ use super::*;
 use crate::allocator::EntityAllocator;
 use crate::archetype_registry::ArchetypeRegistry;
 use crate::commands::Commands;
-use crate::hierarchy::{Children, hierarchy_sync_system, transform_propagation_system};
+use crate::hierarchy::{Children, Parent, hierarchy_sync_system, transform_propagation_system};
 use crate::query::AccessTracker;
 
 fn world() -> Resources {
@@ -27,7 +27,7 @@ fn world() -> Resources {
     resources
 }
 
-fn spawn(resources: &mut Resources, at: Vec3) -> Entity {
+fn spawn(resources: &mut Resources, at: DVec3) -> Entity {
     let mut commands = resources.remove::<Commands>().unwrap();
     let entity = commands.spawn(resources).id();
     commands.apply(resources);
@@ -47,37 +47,40 @@ fn global(resources: &Resources, entity: Entity) -> Vec3 {
     globals.get(entity).unwrap().matrix.w_axis.truncate()
 }
 
-/// Earth radius away: the player, a box beside it, and a planet anchored at cell zero.
+/// Earth radius away, with a box 5.25 m beside the player: f32 at that radius cannot hold the .25.
 #[test]
-fn a_rebase_keeps_relative_poses() {
+fn a_rebase_keeps_exact_offsets() {
     let mut resources = world();
-    let player = spawn(&mut resources, Vec3::new(0.0, 6_371_007.0, 0.0));
-    let beside = spawn(&mut resources, Vec3::new(5.0, 6_371_007.0, 0.0));
-    let planet = spawn(&mut resources, Vec3::ZERO);
+    let player = spawn(&mut resources, DVec3::new(0.0, 6_371_007.0, 0.0));
+    let beside = spawn(&mut resources, DVec3::new(5.25, 6_371_007.125, 0.0));
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
     let origin = FloatingOrigin::default();
     registry
         .get_cpu_mut::<FloatingOrigin>()
         .unwrap()
         .insert(player, origin);
-    let cell = GridCell::default();
-    registry
-        .get_cpu_mut::<GridCell>()
-        .unwrap()
-        .insert(planet, cell);
     hierarchy_sync_system(&mut resources);
     transform_propagation_system(&mut resources);
 
     rebase_origin(&mut resources);
 
-    let registry = resources.get::<ComponentRegistry>().unwrap();
-    assert_eq!(origin_cell(registry), IVec3::new(0, 3111, 0));
+    let cell = resources.get::<WorldOrigin>().unwrap().cell;
+    assert_eq!(cell, IVec3::new(0, 3111, 0));
     assert_eq!(global(&resources, player), Vec3::new(0.0, -321.0, 0.0));
-    assert_eq!(global(&resources, beside), Vec3::new(5.0, -321.0, 0.0));
-    assert_eq!(
-        global(&resources, planet),
-        Vec3::new(0.0, -6_371_328.0, 0.0)
-    );
-    let shift = resources.get::<OriginShift>().unwrap().cells;
-    assert_eq!(shift, IVec3::new(0, 3111, 0));
+    assert_eq!(global(&resources, beside), Vec3::new(5.25, -320.875, 0.0));
+    let registry = resources.get::<ComponentRegistry>().unwrap();
+    let transforms = registry.get_cpu::<Transform>().unwrap();
+    assert_eq!(transforms.get(player).unwrap().position.y, 6_371_007.0);
+}
+
+/// Scenes saved before #1972 hold `position` as an f32 `Vec3`; a rejected write would leave every
+/// entity at the origin without a word.
+#[test]
+fn an_f32_position_still_loads() {
+    use crate::reflect::{Reflect, ReflectValue};
+    let mut transform = Transform::default();
+    transform
+        .reflect_set("position", ReflectValue::Vec3(Vec3::new(1.5, -2.0, 3.25)))
+        .expect("an f32 position was refused");
+    assert_eq!(transform.position, DVec3::new(1.5, -2.0, 3.25));
 }

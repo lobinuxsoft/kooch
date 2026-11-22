@@ -130,6 +130,8 @@ pub fn hold_characters(resources: &mut Resources) {
 
 /// Every character, with the up that applies where it stands.
 fn plan(resources: &Resources) -> Vec<Planned> {
+    // The solver answers relative to the world origin; `Transform` is absolute (#1972).
+    let origin = kooch_ecs::hierarchy::WorldOrigin::of(resources);
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Vec::new();
     };
@@ -172,7 +174,7 @@ fn plan(resources: &Resources) -> Vec<Planned> {
                 entity,
                 body,
                 *controller,
-                transform.position,
+                (transform.position - origin).as_vec3(),
                 transform.rotation,
                 facings
                     .and_then(|facings| facings.get(entity))

@@ -370,7 +370,7 @@ fn duplicate_creates_a_copy_on_the_project() {
             &TypeId::of::<Transform>(),
             source,
             "position",
-            ReflectValue::Vec3(glam::Vec3::new(3.0, 4.0, 5.0)),
+            ReflectValue::DVec3(glam::DVec3::new(3.0, 4.0, 5.0)),
         );
     }
     editor.insert(state);
@@ -396,7 +396,7 @@ fn duplicate_creates_a_copy_on_the_project() {
         .map(|(_, v)| v.clone());
     assert_eq!(
         position,
-        Some(ReflectValue::Vec3(glam::Vec3::new(3.0, 4.0, 5.0))),
+        Some(ReflectValue::DVec3(glam::DVec3::new(3.0, 4.0, 5.0))),
         "the copy did not carry the source's field values"
     );
 

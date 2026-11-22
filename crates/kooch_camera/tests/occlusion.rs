@@ -88,6 +88,7 @@ fn position(resources: &Resources, entity: Entity) -> Vec3 {
         .and_then(|registry| registry.get_cpu::<Transform>()?.get(entity).copied())
         .expect("a transform")
         .position
+        .as_vec3()
 }
 
 /// A frame: the clock moves, the solver learns what exists, then the rig plans.

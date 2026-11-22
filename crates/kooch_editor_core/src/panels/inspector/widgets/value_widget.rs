@@ -244,6 +244,20 @@ pub(in crate::panels::inspector) fn draw_value_widget(
                 changed.then_some(ReflectValue::Vec3(glam::Vec3::new(x, y, z)))
             }
         }
+        // f64 end to end: an f32 drag would round a planet-radius position to half a metre (#1972).
+        ReflectValue::DVec3(v) => {
+            let (mut x, mut y, mut z) = (v.x, v.y, v.z);
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                ui.label("x");
+                changed |= ui.add(crate::numeric::drag(&mut x).speed(0.1)).changed();
+                ui.label("y");
+                changed |= ui.add(crate::numeric::drag(&mut y).speed(0.1)).changed();
+                ui.label("z");
+                changed |= ui.add(crate::numeric::drag(&mut z).speed(0.1)).changed();
+            });
+            changed.then_some(ReflectValue::DVec3(glam::DVec3::new(x, y, z)))
+        }
         ReflectValue::Vec4(v) => {
             let is_color = field_name.contains("color");
             if is_color {

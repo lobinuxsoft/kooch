@@ -227,7 +227,7 @@ fn scaling_an_existing_body_rebuilds_it() {
         &mut resources,
         entity,
         Transform {
-            position: Vec3::new(0.0, 10.0, 0.0),
+            position: Vec3::new(0.0, 10.0, 0.0).into(),
             scale: Vec3::splat(4.0),
             ..Default::default()
         },

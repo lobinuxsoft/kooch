@@ -138,6 +138,8 @@ pub(crate) struct Found {
     pub entity: Entity,
     pub planet: Planet,
     pub world: Mat4,
+    /// The centre in absolute f64 metres: `world` is relative to the world origin, and narrowed.
+    pub at: DVec3,
 }
 
 /// Chooses, generates and draws every planet's blocks. Does nothing where nothing draws.
@@ -346,6 +348,19 @@ fn crosses(
 }
 
 fn gather(resources: &Resources) -> Vec<Found> {
+    let origin = kooch_ecs::hierarchy::WorldOrigin::of(resources);
+    let registry = resources.get::<kooch_ecs::component::ComponentRegistry>();
+    let transforms = registry.and_then(|r| r.get_cpu::<kooch_ecs::transform::Transform>());
+    let parents = registry.and_then(|r| r.get_cpu::<kooch_ecs::hierarchy::Parent>());
+    // A root's own f64 position; a child's only exists narrowed, under its parent.
+    let at = |entity: Entity, world: &Mat4| {
+        let root = parents.as_ref().is_none_or(|p| p.get(entity).is_none());
+        transforms
+            .as_ref()
+            .and_then(|t| t.get(entity))
+            .filter(|_| root)
+            .map_or(origin + world.w_axis.truncate().as_dvec3(), |t| t.position)
+    };
     let mut found = Vec::new();
     Query::<(Entity, &Planet, &GlobalTransform)>::new(resources).for_each(
         |(entity, planet, transform)| {
@@ -353,6 +368,7 @@ fn gather(resources: &Resources) -> Vec<Found> {
                 entity,
                 planet: planet.clone(),
                 world: transform.matrix,
+                at: at(entity, &transform.matrix),
             });
         },
     );

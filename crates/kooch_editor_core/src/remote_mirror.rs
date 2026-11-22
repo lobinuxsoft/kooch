@@ -87,8 +87,7 @@ impl RemoteMirror {
             let Some(&entity) = self.id_map.get(&entry.id) else {
                 continue;
             };
-            let matrix = glam::Mat4::from_cols_array(&entry.matrix);
-            write_transform(resources, entity, matrix);
+            write_transform(resources, entity, entry);
         }
         // 🔴 `Transform` used to be the only thing this path carried, so anything else gameplay
         // wrote was invisible while playing: a vcam's roll arrived and its field of view did not
@@ -403,8 +402,12 @@ fn type_id<T: 'static>() -> std::any::TypeId {
     std::any::TypeId::of::<T>()
 }
 
-/// Writes one entity's local transform, decomposed the way the component stores it.
-fn write_transform(resources: &mut Resources, entity: Entity, matrix: glam::Mat4) {
+/// Writes one entity's local transform as the source sent it.
+fn write_transform(
+    resources: &mut Resources,
+    entity: Entity,
+    moved: &kooch_remote::protocol::MovedTransform,
+) {
     let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>() else {
         return;
     };
@@ -414,10 +417,9 @@ fn write_transform(resources: &mut Resources, entity: Entity, matrix: glam::Mat4
     let Some(transform) = storage.get_mut(entity) else {
         return;
     };
-    let (scale, rotation, translation) = matrix.to_scale_rotation_translation();
-    transform.position = translation;
-    transform.rotation = rotation;
-    transform.scale = scale;
+    transform.position = glam::DVec3::from_array(moved.position);
+    transform.rotation = glam::Quat::from_array(moved.rotation);
+    transform.scale = glam::Vec3::from_array(moved.scale);
 }
 
 /// The block geometry carried by a snapshot's fields, as the same number [`crate::block_edit::digest`]

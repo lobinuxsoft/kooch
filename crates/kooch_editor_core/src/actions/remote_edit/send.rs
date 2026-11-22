@@ -188,7 +188,7 @@ pub(super) fn send(
                 return Ok(());
             };
             client
-                .set_field(entity, transform, "position", ReflectValue::Vec3(at))
+                .set_field(entity, transform, "position", ReflectValue::DVec3(at))
                 .map_err(map_err)
         }
         Edit::TransformEdit { entity, transform } => {
@@ -196,7 +196,7 @@ pub(super) fn send(
             let ty = std::any::type_name::<kooch_ecs::transform::Transform>();
             // A gizmo drag replaces the whole transform; push each field.
             for (field, value) in [
-                ("position", ReflectValue::Vec3(transform.position)),
+                ("position", ReflectValue::DVec3(transform.position)),
                 ("rotation", ReflectValue::Quat(transform.rotation)),
                 ("scale", ReflectValue::Vec3(transform.scale)),
             ] {
@@ -324,7 +324,7 @@ pub(super) fn send(
                     root,
                     std::any::type_name::<kooch_ecs::transform::Transform>(),
                     "position",
-                    ReflectValue::Vec3(at),
+                    ReflectValue::DVec3(at),
                 )
                 .map_err(map_err)
         }

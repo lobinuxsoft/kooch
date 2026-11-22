@@ -96,7 +96,7 @@ fn position(resources: &Resources, entity: Entity) -> Vec3 {
         .get::<ComponentRegistry>()
         .and_then(|r| r.get_cpu::<Transform>())
         .and_then(|s| s.get(entity))
-        .map(|t| t.position)
+        .map(|t| t.position.as_vec3())
         .expect("no transform")
 }
 
@@ -148,7 +148,7 @@ fn slab(resources: &mut Resources, at: Vec3, half: Vec3, rotation: glam::Quat) -
         resources,
         entity,
         Transform {
-            position: at,
+            position: at.as_dvec3(),
             rotation,
             scale: Vec3::ONE,
         },

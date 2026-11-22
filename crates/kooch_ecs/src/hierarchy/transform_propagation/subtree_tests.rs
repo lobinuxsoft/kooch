@@ -11,7 +11,7 @@ use kooch_core::resource::Resources;
 
 fn at(x: f32) -> Transform {
     Transform {
-        position: Vec3::new(x, 0.0, 0.0),
+        position: Vec3::new(x, 0.0, 0.0).into(),
         ..Default::default()
     }
 }

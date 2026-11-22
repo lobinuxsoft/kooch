@@ -58,7 +58,7 @@ fn idle<T: Reflect>(value: &T) -> Vec<(String, ReflectValue)> {
 #[test]
 fn idle_components_write_nothing() {
     let transform = kooch_ecs::transform::Transform {
-        position: glam::Vec3::new(0.0, 8.0, 18.0),
+        position: glam::Vec3::new(0.0, 8.0, 18.0).into(),
         rotation: glam::Quat::from_euler(glam::EulerRot::XYZ, -0.0, 0.0, -0.0),
         ..Default::default()
     };

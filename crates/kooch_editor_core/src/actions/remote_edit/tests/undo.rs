@@ -72,17 +72,17 @@ fn an_undone_field_goes_back() {
         .intern(transform_ty);
     editor.insert(state);
 
-    let moved = glam::Vec3::new(9.0, 9.0, 9.0);
+    let moved = glam::DVec3::new(9.0, 9.0, 9.0);
     assert!(dispatch(
         &mut editor,
         &EditorAction::SetField {
             entity: local,
             component: comp,
             field: "position".into(),
-            value: ReflectValue::Vec3(moved),
+            value: ReflectValue::DVec3(moved),
         }
     ));
-    assert_eq!(position(&socket), Some(ReflectValue::Vec3(moved)));
+    assert_eq!(position(&socket), Some(ReflectValue::DVec3(moved)));
 
     assert!(dispatch(
         &mut editor,
@@ -90,7 +90,7 @@ fn an_undone_field_goes_back() {
     ));
     assert_eq!(
         position(&socket),
-        Some(ReflectValue::Vec3(glam::Vec3::ZERO)),
+        Some(ReflectValue::DVec3(glam::DVec3::ZERO)),
         "the undo did not reach the project",
     );
 
@@ -101,7 +101,7 @@ fn an_undone_field_goes_back() {
     ));
     assert_eq!(
         position(&socket),
-        Some(ReflectValue::Vec3(moved)),
+        Some(ReflectValue::DVec3(moved)),
         "the redo did not reach the project",
     );
 
@@ -159,7 +159,7 @@ fn an_undone_despawn_rebuilds_it() {
                     entity: hero,
                     component: transform_ty.into(),
                     field: "position".into(),
-                    value: ReflectValue::Vec3(glam::Vec3::new(1.0, 2.0, 3.0)),
+                    value: ReflectValue::DVec3(glam::DVec3::new(1.0, 2.0, 3.0)),
                 },
             },
             &mut res,
@@ -205,7 +205,7 @@ fn an_undone_despawn_rebuilds_it() {
     assert_eq!(entities.len(), 1, "the entity did not come back");
     assert_eq!(
         position(&socket),
-        Some(ReflectValue::Vec3(glam::Vec3::new(1.0, 2.0, 3.0))),
+        Some(ReflectValue::DVec3(glam::DVec3::new(1.0, 2.0, 3.0))),
         "it came back without its values",
     );
 

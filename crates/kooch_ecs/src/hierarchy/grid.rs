@@ -1,13 +1,13 @@
-//! Large-world precision (#51): a floating origin for what moves, an integer cell for what is far.
+//! Large-world precision (#51, #1972): positions are f64, everything narrowed to f32 is relative to
+//! a world origin that follows the view.
 //!
-//! 🔴 f32 steps 0.5 m at Earth radius. Everything the frame computes stays near the origin: when the
-//! [`FloatingOrigin`] entity strays a cell away, every root without a [`GridCell`] is shifted by whole
-//! cells at once and [`OriginShift`] tells the caches (solver, camera rig) to follow. Whole cells keep
-//! the shift exact in f32, so a rebase never moves anything relative to anything else.
+//! 🔴 f32 steps 0.5 m at Earth radius. `Transform` keeps the exact f64 position; `GlobalTransform`
+//! is relative to [`WorldOrigin`], which moves by whole cells when its anchor strays — the editor
+//! camera while editing, the [`FloatingOrigin`] entity while playing. Nothing authored moves: a
+//! rebase only republishes `GlobalTransform`, and [`OriginShift`] tells caches (solver, camera rig)
+//! that hold origin-relative positions to follow.
 
-use std::collections::HashSet;
-
-use glam::{I64Vec3, IVec3, Mat4, Vec3};
+use glam::{DVec3, I64Vec3, IVec3, Mat4};
 use kooch_core::resource::Resources;
 use kooch_core::run_state::{Mirrored, Playing};
 
@@ -16,13 +16,12 @@ use crate::entity::Entity;
 use crate::transform::Transform;
 
 use super::global_transform::GlobalTransform;
-use super::parent::Parent;
 
 /// Side of a cell, in metres. A power of two, so a shift by whole cells is exact in f32.
 pub const CELL: f64 = 2048.0;
 
-/// Which cell a root sits in; its `Transform` is local to that cell. For what the origin must not
-/// drag along: a planet, a far station. Ignored below the root — a child is local to its parent.
+/// Which cell a root sits in; its `Transform` is local to that cell. Reserved for sector-scale
+/// worlds (#1977): f64 alone already holds a solar system. Ignored below the root.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, crate::Reflect)]
 #[reflect(category = "Core")]
 pub struct GridCell {
@@ -43,8 +42,8 @@ impl GridCell {
     }
 }
 
-/// The entity the world is kept centred on, usually the player. Carries the origin's cell as a
-/// component rather than a resource so the editor's mirror of a remote Play receives it.
+/// The entity the world is kept centred on while playing, usually the player. Carries the origin's
+/// cell so the editor's mirror of a remote Play receives it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, crate::Reflect)]
 #[reflect(category = "Core")]
 pub struct FloatingOrigin {
@@ -65,8 +64,33 @@ impl FloatingOrigin {
     }
 }
 
-/// Whole cells the origin moved this frame; zero on every frame it did not. Anything caching a world
-/// position across frames adds [`OriginShift::offset`] to it.
+/// The cell `GlobalTransform` is relative to. Zero until something anchors it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WorldOrigin {
+    /// The origin's cell.
+    pub cell: IVec3,
+}
+
+impl WorldOrigin {
+    /// The origin in metres.
+    pub fn offset(&self) -> DVec3 {
+        self.cell.as_dvec3() * CELL
+    }
+
+    /// The origin in `resources`, zero without one.
+    pub fn of(resources: &Resources) -> DVec3 {
+        resources
+            .get::<WorldOrigin>()
+            .map_or(DVec3::ZERO, WorldOrigin::offset)
+    }
+}
+
+/// What the origin follows while nothing plays: the editor's camera. A game leaves it empty.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OriginAnchor(pub Option<Entity>);
+
+/// Whole cells the origin moved this frame; zero on every frame it did not. Anything caching an
+/// origin-relative position across frames adds [`OriginShift::offset`] to it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OriginShift {
     /// Cells moved, in the origin's direction.
@@ -79,13 +103,13 @@ impl OriginShift {
         self.cells != IVec3::ZERO
     }
 
-    /// What every world position gains: the origin moved one way, the world the other.
-    pub fn offset(&self) -> Vec3 {
+    /// What every origin-relative position gains: the origin moved one way, the world the other.
+    pub fn offset(&self) -> glam::Vec3 {
         (-self.cells.as_dvec3() * CELL).as_vec3()
     }
 
     /// This frame's shift, `None` when the origin stayed.
-    pub fn of(resources: &Resources) -> Option<Vec3> {
+    pub fn of(resources: &Resources) -> Option<glam::Vec3> {
         resources
             .get::<OriginShift>()
             .filter(|shift| shift.moved())
@@ -93,43 +117,23 @@ impl OriginShift {
     }
 }
 
-/// The origin's cell: the first [`FloatingOrigin`]'s, or zero in a world without one.
-pub fn origin_cell(registry: &ComponentRegistry) -> IVec3 {
-    registry
-        .get_cpu::<FloatingOrigin>()
-        .and_then(|storage| storage.iter().next().map(|(_, origin)| origin.cell()))
-        .unwrap_or(IVec3::ZERO)
-}
-
-/// Where a gridded root's local position sits relative to the origin. In f64 so a far cell loses
-/// nothing before the difference makes it near.
-pub fn anchored(cell: IVec3, origin: IVec3, local: Vec3) -> Vec3 {
-    let cells = cell.as_i64vec3() - origin.as_i64vec3();
-    (cells.as_dvec3() * CELL + local.as_dvec3()).as_vec3()
-}
-
-/// A root's world matrix: its local one, carried from its cell to the origin's when it has one.
+/// A root's matrix relative to the origin: its own position, or its cell plus a local one.
 pub(super) fn root_matrix(local: &Transform, cell: Option<IVec3>, origin: IVec3) -> Mat4 {
-    match cell {
-        Some(cell) => Transform {
-            position: anchored(cell, origin, local.position),
-            ..*local
-        }
-        .to_matrix(),
-        None => local.to_matrix(),
-    }
+    let from = match cell {
+        Some(cell) => (origin.as_i64vec3() - cell.as_i64vec3()).as_dvec3() * CELL,
+        None => origin.as_dvec3() * CELL,
+    };
+    local.matrix_from(from)
 }
 
 /// A fingerprint of the origin and every grid cell: a change forces a full propagation pass, which
 /// the per-entity pose diff cannot see.
-pub(super) fn anchors(registry: &ComponentRegistry) -> u64 {
-    let mut hash = mix(0, origin_cell(registry).as_i64vec3());
+pub(super) fn anchors(registry: &ComponentRegistry, origin: IVec3) -> u64 {
+    let mut hash = mix(0, origin.as_i64vec3());
     if let Some(cells) = registry.get_cpu::<GridCell>() {
         for (entity, cell) in cells.iter() {
-            hash = mix(
-                hash,
-                I64Vec3::new(entity.index() as i64, entity.generation() as i64, 0),
-            );
+            let id = I64Vec3::new(entity.index() as i64, entity.generation() as i64, 0);
+            hash = mix(hash, id);
             hash = mix(hash, cell.cell().as_i64vec3());
         }
     }
@@ -142,79 +146,63 @@ fn mix(hash: u64, value: I64Vec3) -> u64 {
     })
 }
 
-/// Recentres the world on the [`FloatingOrigin`] once it strays past a cell, then republishes the
-/// hierarchy so everything this frame reads the shifted world. Gameplay only, and never in a mirror:
-/// the authored scene must not move while it is edited.
+/// Recentres the origin on its anchor once it strays past a cell, then republishes the hierarchy so
+/// everything this frame reads it. A mirror takes the origin its source published instead.
 pub fn rebase_origin(resources: &mut Resources) {
     resources.insert(OriginShift::default());
-    if !Playing::is_playing(resources) || Mirrored::is_mirrored(resources) {
-        return;
-    }
-    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
+    let was = resources.get::<WorldOrigin>().copied().unwrap_or_default();
+    let Some(registry) = resources.get::<ComponentRegistry>() else {
         return;
     };
-    let Some(cells) = straying(registry) else {
+    let now = match Mirrored::is_mirrored(resources) {
+        true => first_origin(registry).map(|(_, origin)| origin.cell()),
+        false => anchor(resources, registry)
+            .and_then(|entity| straying(registry, entity))
+            .map(|cells| was.cell + cells),
+    };
+    let Some(now) = now.filter(|now| *now != was.cell) else {
         return;
     };
-    let offset = OriginShift { cells }.offset();
-    shift_roots(registry, offset);
-    if let Some(mut origins) = registry.get_cpu_mut::<FloatingOrigin>()
+    let publish = !Mirrored::is_mirrored(resources) && Playing::is_playing(resources);
+    if publish
+        && let Some(registry) = resources.get_mut::<ComponentRegistry>()
+        && let Some(mut origins) = registry.get_cpu_mut::<FloatingOrigin>()
         && let Some((_, mut origin)) = origins.iter_mut().next()
     {
-        let cell = origin.cell() + cells;
-        (origin.x, origin.y, origin.z) = (cell.x, cell.y, cell.z);
+        (origin.x, origin.y, origin.z) = (now.x, now.y, now.z);
     }
-    resources.insert(OriginShift { cells });
+    resources.insert(WorldOrigin { cell: now });
+    resources.insert(OriginShift {
+        cells: now - was.cell,
+    });
     super::transform_propagation_system(resources);
 }
 
-/// Whole cells the origin entity has strayed, `None` inside one cell. Past a whole cell rather than
-/// half, so the entity lands within half a cell and a step back does not rebase again.
-fn straying(registry: &ComponentRegistry) -> Option<IVec3> {
-    let entity: Entity = registry
-        .get_cpu::<FloatingOrigin>()?
+/// The entity the origin follows: the player while playing, the editor camera otherwise.
+fn anchor(resources: &Resources, registry: &ComponentRegistry) -> Option<Entity> {
+    match Playing::is_playing(resources) {
+        true => first_origin(registry).map(|(entity, _)| entity),
+        false => resources.get::<OriginAnchor>().and_then(|anchor| anchor.0),
+    }
+}
+
+fn first_origin(registry: &ComponentRegistry) -> Option<(Entity, FloatingOrigin)> {
+    let origins = registry.get_cpu::<FloatingOrigin>()?;
+    origins
         .iter()
         .next()
-        .map(|(entity, _)| *entity)?;
-    let at = registry
-        .get_cpu::<GlobalTransform>()?
-        .get(entity)?
-        .matrix
-        .w_axis
-        .truncate();
-    let at = at.as_dvec3();
+        .map(|(entity, origin)| (*entity, *origin))
+}
+
+/// Whole cells the anchor has strayed from the origin, `None` inside one cell. Past a whole cell
+/// rather than half, so it lands within half a cell and a step back does not rebase again.
+fn straying(registry: &ComponentRegistry, entity: Entity) -> Option<IVec3> {
+    let global = registry.get_cpu::<GlobalTransform>()?;
+    let at = global.get(entity)?.matrix.w_axis.truncate().as_dvec3();
     if !(at.abs().max_element() > CELL) {
         return None;
     }
     Some((at / CELL).round().as_ivec3())
-}
-
-/// Moves every root that is not anchored to a cell. Children ride their parents.
-fn shift_roots(registry: &mut ComponentRegistry, offset: Vec3) {
-    let still: HashSet<Entity> = {
-        let parents = registry.get_cpu::<Parent>();
-        let cells = registry.get_cpu::<GridCell>();
-        let Some(transforms) = registry.get_cpu::<Transform>() else {
-            return;
-        };
-        transforms
-            .iter()
-            .map(|(entity, _)| *entity)
-            .filter(|&entity| {
-                let parented = parents.as_ref().is_some_and(|p| p.get(entity).is_some());
-                let anchored = cells.as_ref().is_some_and(|c| c.get(entity).is_some());
-                parented || anchored
-            })
-            .collect()
-    };
-    let Some(mut transforms) = registry.get_cpu_mut::<Transform>() else {
-        return;
-    };
-    for (entity, mut transform) in transforms.iter_mut() {
-        if !still.contains(entity) {
-            transform.position += offset;
-        }
-    }
 }
 
 #[cfg(test)]

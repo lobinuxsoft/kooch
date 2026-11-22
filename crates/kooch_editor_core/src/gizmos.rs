@@ -463,7 +463,7 @@ pub(crate) fn apply_handle_input(
                         Some(m) => parent_space::translation_to_parent_space(m, v),
                         None => v,
                     };
-                    t.position += v;
+                    t.position += v.as_dvec3();
                     mutated = true;
                 }
                 TransformDelta::Rotation(q) => {
