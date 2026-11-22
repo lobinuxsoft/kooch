@@ -252,8 +252,14 @@ pub(super) fn focus_target(
     }
 
     let point = entity_world_position(resources, entity)?;
-    let radius = crate::picking::entity_bounds(resources, entity)
-        .map(|(min, max)| radius_around(point, min, max));
+    // A planet has no mesh of its own, only blocks: its sphere is what F frames (#1970).
+    let planet = kooch_ecs::query::Query::<&kooch_planet::Planet>::new(resources)
+        .get(entity)
+        .map(|planet| planet.radius + planet.relief);
+    let radius = planet.or_else(|| {
+        crate::picking::entity_bounds(resources, entity)
+            .map(|(min, max)| radius_around(point, min, max))
+    });
     Some(FocusTarget { point, radius })
 }
 

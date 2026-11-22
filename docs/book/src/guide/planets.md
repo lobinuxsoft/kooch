@@ -81,6 +81,9 @@ the cell it is in shows on that component. While editing, it follows the editor 
 can be edited at its surface as precisely as near zero. A scene without a FloatingOrigin plays with
 the origin at zero, as before, and scenes saved with single-precision positions load unchanged.
 
+In the Edit View, **F** on a planet frames the whole sphere; scrolling backs off as far as the
+largest planet needs, and flying speeds up with the distance to what you orbit.
+
 Code that keeps an origin-relative position across frames reads `OriginShift` and adds its offset
 on the frame the origin moves. Code that writes a root's `Transform` from a world-space value — a
 `GlobalTransform`, a ray hit, a physics pose — adds `WorldOrigin::of(resources)` first.

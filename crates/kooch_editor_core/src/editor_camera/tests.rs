@@ -19,7 +19,7 @@ fn initial_transform_looks_at_focus_point() {
     // Camera-forward in glam right-handed view space is -Z, so the
     // world-space forward direction is `rotation * -Z`.
     let forward = (t.rotation * -Vec3::Z).normalize();
-    let expected = (controller.focus_point - t.position.as_vec3()).normalize();
+    let expected = (controller.focus_point.as_vec3() - t.position.as_vec3()).normalize();
     let dot = forward.dot(expected);
     assert!(
         dot > 0.999,

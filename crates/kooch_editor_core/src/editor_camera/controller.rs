@@ -1,22 +1,22 @@
 //! Editor camera controller state — the *navigation* state of the editor camera, distinct from the
 //! camera entity's `Transform`.
 
-use glam::Vec3;
+use glam::DVec3;
 
 /// Persistent state of the editor camera controller.
 #[derive(Debug, Clone)]
 pub struct EditorCameraController {
-    /// World-space point the camera orbits around. Moves with the camera
-    /// in fly mode so that subsequent orbits feel natural rather than
-    /// snapping back to the origin.
-    pub focus_point: Vec3,
+    /// Absolute point the camera orbits around, in f64: the world origin follows this camera, so
+    /// an origin-relative focus would jump a cell on every rebase (#1976). Moves with the camera
+    /// in fly mode so that subsequent orbits feel natural.
+    pub focus_point: DVec3,
     /// Distance from `focus_point` to the camera position along the
     /// camera's forward axis. Clamped to `[min_distance, max_distance]`.
     pub distance: f32,
     /// Lower bound on `distance` to prevent the camera from passing
     /// through the focus point.
     pub min_distance: f32,
-    /// Upper bound on `distance` to keep the scene framed.
+    /// Upper bound on `distance`; raised each frame to frame the largest planet (#1970).
     pub max_distance: f32,
 
     /// Orbit rotation per pixel of mouse drag (radians).
@@ -38,7 +38,7 @@ impl Default for EditorCameraController {
     /// units/sec fly base speed
     fn default() -> Self {
         Self {
-            focus_point: Vec3::ZERO,
+            focus_point: DVec3::ZERO,
             distance: 10.0,
             min_distance: 0.1,
             max_distance: 10_000.0,
