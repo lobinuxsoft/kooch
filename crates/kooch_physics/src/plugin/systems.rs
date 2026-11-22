@@ -121,6 +121,8 @@ struct Reader<'a> {
     meshes: Option<&'a ColliderMeshCache>,
     slots: Option<kooch_ecs::component::ComponentView<'a, SolverBody>>,
     colliders: Option<kooch_ecs::component::ComponentView<'a, Collider>>,
+    /// Where an entity spawned since the last propagation is measured from (#1974).
+    origin: glam::DVec3,
 }
 
 impl<'a> Reader<'a> {
@@ -128,8 +130,10 @@ impl<'a> Reader<'a> {
         registry: &'a ComponentRegistry,
         layers: &'a kooch_core::layers::LayerNames,
         meshes: Option<&'a ColliderMeshCache>,
+        origin: glam::DVec3,
     ) -> Self {
         Self {
+            origin,
             registry,
             views: super::compound::Views::new(registry, layers),
             layers,
@@ -151,7 +155,8 @@ impl<'a> Reader<'a> {
         .in_layers(self.layers);
         // The world pose, from the `GlobalTransform` that `PrePhysics` propagated a moment ago:
         // authored at the LOCAL offset, a parented volume sat 19 m from where it is drawn (#1316).
-        let (position, rotation, scale) = super::pose::world_pose(self.registry, entity);
+        let (position, rotation, scale) =
+            super::pose::world_pose(self.registry, entity, self.origin);
         let attachments = super::compound::attachments_in(&self.views, entity);
         let spec = BodySpec::with_attachments(
             body,
@@ -192,7 +197,8 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
     let layers = layer_table(resources);
     let registry = resources.get::<ComponentRegistry>()?;
     let meshes = resources.get::<ColliderMeshCache>();
-    let reader = Reader::new(registry, &layers, meshes);
+    let origin = kooch_ecs::hierarchy::WorldOrigin::of(resources);
+    let reader = Reader::new(registry, &layers, meshes, origin);
 
     let owned: Vec<(Entity, &PhysicsBody)> = registry
         .get_cpu::<PhysicsBody>()
@@ -217,6 +223,7 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
         meshes,
         &layers,
         &authored,
+        origin,
     ));
 
     // Entity order, not hash order: creation order is observable in the solver, and runs would
@@ -263,6 +270,7 @@ fn regions(
     meshes: Option<&ColliderMeshCache>,
     layers: &kooch_core::layers::LayerNames,
     authored: &[Authored],
+    origin: glam::DVec3,
 ) -> Vec<Authored> {
     let Some(volumes) = registry.get_cpu::<kooch_ecs::post_process_volume::PostProcessVolume>()
     else {
@@ -289,7 +297,7 @@ fn regions(
             }
             .in_layers(layers);
             // The world pose, as above: a volume is as often a child as anything else.
-            let (position, rotation, scale) = super::pose::world_pose(registry, entity);
+            let (position, rotation, scale) = super::pose::world_pose(registry, entity, origin);
             let spec = BodySpec::new(&body, &collider, entity, scale, meshes);
             Some(Authored {
                 entity,

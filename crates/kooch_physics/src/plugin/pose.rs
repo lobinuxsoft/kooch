@@ -16,7 +16,7 @@ use kooch_ecs::transform::Transform;
 const MAX_DEPTH: u32 = 64;
 
 /// `entity`'s local-to-world matrix, as the last propagation published it.
-fn world_of(registry: &ComponentRegistry, entity: Entity) -> Mat4 {
+fn world_of(registry: &ComponentRegistry, entity: Entity, origin: glam::DVec3) -> Mat4 {
     if let Some(global) = registry.component::<GlobalTransform>(entity) {
         return global.matrix;
     }
@@ -35,7 +35,7 @@ fn world_of(registry: &ComponentRegistry, entity: Entity) -> Mat4 {
     }
     registry
         .component::<Transform>(entity)
-        .map(Transform::to_matrix)
+        .map(|transform| transform.matrix_from(origin))
         .unwrap_or(Mat4::IDENTITY)
 }
 
@@ -45,8 +45,13 @@ fn world_of(registry: &ComponentRegistry, entity: Entity) -> Mat4 {
 /// decomposed scale wobbles in its last bits as the rotation moves, and the scale is part of the
 /// body's spec: a wobbling spec rebuilt a spinning body every single frame. `GlobalTransform` only
 /// stores a matrix, and its own `scale()` says it approximates — so this cannot come from there.
-pub(super) fn world_pose(registry: &ComponentRegistry, entity: Entity) -> (Vec3, Quat, Vec3) {
-    let (_, rotation, translation) = world_of(registry, entity).to_scale_rotation_translation();
+pub(super) fn world_pose(
+    registry: &ComponentRegistry,
+    entity: Entity,
+    origin: glam::DVec3,
+) -> (Vec3, Quat, Vec3) {
+    let (_, rotation, translation) =
+        world_of(registry, entity, origin).to_scale_rotation_translation();
     (translation, rotation, scale_of(registry, entity))
 }
 
@@ -96,8 +101,8 @@ pub(super) fn under_parent(
     // documents the same choice: deriving the parent's from the child's makes the next propagated
     // value impossible to predict through rounding, which breaks the comparison that decides
     // whether the author moved a body.
-    let local =
-        world_of(registry, parent).inverse() * Mat4::from_rotation_translation(rotation, position);
+    let local = world_of(registry, parent, origin).inverse()
+        * Mat4::from_rotation_translation(rotation, position);
     let (_, rotation, translation) = local.to_scale_rotation_translation();
     (translation.as_dvec3(), rotation)
 }
