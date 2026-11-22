@@ -20,6 +20,7 @@ mod recent;
 mod roster;
 mod seam;
 mod select;
+mod sight;
 mod sync;
 mod terrain;
 #[cfg(test)]
@@ -41,6 +42,7 @@ pub use pool::{BlockPool, Residency};
 pub use recent::{BatchMean, RECENT};
 pub use seam::{Leaves, Near};
 pub use select::{Limits, Planets, Shape, View, select};
+pub use sight::Cone;
 pub use sync::{PlanetStats, PlanetTerrain, PlanetViewers, sync_planets};
 pub use terrain::{CountedBlock, GpuTimes, MESH_BATCH, Terrain};
 

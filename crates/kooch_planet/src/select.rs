@@ -7,6 +7,7 @@ use std::collections::BinaryHeap;
 use glam::{DVec3, IVec3};
 
 use super::{BLOCK_SAMPLES, BlockKey};
+use crate::sight::{Cone, sees};
 
 /// How much a block split last frame overstates its error: it merges back only once it is well under
 /// the target, so a block at the threshold does not split and merge on alternate frames.
@@ -39,6 +40,8 @@ pub struct Planets {
     /// Every viewer in the planet's local space, its origin and rotation removed: `views` in a
     /// row per planet. A block is refined for the viewer closest to it.
     pub viewer: Vec<DVec3>,
+    /// Each viewer's view cone, parallel to `viewer`.
+    pub cone: Vec<Cone>,
     pub views: usize,
     pub limits: Vec<Limits>,
 }
@@ -47,10 +50,24 @@ impl Planets {
     /// Adds a planet and returns its index, which is `BlockKey::planet`.
     /// Every planet takes as many viewers as the first one did; a planet with none is out of view.
     pub fn push(&mut self, shape: Shape, viewers: &[DVec3], limits: Limits) -> u32 {
+        self.push_seen(shape, viewers, &[], limits)
+    }
+
+    /// [`Planets::push`] with each viewer's view cone; a viewer without one sees everything.
+    pub fn push_seen(
+        &mut self,
+        shape: Shape,
+        viewers: &[DVec3],
+        cones: &[Cone],
+        limits: Limits,
+    ) -> u32 {
         if self.shape.is_empty() {
             self.viewer.clear();
+            self.cone.clear();
             self.views = viewers.len();
         }
+        self.cone
+            .extend((0..self.views).map(|v| cones.get(v).copied().unwrap_or(Cone::ALL)));
         let nowhere = DVec3::splat(f64::INFINITY);
         self.viewer.extend((0..self.views).map(|v| {
             viewers
@@ -68,6 +85,7 @@ impl Planets {
     pub fn clear(&mut self) {
         self.shape.clear();
         self.viewer.clear();
+        self.cone.clear();
         self.views = 0;
         self.limits.clear();
     }
@@ -75,6 +93,13 @@ impl Planets {
     /// `planet`'s viewers, in its local space.
     pub fn viewers(&self, planet: usize) -> &[DVec3] {
         self.viewer
+            .get(planet * self.views..(planet + 1) * self.views)
+            .unwrap_or_default()
+    }
+
+    /// `planet`'s view cones, parallel to [`Planets::viewers`].
+    pub fn cones(&self, planet: usize) -> &[Cone] {
+        self.cone
             .get(planet * self.views..(planet + 1) * self.views)
             .unwrap_or_default()
     }
@@ -292,7 +317,11 @@ impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'
             true => self.error(key) * KEEP_SPLIT,
             false => self.error(key),
         };
-        if key.level > 0 && error > self.view.target_px && !self.hidden(key, kept) {
+        if key.level > 0
+            && error > self.view.target_px
+            && !self.hidden(key, kept)
+            && sees(self.planets, key)
+        {
             heap.push(Node { error, key });
         } else {
             self.out.push(key);

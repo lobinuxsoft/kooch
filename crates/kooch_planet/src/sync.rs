@@ -25,6 +25,7 @@ use crate::draw::{Blocks, Frame};
 use crate::eval::{Generator, may_cross};
 use crate::roster::{Roster, Signature};
 use crate::select::{root_level, voxel_size};
+use crate::sight::Cone;
 use crate::{
     BARE_SPHERE, BlockKey, BlockPool, CountedBlock, DEFAULT_CAPACITY, Leaves, Limits, Planets,
     Residency, Shape, Terrain, View, select,
@@ -194,7 +195,7 @@ pub fn sync_planets(resources: &mut Resources) {
         }
     }
     placed.truncate(state.roster.len());
-    let (viewers, view) = viewers(resources);
+    let (viewers, cones, view) = viewers(resources);
     // The pool's bytes, not its block count, are what runs out first on dense relief (#1968).
     let budget = resources
         .get::<GpuMeshes>()
@@ -202,7 +203,7 @@ pub fn sync_planets(resources: &mut Resources) {
         .map_or(DEFAULT_CAPACITY, |usage| {
             crate::budget::blocks_within(state.pool.resident(), usage, DEFAULT_CAPACITY)
         });
-    fill_planets(&mut state.planets, &placed, &found, &viewers);
+    fill_planets(&mut state.planets, &placed, &found, &viewers, &cones);
     let worst = match viewers.is_empty() {
         true => {
             state.wanted.clear();
@@ -403,31 +404,34 @@ fn source(resources: &Resources, handle: Handle<Shader>) -> Option<String> {
 }
 
 /// Every admitted active camera's eye, and the most demanding lens among them.
-fn viewers(resources: &Resources) -> (Vec<DVec3>, View) {
+/// Each admitted camera's position and view cone, in world space, and the view to measure error by.
+fn viewers(resources: &Resources) -> (Vec<DVec3>, Vec<Cone>, View) {
     let admitted = resources
         .get::<PlanetViewers>()
         .copied()
         .unwrap_or_default();
+    let (width, height) = resources
+        .get::<ViewSize>()
+        .map(|size| (size.0.x, size.0.y))
+        .or_else(|| resources.get::<GpuContext>().map(|gpu| gpu.size()))
+        .unwrap_or((1280, 720));
+    let aspect = f64::from(width.max(1)) / f64::from(height.max(1));
     let mut eyes = Vec::new();
+    let mut cones = Vec::new();
     let mut fov = f32::MAX;
     Query::<(Entity, &PerspectiveCamera, &GlobalTransform)>::new(resources).for_each(
         |(entity, camera, transform)| {
             if camera.active && admitted.admits(entity) {
+                let degrees = camera.fov.clamp(1.0, 179.0);
+                let forward = -transform.matrix.z_axis.truncate().as_dvec3();
                 eyes.push(transform.translation().as_dvec3());
-                fov = fov.min(camera.fov.max(1.0));
+                cones.push(Cone::new(forward, f64::from(degrees).to_radians(), aspect));
+                fov = fov.min(degrees);
             }
         },
     );
-    let height = resources
-        .get::<ViewSize>()
-        .map(|size| size.0.y)
-        .or_else(|| resources.get::<GpuContext>().map(|gpu| gpu.size().1))
-        .unwrap_or(720)
-        .max(1);
-    (
-        eyes,
-        View::new(f64::from(height), f64::from(fov.min(179.0)).to_radians()),
-    )
+    let view = View::new(f64::from(height.max(1)), f64::from(fov).to_radians());
+    (eyes, cones, view)
 }
 
 /// Every block the pool holds a descendant of: what the selection split last frame.
@@ -444,10 +448,17 @@ fn fill_split(split: &mut HashSet<BlockKey>, pool: &BlockPool, planets: &Planets
 }
 
 /// One row per roster index; a free index is a planet nobody sees, so it holds nothing.
-fn fill_planets(planets: &mut Planets, placed: &[Option<usize>], found: &[Found], eyes: &[DVec3]) {
+fn fill_planets(
+    planets: &mut Planets,
+    placed: &[Option<usize>],
+    found: &[Found],
+    eyes: &[DVec3],
+    cones: &[Cone],
+) {
     planets.clear();
     let nowhere = vec![DVec3::splat(f64::INFINITY); eyes.len()];
     let mut local = Vec::with_capacity(eyes.len());
+    let mut turned = Vec::with_capacity(cones.len());
     for at in placed {
         let limits = Limits {
             floor: FLOOR,
@@ -460,11 +471,16 @@ fn fill_planets(planets: &mut Planets, placed: &[Option<usize>], found: &[Found]
         let to_local = planet.world.as_dmat4().inverse();
         local.clear();
         local.extend(eyes.iter().map(|eye| to_local.transform_point3(*eye)));
+        turned.clear();
+        turned.extend(cones.iter().map(|cone| Cone {
+            axis: to_local.transform_vector3(cone.axis).normalize_or_zero(),
+            ..*cone
+        }));
         let local = match to_local.is_finite() {
             true => &local[..],
             false => &nowhere[..],
         };
-        planets.push(Shape::from(&planet.planet), local, limits);
+        planets.push_seen(Shape::from(&planet.planet), local, &turned, limits);
     }
 }
 
