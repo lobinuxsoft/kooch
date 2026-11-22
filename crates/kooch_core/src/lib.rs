@@ -57,7 +57,6 @@ pub mod assets;
 pub mod buffer;
 pub mod change_tick;
 pub mod compute;
-pub mod coord;
 pub mod event;
 pub mod frame_metrics;
 pub mod frame_pacing;

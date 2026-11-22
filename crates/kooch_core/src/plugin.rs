@@ -133,13 +133,11 @@ impl Plugin for CorePlugin {
         // is a failure mode that looks exactly like nothing happening.
         crate::init_tracing_if_needed();
 
-        use crate::coord::ActiveOrigin;
         use crate::event::AppExit;
         use crate::frame_metrics::{FrameMetrics, MetricsReport, frame_metrics_system};
         use crate::time::Time;
 
         app.insert_resource(Time::new());
-        app.insert_resource(ActiveOrigin::default());
         app.add_event::<AppExit>();
 
         // Measured always, reported only if asked. Two subtractions per

@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
 use glam::DVec3;
-use kooch_core::coord::ActiveOrigin;
 use kooch_core::resource::Resources;
 use kooch_ecs::entity::Entity;
 use kooch_ecs::hierarchy::GlobalTransform;
@@ -78,7 +77,7 @@ pub fn activation_system(
     manager: &mut ChunkManager,
     config: &LodRingConfig,
 ) {
-    let origin = resources.get::<ActiveOrigin>().copied().unwrap_or_default();
+    let origin = kooch_ecs::hierarchy::WorldOrigin::of(resources);
 
     let mut focuses: Vec<(Entity, DVec3, u8)> = Vec::new();
     let q = Query::<(Entity, &StreamingFocus, &GlobalTransform)>::new(resources);
@@ -87,7 +86,7 @@ pub fn activation_system(
             return;
         }
         let (_, _, translation) = gt.matrix.to_scale_rotation_translation();
-        let universe_pos = origin.coord().translated(translation.as_dvec3()).to_dvec3();
+        let universe_pos = origin + translation.as_dvec3();
         focuses.push((entity, universe_pos, focus.priority));
     });
     drop(q);
