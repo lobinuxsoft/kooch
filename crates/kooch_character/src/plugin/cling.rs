@@ -207,8 +207,8 @@ fn launch(world: &mut PhysicsWorld, one: &Asked, leap: Leap) {
 
 /// Everything asking, with what the world will need.
 fn plan(resources: &Resources) -> Vec<Asked> {
-    // The solver answers relative to the world origin; `Transform` is absolute (#1972).
-    let origin = kooch_ecs::hierarchy::WorldOrigin::of(resources);
+    // The solver answers relative to the world origin; `Transform` is local to its cell.
+    let origin = kooch_ecs::hierarchy::WorldOrigin::get(resources);
     let Some(registry) = resources.get::<ComponentRegistry>() else {
         return Vec::new();
     };
@@ -251,7 +251,7 @@ fn plan(resources: &Resources) -> Vec<Asked> {
             Some((
                 entity,
                 *bodies.get(entity)?,
-                (transforms.get(entity)?.position - origin).as_vec3(),
+                origin.relative(registry, entity, transforms.get(entity)?),
                 found.standing,
                 touching
                     .and_then(|touching| touching.get(entity))

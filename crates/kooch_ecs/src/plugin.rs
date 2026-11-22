@@ -117,10 +117,12 @@ impl Plugin for EcsPlugin {
                 }
                 if let Some(streamed) = resources.get_mut::<crate::StreamedComponents>() {
                     streamed.add::<crate::hierarchy::FloatingOrigin>();
+                    streamed.add::<crate::hierarchy::GridCell>();
                 }
             },
         );
         app.insert_resource(crate::hierarchy::OriginAnchor::default());
+        app.add_system(Stage::First, crate::hierarchy::grid::rehome_cells);
         app.add_system(Stage::First, crate::hierarchy::grid::rebase_origin);
         // 🔴 Propagation runs TWICE, and both passes are load-bearing (#1316). This one resolves
         // the world the solver is about to read; the `PostUpdate` one below publishes what the

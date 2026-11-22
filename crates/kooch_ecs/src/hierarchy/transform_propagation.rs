@@ -34,14 +34,14 @@ pub fn transform_propagation_system(resources: &mut kooch_core::resource::Resour
 }
 
 /// The cell `GlobalTransform` is published relative to.
-fn origin_of(resources: &kooch_core::resource::Resources) -> glam::IVec3 {
+fn origin_of(resources: &kooch_core::resource::Resources) -> glam::I64Vec3 {
     resources
         .get::<super::grid::WorldOrigin>()
-        .map_or(glam::IVec3::ZERO, |origin| origin.cell)
+        .map_or(glam::I64Vec3::ZERO, |origin| origin.cell)
 }
 
 /// Propagates transforms top-down through the whole hierarchy.
-fn full_pass(resources: &mut kooch_core::resource::Resources, origin: glam::IVec3) {
+fn full_pass(resources: &mut kooch_core::resource::Resources, origin: glam::I64Vec3) {
     use crate::component::ComponentRegistry;
     use crate::transform::Transform;
 

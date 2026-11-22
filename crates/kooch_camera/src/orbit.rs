@@ -259,7 +259,7 @@ fn planned(resources: &Resources) -> Vec<Turn> {
     let dt = crate::plugin::frame_dt(resources);
     let carried = resources.get::<crate::rig::RigMemory>();
     let targets = registry.get_cpu::<CameraTarget>();
-    let pose_of = crate::plugin::poses(registry, kooch_ecs::hierarchy::WorldOrigin::of(resources));
+    let pose_of = crate::plugin::poses(registry, kooch_ecs::hierarchy::WorldOrigin::get(resources));
 
     orbits
         .iter()

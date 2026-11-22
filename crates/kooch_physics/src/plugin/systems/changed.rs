@@ -43,7 +43,7 @@ pub(super) fn authored(resources: &Resources, cache: &mut SyncCache) -> Option<V
         meshes,
         since,
         &mut list,
-        kooch_ecs::hierarchy::WorldOrigin::of(resources),
+        kooch_ecs::hierarchy::WorldOrigin::get(resources),
     ) {
         Some(()) => Some(list),
         None => read_authored(resources),
@@ -63,7 +63,7 @@ fn reread(
     meshes: Option<&ColliderMeshCache>,
     since: u64,
     list: &mut Vec<Authored>,
-    origin: glam::DVec3,
+    origin: kooch_ecs::hierarchy::WorldOrigin,
 ) -> Option<()> {
     let bodies = registry.get_cpu::<PhysicsBody>()?;
     let mut dirty: Vec<Entity> = bodies.iter_changed(since).map(|(e, _)| *e).collect();

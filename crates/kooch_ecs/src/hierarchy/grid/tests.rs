@@ -1,4 +1,4 @@
-use glam::{DVec3, IVec3, Vec3};
+use glam::{DVec3, I64Vec3, Vec3};
 use kooch_core::resource::Resources;
 use kooch_core::run_state::Playing;
 
@@ -65,7 +65,7 @@ fn a_rebase_keeps_exact_offsets() {
     rebase_origin(&mut resources);
 
     let cell = resources.get::<WorldOrigin>().unwrap().cell;
-    assert_eq!(cell, IVec3::new(0, 3111, 0));
+    assert_eq!(cell, I64Vec3::new(0, 3111, 0));
     assert_eq!(global(&resources, player), Vec3::new(0.0, -321.0, 0.0));
     assert_eq!(global(&resources, beside), Vec3::new(5.25, -320.875, 0.0));
     let registry = resources.get::<ComponentRegistry>().unwrap();
@@ -85,7 +85,7 @@ fn an_f32_position_still_loads() {
     assert_eq!(transform.position, DVec3::new(1.5, -2.0, 3.25));
 }
 
-fn published(resources: &Resources, entity: Entity) -> IVec3 {
+fn published(resources: &Resources, entity: Entity) -> I64Vec3 {
     let registry = resources.get::<ComponentRegistry>().unwrap();
     registry
         .get_cpu::<FloatingOrigin>()
@@ -109,7 +109,7 @@ fn a_replay_republishes_the_cell() {
     hierarchy_sync_system(&mut resources);
     transform_propagation_system(&mut resources);
     rebase_origin(&mut resources);
-    let far = IVec3::new(0, 3111, 0);
+    let far = I64Vec3::new(0, 3111, 0);
 
     // Stop: the snapshot restores the authored cell.
     let registry = resources.get_mut::<ComponentRegistry>().unwrap();
@@ -127,9 +127,9 @@ fn a_replay_republishes_the_cell() {
 fn no_anchor_returns_home() {
     let mut resources = world();
     resources.insert(WorldOrigin {
-        cell: IVec3::new(0, 3111, 0),
+        cell: I64Vec3::new(0, 3111, 0),
     });
     resources.insert(Playing(false));
     rebase_origin(&mut resources);
-    assert_eq!(resources.get::<WorldOrigin>().unwrap().cell, IVec3::ZERO);
+    assert_eq!(resources.get::<WorldOrigin>().unwrap().cell, I64Vec3::ZERO);
 }

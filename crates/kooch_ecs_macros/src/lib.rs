@@ -521,15 +521,23 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             });
         }
 
-        // A field widened to f64 still reads what older scenes saved as f32 (#1972).
-        let widen = (kind_variant == "DVec3").then(|| {
-            quote! {
+        // A widened field still reads what older scenes saved narrower: f32 positions (#1972),
+        // i32 cells (#1977).
+        let widen = match kind_variant {
+            "DVec3" => Some(quote! {
                 ::kooch_ecs::reflect::ReflectValue::Vec3(v) => {
                     self.#field_name = v.as_dvec3();
                     Ok(())
                 }
-            }
-        });
+            }),
+            "I64" => Some(quote! {
+                ::kooch_ecs::reflect::ReflectValue::I32(v) => {
+                    self.#field_name = i64::from(v);
+                    Ok(())
+                }
+            }),
+            _ => None,
+        };
 
         // reflect_set arm.
         set_arms.push(quote! {

@@ -122,7 +122,7 @@ struct Reader<'a> {
     slots: Option<kooch_ecs::component::ComponentView<'a, SolverBody>>,
     colliders: Option<kooch_ecs::component::ComponentView<'a, Collider>>,
     /// Where an entity spawned since the last propagation is measured from (#1974).
-    origin: glam::DVec3,
+    origin: kooch_ecs::hierarchy::WorldOrigin,
 }
 
 impl<'a> Reader<'a> {
@@ -130,7 +130,7 @@ impl<'a> Reader<'a> {
         registry: &'a ComponentRegistry,
         layers: &'a kooch_core::layers::LayerNames,
         meshes: Option<&'a ColliderMeshCache>,
-        origin: glam::DVec3,
+        origin: kooch_ecs::hierarchy::WorldOrigin,
     ) -> Self {
         Self {
             origin,
@@ -197,7 +197,7 @@ fn read_authored(resources: &Resources) -> Option<Vec<Authored>> {
     let layers = layer_table(resources);
     let registry = resources.get::<ComponentRegistry>()?;
     let meshes = resources.get::<ColliderMeshCache>();
-    let origin = kooch_ecs::hierarchy::WorldOrigin::of(resources);
+    let origin = kooch_ecs::hierarchy::WorldOrigin::get(resources);
     let reader = Reader::new(registry, &layers, meshes, origin);
 
     let owned: Vec<(Entity, &PhysicsBody)> = registry
@@ -270,7 +270,7 @@ fn regions(
     meshes: Option<&ColliderMeshCache>,
     layers: &kooch_core::layers::LayerNames,
     authored: &[Authored],
-    origin: glam::DVec3,
+    origin: kooch_ecs::hierarchy::WorldOrigin,
 ) -> Vec<Authored> {
     let Some(volumes) = registry.get_cpu::<kooch_ecs::post_process_volume::PostProcessVolume>()
     else {
@@ -515,7 +515,7 @@ pub fn physics_writeback_system(resources: &mut Resources) {
 
     // 🔴 World in, local out: the solver answers in world space and a `Transform` is relative to
     // its parent. Writing the world pose straight back applied the parent twice (#1316).
-    let origin = kooch_ecs::hierarchy::WorldOrigin::of(resources);
+    let origin = kooch_ecs::hierarchy::WorldOrigin::get(resources);
     let local: Vec<(Entity, glam::DVec3, Quat)> = match resources.get::<ComponentRegistry>() {
         Some(registry) => poses
             .iter()

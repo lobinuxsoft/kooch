@@ -106,7 +106,7 @@ fn aimed(resources: &Resources) -> Vec<(Entity, Vec3, Vec3)> {
     let Some(vcams) = registry.get_cpu::<crate::VirtualCamera>() else {
         return Vec::new();
     };
-    let pose = crate::plugin::poses(registry, kooch_ecs::hierarchy::WorldOrigin::of(resources));
+    let pose = crate::plugin::poses(registry, kooch_ecs::hierarchy::WorldOrigin::get(resources));
     let targets = registry.get_cpu::<crate::CameraTarget>();
 
     aims.iter()

@@ -7,7 +7,7 @@ pub(super) fn spawn_mesh(
     resources: &mut Resources,
     path: &std::path::Path,
     name: &str,
-    at: Option<glam::DVec3>,
+    at: Option<crate::viewport_pick::Placed>,
 ) {
     const TARGET: &str = "kooch_editor_core::remote_edit::spawn_mesh";
 
@@ -86,7 +86,7 @@ pub(super) fn spawn_mesh(
 pub(super) fn spawn_block(
     resources: &mut Resources,
     shape: kooch_blockmesh::Shape,
-    at: Option<glam::DVec3>,
+    at: Option<crate::viewport_pick::Placed>,
 ) {
     const TARGET: &str = "kooch_editor_core::remote_edit::spawn_block";
 
@@ -182,23 +182,41 @@ pub(super) fn spawn_block(
 ///
 /// A failure is logged and swallowed: the entity exists either way, and an author who sees it at
 /// the origin can drag it. Refusing the spawn over a misplaced one would be worse.
-fn place(
+pub(super) fn place(
     client: &kooch_remote::RemoteClient,
     entity: kooch_remote::protocol::EntityId,
     transform_ty: &str,
-    at: Option<glam::DVec3>,
+    at: Option<crate::viewport_pick::Placed>,
 ) {
-    let Some(at) = at else {
+    let Some((cell, at)) = at else {
         return;
     };
     let value = kooch_ecs::reflect::ReflectValue::DVec3(at);
-    if let Err(e) = client.set_field(entity, transform_ty, "position", value) {
+    let placed = cell
+        .map_or(Ok(()), |cell| set_cell(client, entity, cell))
+        .and_then(|()| client.set_field(entity, transform_ty, "position", value));
+    if let Err(e) = placed {
         tracing::warn!(
             target: "kooch_editor_core::remote_edit::place",
             error = %e,
             "could not place the new entity",
         );
     }
+}
+
+/// Gives a far spawn its cell, before its position, which is local to it.
+pub(super) fn set_cell(
+    client: &kooch_remote::RemoteClient,
+    entity: kooch_remote::protocol::EntityId,
+    cell: kooch_ecs::hierarchy::GridCell,
+) -> Result<(), kooch_remote::ClientError> {
+    use kooch_ecs::reflect::ReflectValue::I64;
+    let ty = std::any::type_name::<kooch_ecs::hierarchy::GridCell>();
+    // Already there on a prefab that carries one: overwritten below either way.
+    let _ = client.add_component(entity, ty);
+    client.set_field(entity, ty, "x", I64(cell.x))?;
+    client.set_field(entity, ty, "y", I64(cell.y))?;
+    client.set_field(entity, ty, "z", I64(cell.z))
 }
 
 /// Puts the spawn in the remote history.

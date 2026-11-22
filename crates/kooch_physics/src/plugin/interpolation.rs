@@ -115,7 +115,7 @@ pub fn interpolate_bodies(resources: &mut Resources) {
     let Some(poses) = resources.remove::<StepPoses>() else {
         return;
     };
-    let origin = kooch_ecs::hierarchy::WorldOrigin::of(resources);
+    let origin = kooch_ecs::hierarchy::WorldOrigin::get(resources);
     let drawn: Vec<(Entity, glam::DVec3, Quat)> = match resources.get::<ComponentRegistry>() {
         Some(registry) => poses
             .poses

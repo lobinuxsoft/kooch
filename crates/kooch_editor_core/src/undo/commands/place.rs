@@ -91,13 +91,30 @@ pub(super) fn drop_at(
     };
 
     // A child's Transform is in its parent's space, and `place` has already reparented by now.
-    // The pick is relative to the world origin; a root's position is absolute (#1972).
-    let local = match parent_matrix(resources, entity) {
-        Some(matrix) => matrix.inverse().transform_point3(world).as_dvec3(),
-        None => kooch_ecs::hierarchy::WorldOrigin::of(resources) + world.as_dvec3(),
+    // The pick is relative to the world origin; a root's position is local to its cell (#1977).
+    let (cell, local) = match parent_matrix(resources, entity) {
+        Some(matrix) => (None, matrix.inverse().transform_point3(world).as_dvec3()),
+        None => kooch_ecs::hierarchy::WorldOrigin::get(resources).place(world),
     };
-    if let Some(registry) = resources.get_mut::<ComponentRegistry>()
-        && let Some(mut storage) = registry.get_cpu_mut::<kooch_ecs::Transform>()
+    put(resources, entity, cell, local);
+}
+
+/// Writes a root's new place: its cell, if far out, then the position local to it.
+pub(crate) fn put(
+    resources: &mut Resources,
+    entity: Entity,
+    cell: Option<kooch_ecs::hierarchy::GridCell>,
+    local: glam::DVec3,
+) {
+    let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
+        return;
+    };
+    if let Some(cell) = cell
+        && let Some(mut cells) = registry.get_cpu_mut::<kooch_ecs::hierarchy::GridCell>()
+    {
+        cells.insert(entity, cell);
+    }
+    if let Some(mut storage) = registry.get_cpu_mut::<kooch_ecs::Transform>()
         && let Some(transform) = storage.get_mut(entity)
     {
         transform.position = local;

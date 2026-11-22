@@ -139,8 +139,10 @@ pub(crate) struct Found {
     pub entity: Entity,
     pub planet: Planet,
     pub world: Mat4,
-    /// The centre in absolute f64 metres: `world` is relative to the world origin, and narrowed.
+    /// The centre in f64 metres from `cell`'s corner: `world` is relative to the origin, narrowed.
     pub at: DVec3,
+    /// The cell `at` is measured from.
+    pub cell: kooch_ecs::hierarchy::GridCell,
 }
 
 /// Chooses, generates and draws every planet's blocks. Does nothing where nothing draws.
@@ -349,27 +351,38 @@ fn crosses(
 }
 
 fn gather(resources: &Resources) -> Vec<Found> {
-    let origin = kooch_ecs::hierarchy::WorldOrigin::of(resources);
+    use kooch_ecs::hierarchy::GridCell;
+    let origin = kooch_ecs::hierarchy::WorldOrigin::get(resources);
     let registry = resources.get::<kooch_ecs::component::ComponentRegistry>();
     let transforms = registry.and_then(|r| r.get_cpu::<kooch_ecs::transform::Transform>());
     let parents = registry.and_then(|r| r.get_cpu::<kooch_ecs::hierarchy::Parent>());
-    // A root's own f64 position; a child's only exists narrowed, under its parent.
+    let cells = registry.and_then(|r| r.get_cpu::<GridCell>());
+    // A root's own f64 position in its cell; a child's only exists narrowed, from the origin's.
     let at = |entity: Entity, world: &Mat4| {
         let root = parents.as_ref().is_none_or(|p| p.get(entity).is_none());
-        transforms
+        let own = transforms
             .as_ref()
             .and_then(|t| t.get(entity))
-            .filter(|_| root)
-            .map_or(origin + world.w_axis.truncate().as_dvec3(), |t| t.position)
+            .filter(|_| root);
+        let cell = cells.as_ref().and_then(|c| c.get(entity)).copied();
+        match own {
+            Some(t) => (t.position, cell.unwrap_or_default()),
+            None => {
+                let (x, y, z) = (origin.cell.x, origin.cell.y, origin.cell.z);
+                (world.w_axis.truncate().as_dvec3(), GridCell { x, y, z })
+            }
+        }
     };
     let mut found = Vec::new();
     Query::<(Entity, &Planet, &GlobalTransform)>::new(resources).for_each(
         |(entity, planet, transform)| {
+            let (at, cell) = at(entity, &transform.matrix);
             found.push(Found {
                 entity,
                 planet: planet.clone(),
                 world: transform.matrix,
-                at: at(entity, &transform.matrix),
+                at,
+                cell,
             });
         },
     );

@@ -15,7 +15,7 @@ pub mod transform_propagation;
 pub use children::Children;
 pub use descendants::collect_descendants;
 pub use global_transform::GlobalTransform;
-pub use grid::{FloatingOrigin, GridCell, OriginAnchor, OriginShift, WorldOrigin};
+pub use grid::{CELL, FAR, FloatingOrigin, GridCell, OriginAnchor, OriginShift, WorldOrigin};
 pub use hierarchy_sync::hierarchy_sync_system;
 pub use parent::Parent;
 pub use position_only::{PositionOnly, parent_frame};
