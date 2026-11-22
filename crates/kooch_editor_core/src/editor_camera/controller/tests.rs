@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn defaults_are_sane() {
     let c = EditorCameraController::default();
-    assert_eq!(c.focus_point, Vec3::ZERO);
+    assert_eq!(c.focus_point, glam::DVec3::ZERO);
     assert!(c.min_distance < c.distance);
     assert!(c.distance < c.max_distance);
 }

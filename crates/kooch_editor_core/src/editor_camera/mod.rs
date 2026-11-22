@@ -139,7 +139,11 @@ pub fn origin_anchor_system(resources: &mut Resources) {
 
 /// Computes the initial world `Transform` from the controller's defaults.
 fn initial_transform(controller: &EditorCameraController) -> Transform {
-    let view = glam::camera::rh::view::look_at_mat4(DEFAULT_EYE, controller.focus_point, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(
+        DEFAULT_EYE,
+        controller.focus_point.as_vec3(),
+        Vec3::Y,
+    );
     let world = view.inverse();
     let (_, rotation, translation) = world.to_scale_rotation_translation();
     Transform::new(translation, rotation, Vec3::ONE)
