@@ -3,7 +3,6 @@
 
 use glam::{DVec3, IVec3, Vec3};
 use kooch_core::Aabb;
-use kooch_core::coord::{ActiveOrigin, UniverseCoord};
 
 /// Side length of a level-0 chunk in meters. A chunk at level N has
 /// side `BASE_CHUNK_SIZE_METERS << N` — each level doubles the side
@@ -35,25 +34,15 @@ impl ChunkId {
         BASE_CHUNK_SIZE_METERS * (1u64 << self.level) as f64
     }
 
-    /// Lower corner of this chunk in absolute universe coordinates.
-    /// Useful when crossing sector boundaries; most consumers want
-    /// [`Self::bounds`] instead.
-    pub fn world_origin(&self) -> UniverseCoord {
-        let s = self.size_meters();
-        let world = DVec3::new(
-            self.coords.x as f64 * s,
-            self.coords.y as f64 * s,
-            self.coords.z as f64 * s,
-        );
-        UniverseCoord::from_dvec3(world)
+    /// The chunk's lowest corner, in absolute metres.
+    pub fn corner(&self) -> DVec3 {
+        self.coords.as_dvec3() * self.size_meters()
     }
 
-    /// AABB relative to [`ActiveOrigin`]; f32 is safe because far chunks unload before they leave
-    /// its precision.
-    pub fn bounds(&self, origin: &ActiveOrigin) -> Aabb {
-        let world = self.world_origin();
-        let delta = origin.coord().delta_to(&world);
-        let min = delta.as_vec3();
+    /// AABB relative to the world origin (`WorldOrigin::of`), as `GlobalTransform` is; f32 is safe
+    /// because far chunks unload before they leave its precision.
+    pub fn bounds(&self, origin: DVec3) -> Aabb {
+        let min = (self.corner() - origin).as_vec3();
         let s = self.size_meters() as f32;
         Aabb::new(min, min + Vec3::splat(s))
     }
