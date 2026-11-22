@@ -1,8 +1,9 @@
 # Large worlds and precision
 
 A `Transform`'s position is an `f64` (`DVec3`): exact to well under a millimetre anywhere in a
-solar system. Rotation and scale stay `f32`. Everything downstream — `GlobalTransform`, the GPU,
-physics, the camera rig — works in `f32`, measured from a **world origin** that is never far away.
+solar system. Past that, a root carries a **GridCell** and its position is local to the cell.
+Rotation and scale stay `f32`. Everything downstream — `GlobalTransform`, the GPU, physics, the
+camera rig — works in `f32`, measured from a **world origin** that is never far away.
 
 ## The world origin
 
@@ -17,17 +18,33 @@ When what it follows strays more than one cell, the origin jumps by whole cells.
 moves: every `GlobalTransform` is republished from the exact `f64` positions, and `OriginShift`
 says by how much that frame.
 
+## Sectors: GridCell
+
+A `GridCell` (three `i64`) puts a root in a 2048 m cell; its `Transform.position` is then measured
+from that cell's corner. A cell index reaches 10²² m, far past any galaxy, and stays exact.
+
+- Something dropped in the viewport more than 4·10⁹ m out (`FAR`) gets one by itself.
+- While playing, a root that strays past a cell moves whole cells from its position into its
+  `GridCell`. Nothing moves on screen.
+- Planet blocks carry their planet's cell.
+- Below a root, a `GridCell` is ignored.
+
 ## Writing a system that stores a position
+
+Take `let origin = WorldOrigin::get(resources);` once, then per root `entity`:
 
 | You have | You want | Write |
 |---|---|---|
-| a root's `Transform` | what physics, rays, `gravity_up` and `teleport` take | `transform.relative_to(WorldOrigin::of(resources))` |
-| an origin-relative point (a `GlobalTransform`, a ray hit, a solver pose) | a root's `Transform.position` | `WorldOrigin::of(resources) + point.as_dvec3()` |
+| a root's `Transform` | what physics, rays, `gravity_up` and `teleport` take | `origin.relative(registry, entity, transform)` |
+| an origin-relative point (a `GlobalTransform`, a ray hit, a solver pose) | that root's `Transform.position` | `origin.local(registry, entity, point)` |
+| an origin-relative point | a **new** root's place | `origin.place(point)` → `(Option<GridCell>, DVec3)` |
 | an origin-relative position kept across frames | still right after a rebase | add `OriginShift::of(resources)` when it is `Some` |
-| a position kept across frames | never wrong | keep it as `DVec3`, absolute |
 
-A child's `Transform` is local to its parent and small: it needs none of this.
+These go through the root's `GridCell`, or cell zero without one. `WorldOrigin::of(resources)` is the
+cell-zero shortcut, right only for a root without a `GridCell`. A child's `Transform` is local to
+its parent and small: it needs none of this.
 
 ## Scenes
 
-Scenes saved with `f32` positions load unchanged; saving writes `f64`.
+Scenes saved with `f32` positions load unchanged; saving writes `f64`. Cells saved as `i32` load
+as `i64`.

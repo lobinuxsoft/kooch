@@ -9,6 +9,7 @@ use std::any::TypeId;
 use kooch_core::resource::Resources;
 use kooch_ecs::reflect::ReflectValue;
 
+pub(crate) use commands::place::put as put_placed;
 pub(crate) use commands::{
     AddComponentCommand, AddDynamicComponentCommand, BlockEditCommand, DespawnCommand,
     DuplicateCommand, MoveToSceneCommand, PasteCommand, RemoveComponentCommand,

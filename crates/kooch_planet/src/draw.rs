@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use glam::{DVec3, Mat4, Vec3};
 use kooch_core::Guid;
 use kooch_core::resource::Resources;
+use kooch_ecs::hierarchy::{CELL, GridCell};
 use kooch_ecs::query::Query;
 use kooch_ecs::{Commands, Entity, MeshRenderer, Transform};
 use kooch_render::meshlet::{GpuMeshes, MeshBounds};
@@ -217,8 +218,8 @@ impl Blocks {
             visible,
             ..Default::default()
         };
-        let transform = place(planet.world, planet.at, block.origin);
-        self.entity[s] = put(resources, self.entity[s], transform, renderer);
+        let placed = place(planet, block.origin);
+        self.entity[s] = put(resources, self.entity[s], placed, renderer);
     }
 
     /// Hides the index and gives its meshes back.
@@ -264,9 +265,10 @@ impl Blocks {
                 let Some(entity) = self.entity[s].filter(|_| ours) else {
                     continue;
                 };
-                let query = Query::<(&mut Transform, &mut MeshRenderer)>::new(resources);
-                if let Some((transform, renderer)) = query.get(entity) {
-                    *transform = place(planet.world, planet.at, self.origin[s]);
+                let query =
+                    Query::<(&mut Transform, &mut GridCell, &mut MeshRenderer)>::new(resources);
+                if let Some((transform, cell, renderer)) = query.get(entity) {
+                    (*transform, *cell) = place(planet, self.origin[s]);
                     renderer.material = material;
                 }
             }
@@ -344,15 +346,14 @@ fn bounds_of(voxel: f32, near: &Near) -> MeshBounds {
 fn put(
     resources: &mut Resources,
     held: Option<Entity>,
-    transform: Transform,
+    (transform, cell): (Transform, GridCell),
     renderer: MeshRenderer,
 ) -> Option<Entity> {
     if let Some(entity) = held
-        && let Some((t, r)) =
-            Query::<(&mut Transform, &mut MeshRenderer)>::new(resources).get(entity)
+        && let Some((t, c, r)) =
+            Query::<(&mut Transform, &mut GridCell, &mut MeshRenderer)>::new(resources).get(entity)
     {
-        *t = transform;
-        *r = renderer;
+        (*t, *c, *r) = (transform, cell, renderer);
         return Some(entity);
     }
     let mut commands = resources.remove::<Commands>()?;
@@ -360,18 +361,26 @@ fn put(
         .spawn(resources)
         .insert(PlanetBlock)
         .insert(transform)
+        .insert(cell)
         .insert(renderer)
         .id();
     resources.insert(commands);
     Some(entity)
 }
 
-/// A block's transform: its corner carried by the planet's, all in f64 from the planet's absolute
-/// centre `at`. The corner is a planet radius out, where f32 steps half a metre (#51, #1972).
-fn place(world: Mat4, at: DVec3, origin: DVec3) -> Transform {
-    let (scale, rotation, _) = world.to_scale_rotation_translation();
-    let corner = at + world.as_dmat4().transform_vector3(origin);
-    Transform::new(corner, rotation, scale)
+/// A block's transform: its corner carried by the planet's, in f64 from the planet's centre, then
+/// homed into its own cell. The corner is a planet radius out, where f32 steps half a metre (#51).
+fn place(planet: &Found, origin: DVec3) -> (Transform, GridCell) {
+    let (scale, rotation, _) = planet.world.to_scale_rotation_translation();
+    let corner = planet.at + planet.world.as_dmat4().transform_vector3(origin);
+    let whole = (corner / CELL).round();
+    let by = whole.as_i64vec3() + planet.cell.cell();
+    let cell = GridCell {
+        x: by.x,
+        y: by.y,
+        z: by.z,
+    };
+    (Transform::new(corner - whole * CELL, rotation, scale), cell)
 }
 
 const PREFIX: &[u8; 8] = b"kooch:pl";

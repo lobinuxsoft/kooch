@@ -8,7 +8,7 @@
 use glam::{Mat4, Quat, Vec3};
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
-use kooch_ecs::hierarchy::{GlobalTransform, Parent};
+use kooch_ecs::hierarchy::{GlobalTransform, Parent, WorldOrigin};
 use kooch_ecs::transform::Transform;
 
 /// How deep a chain is followed before it is treated as a cycle. A hierarchy this deep is a bug
@@ -16,7 +16,7 @@ use kooch_ecs::transform::Transform;
 const MAX_DEPTH: u32 = 64;
 
 /// `entity`'s local-to-world matrix, as the last propagation published it.
-fn world_of(registry: &ComponentRegistry, entity: Entity, origin: glam::DVec3) -> Mat4 {
+fn world_of(registry: &ComponentRegistry, entity: Entity, origin: WorldOrigin) -> Mat4 {
     if let Some(global) = registry.component::<GlobalTransform>(entity) {
         return global.matrix;
     }
@@ -35,7 +35,7 @@ fn world_of(registry: &ComponentRegistry, entity: Entity, origin: glam::DVec3) -
     }
     registry
         .component::<Transform>(entity)
-        .map(|transform| transform.matrix_from(origin))
+        .map(|transform| transform.matrix_from(origin.of_root(registry, entity)))
         .unwrap_or(Mat4::IDENTITY)
 }
 
@@ -48,7 +48,7 @@ fn world_of(registry: &ComponentRegistry, entity: Entity, origin: glam::DVec3) -
 pub(super) fn world_pose(
     registry: &ComponentRegistry,
     entity: Entity,
-    origin: glam::DVec3,
+    origin: WorldOrigin,
 ) -> (Vec3, Quat, Vec3) {
     let (_, rotation, translation) =
         world_of(registry, entity, origin).to_scale_rotation_translation();
@@ -87,15 +87,15 @@ pub(super) fn under_parent(
     entity: Entity,
     position: Vec3,
     rotation: Quat,
-    origin: glam::DVec3,
+    origin: WorldOrigin,
 ) -> (glam::DVec3, Quat) {
     let parent = registry
         .component::<Parent>(entity)
         .map(|parent| parent.entity)
         .filter(|parent| parent.is_valid() && *parent != entity);
-    // The solver works relative to the world origin; a root's `Transform` is absolute (#1972).
+    // The solver works relative to the world origin; a root's `Transform` is local to its cell.
     let Some(parent) = parent else {
-        return (origin + position.as_dvec3(), rotation);
+        return (origin.local(registry, entity, position), rotation);
     };
     // 🔴 The parent's published global, not this entity's global divided out. rapier's plugin
     // documents the same choice: deriving the parent's from the child's makes the next propagated

@@ -22,10 +22,13 @@ const FALLBACK_DISTANCE: f32 = 10.0;
 /// `y = 0` put a prefab released over a hillside at sea level, through the hill (#1459).
 ///
 /// `&mut` because resolving a mesh may load it — the same reason [`crate::picking`] takes one.
-/// [`resolve`] as an absolute position, for a root's `Transform` or another process (#1972).
-pub(crate) fn resolve_absolute(resources: &mut Resources, point: DropPoint) -> Option<glam::DVec3> {
-    let origin = kooch_ecs::hierarchy::WorldOrigin::of(resources);
-    resolve(resources, point).map(|at| origin + at.as_dvec3())
+/// A new root's place: its cell when far out, and its `Transform` position (#1977).
+pub(crate) type Placed = (Option<kooch_ecs::hierarchy::GridCell>, glam::DVec3);
+
+/// [`resolve`] as a new root's place, for this world or another process (#1972).
+pub(crate) fn resolve_placed(resources: &mut Resources, point: DropPoint) -> Option<Placed> {
+    let origin = kooch_ecs::hierarchy::WorldOrigin::get(resources);
+    resolve(resources, point).map(|at| origin.place(at))
 }
 
 pub(crate) fn resolve(resources: &mut Resources, point: DropPoint) -> Option<Vec3> {

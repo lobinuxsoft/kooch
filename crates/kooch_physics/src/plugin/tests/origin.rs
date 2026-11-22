@@ -1,6 +1,6 @@
 //! A world far from zero: the solver works relative to the world origin, `Transform` stays exact.
 
-use glam::{DVec3, IVec3};
+use glam::{DVec3, I64Vec3};
 use kooch_ecs::hierarchy::{OriginShift, WorldOrigin};
 
 use super::*;
@@ -20,7 +20,7 @@ fn exact(resources: &Resources, entity: Entity) -> DVec3 {
 /// Spawned since the last propagation, so the solver reads its `Transform`, not a global.
 fn far_body(resources: &mut Resources) -> Entity {
     resources.insert(WorldOrigin {
-        cell: IVec3::new(0, 3111, 0),
+        cell: I64Vec3::new(0, 3111, 0),
     });
     spawn_body(
         resources,
@@ -47,10 +47,10 @@ fn a_rebase_keeps_body_poses() {
     let body = far_body(&mut resources);
     physics_sync_system(&mut resources);
     resources.insert(WorldOrigin {
-        cell: IVec3::new(0, 3112, 0),
+        cell: I64Vec3::new(0, 3112, 0),
     });
     resources.insert(OriginShift {
-        cells: IVec3::new(0, 1, 0),
+        cells: I64Vec3::new(0, 1, 0),
     });
     follow_origin(&mut resources);
     physics_writeback_system(&mut resources);

@@ -138,8 +138,7 @@ pub(super) fn handle_instantiate_prefab(
 ) {
     // Resolved before the spawn: it reads the camera, and the borrow ends
     // before the world is mutated.
-    let at = crate::viewport_pick::resolve(resources, at);
-    let origin = kooch_ecs::hierarchy::WorldOrigin::of(resources);
+    let at = crate::viewport_pick::resolve_placed(resources, at);
 
     let (root, members) = match kooch_ecs::scene::spawn_prefab_members(prefab, resources) {
         Ok(spawned) => spawned,
@@ -153,13 +152,8 @@ pub(super) fn handle_instantiate_prefab(
     kooch_ecs::prefab_instance::attach(resources, root, &members, prefab);
     // A drop into the viewport names a place; the World panel and the
     // context menu do not, and leave the prefab where it was authored.
-    if let Some(at) = at
-        && let Some(registry) = resources.get_mut::<kooch_ecs::component::ComponentRegistry>()
-        && let Some(mut storage) = registry.get_cpu_mut::<kooch_ecs::transform::Transform>()
-        && let Some(transform) = storage.get_mut(root)
-    {
-        // The pick is relative to the world origin; a root's position is absolute (#1972).
-        transform.position = origin + at.as_dvec3();
+    if let Some((cell, at)) = at {
+        crate::undo::put_placed(resources, root, cell, at);
     }
     tracing::info!("instanced prefab {prefab}");
 }

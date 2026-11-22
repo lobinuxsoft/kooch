@@ -184,9 +184,12 @@ pub(super) fn send(
             // Placing it is a `SetField` on the entity that just came back rather than a parameter
             // on the call — the same route `InstantiatePrefab` takes, which keeps spatial types
             // out of the wire format (#1461).
-            let Some(at) = at else {
+            let Some((cell, at)) = at else {
                 return Ok(());
             };
+            if let Some(cell) = cell.filter(|_| parent.is_none()) {
+                set_cell(&client, entity, cell).map_err(map_err)?;
+            }
             client
                 .set_field(entity, transform, "position", ReflectValue::DVec3(at))
                 .map_err(map_err)
@@ -316,9 +319,12 @@ pub(super) fn send(
             // Placing the instance is a `SetField` on the root that just came back, rather than a
             // parameter on the call. It reuses the path that already knows how to write a reflected
             // field, and keeps spatial types out of the wire format.
-            let Some(at) = at else {
+            let Some((cell, at)) = at else {
                 return Ok(());
             };
+            if let Some(cell) = cell {
+                set_cell(&client, root, cell).map_err(map_err)?;
+            }
             client
                 .set_field(
                     root,
