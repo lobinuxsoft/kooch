@@ -22,6 +22,7 @@
 - [Audio](./guide/audio.md)
 - [Gravity](./guide/gravity.md)
 - [Planets](./guide/planets.md)
+- [Large worlds and precision](./guide/precision.md)
 - [Input](./guide/input.md)
 - [UI](./guide/ui.md)
   - [UI files](./guide/ui_files.md)
