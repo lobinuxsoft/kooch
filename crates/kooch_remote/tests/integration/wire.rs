@@ -69,7 +69,7 @@ fn play_snapshots_the_world_and_stop_restores_it() {
         .map(|(_, v)| v.clone());
     assert_eq!(
         position,
-        Some(ReflectValue::Vec3(glam::Vec3::ZERO)),
+        Some(ReflectValue::DVec3(glam::DVec3::ZERO)),
         "play mutation leaked into the authored scene"
     );
 }

@@ -51,12 +51,14 @@ pub struct MovedComponent {
     pub component: ComponentSnapshot,
 }
 
-/// One entity's local transform as matrix columns — the mirror writes `Transform`, so no rebuild
-/// from three fields.
+/// One entity's local transform. The position travels as f64: a matrix in f32 rounded a root a
+/// planet radius out to half a metre, and the mirror shook with it (#1972).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct MovedTransform {
     pub id: EntityId,
-    pub matrix: [f32; 16],
+    pub position: [f64; 3],
+    pub rotation: [f32; 4],
+    pub scale: [f32; 3],
 }
 
 /// One entity with its name and components, as seen over the wire.

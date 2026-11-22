@@ -134,14 +134,17 @@ pub fn entity_world_position(resources: &Resources, entity: Entity) -> Option<Ve
     Some(translation)
 }
 
+/// The camera relative to the world origin, the space its controller and the picks work in (#1972).
 fn read_transform(resources: &Resources, entity: Entity) -> Option<(Vec3, Quat)> {
+    let origin = kooch_ecs::hierarchy::WorldOrigin::of(resources);
     let registry = resources.get::<ComponentRegistry>()?;
     let storage = registry.get_cpu::<Transform>()?;
     let t = storage.get(entity)?;
-    Some((t.position, t.rotation))
+    Some(((t.position - origin).as_vec3(), t.rotation))
 }
 
 fn write_transform(resources: &mut Resources, entity: Entity, position: Vec3, rotation: Quat) {
+    let position = kooch_ecs::hierarchy::WorldOrigin::of(resources) + position.as_dvec3();
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
         && let Some(mut storage) = registry.get_cpu_mut::<Transform>()
         && let Some(t) = storage.get_mut(entity)

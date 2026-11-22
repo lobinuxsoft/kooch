@@ -350,8 +350,8 @@ pub(crate) fn capture_before(
                 [
                     (
                         "position",
-                        ReflectValue::Vec3(before.position),
-                        ReflectValue::Vec3(after.position),
+                        ReflectValue::DVec3(before.position),
+                        ReflectValue::DVec3(after.position),
                     ),
                     (
                         "rotation",

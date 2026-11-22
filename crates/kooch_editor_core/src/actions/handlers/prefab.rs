@@ -139,6 +139,7 @@ pub(super) fn handle_instantiate_prefab(
     // Resolved before the spawn: it reads the camera, and the borrow ends
     // before the world is mutated.
     let at = crate::viewport_pick::resolve(resources, at);
+    let origin = kooch_ecs::hierarchy::WorldOrigin::of(resources);
 
     let (root, members) = match kooch_ecs::scene::spawn_prefab_members(prefab, resources) {
         Ok(spawned) => spawned,
@@ -157,7 +158,8 @@ pub(super) fn handle_instantiate_prefab(
         && let Some(mut storage) = registry.get_cpu_mut::<kooch_ecs::transform::Transform>()
         && let Some(transform) = storage.get_mut(root)
     {
-        transform.position = at;
+        // The pick is relative to the world origin; a root's position is absolute (#1972).
+        transform.position = origin + at.as_dvec3();
     }
     tracing::info!("instanced prefab {prefab}");
 }

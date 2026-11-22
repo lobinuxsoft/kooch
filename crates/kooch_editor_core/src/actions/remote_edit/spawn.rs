@@ -7,7 +7,7 @@ pub(super) fn spawn_mesh(
     resources: &mut Resources,
     path: &std::path::Path,
     name: &str,
-    at: Option<glam::Vec3>,
+    at: Option<glam::DVec3>,
 ) {
     const TARGET: &str = "kooch_editor_core::remote_edit::spawn_mesh";
 
@@ -86,7 +86,7 @@ pub(super) fn spawn_mesh(
 pub(super) fn spawn_block(
     resources: &mut Resources,
     shape: kooch_blockmesh::Shape,
-    at: Option<glam::Vec3>,
+    at: Option<glam::DVec3>,
 ) {
     const TARGET: &str = "kooch_editor_core::remote_edit::spawn_block";
 
@@ -186,12 +186,12 @@ fn place(
     client: &kooch_remote::RemoteClient,
     entity: kooch_remote::protocol::EntityId,
     transform_ty: &str,
-    at: Option<glam::Vec3>,
+    at: Option<glam::DVec3>,
 ) {
     let Some(at) = at else {
         return;
     };
-    let value = kooch_ecs::reflect::ReflectValue::Vec3(at);
+    let value = kooch_ecs::reflect::ReflectValue::DVec3(at);
     if let Err(e) = client.set_field(entity, transform_ty, "position", value) {
         tracing::warn!(
             target: "kooch_editor_core::remote_edit::place",

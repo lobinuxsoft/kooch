@@ -16,24 +16,32 @@ use super::position_only::{PositionOnly, parent_frame};
 /// Republishes the subtrees that moved since the last pass; the whole hierarchy only when that
 /// cannot be told (first pass, a new entity, a cycle).
 pub fn transform_propagation_system(resources: &mut kooch_core::resource::Resources) {
+    let origin = origin_of(resources);
     let mut cache = resources.remove::<PropagationCache>().unwrap_or_default();
     let roots = resources
         .get::<crate::component::ComponentRegistry>()
         .and_then(|registry| {
             // A rebase or a re-anchored root moves what no pose diff sees.
-            let anchors = super::grid::anchors(registry);
+            let anchors = super::grid::anchors(registry, origin);
             let held = std::mem::replace(&mut cache.anchors, anchors) == anchors;
             moved_roots(registry, &mut cache).filter(|_| held)
         });
     resources.insert(cache);
     match roots {
         Some(roots) => propagate_subtrees(resources, &roots),
-        None => full_pass(resources),
+        None => full_pass(resources, origin),
     }
 }
 
+/// The cell `GlobalTransform` is published relative to.
+fn origin_of(resources: &kooch_core::resource::Resources) -> glam::IVec3 {
+    resources
+        .get::<super::grid::WorldOrigin>()
+        .map_or(glam::IVec3::ZERO, |origin| origin.cell)
+}
+
 /// Propagates transforms top-down through the whole hierarchy.
-fn full_pass(resources: &mut kooch_core::resource::Resources) {
+fn full_pass(resources: &mut kooch_core::resource::Resources, origin: glam::IVec3) {
     use crate::component::ComponentRegistry;
     use crate::transform::Transform;
 
@@ -85,7 +93,6 @@ fn full_pass(resources: &mut kooch_core::resource::Resources) {
 
     // Seed roots, each carried from its cell to the origin's.
     {
-        let origin = super::grid::origin_cell(&registry);
         let cells = registry.get_cpu::<GridCell>();
         for &root in &roots {
             let cell = cells.as_ref().and_then(|c| c.get(root)).map(|c| c.cell());
@@ -182,7 +189,7 @@ pub fn propagate_subtrees(resources: &mut kooch_core::resource::Resources, roots
         let parents = registry.get_cpu::<Parent>();
         let children = registry.get_cpu::<Children>();
         let cells = registry.get_cpu::<GridCell>();
-        let origin = super::grid::origin_cell(&registry);
+        let origin = origin_of(resources);
         let position_only = registry.get_cpu::<PositionOnly>();
         let rides = |entity: Entity| {
             position_only

@@ -19,8 +19,8 @@ fn world() -> (Resources, Entity, Entity) {
         ..Default::default()
     };
     let mut transforms = registry.get_cpu_mut::<Transform>().unwrap();
-    transforms.insert(vcam, at(Vec3::Z * 5.0));
-    transforms.insert(target, at(Vec3::ZERO));
+    transforms.insert(vcam, at((Vec3::Z * 5.0).into()));
+    transforms.insert(target, at(Vec3::ZERO.into()));
     registry.register_cpu::<crate::Follow>();
     registry.register_cpu::<crate::HardLookAt>();
     registry
@@ -70,7 +70,7 @@ fn place(resources: &mut Resources, entity: Entity, position: Vec3) {
         .unwrap()
         .get_mut(entity)
         .unwrap()
-        .position = position;
+        .position = position.into();
 }
 
 /// 🔴 The aim used to be computed from the follow mode's answer — where the body is going — while
@@ -92,7 +92,7 @@ fn the_aim_follows_the_body() {
     );
 
     let forward = camera.rotation * -Vec3::Z;
-    let at_target = (Vec3::X * 10.0 - camera.position).normalize();
+    let at_target = (Vec3::X * 10.0 - camera.position.as_vec3()).normalize();
     assert!(
         forward.angle_between(at_target) < 1e-3,
         "the camera looked {:?} instead of {at_target:?}",

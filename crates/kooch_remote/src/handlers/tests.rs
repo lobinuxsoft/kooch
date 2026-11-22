@@ -101,7 +101,7 @@ fn stop_puts_an_authored_value_back() {
         registry.insert_default_reflected(&std::any::TypeId::of::<Transform>(), entity);
         let mut storage = registry.get_cpu_mut::<Transform>().unwrap();
         let mut authored = Transform::default();
-        authored.position = glam::Vec3::new(1.0, 2.0, 3.0);
+        authored.position = glam::DVec3::new(1.0, 2.0, 3.0);
         storage.insert(entity, authored);
     }
     let arch = resources.get_mut::<ArchetypeRegistry>().unwrap();
@@ -120,7 +120,7 @@ fn stop_puts_an_authored_value_back() {
         .unwrap()
         .get_mut(entity)
         .unwrap()
-        .position = glam::Vec3::new(99.0, 99.0, 99.0);
+        .position = glam::DVec3::new(99.0, 99.0, 99.0);
 
     set_playing(&mut resources, false).expect("stop");
 
@@ -134,7 +134,7 @@ fn stop_puts_an_authored_value_back() {
         .position;
     assert_eq!(
         position,
-        glam::Vec3::new(1.0, 2.0, 3.0),
+        glam::DVec3::new(1.0, 2.0, 3.0),
         "stop left the world where play moved it",
     );
 }
@@ -179,7 +179,7 @@ fn stop_tells_the_caller_the_world_moved_back() {
             .unwrap()
             .get_mut(entity)
             .unwrap()
-            .position = glam::Vec3::new(x, 0.0, 0.0);
+            .position = glam::DVec3::new(f64::from(x), 0.0, 0.0);
     };
 
     // The editor's pull while authoring.

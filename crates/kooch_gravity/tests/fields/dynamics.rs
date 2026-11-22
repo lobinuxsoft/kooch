@@ -280,7 +280,7 @@ fn scaling_a_source_does_not_resize_it() {
         source_at(
             &mut resources,
             Transform {
-                position: Vec3::ZERO,
+                position: Vec3::ZERO.into(),
                 rotation: glam::Quat::IDENTITY,
                 scale: Vec3::splat(scale),
             },

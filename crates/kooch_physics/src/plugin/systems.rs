@@ -507,16 +507,18 @@ pub fn physics_writeback_system(resources: &mut Resources) {
 
     // 🔴 World in, local out: the solver answers in world space and a `Transform` is relative to
     // its parent. Writing the world pose straight back applied the parent twice (#1316).
-    let local: Vec<(Entity, Vec3, Quat)> = match resources.get::<ComponentRegistry>() {
+    let origin = kooch_ecs::hierarchy::WorldOrigin::of(resources);
+    let local: Vec<(Entity, glam::DVec3, Quat)> = match resources.get::<ComponentRegistry>() {
         Some(registry) => poses
-            .into_iter()
+            .iter()
+            .copied()
             .map(|(entity, position, rotation)| {
                 let (position, rotation) =
-                    super::pose::under_parent(registry, entity, position, rotation);
+                    super::pose::under_parent(registry, entity, position, rotation, origin);
                 (entity, position, rotation)
             })
             .collect(),
-        None => poses,
+        None => Vec::new(),
     };
 
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
@@ -530,18 +532,17 @@ pub fn physics_writeback_system(resources: &mut Resources) {
         }
     }
 
-    // 🔴 The LOCAL pose, because that is what `Transform` holds and what a frame is drawn between.
-    // Kept so `interpolate_bodies` can draw between the last two steps rather than showing this one
-    // until the next arrives (#1415).
-    let mut poses = resources
+    // The solver's pose, relative to the origin: `interpolate_bodies` draws between the last two
+    // steps and takes each to its parent itself (#1415, #1972).
+    let mut stepped = resources
         .remove::<super::interpolation::StepPoses>()
         .unwrap_or_default();
-    for (entity, position, rotation) in &local {
-        poses.stepped(*entity, *position, *rotation);
+    for (entity, position, rotation) in &poses {
+        stepped.stepped(*entity, *position, *rotation);
     }
-    let alive: Vec<Entity> = local.iter().map(|(entity, _, _)| *entity).collect();
-    poses.retain(&alive);
-    resources.insert(poses);
+    let alive: Vec<Entity> = poses.iter().map(|(entity, _, _)| *entity).collect();
+    stepped.retain(&alive);
+    resources.insert(stepped);
 
     resources.insert(world);
 }

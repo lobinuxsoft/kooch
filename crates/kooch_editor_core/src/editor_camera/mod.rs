@@ -129,6 +129,14 @@ pub fn planet_viewers_system(resources: &mut Resources) {
     resources.insert(viewers);
 }
 
+/// The origin follows the editor camera while editing, so far edits keep f32 precision; during a
+/// remote Play it is left to the game's `FloatingOrigin` (#1972).
+pub fn origin_anchor_system(resources: &mut Resources) {
+    let camera = find_editor_camera_entity(resources)
+        .filter(|_| !crate::ui_preview::remote_playing(resources));
+    resources.insert(kooch_ecs::hierarchy::OriginAnchor(camera));
+}
+
 /// Computes the initial world `Transform` from the controller's defaults.
 fn initial_transform(controller: &EditorCameraController) -> Transform {
     let view = glam::camera::rh::view::look_at_mat4(DEFAULT_EYE, controller.focus_point, Vec3::Y);

@@ -149,7 +149,7 @@ fn mirrored_position(resources: &Resources, state: &RemoteState) -> Vec3 {
         .get::<ComponentRegistry>()
         .and_then(|r| r.get_cpu::<Transform>())
         .and_then(|s| s.get(local))
-        .map(|t| t.position)
+        .map(|t| t.position.as_vec3())
         .expect("mirror has no Transform")
 }
 
@@ -167,7 +167,7 @@ fn drag_it_to(resources: &mut Resources, state: &RemoteState, position: Vec3) {
         && let Some(mut storage) = reg.get_cpu_mut::<Transform>()
         && let Some(t) = storage.get_mut(local)
     {
-        t.position = position;
+        t.position = position.into();
     }
 }
 
@@ -495,6 +495,6 @@ fn a_held_entity_keeps_its_edit() {
     let after = resources
         .get::<ComponentRegistry>()
         .and_then(|registry| registry.get_cpu::<Transform>()?.get(local))
-        .map(|transform| transform.position);
+        .map(|transform| transform.position.as_vec3());
     assert_eq!(after, Some(moved), "the snapshot overwrote the live edit");
 }

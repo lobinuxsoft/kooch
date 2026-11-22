@@ -12,7 +12,7 @@ use crate::protocol::{EntityId, MovedComponent, MovedTransform};
 /// described it.
 #[derive(Default)]
 pub struct MovedCache {
-    last: HashMap<EntityId, [f32; 16]>,
+    last: HashMap<EntityId, MovedTransform>,
     /// The last value sent for each declared component, keyed by entity and type name (#1407).
     last_components: HashMap<(EntityId, String), Vec<(String, ReflectValue)>>,
     revision: u64,
@@ -62,7 +62,7 @@ impl MovedCache {
             current
                 .iter()
                 .copied()
-                .filter(|m| self.last.get(&m.id) != Some(&m.matrix))
+                .filter(|m| self.last.get(&m.id) != Some(m))
                 .collect()
         };
 
@@ -87,7 +87,7 @@ impl MovedCache {
         if !moved.is_empty() || !removed.is_empty() || !changed.is_empty() || appeared || stale {
             self.revision += 1;
         }
-        self.last = current.into_iter().map(|m| (m.id, m.matrix)).collect();
+        self.last = current.into_iter().map(|m| (m.id, m)).collect();
         self.last_components = components
             .into_iter()
             .map(|entry| {

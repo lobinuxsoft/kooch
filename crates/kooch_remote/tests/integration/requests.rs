@@ -63,7 +63,7 @@ fn spawn_set_field_and_list_round_trip() {
         .map(|(_, v)| v);
     assert_eq!(
         position,
-        Some(&ReflectValue::Vec3(glam::Vec3::new(1.0, 2.0, 3.0)))
+        Some(&ReflectValue::DVec3(glam::DVec3::new(1.0, 2.0, 3.0)))
     );
 }
 
@@ -241,7 +241,7 @@ fn client_drives_server_end_to_end() {
         .map(|(_, v)| v);
     assert_eq!(
         position,
-        Some(&ReflectValue::Vec3(glam::Vec3::new(4.0, 5.0, 6.0)))
+        Some(&ReflectValue::DVec3(glam::DVec3::new(4.0, 5.0, 6.0)))
     );
 
     // #645 — every call records transport and decode cost, so the editor can tell which half is the

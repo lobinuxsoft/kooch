@@ -54,7 +54,7 @@ pub(super) fn record(resources: &Resources, actions: &[&EditorAction]) -> Vec<Ed
                     (
                         "position",
                         before.position != after.position,
-                        ReflectValue::Vec3(after.position),
+                        ReflectValue::DVec3(after.position),
                     ),
                     (
                         "rotation",

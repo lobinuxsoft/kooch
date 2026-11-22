@@ -82,13 +82,15 @@ pub(super) fn under_parent(
     entity: Entity,
     position: Vec3,
     rotation: Quat,
-) -> (Vec3, Quat) {
+    origin: glam::DVec3,
+) -> (glam::DVec3, Quat) {
     let parent = registry
         .component::<Parent>(entity)
         .map(|parent| parent.entity)
         .filter(|parent| parent.is_valid() && *parent != entity);
+    // The solver works relative to the world origin; a root's `Transform` is absolute (#1972).
     let Some(parent) = parent else {
-        return (position, rotation);
+        return (origin + position.as_dvec3(), rotation);
     };
     // 🔴 The parent's published global, not this entity's global divided out. rapier's plugin
     // documents the same choice: deriving the parent's from the child's makes the next propagated
@@ -97,5 +99,5 @@ pub(super) fn under_parent(
     let local =
         world_of(registry, parent).inverse() * Mat4::from_rotation_translation(rotation, position);
     let (_, rotation, translation) = local.to_scale_rotation_translation();
-    (translation, rotation)
+    (translation.as_dvec3(), rotation)
 }

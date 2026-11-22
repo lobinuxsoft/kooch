@@ -48,6 +48,8 @@ pub enum FieldKind {
     Nested,
     /// An ordered list.
     List,
+    /// Three `f64`s, a world position. Last, so the kinds before it keep their numbers.
+    DVec3,
 }
 
 impl FieldKind {
@@ -75,6 +77,7 @@ impl FieldKind {
         FieldKind::EntityRef,
         FieldKind::Nested,
         FieldKind::List,
+        FieldKind::DVec3,
     ];
 }
 

@@ -24,11 +24,11 @@ fn world() -> (Resources, Entity, Entity) {
     registry
         .get_cpu_mut::<Transform>()
         .unwrap()
-        .insert(vcam, at(Vec3::Z * 5.0));
+        .insert(vcam, at((Vec3::Z * 5.0).into()));
     registry
         .get_cpu_mut::<Transform>()
         .unwrap()
-        .insert(target, at(Vec3::ZERO));
+        .insert(target, at(Vec3::ZERO.into()));
     registry.register_cpu::<crate::Follow>();
     registry.register_cpu::<crate::HardLookAt>();
     registry
@@ -103,7 +103,7 @@ fn place(resources: &mut Resources, entity: Entity, position: Vec3) {
         .unwrap()
         .into_mut(entity)
         .unwrap()
-        .position = position;
+        .position = position.into();
 }
 
 fn pose(resources: &Resources, entity: Entity) -> (Vec3, glam::Quat) {

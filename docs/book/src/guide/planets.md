@@ -70,17 +70,22 @@ GPU.
 
 ## Walking on a planet the size of Earth
 
-Positions are `f32`, which steps half a metre at Earth's radius: a character standing there jitters
-and the ground's blocks drift apart. Add a **FloatingOrigin** to the player. While the game plays,
-once it strays more than 2048 m from the origin the whole world is moved back by whole 2048 m
-cells, physics and camera included, so everything you see stays within a few kilometres of zero.
-Nothing moves relative to anything else; the cell the origin is in shows on the component.
+A `Transform`'s position is double precision, exact to well under a millimetre anywhere in a solar
+system, and the inspector edits it as such. What reaches the GPU, physics and the camera is single
+precision, which steps half a metre at Earth's radius, so it is measured from a **world origin**
+that follows the view: whenever the view strays more than 2048 m away, the origin jumps by whole
+2048 m cells. Nothing authored moves — only what is drawn and simulated is re-centred.
 
-A root that must stay put while the origin moves, such as a second planet far away, takes a
-**GridCell**: its `Transform` is then relative to that cell, and its position is worked out in
-double precision. A scene without either loads in cell zero and behaves as before.
+While the game plays, the origin follows the entity with a **FloatingOrigin**, usually the player;
+the cell it is in shows on that component. While editing, it follows the editor camera, so a planet
+can be edited at its surface as precisely as near zero. A scene without a FloatingOrigin plays with
+the origin at zero, as before, and scenes saved with single-precision positions load unchanged.
 
-The origin only moves during Play. In the editor the scene stays where you authored it.
+Code that keeps an origin-relative position across frames reads `OriginShift` and adds its offset
+on the frame the origin moves. Code that writes a root's `Transform` from a world-space value — a
+`GlobalTransform`, a ray hit, a physics pose — adds `WorldOrigin::of(resources)` first.
+The other way round, `transform.relative_to(WorldOrigin::of(resources))` is the position physics
+rays, `gravity_up` and `teleport` expect.
 
 ## Not yet
 

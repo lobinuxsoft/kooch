@@ -521,6 +521,16 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             });
         }
 
+        // A field widened to f64 still reads what older scenes saved as f32 (#1972).
+        let widen = (kind_variant == "DVec3").then(|| {
+            quote! {
+                ::kooch_ecs::reflect::ReflectValue::Vec3(v) => {
+                    self.#field_name = v.as_dvec3();
+                    Ok(())
+                }
+            }
+        });
+
         // reflect_set arm.
         set_arms.push(quote! {
             #set_pattern => match value {
@@ -528,6 +538,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     self.#field_name = v;
                     Ok(())
                 }
+                #widen
                 other => Err(::kooch_ecs::reflect::ReflectError::TypeMismatch {
                     field: #field_name_str.into(),
                     expected: ::kooch_ecs::reflect::FieldKind::#kind_ident,

@@ -25,6 +25,7 @@ pub(crate) fn default_value(kind: FieldKind) -> ReflectValue {
         FieldKind::String => ReflectValue::String(String::new()),
         FieldKind::Vec2 => ReflectValue::Vec2(glam::Vec2::ZERO),
         FieldKind::Vec3 => ReflectValue::Vec3(glam::Vec3::ZERO),
+        FieldKind::DVec3 => ReflectValue::DVec3(glam::DVec3::ZERO),
         FieldKind::Vec4 => ReflectValue::Vec4(glam::Vec4::ZERO),
         FieldKind::Quat => ReflectValue::Quat(glam::Quat::IDENTITY),
         FieldKind::Mat4 => ReflectValue::Mat4(glam::Mat4::IDENTITY),

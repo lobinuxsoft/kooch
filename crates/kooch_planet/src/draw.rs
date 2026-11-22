@@ -217,7 +217,7 @@ impl Blocks {
             visible,
             ..Default::default()
         };
-        let transform = place(planet.world, block.origin);
+        let transform = place(planet.world, planet.at, block.origin);
         self.entity[s] = put(resources, self.entity[s], transform, renderer);
     }
 
@@ -266,7 +266,7 @@ impl Blocks {
                 };
                 let query = Query::<(&mut Transform, &mut MeshRenderer)>::new(resources);
                 if let Some((transform, renderer)) = query.get(entity) {
-                    *transform = place(planet.world, self.origin[s]);
+                    *transform = place(planet.world, planet.at, self.origin[s]);
                     renderer.material = material;
                 }
             }
@@ -366,11 +366,11 @@ fn put(
     Some(entity)
 }
 
-/// A block's transform: its corner carried by the planet's. In f64 until the sum is near the origin:
-/// the corner is a planet radius out, where f32 steps half a metre (#51).
-fn place(world: Mat4, origin: DVec3) -> Transform {
+/// A block's transform: its corner carried by the planet's, all in f64 from the planet's absolute
+/// centre `at`. The corner is a planet radius out, where f32 steps half a metre (#51, #1972).
+fn place(world: Mat4, at: DVec3, origin: DVec3) -> Transform {
     let (scale, rotation, _) = world.to_scale_rotation_translation();
-    let corner = world.as_dmat4().transform_point3(origin).as_vec3();
+    let corner = at + world.as_dmat4().transform_vector3(origin);
     Transform::new(corner, rotation, scale)
 }
 

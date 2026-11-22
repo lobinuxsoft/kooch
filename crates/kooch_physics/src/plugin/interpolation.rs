@@ -115,14 +115,25 @@ pub fn interpolate_bodies(resources: &mut Resources) {
     let Some(poses) = resources.remove::<StepPoses>() else {
         return;
     };
+    let origin = kooch_ecs::hierarchy::WorldOrigin::of(resources);
+    let drawn: Vec<(Entity, glam::DVec3, Quat)> = match resources.get::<ComponentRegistry>() {
+        Some(registry) => poses
+            .poses
+            .keys()
+            .filter_map(|&entity| {
+                let (position, rotation) = poses.at(entity, alpha)?;
+                let (position, rotation) =
+                    super::pose::under_parent(registry, entity, position, rotation, origin);
+                Some((entity, position, rotation))
+            })
+            .collect(),
+        None => Vec::new(),
+    };
     let mut moved: Vec<Entity> = Vec::new();
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
         && let Some(mut transforms) = registry.get_cpu_mut::<Transform>()
     {
-        for (&entity, _) in poses.poses.iter() {
-            let Some((position, rotation)) = poses.at(entity, alpha) else {
-                continue;
-            };
+        for (entity, position, rotation) in drawn {
             if let Some(transform) = transforms.get_mut(entity) {
                 transform.position = position;
                 transform.rotation = rotation;

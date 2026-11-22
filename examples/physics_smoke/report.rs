@@ -264,7 +264,7 @@ fn position_of(resources: &Resources, entity: Entity) -> Vec3 {
         .get::<ComponentRegistry>()
         .and_then(|r| r.get_cpu::<Transform>())
         .and_then(|s| s.get(entity))
-        .map(|t| t.position)
+        .map(|t| t.position.as_vec3())
         .unwrap_or_default()
 }
 

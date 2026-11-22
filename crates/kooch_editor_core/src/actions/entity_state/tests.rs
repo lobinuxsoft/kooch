@@ -76,7 +76,7 @@ fn a_capture_carries_its_values() {
         .expect("the transform was not captured");
     assert!(transform.fields.contains(&(
         "position".to_owned(),
-        ReflectValue::Vec3(glam::Vec3::new(1.0, 2.0, 3.0)),
+        ReflectValue::DVec3(glam::DVec3::new(1.0, 2.0, 3.0)),
     )));
 }
 

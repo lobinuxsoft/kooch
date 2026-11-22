@@ -80,7 +80,7 @@ fn set_field_routes_to_the_server() {
         entity: local,
         component: comp,
         field: "position".into(),
-        value: ReflectValue::Vec3(glam::Vec3::new(9.0, 9.0, 9.0)),
+        value: ReflectValue::DVec3(glam::DVec3::new(9.0, 9.0, 9.0)),
     };
     assert!(
         dispatch(&mut editor, &action),
@@ -98,7 +98,7 @@ fn set_field_routes_to_the_server() {
         .map(|(_, v)| v.clone());
     assert_eq!(
         pos,
-        Some(ReflectValue::Vec3(glam::Vec3::new(9.0, 9.0, 9.0)))
+        Some(ReflectValue::DVec3(glam::DVec3::new(9.0, 9.0, 9.0)))
     );
 
     done.store(true, Ordering::Relaxed);

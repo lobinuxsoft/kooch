@@ -3,18 +3,14 @@ use crate::protocol::MovedComponent;
 use kooch_ecs::reflect::ReflectValue;
 
 fn at(id: u32, x: f32) -> MovedTransform {
-    let mut matrix = [0.0; 16];
-    matrix[0] = 1.0;
-    matrix[5] = 1.0;
-    matrix[10] = 1.0;
-    matrix[12] = x;
-    matrix[15] = 1.0;
     MovedTransform {
         id: EntityId {
             index: id,
             generation: 0,
         },
-        matrix,
+        position: [f64::from(x), 0.0, 0.0],
+        rotation: [0.0, 0.0, 0.0, 1.0],
+        scale: [1.0; 3],
     }
 }
 

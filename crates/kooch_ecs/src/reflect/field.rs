@@ -101,6 +101,8 @@ pub enum FieldKind {
     String,
     Vec2,
     Vec3,
+    /// Three `f64`s: a world position (#1972).
+    DVec3,
     Vec4,
     Quat,
     Mat4,

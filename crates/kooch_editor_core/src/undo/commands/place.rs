@@ -91,9 +91,10 @@ pub(super) fn drop_at(
     };
 
     // A child's Transform is in its parent's space, and `place` has already reparented by now.
+    // The pick is relative to the world origin; a root's position is absolute (#1972).
     let local = match parent_matrix(resources, entity) {
-        Some(matrix) => matrix.inverse().transform_point3(world),
-        None => world,
+        Some(matrix) => matrix.inverse().transform_point3(world).as_dvec3(),
+        None => kooch_ecs::hierarchy::WorldOrigin::of(resources) + world.as_dvec3(),
     };
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
         && let Some(mut storage) = registry.get_cpu_mut::<kooch_ecs::Transform>()

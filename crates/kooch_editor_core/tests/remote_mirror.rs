@@ -84,7 +84,7 @@ fn apply_rebuilds_entities_hierarchy_and_parks_unknowns() {
         .and_then(|r| r.get_cpu::<Transform>())
         .and_then(|s| s.get(mesh))
         .map(|t| t.position);
-    assert_eq!(position, Some(glam::Vec3::X));
+    assert_eq!(position, Some(glam::DVec3::X));
 
     // Hierarchy is reconstructed by id, not name.
     let parent = resources
@@ -170,7 +170,7 @@ fn reapply_keeps_local_entities_stable() {
         .and_then(|r| r.get_cpu::<Transform>())
         .and_then(|s| s.get(before))
         .map(|t| t.position);
-    assert_eq!(position, Some(glam::Vec3::Y), "field not updated in place");
+    assert_eq!(position, Some(glam::DVec3::Y), "field not updated in place");
 }
 
 /// A component removed on the project's side leaves the mirror too —

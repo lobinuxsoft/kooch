@@ -11,6 +11,7 @@ use kooch_core::time::Time;
 use kooch_ecs::GlobalTransform;
 use kooch_ecs::component::ComponentRegistry;
 use kooch_ecs::entity::Entity;
+use kooch_ecs::hierarchy::WorldOrigin;
 use kooch_ecs::perspective_camera::PerspectiveCamera;
 use kooch_ecs::transform::Transform;
 
@@ -425,9 +426,10 @@ pub(crate) fn frame_dt(resources: &Resources) -> f32 {
 
 /// Where the render camera is right now.
 fn camera_pose(resources: &Resources, camera: Entity) -> Option<(Vec3, glam::Quat)> {
+    let origin = WorldOrigin::of(resources);
     let registry = resources.get::<ComponentRegistry>()?;
     let transform = registry.get_cpu::<Transform>()?.get(camera)?;
-    Some((transform.position, transform.rotation))
+    Some((transform.relative_to(origin), transform.rotation))
 }
 
 mod origin;
@@ -564,7 +566,8 @@ fn plan_vcam_poses(resources: &Resources) -> (CameraStates, RigMemory) {
     let targets = registry.get_cpu::<CameraTarget>();
     let dt = frame_dt(resources);
 
-    let pose_of = poses(registry);
+    let origin = WorldOrigin::of(resources);
+    let pose_of = poses(registry, origin);
 
     let mut plan: Vec<CameraState> = Vec::new();
     let mut memory = RigMemory::default();
@@ -596,14 +599,15 @@ fn plan_vcam_poses(resources: &Resources) -> (CameraStates, RigMemory) {
         memory.horizons.set(entity, up, reference);
         // Where the rig had the camera before any wall, not where the wall put it: the damping is the
         // body's, and a return is the collision's to time.
-        let previous = carried.arms.free_of(entity).unwrap_or(current.position);
+        let here = (current.position - origin).as_vec3();
+        let previous = carried.arms.free_of(entity).unwrap_or(here);
 
         // 🔴 Per vcam, not one shared screen. Two vcams with different fields of view frame
         // differently, and every zone is measured against the screen its own vcam sees (#1254).
         let asked = crate::lens_override::lens_of(registry, entity, camera_lens);
         let mut step = RigStep {
             frame: CameraFrame::new(
-                current.position,
+                here,
                 previous,
                 current.rotation,
                 target.position,
@@ -640,6 +644,7 @@ fn plan_vcam_poses(resources: &Resources) -> (CameraStates, RigMemory) {
 /// followed where it actually is and not where its local offset says.
 pub(crate) fn poses(
     registry: &ComponentRegistry,
+    origin: glam::DVec3,
 ) -> impl Fn(Entity) -> Option<(Vec3, glam::Quat)> + '_ {
     let transforms = registry.get_cpu::<Transform>();
     let globals = registry.get_cpu::<GlobalTransform>();
@@ -650,7 +655,7 @@ pub(crate) fn poses(
         }
         transforms
             .and_then(|storage| storage.get(entity))
-            .map(|transform| (transform.position, transform.rotation))
+            .map(|transform| (transform.relative_to(origin), transform.rotation))
     }
 }
 
@@ -735,6 +740,8 @@ fn rendering_camera(resources: &Resources, winner: Entity) -> Option<Entity> {
 
 /// Writes the planned poses, skipping the ones that have arrived.
 fn apply_poses(resources: &mut Resources, plan: &[Pose]) {
+    // The rig works relative to the origin, a root camera's `Transform` is absolute (#1972).
+    let origin = WorldOrigin::of(resources);
     let Some(registry) = resources.get_mut::<ComponentRegistry>() else {
         return;
     };
@@ -748,16 +755,15 @@ fn apply_poses(resources: &mut Resources, plan: &[Pose]) {
         // Below the floor it has arrived. Writing anyway would dirty a
         // transform to propagate and mirror on every frame of a scene
         // that is standing still.
-        if step
-            .position
-            .abs_diff_eq(transform.position, SETTLE_EPSILON)
+        let at = origin + step.position.as_dvec3();
+        if at.abs_diff_eq(transform.position, f64::from(SETTLE_EPSILON))
             && step
                 .rotation
                 .abs_diff_eq(transform.rotation, SETTLE_EPSILON)
         {
             continue;
         }
-        transform.position = step.position;
+        transform.position = at;
         transform.rotation = step.rotation;
     }
 }
