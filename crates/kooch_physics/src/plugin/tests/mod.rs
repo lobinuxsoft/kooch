@@ -11,6 +11,7 @@ mod joints;
 mod lifetime;
 mod mass;
 mod material;
+mod origin;
 mod play_lifecycle;
 mod pose;
 mod shapes;

@@ -37,7 +37,14 @@ pub(super) fn authored(resources: &Resources, cache: &mut SyncCache) -> Option<V
     if stale || since == 0 {
         return read_authored(resources);
     }
-    match reread(registry, &layers, meshes, since, &mut list) {
+    match reread(
+        registry,
+        &layers,
+        meshes,
+        since,
+        &mut list,
+        kooch_ecs::hierarchy::WorldOrigin::of(resources),
+    ) {
         Some(()) => Some(list),
         None => read_authored(resources),
     }
@@ -56,6 +63,7 @@ fn reread(
     meshes: Option<&ColliderMeshCache>,
     since: u64,
     list: &mut Vec<Authored>,
+    origin: glam::DVec3,
 ) -> Option<()> {
     let bodies = registry.get_cpu::<PhysicsBody>()?;
     let mut dirty: Vec<Entity> = bodies.iter_changed(since).map(|(e, _)| *e).collect();
@@ -76,7 +84,7 @@ fn reread(
     dirty.sort_unstable_by_key(key);
     dirty.dedup();
 
-    let reader = Reader::new(registry, layers, meshes);
+    let reader = Reader::new(registry, layers, meshes, origin);
     for entity in dirty {
         let found = list.binary_search_by_key(&key(&entity), |a| key(&a.entity));
         match (found, bodies.get(entity)) {
