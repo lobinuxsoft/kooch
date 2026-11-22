@@ -96,11 +96,12 @@ impl Job {
     }
 }
 
-/// Slots waiting for their block, oldest first, each once.
+/// Slots waiting for their block, each once; a batch takes the nearest visible first.
 #[derive(Default)]
 pub struct Backlog {
     queue: VecDeque<u32>,
     queued: Vec<bool>,
+    ranked: Vec<(f64, u32)>,
 }
 
 impl Backlog {
@@ -143,14 +144,37 @@ impl Backlog {
         Some(slot)
     }
 
-    /// Up to `max` jobs, built from what each slot holds now: a slot freed since it was queued is
-    /// dropped, one reused is generated for its new block.
+    /// Up to `max` jobs, the most urgent first (`sight::urgency`), built from what each slot holds
+    /// now: a slot freed since it was queued is dropped, one reused is generated for its new block.
     pub fn take(&mut self, pool: &BlockPool, planets: &Planets, max: usize, out: &mut Vec<Job>) {
         out.clear();
-        while out.len() < max {
-            let Some(slot) = self.queue.pop_front() else {
-                break;
-            };
+        self.ranked.clear();
+        let queued = &mut self.queued;
+        self.ranked.extend(
+            self.queue
+                .drain(..)
+                .filter_map(|slot| match pool.key(slot) {
+                    Some(key) => Some((crate::sight::urgency(planets, key), slot)),
+                    None => {
+                        // Freed since it was queued: nothing to generate, and free to queue again.
+                        if let Some(flag) = queued.get_mut(slot as usize) {
+                            *flag = false;
+                        }
+                        None
+                    }
+                }),
+        );
+        // Ranked again every batch: the camera moves while the backlog waits.
+        let cut = max.min(self.ranked.len());
+        if cut < self.ranked.len() {
+            self.ranked
+                .select_nth_unstable_by(cut, |a, b| a.0.total_cmp(&b.0));
+        }
+        self.ranked[..cut].sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+        self.queue
+            .extend(self.ranked[cut..].iter().map(|&(_, slot)| slot));
+        for i in 0..cut {
+            let slot = self.ranked[i].1;
             if let Some(flag) = self.queued.get_mut(slot as usize) {
                 *flag = false;
             }
