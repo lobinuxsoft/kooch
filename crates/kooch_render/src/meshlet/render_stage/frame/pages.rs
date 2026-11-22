@@ -115,7 +115,14 @@ fn read_epoch(resources: &Resources) -> u32 {
             "the page machine read the scene epoch",
         );
     }
-    epoch
+    // Cached pages hold origin-relative depth: a rebase moves every caster under them (#1973).
+    let cell = resources
+        .get::<kooch_ecs::hierarchy::WorldOrigin>()
+        .map_or(glam::IVec3::ZERO, |origin| origin.cell);
+    let moved = (cell.x as u32).wrapping_mul(0x9E37_79B1)
+        ^ (cell.y as u32).wrapping_mul(0x85EB_CA77)
+        ^ (cell.z as u32).wrapping_mul(0xC2B2_AE3D);
+    epoch ^ moved
 }
 
 fn page_settings(resources: &Resources) -> PageSettings {
