@@ -174,7 +174,7 @@ fn plan(resources: &Resources) -> Vec<Planned> {
                 entity,
                 body,
                 *controller,
-                (transform.position - origin).as_vec3(),
+                transform.relative_to(origin),
                 transform.rotation,
                 facings
                     .and_then(|facings| facings.get(entity))

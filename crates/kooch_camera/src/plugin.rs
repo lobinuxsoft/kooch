@@ -429,7 +429,7 @@ fn camera_pose(resources: &Resources, camera: Entity) -> Option<(Vec3, glam::Qua
     let origin = WorldOrigin::of(resources);
     let registry = resources.get::<ComponentRegistry>()?;
     let transform = registry.get_cpu::<Transform>()?.get(camera)?;
-    Some(((transform.position - origin).as_vec3(), transform.rotation))
+    Some((transform.relative_to(origin), transform.rotation))
 }
 
 mod origin;
@@ -655,7 +655,7 @@ pub(crate) fn poses(
         }
         transforms
             .and_then(|storage| storage.get(entity))
-            .map(|transform| ((transform.position - origin).as_vec3(), transform.rotation))
+            .map(|transform| (transform.relative_to(origin), transform.rotation))
     }
 }
 

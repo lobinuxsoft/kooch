@@ -84,6 +84,8 @@ the origin at zero, as before, and scenes saved with single-precision positions 
 Code that keeps an origin-relative position across frames reads `OriginShift` and adds its offset
 on the frame the origin moves. Code that writes a root's `Transform` from a world-space value — a
 `GlobalTransform`, a ray hit, a physics pose — adds `WorldOrigin::of(resources)` first.
+The other way round, `transform.relative_to(WorldOrigin::of(resources))` is the position physics
+rays, `gravity_up` and `teleport` expect.
 
 ## Not yet
 

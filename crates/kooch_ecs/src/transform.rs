@@ -65,6 +65,12 @@ impl Transform {
         Mat4::from_scale_rotation_translation(self.scale, self.rotation, at)
     }
 
+    /// A root's position as physics, rays and gravity see it: relative to the world origin
+    /// (`WorldOrigin::of`).
+    pub fn relative_to(&self, origin: DVec3) -> Vec3 {
+        (self.position - origin).as_vec3()
+    }
+
     /// The position as f32, for a child's small offset.
     pub fn local(&self) -> Vec3 {
         self.position.as_vec3()
