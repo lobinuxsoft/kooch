@@ -1,7 +1,7 @@
-// Surface nets over one block's tile (#313), shared by the count and write passes. Both walk the
+// Dual contouring over one block's tile (#313, #393), shared by the count and write passes. Both walk the
 // same regions the same way, so the sizes one counts are the sizes the other fills.
 //
-// A cell holds a vertex when its eight samples change sign: the mean of its edge crossings. Each
+// A cell holds a vertex when its eight samples change sign: dual contouring's QEF point (#393). Each
 // sign-changing edge whose start lies in the block gives a quad over the four cells around it, so
 // two blocks of one level share their border cells and the mesh closes between them.
 //
@@ -162,10 +162,40 @@ fn crosses(v: array<f32, 8>) -> bool {
     return inside != 0u && inside != 8u;
 }
 
-// The mean of the cell's edge crossings, within the cell, and the gradient as its normal. A cell
-// with none, which only a finer neighbour borrows, takes one Newton step from its centre.
+// Gradient of the cell's trilinear interpolant at `p` in [0, 1]³: the Hermite normal of a crossing.
+// From the eight corners alone, so two blocks sharing the cell agree on it bit for bit.
+fn trilinear_gradient(v: array<f32, 8>, p: vec3<f32>) -> vec3<f32> {
+    let q = vec3<f32>(1.0) - p;
+    return vec3<f32>(
+        q.y * q.z * (v[1] - v[0]) + p.y * q.z * (v[3] - v[2]) + q.y * p.z * (v[5] - v[4])
+            + p.y * p.z * (v[7] - v[6]),
+        q.x * q.z * (v[2] - v[0]) + p.x * q.z * (v[3] - v[1]) + q.x * p.z * (v[6] - v[4])
+            + p.x * p.z * (v[7] - v[5]),
+        q.x * q.y * (v[4] - v[0]) + p.x * q.y * (v[5] - v[1]) + q.x * p.y * (v[6] - v[2])
+            + p.x * p.y * (v[7] - v[3]),
+    );
+}
+
+// Pull toward the crossings' mean, per crossing: keeps a flat or rank-deficient QEF from flinging
+// the vertex out, at a cost of under a hundredth of a voxel on a sharp corner.
+const QEF_BIAS: f32 = 0.05;
+
+// Dual contouring (#393): the point nearest every crossing's tangent plane, solved about the
+// crossings' mean with a small pull toward it, then kept in the cell. The normal is the mean of the
+// crossings'. A cell with no crossing, which only a finer neighbour borrows, takes one Newton step
+// from its centre.
 fn place(v: array<f32, 8>) -> array<vec3<f32>, 2> {
-    var sum = vec3<f32>(0.0);
+    // AᵀA (symmetric: six entries), Aᵀb and the crossings' sum, gathered in one pass: a per-thread
+    // array indexed at run time would go to scratch (#1938).
+    var xx = 0.0;
+    var xy = 0.0;
+    var xz = 0.0;
+    var yy = 0.0;
+    var yz = 0.0;
+    var zz = 0.0;
+    var atb = vec3<f32>(0.0);
+    var mass = vec3<f32>(0.0);
+    var normal = vec3<f32>(0.0);
     var count = 0.0;
     for (var k = 0u; k < 8u; k++) {
         for (var axis = 0u; axis < 3u; axis++) {
@@ -178,10 +208,19 @@ fn place(v: array<f32, 8>) -> array<vec3<f32>, 2> {
             if ((a < 0.0) == (b < 0.0)) {
                 continue;
             }
-            let start = vec3<f32>(f32(k & 1u), f32((k >> 1u) & 1u), f32(k >> 2u));
-            var step = vec3<f32>(0.0);
-            step[axis] = 1.0;
-            sum += start + step * (a / (a - b));
+            var p = vec3<f32>(f32(k & 1u), f32((k >> 1u) & 1u), f32(k >> 2u));
+            p[axis] = a / (a - b);
+            let grad = trilinear_gradient(v, p);
+            let n = select(vec3<f32>(0.0), normalize(grad), dot(grad, grad) > 0.0);
+            xx += n.x * n.x;
+            xy += n.x * n.y;
+            xz += n.x * n.z;
+            yy += n.y * n.y;
+            yz += n.y * n.z;
+            zz += n.z * n.z;
+            atb += n * dot(n, p);
+            mass += p;
+            normal += n;
             count += 1.0;
         }
     }
@@ -191,18 +230,37 @@ fn place(v: array<f32, 8>) -> array<vec3<f32>, 2> {
         (v[4] + v[5] + v[6] + v[7]) - (v[0] + v[1] + v[2] + v[3]),
     );
     let still = !(dot(g, g) > 0.0);
-    let normal = select(normalize(g), vec3<f32>(0.0, 1.0, 0.0), still);
-    if (count > 0.0) {
-        return array<vec3<f32>, 2>(sum / count, normal);
+    let fallback = select(normalize(g), vec3<f32>(0.0, 1.0, 0.0), still);
+    if (count == 0.0) {
+        var mean = 0.0;
+        for (var k = 0u; k < 8u; k++) {
+            mean += v[k] * 0.125;
+        }
+        // g is four times the gradient across the cell.
+        let newton = select(g * (4.0 * mean / dot(g, g)), vec3<f32>(0.0), still);
+        let inside = clamp(vec3<f32>(0.5) - newton, vec3<f32>(0.0), vec3<f32>(1.0));
+        return array<vec3<f32>, 2>(inside, fallback);
     }
-    var mean = 0.0;
-    for (var k = 0u; k < 8u; k++) {
-        mean += v[k] * 0.125;
+    mass /= count;
+    let ata = mat3x3<f32>(vec3<f32>(xx, xy, xz), vec3<f32>(xy, yy, yz), vec3<f32>(xz, yz, zz));
+    // Solved about the mean: (AᵀA + λI) y = Aᵀb − AᵀA·mass.
+    let rhs = atb - ata * mass;
+    let m = ata + mat3x3<f32>(
+        vec3<f32>(QEF_BIAS * count, 0.0, 0.0),
+        vec3<f32>(0.0, QEF_BIAS * count, 0.0),
+        vec3<f32>(0.0, 0.0, QEF_BIAS * count),
+    );
+    // Positive definite through the bias; the guard only catches a NaN sample.
+    let det = determinant(m);
+    var y = vec3<f32>(0.0);
+    if (det > 1e-12) {
+        // Cofactors: for a symmetric matrix, its inverse times the determinant.
+        let adj = mat3x3<f32>(cross(m[1], m[2]), cross(m[2], m[0]), cross(m[0], m[1]));
+        y = (adj * rhs) / det;
     }
-    // g is four times the gradient across the cell.
-    let newton = select(g * (4.0 * mean / dot(g, g)), vec3<f32>(0.0), still);
-    let inside = clamp(vec3<f32>(0.5) - newton, vec3<f32>(0.0), vec3<f32>(1.0));
-    return array<vec3<f32>, 2>(inside, normal);
+    let inside = clamp(mass + y, vec3<f32>(0.0), vec3<f32>(1.0));
+    let up = select(normalize(normal), fallback, !(dot(normal, normal) > 0.0));
+    return array<vec3<f32>, 2>(inside, up);
 }
 
 // Cell `c`'s vertex, in our samples, and its normal. A cell across a coarser leaf is the coarse cell

@@ -91,6 +91,38 @@ fn the_solar_system_fits() {
     }
 }
 
+/// Touching leaves are at most one level apart, so a seam meets one level change (#393).
+#[test]
+fn touching_leaves_are_balanced() {
+    let view = View::new(800.0, 60f64.to_radians());
+    let planets = solar_system(1.8);
+    let mut wanted = Vec::new();
+    select(
+        &planets,
+        &view,
+        DEFAULT_CAPACITY,
+        hills(&planets),
+        |_| false,
+        &mut wanted,
+    );
+    let earth: Vec<BlockKey> = wanted.into_iter().filter(|k| k.planet == 0).collect();
+    // A block's span in finest-level cells, low inclusive, high exclusive.
+    let span = |k: &BlockKey| {
+        (
+            k.cell << k.level as i32,
+            (k.cell + IVec3::ONE) << k.level as i32,
+        )
+    };
+    for a in &earth {
+        let (alo, ahi) = span(a);
+        for b in earth.iter().filter(|b| b.level > a.level + 1) {
+            let (blo, bhi) = span(b);
+            let touch = (0..3).all(|i| alo[i] <= bhi[i] && blo[i] <= ahi[i]);
+            assert!(!touch, "{a:?} touches {b:?}");
+        }
+    }
+}
+
 fn key(cell: i32) -> BlockKey {
     BlockKey {
         planet: 0,
