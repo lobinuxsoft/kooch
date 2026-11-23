@@ -54,7 +54,7 @@ impl Near {
                 ..key
             };
             let leaf = std::iter::successors(Some(across), |k| Some(k.parent())).nth(up as usize);
-            leaf.is_some_and(|leaf| pool.key(side & SLOT_MASK) == Some(leaf))
+            leaf.is_some_and(|leaf| pool.key(slot(side)) == Some(leaf))
         })
     }
 }
@@ -68,6 +68,11 @@ pub fn direction(d: usize) -> IVec3 {
 /// Levels up to the coarser leaf a side borrows from; zero when it borrows none.
 pub fn levels(side: u32) -> u32 {
     (side >> SLOT_BITS) & 0x7f
+}
+
+/// The slot of the coarser leaf a side borrows from.
+pub fn slot(side: u32) -> u32 {
+    side & SLOT_MASK
 }
 
 /// Meshed blocks whose neighbours changed since they were counted (#313 step 4c piece 5): a leaf

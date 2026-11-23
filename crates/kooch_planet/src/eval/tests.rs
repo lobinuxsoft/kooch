@@ -1,4 +1,4 @@
-use glam::{DVec3, Vec3};
+use glam::{DVec3, IVec3, Vec3};
 
 use super::{Generator, may_cross};
 use crate::generate::{GeneratePass, Job};
@@ -162,7 +162,7 @@ fn cpu_twin_matches_gpu() {
                 (i / dim % dim) as f32,
                 (i / (dim * dim)) as f32,
             );
-            let point = (Vec3::from(job.origin) + cell * job.voxel).as_dvec3();
+            let point = ((IVec3::from(job.index).as_vec3() + cell) * job.voxel).as_dvec3();
             let cpu = generator.sample(&shape, point, 0).expect("a point sample");
             let cpu = (cpu / job.voxel).clamp(-64.0, 64.0);
             total += 1;

@@ -1,9 +1,11 @@
 //! The entities that draw the blocks, one per draw index. A block that changes level stays on
-//! screen until what replaces it has its mesh, as Zylann's octree does: see [`swap`].
+//! screen until what replaces it has its mesh, as Zylann's octree does, and every mesh waits until
+//! the neighbours it was counted with are on screen with it: see [`swap`].
 //!
 //! A block's mesh is counted, asked of the meshlet pool, granted the frame after and written in
 //! place by the GPU, under a GUID of its own per ask, so a stale grant never meets a newer ask.
 
+mod agree;
 mod swap;
 
 use std::collections::HashMap;
@@ -38,10 +40,13 @@ pub(crate) struct Blocks {
     /// About how many: counted from triangle bytes, which round up per meshlet.
     triangles: Vec<u32>,
     meshlets: Vec<u32>,
-    /// The mesh on screen.
+    /// The mesh on screen, and the neighbours it was counted with.
     mesh: Vec<Option<Guid>>,
-    /// Written and waiting for its swap.
+    near: Vec<Near>,
+    /// Written and waiting for its swap, since the frame it was written.
     staged: Vec<Option<Guid>>,
+    staged_near: Vec<Near>,
+    staged_at: Vec<u32>,
     asked: Vec<Option<Asked>>,
     /// Whether the block's mesh is in hand: written, or nothing to draw.
     built: Vec<bool>,
@@ -77,8 +82,8 @@ impl Blocks {
     }
 
     /// Writes the meshes the pool granted since last frame, then asks for the ones just counted.
-    /// A block already on screen takes its new mesh at once; a new one waits hidden for
-    /// [`Blocks::swap`], which needs its transform propagated first.
+    /// Every mesh is staged for [`Blocks::swap`], an old block's too: shown at once, it would
+    /// meet neighbours still drawn from before and open the seam between them (#1979).
     pub(crate) fn draw(
         &mut self,
         resources: &mut Resources,
@@ -204,16 +209,14 @@ impl Blocks {
         self.built[s] = true;
         self.triangles[s] = block.sizes.triangle_bytes / 3;
         self.meshlets[s] = block.sizes.meshlets;
-        let visible = self.shown[s];
-        let held = match visible {
-            true => &mut self.mesh[s],
-            false => &mut self.staged[s],
-        };
-        if let Some(old) = held.replace(mesh) {
+        if let Some(old) = self.staged[s].replace(mesh) {
             meshes.release(old);
         }
+        self.staged_near[s] = block.near;
+        self.staged_at[s] = self.frame;
+        let visible = self.shown[s];
         let renderer = MeshRenderer {
-            mesh: Some(mesh),
+            mesh: if visible { self.mesh[s] } else { Some(mesh) },
             material: planet.planet.material,
             visible,
             ..Default::default()
@@ -293,13 +296,6 @@ impl Blocks {
             .sum()
     }
 
-    /// Whether `key`'s mesh is in hand.
-    fn built(&self, key: BlockKey) -> bool {
-        self.of_key
-            .get(&key)
-            .is_some_and(|&i| self.built[i as usize])
-    }
-
     /// The draw index of `key`, taken from the free list when it has none.
     fn index_of(&mut self, key: BlockKey) -> u32 {
         if let Some(&i) = self.of_key.get(&key) {
@@ -312,7 +308,10 @@ impl Blocks {
             self.triangles.push(0);
             self.meshlets.push(0);
             self.mesh.push(None);
+            self.near.push(Near::default());
             self.staged.push(None);
+            self.staged_near.push(Near::default());
+            self.staged_at.push(0);
             self.asked.push(None);
             self.built.push(false);
             self.shown.push(false);

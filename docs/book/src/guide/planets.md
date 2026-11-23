@@ -68,6 +68,13 @@ planet fills in over a few frames instead of stopping one. The **Planets** secti
 Performance tab shows how full the pool is, how many blocks wait and what the last batch cost the
 GPU.
 
+## Seams between detail levels
+
+The ground is meshed with dual contouring: each cell's vertex sits where the surface's planes meet,
+so ridges and terraces keep their edges. Blocks that touch are never more than one level apart, and
+a block only goes on screen together with the neighbours its mesh was built against, so a level
+change never shows a crack between them.
+
 ## Walking on a planet the size of Earth
 
 A `Transform`'s position is double precision, exact to well under a millimetre anywhere in a solar
@@ -94,5 +101,3 @@ rays, `gravity_up` and `teleport` expect.
 
 - **Collision is still yours.** The ground has no collider yet; a sphere `Collider` at `radius` is
   the stand-in until it does (#313).
-- **Seams between detail levels** can show a crack where a fine block meets a coarse one.
-- The ground is meshed with surface nets: smooth, without the sharp edges dual contouring keeps.
