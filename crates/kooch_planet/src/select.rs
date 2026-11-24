@@ -8,7 +8,7 @@ use std::collections::{BinaryHeap, HashSet};
 use glam::{DVec3, IVec3};
 
 use super::{BLOCK_SAMPLES, BlockKey};
-use crate::sight::{Cone, sees};
+use crate::sight::Cone;
 
 /// How much a block split last frame overstates its error: it merges back only once it is well under
 /// the target, so a block at the threshold does not split and merge on alternate frames.
@@ -365,7 +365,8 @@ impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'
             true => self.error(key) * KEEP_SPLIT,
             false => self.error(key),
         };
-        if key.level > 0 && error > 1.0 && !self.hidden(key, kept) && sees(self.planets, key) {
+        // 🔴 Never by where the camera looks: turning it would re-level every block it sweeps (#1999).
+        if key.level > 0 && error > 1.0 && !self.hidden(key, kept) {
             heap.push(Node { error, key });
         }
     }
