@@ -65,6 +65,7 @@ impl Blocks {
             if waited && self.frame.wrapping_sub(left) <= LINGER {
                 lingering.insert(key);
             } else {
+                self.expired += u32::from(waited);
                 gone.push(i);
             }
         }
@@ -106,7 +107,10 @@ impl Blocks {
                 continue;
             }
             match self.due(d) {
-                true => self.apply(d, &mut meshes),
+                true => {
+                    self.early += u32::from(waiting > 0);
+                    self.apply(d, &mut meshes)
+                }
                 false => held_back += 1,
             }
         }

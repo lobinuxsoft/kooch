@@ -323,13 +323,15 @@ pub fn sync_planets(resources: &mut Resources) {
     // #1999 debug: whether a level change goes on screen whole or is forced out by the hold.
     if state.frame % 120 == 0
         && let Some(terrain) = &state.terrain
-        && blocks.on_time + blocks.forced > 0
+        && blocks.on_time + blocks.forced + blocks.expired > 0
     {
         let (seams, epoch) = terrain.seams_and_epoch();
         tracing::info!(
             target: "kooch_planet",
             on_time = blocks.on_time,
             forced = blocks.forced,
+            expired = blocks.expired,
+            early = blocks.early,
             behind = epoch.saturating_sub(terrain.frontier().min(epoch)),
             backlog = terrain.waiting(),
             seams,
@@ -337,6 +339,8 @@ pub fn sync_planets(resources: &mut Resources) {
         );
         blocks.on_time = 0;
         blocks.forced = 0;
+        blocks.expired = 0;
+        blocks.early = 0;
     }
     let stats = PlanetStats {
         resident: state.pool.resident(),

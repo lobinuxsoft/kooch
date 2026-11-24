@@ -81,6 +81,10 @@ pub(crate) struct Blocks {
     /// Changes put on screen with their epoch whole, and by [`HOLD`] running out. #1999 debug.
     pub(crate) on_time: u32,
     pub(crate) forced: u32,
+    /// #1999 debug: lingering blocks dropped by the linger limit while still waited for.
+    pub(crate) expired: u32,
+    /// #1999 debug: seam changes applied while a new block of the change waits hidden.
+    pub(crate) early: u32,
 }
 
 /// What [`Blocks::draw`] reads of the frame.
