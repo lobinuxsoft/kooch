@@ -11,6 +11,8 @@ use super::BlockKey;
 pub struct Residency {
     pub added: Vec<u32>,
     pub removed: Vec<u32>,
+    /// The blocks `removed` held: their neighbours' seams read them.
+    pub gone: Vec<BlockKey>,
 }
 
 /// A fixed number of block slots shared by every planet. The key → slot map is CPU-side
@@ -81,6 +83,7 @@ impl BlockPool {
     pub fn apply(&mut self, wanted: &[BlockKey], out: &mut Residency) {
         out.added.clear();
         out.removed.clear();
+        out.gone.clear();
         self.frame = self.frame.wrapping_add(1);
         let frame = self.frame;
         for key in wanted {
@@ -89,11 +92,12 @@ impl BlockPool {
             }
         }
         let (stamp, free) = (&self.stamp, &mut self.free);
-        self.slots.retain(|_, slot| {
+        self.slots.retain(|key, slot| {
             let keep = stamp[*slot as usize] == frame;
             if !keep {
                 free.push(*slot);
                 out.removed.push(*slot);
+                out.gone.push(*key);
             }
             keep
         });

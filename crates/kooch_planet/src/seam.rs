@@ -111,13 +111,23 @@ impl Stale {
         self.queue.pop()
     }
 
-    /// Checks up to `budget` slots, queueing those whose neighbours differ from their mesh's.
+    pub fn holds(&self, slot: u32) -> bool {
+        self.queue.holds(slot)
+    }
+
+    pub fn slots(&self) -> impl Iterator<Item = u32> + '_ {
+        self.queue.slots()
+    }
+
+    /// Checks up to `budget` slots, putting in `found` those whose neighbours differ from their
+    /// mesh's. The caller queues them.
     pub fn sweep(
         &mut self,
         leaves: Leaves,
         planets: &Planets,
         ready: impl Fn(u32) -> bool,
         budget: u32,
+        found: &mut Vec<u32>,
     ) {
         let capacity = leaves.pool.capacity();
         if capacity == 0 {
@@ -136,10 +146,44 @@ impl Stale {
             };
             let root = planets.shape.get(key.planet as usize).map_or(0, root_level);
             if near(leaves, root, key, &ready) != *was {
-                self.queue.retry(slot);
+                found.push(slot);
             }
         }
     }
+}
+
+/// Every resident block whose seam reads `key`'s cells: within one cell of it, at its level or one
+/// either side, which the 2:1 balance makes every level that can touch it.
+pub(crate) fn touching(pool: &BlockPool, root: u8, key: BlockKey) -> Vec<u32> {
+    let mut found = Vec::new();
+    let mut around = |level: u8, lo: IVec3, hi: IVec3| {
+        for z in lo.z..=hi.z {
+            for y in lo.y..=hi.y {
+                for x in lo.x..=hi.x {
+                    let at = BlockKey {
+                        level,
+                        cell: IVec3::new(x, y, z),
+                        ..key
+                    };
+                    if at != key
+                        && let Some(slot) = pool.slot(at)
+                    {
+                        found.push(slot);
+                    }
+                }
+            }
+        }
+    };
+    around(key.level, key.cell - IVec3::ONE, key.cell + IVec3::ONE);
+    if key.level > 0 {
+        let first = key.cell * 2;
+        around(key.level - 1, first - IVec3::ONE, first + IVec3::splat(2));
+    }
+    if key.level < root {
+        let up = key.parent().cell;
+        around(key.level + 1, up - IVec3::ONE, up + IVec3::ONE);
+    }
+    found
 }
 
 /// `key`'s neighbours among `leaves`. A coarser leaf whose tile is not `ready` counts as

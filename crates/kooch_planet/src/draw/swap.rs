@@ -18,11 +18,21 @@ const LINGER: u32 = 240;
 impl Blocks {
     /// Retires the blocks whose replacements are in and shows the new ones nothing overlaps. Runs
     /// before this frame's meshes are drawn, so every block it shows has a propagated transform.
-    pub(crate) fn swap(&mut self, resources: &mut Resources, pool: &BlockPool, planets: &Planets) {
+    /// `frontier` is the earliest epoch the terrain still counts: a change goes on screen with every
+    /// other of its epoch, so a seam and the block it meets appear in the same frame (#1999).
+    pub(crate) fn swap(
+        &mut self,
+        resources: &mut Resources,
+        pool: &BlockPool,
+        planets: &Planets,
+        frontier: u64,
+    ) {
         self.frame = self.frame.wrapping_add(1);
         if self.settled {
             return;
         }
+        let asked = self.asked.iter().flatten().map(|asked| asked.block.epoch);
+        self.frontier = asked.fold(frontier, u64::min);
         let Some(mut meshes) = resources.remove::<GpuMeshes>() else {
             return;
         };
@@ -75,10 +85,8 @@ impl Blocks {
         for (&key, &i) in &self.of_key {
             // A new block waits for both its meshes: an interior shown without its seam is a hole.
             let s = i as usize;
-            let staged = self.staged[s * PARTS..(s + 1) * PARTS]
-                .iter()
-                .any(Option::is_some);
-            if self.shown[s] || !staged || !self.complete(s) {
+            let staged = self.pending[s * PARTS..(s + 1) * PARTS].iter().any(|&p| p);
+            if self.shown[s] || !staged || !self.ready(s) {
                 continue;
             }
             let covered =
@@ -91,22 +99,39 @@ impl Blocks {
         for i in ready {
             self.show(i, &mut meshes);
         }
+        // What changes on screen: a seam counted again for its neighbours', or one taken away.
+        let mut held_back = 0;
+        for d in 0..self.pending.len() {
+            if !self.pending[d] || !self.shown[d / PARTS] {
+                continue;
+            }
+            match self.due(d) {
+                true => self.apply(d, &mut meshes),
+                false => held_back += 1,
+            }
+        }
         resources.insert(meshes);
-        self.settled = awaited.is_empty() && lingering.is_empty() && waiting == 0;
+        self.settled = awaited.is_empty() && lingering.is_empty() && waiting == 0 && held_back == 0;
     }
 
     /// Puts the staged meshes on screen and gives back the ones they replace.
     fn show(&mut self, i: u32, meshes: &mut GpuMeshes) {
         let s = i as usize;
         for d in s * PARTS..(s + 1) * PARTS {
-            let Some(mesh) = self.staged[d].take() else {
-                continue;
-            };
-            if let Some(old) = self.mesh[d].replace(mesh) {
-                meshes.release(old);
+            if self.pending[d] {
+                self.apply(d, meshes);
             }
         }
         self.shown[s] = true;
+    }
+
+    /// Mesh `d`'s waiting change, on screen: the staged mesh, or none.
+    fn apply(&mut self, d: usize, meshes: &mut GpuMeshes) {
+        self.pending[d] = false;
+        let staged = self.staged[d].take();
+        if let Some(old) = std::mem::replace(&mut self.mesh[d], staged) {
+            meshes.release(old);
+        }
     }
 
     /// Hides the index, gives its meshes back and frees it.

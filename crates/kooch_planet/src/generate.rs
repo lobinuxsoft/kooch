@@ -144,8 +144,18 @@ impl Backlog {
     pub fn retry(&mut self, slot: u32) {
         self.push(&Residency {
             added: vec![slot],
-            removed: Vec::new(),
+            ..Residency::default()
         });
+    }
+
+    /// Whether `slot` waits in the queue.
+    pub fn holds(&self, slot: u32) -> bool {
+        self.queued.get(slot as usize).copied().unwrap_or(false)
+    }
+
+    /// Every slot waiting.
+    pub fn slots(&self) -> impl Iterator<Item = u32> + '_ {
+        self.queue.iter().copied()
     }
 
     pub fn is_empty(&self) -> bool {

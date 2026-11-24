@@ -29,6 +29,9 @@ use crate::{BLOCK_SAMPLES, BlockKey, BlockPool, CountedBlock, Near, Terrain, Wri
 /// Meshes a block draws with: its interior and its seam.
 const PARTS: usize = 2;
 
+/// Frames a change may wait for the rest of its epoch before it goes on screen anyway.
+const HOLD: u32 = 30;
+
 /// A mesh asked of the pool and not granted yet.
 #[derive(Clone, Copy)]
 struct Asked {
@@ -51,8 +54,12 @@ pub(crate) struct Blocks {
     meshlets: Vec<u32>,
     /// Per mesh, the one on screen.
     mesh: Vec<Option<Guid>>,
-    /// Per mesh, written and waiting for its swap.
+    /// Per mesh, written and waiting for its swap, the epoch it answers and the frame it came.
     staged: Vec<Option<Guid>>,
+    staged_epoch: Vec<u64>,
+    staged_at: Vec<u32>,
+    /// Per mesh, whether a change waits: `staged`, or with none, taking the mesh away.
+    pending: Vec<bool>,
     asked: Vec<Option<Asked>>,
     /// Per mesh, whether it is in hand: written, or nothing to draw.
     held: Vec<bool>,
@@ -69,6 +76,8 @@ pub(crate) struct Blocks {
     frame: u32,
     /// Nothing waits and nothing lingers, so [`Blocks::swap`] has nothing to do.
     settled: bool,
+    /// The earliest epoch still being counted or written, this frame; see [`Terrain::frontier`].
+    frontier: u64,
 }
 
 /// What [`Blocks::draw`] reads of the frame.
@@ -118,12 +127,7 @@ impl Blocks {
             self.held[d] = true;
             self.triangles[d] = 0;
             self.meshlets[d] = 0;
-            for mesh in [self.mesh[d].take(), self.staged[d].take()]
-                .into_iter()
-                .flatten()
-            {
-                meshes.release(mesh);
-            }
+            self.stage(d, None, block.epoch, meshes);
             return;
         }
         self.asks = self.asks.wrapping_add(1);
@@ -143,7 +147,7 @@ impl Blocks {
                 && asked.mesh == mesh
             {
                 self.asked[d] = None;
-                terrain.remesh(asked.block.slot, asked.block.part);
+                terrain.remesh(asked.block.slot, asked.block.part, asked.block.epoch);
             }
         }
         let granted = meshes.take_granted();
@@ -169,7 +173,7 @@ impl Blocks {
             // A tile it borrowed changed hands since the count: the write would mesh otherwise.
             if block.part == Part::Seam && !block.near.holds(frame.pool, block.key) {
                 meshes.release(mesh);
-                terrain.remesh(block.slot, Part::Seam);
+                terrain.remesh(block.slot, Part::Seam, block.epoch);
                 continue;
             }
             let job = WriteJob::new(
@@ -213,11 +217,17 @@ impl Blocks {
         self.held[d] = true;
         self.triangles[d] = block.sizes.triangle_bytes / 3;
         self.meshlets[d] = block.sizes.meshlets;
-        let held = match self.shown[d / PARTS] {
-            true => &mut self.mesh[d],
-            false => &mut self.staged[d],
-        };
-        if let Some(old) = held.replace(mesh) {
+        // Staged even on screen: a seam counted for its neighbours' change waits for them (#1999).
+        self.stage(d, Some(mesh), block.epoch, meshes);
+    }
+
+    fn stage(&mut self, d: usize, mesh: Option<Guid>, epoch: u64, meshes: &mut GpuMeshes) {
+        self.settled = false;
+        self.pending[d] = true;
+        self.staged_epoch[d] = epoch;
+        self.staged_at[d] = self.frame;
+        let old = std::mem::replace(&mut self.staged[d], mesh);
+        if let Some(old) = old {
             meshes.release(old);
         }
     }
@@ -231,6 +241,7 @@ impl Blocks {
             {
                 meshes.release(mesh);
             }
+            self.pending[d] = false;
         }
         self.shown[s] = false;
     }
@@ -294,11 +305,25 @@ impl Blocks {
         self.held[s * PARTS..(s + 1) * PARTS].iter().all(|&h| h)
     }
 
-    /// Whether `key`'s meshes are in hand.
+    /// Whether mesh `d`'s waiting change may go on screen: every change of its epoch is in, or it
+    /// has waited [`HOLD`] frames for one that never comes.
+    fn due(&self, d: usize) -> bool {
+        self.pending[d]
+            && (self.staged_epoch[d] < self.frontier
+                || self.frame.wrapping_sub(self.staged_at[d]) > HOLD)
+    }
+
+    /// Whether index `s` can go on screen as it is: both meshes in hand, every waiting change due.
+    fn ready(&self, s: usize) -> bool {
+        self.complete(s) && (s * PARTS..(s + 1) * PARTS).all(|d| !self.pending[d] || self.due(d))
+    }
+
+    /// Whether `key` is on screen or ready to be.
     fn built(&self, key: BlockKey) -> bool {
-        self.of_key
-            .get(&key)
-            .is_some_and(|&i| self.complete(i as usize))
+        self.of_key.get(&key).is_some_and(|&i| {
+            let s = i as usize;
+            self.complete(s) && (self.shown[s] || self.ready(s))
+        })
     }
 
     /// The draw index of `key`, taken from the free list when it has none.
@@ -317,6 +342,9 @@ impl Blocks {
                 self.meshlets.push(0);
                 self.mesh.push(None);
                 self.staged.push(None);
+                self.staged_epoch.push(0);
+                self.staged_at.push(0);
+                self.pending.push(false);
                 self.asked.push(None);
                 self.held.push(false);
             }

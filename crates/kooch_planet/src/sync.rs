@@ -31,8 +31,8 @@ use crate::sight::Cone;
 pub use ray::{GroundHit, ground_hits};
 
 use crate::{
-    BARE_SPHERE, BlockKey, BlockPool, CountedBlock, DEFAULT_CAPACITY, Leaves, Limits, Planets,
-    Residency, Shape, Terrain, View, select,
+    BARE_SPHERE, BlockKey, BlockPool, CountedBlock, DEFAULT_CAPACITY, Leaves, Limits, Part,
+    Planets, Residency, Shape, Terrain, View, select,
 };
 
 /// Blocks every planet in view gets before the others compete for the rest of the pool.
@@ -274,10 +274,18 @@ pub fn sync_planets(resources: &mut Resources) {
     }
     // Only the finest level's empty count is final: a coarser block samples every 2^level voxels
     // and misses a ridge thinner than that, and calling it empty would prune its children (#1945).
-    for block in meshed
+    // Empty means both meshes: a generated block counts both in the same batch.
+    let surfaced: HashSet<BlockKey> = meshed
         .iter()
-        .filter(|b| b.sizes.meshlets == 0 && b.key.level == 0)
-    {
+        .filter(|b| b.sizes.meshlets != 0)
+        .map(|b| b.key)
+        .collect();
+    for block in meshed.iter().filter(|b| {
+        b.part == Part::Interior
+            && b.sizes.meshlets == 0
+            && b.key.level == 0
+            && !surfaced.contains(&b.key)
+    }) {
         let known = Known {
             revision: block.revision,
             seen: state.frame,
@@ -289,7 +297,14 @@ pub fn sync_planets(resources: &mut Resources) {
     if !state.residency.added.is_empty() || !state.residency.removed.is_empty() {
         blocks.unsettle();
     }
-    blocks.swap(resources, &state.pool, &state.planets);
+    let counting = meshed.iter().map(|b| b.epoch);
+    let frontier = state.terrain.as_ref().map_or(u64::MAX, Terrain::frontier);
+    blocks.swap(
+        resources,
+        &state.pool,
+        &state.planets,
+        counting.fold(frontier, u64::min),
+    );
     match &mut state.terrain {
         Some(terrain) => {
             let frame = Frame {
