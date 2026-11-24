@@ -25,28 +25,28 @@ fn both_passes_validate() {
     }
 }
 
-/// The eight level-0 blocks around the centre hold the whole sphere.
-fn sphere_blocks() -> (Planets, Vec<BlockKey>) {
+/// The eight blocks of `level` around the centre, which hold the whole sphere at that voxel.
+fn sphere(voxel: f64, level: u8) -> (Planets, Vec<BlockKey>) {
     let mut planets = Planets::default();
     let shape = Shape {
         radius: RADIUS,
         relief: 1.0,
         depth: 1.0,
-        voxel: 0.5,
+        voxel,
         lod_distance: 32.0,
     };
     planets.push(
         shape,
         &[DVec3::ZERO],
         Limits {
-            floor: 8,
-            ceiling: 8,
+            floor: 16,
+            ceiling: 16,
         },
     );
     let keys = (0..8)
         .map(|i| BlockKey {
             planet: 0,
-            level: 0,
+            level,
             cell: IVec3::new(i & 1, (i >> 1) & 1, i >> 2) - IVec3::ONE,
         })
         .collect();
@@ -60,21 +60,22 @@ fn wait(device: &wgpu::Device) {
     });
 }
 
-fn count_all(device: &wgpu::Device, queue: &wgpu::Queue) -> (Terrain, Vec<CountedBlock>) {
-    let (planets, keys) = sphere_blocks();
+fn count_all(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    planets: &Planets,
+    keys: &[BlockKey],
+    split: &HashSet<BlockKey>,
+) -> (Terrain, Vec<CountedBlock>) {
     let mut pool = BlockPool::new(64);
     let mut residency = Residency::default();
-    pool.apply(&keys, &mut residency);
+    pool.apply(keys, &mut residency);
     let mut terrain = Terrain::new(device, queue, 64).unwrap();
     let mut out = Vec::new();
     let mut all = Vec::new();
     for _ in 0..8 {
-        let split = HashSet::new();
-        let leaves = Leaves {
-            pool: &pool,
-            split: &split,
-        };
-        terrain.update(device, queue, leaves, &planets, &residency, &mut out);
+        let leaves = Leaves { pool: &pool, split };
+        terrain.update(device, queue, leaves, planets, &residency, &mut out);
         residency = Residency::default();
         all.append(&mut out);
         wait(device);
@@ -110,16 +111,52 @@ fn read(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Ve
     bytemuck::cast_slice(&bytes).to_vec()
 }
 
-/// 🔴 The blocks of one level close into one surface facing out: every edge is used once each way.
-/// A crack between blocks leaves an edge used once; a flipped triangle uses one twice the same way.
-/// Read back from the meshlets the write pass put in the pool, as the renderer reads them.
+/// 🔴 The blocks of one level close into one surface facing out.
 #[test]
 fn a_meshed_sphere_is_watertight() {
+    let (planets, keys) = sphere(0.5, 0);
+    let faults = mesh_faults(&planets, &keys, &HashSet::new());
+    assert!(faults.is_empty(), "faults: {faults:#?}");
+}
+
+/// 🔴 A level change closes too: one octant of the sphere split into its eight finer blocks (#393).
+/// The low octant puts the coarse blocks past the fine ones' + faces, the high one past their −.
+#[test]
+fn a_split_sphere_is_watertight() {
+    let mut faults = Vec::new();
+    for octant in [0, 7] {
+        let (planets, coarse) = sphere(0.25, 1);
+        let parent = coarse[octant];
+        let children = (0..8).map(|i| BlockKey {
+            level: 0,
+            cell: parent.cell * 2 + IVec3::new(i & 1, (i >> 1) & 1, i >> 2),
+            ..parent
+        });
+        let rest = coarse.iter().copied().filter(|&k| k != parent);
+        let keys: Vec<BlockKey> = rest.chain(children).collect();
+        let found = mesh_faults(&planets, &keys, &HashSet::from([parent]));
+        faults.extend(
+            found
+                .into_iter()
+                .map(|(at, n)| (format!("octant {octant}, {at}"), n)),
+        );
+    }
+    assert!(faults.is_empty(), "faults: {faults:#?}");
+}
+
+/// Where the mesh fails to close, counted by kind and place. Every edge is used once each way. A crack between blocks leaves an edge used once; a flipped
+/// triangle uses one twice the same way. Read back from the meshlets the write pass put in the
+/// pool, as the renderer reads them.
+fn mesh_faults(
+    planets: &Planets,
+    keys: &[BlockKey],
+    split: &HashSet<BlockKey>,
+) -> Vec<(String, u32)> {
     let Some((device, queue)) = try_acquire() else {
-        return;
+        return Vec::new();
     };
-    let (mut terrain, blocks) = count_all(&device, &queue);
-    assert_eq!(blocks.len(), 8, "every block comes back");
+    let (mut terrain, blocks) = count_all(&device, &queue, planets, keys, split);
+    assert_eq!(blocks.len(), keys.len(), "every block comes back");
     let mut pool = GlobalMeshPool::new();
     let ids: Vec<u32> = blocks
         .iter()
@@ -147,6 +184,28 @@ fn a_meshed_sphere_is_watertight() {
     let meshlets = read(&device, &queue, &buffers.meshlets);
 
     let quantise = |p: DVec3| (p * 1000.0).round().as_ivec3();
+    // Which blocks a point lies on and where in each: `-`/`+` on a low/high face, `.` inside. What
+    // tells a face seam from an edge or corner one.
+    let place = |p: DVec3| {
+        blocks
+            .iter()
+            .filter_map(|b| {
+                let side = f64::from(b.voxel) * 16.0;
+                let local = (p - b.origin) / side;
+                let near = local.cmpge(DVec3::splat(-0.02)) & local.cmple(DVec3::splat(1.02));
+                near.all().then(|| {
+                    let face = local.to_array().map(|x| match x {
+                        x if x < 0.02 => '-',
+                        x if x > 0.98 => '+',
+                        _ => '.',
+                    });
+                    format!("L{} {}", b.key.level, face.iter().collect::<String>())
+                })
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    let mut faults: HashMap<String, u32> = HashMap::new();
     let mut edges: HashMap<(IVec3, IVec3), i32> = HashMap::new();
     let mut worst = 0.0f64;
     let mut triangles = 0;
@@ -174,9 +233,18 @@ fn a_meshed_sphere_is_watertight() {
                 for p in [a, b, c] {
                     worst = worst.max((p.length() - RADIUS).abs());
                 }
-                let facing = (b - a).cross(c - a).dot((a + b + c) / 3.0);
-                assert!(facing > 0.0, "a triangle faces into the planet");
+                let centre = (a + b + c) / 3.0;
+                let facing = (b - a).cross(c - a).dot(centre);
                 triangles += 1;
+                if !(facing > 0.0) {
+                    let kind = if facing == 0.0 { "flat" } else { "inward" };
+                    let key = format!("{kind} by L{}: {}", block.key.level, place(centre));
+                    *faults.entry(key).or_default() += 1;
+                    // A flat one repeats a corner and would twin its own edges.
+                    if facing == 0.0 {
+                        continue;
+                    }
+                }
                 for (from, to) in [(a, b), (b, c), (c, a)] {
                     *edges.entry((quantise(from), quantise(to))).or_default() += 1;
                 }
@@ -186,11 +254,16 @@ fn a_meshed_sphere_is_watertight() {
     assert!(triangles > 100, "{triangles} triangles");
     assert!(worst < 0.1, "a vertex sits {worst} m off the sphere");
     for (&(from, to), &count) in &edges {
-        assert_eq!(count, 1, "an edge is used {count} times the same way");
-        assert_eq!(
-            edges.get(&(to, from)),
-            Some(&1),
-            "an edge has no twin: a crack"
-        );
+        let mid = (from + to).as_dvec3() / 2000.0;
+        let kind = match (count, edges.get(&(to, from)).copied().unwrap_or(0)) {
+            (1, 1) => continue,
+            (1, _) if !edges.contains_key(&(to, from)) => "open",
+            _ => "doubled",
+        };
+        *faults.entry(format!("{kind}: {}", place(mid))).or_default() += 1;
     }
+    let mut faults: Vec<_> = faults.into_iter().collect();
+    faults.sort();
+    eprintln!("{triangles} triangles");
+    faults
 }
