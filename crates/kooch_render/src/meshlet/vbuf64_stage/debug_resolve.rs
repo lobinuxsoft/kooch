@@ -2,7 +2,12 @@
 
 use bytemuck::bytes_of;
 
-use crate::meshlet::dispatcher::MeshletCull;
+/// The buffers that name what a visibility-buffer texel holds.
+#[derive(Clone, Copy)]
+pub(super) struct Ids<'a> {
+    pub visible: &'a wgpu::Buffer,
+    pub instances: &'a wgpu::Buffer,
+}
 
 use super::{DEFERRED_COLOR_FORMAT, VBUF64_FORMAT};
 
@@ -78,16 +83,8 @@ impl DebugResolve {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                storage_entry(3),
+                storage_entry(4),
             ],
         });
 
@@ -159,7 +156,7 @@ impl DebugResolve {
         vbuf_view: &wgpu::TextureView,
         color_view: &wgpu::TextureView,
         density_view: &wgpu::TextureView,
-        cull: &MeshletCull,
+        ids: Ids,
         screen_size: (u32, u32),
         output_size: (u32, u32),
         debug_mode: u32,
@@ -196,7 +193,11 @@ impl DebugResolve {
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,
-                        resource: cull.visible_meshlets_buffer().as_entire_binding(),
+                        resource: ids.visible.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: ids.instances.as_entire_binding(),
                     },
                 ],
             },
@@ -228,6 +229,19 @@ impl DebugResolve {
         });
         pass.set_bind_group(0, &bg, &[]);
         pass.draw(0..3, 0..1);
+    }
+}
+
+fn storage_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
     }
 }
 

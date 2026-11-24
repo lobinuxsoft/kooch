@@ -319,6 +319,7 @@ impl MeshletPipeline {
                 instance.flags |= crate::meshlet::scene::INSTANCE_CASTS_NO_SHADOW;
             }
             instance.layers = renderer.layer_mask();
+            instance.tint = tint(key);
 
             let see_through = material_pipeline
                 .as_deref()
@@ -385,6 +386,11 @@ fn collect_lod_force_levels(resources: &Resources) -> HashMap<Entity, u32> {
 /// by hand.
 pub fn instance_at_origin(mesh_id: u32) -> MeshInstance {
     MeshInstance::new(Mat4::IDENTITY, mesh_id, 0)
+}
+
+/// A [`super::DrawKey`] as one word for the Instance IDs view; the shader hashes it again.
+fn tint((entity, part): super::DrawKey) -> u32 {
+    entity.index().wrapping_mul(0x9E37_79B1) ^ part.wrapping_mul(0x85EB_CA6B)
 }
 
 #[cfg(test)]

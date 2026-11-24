@@ -67,7 +67,7 @@ on takes what the distant ones do not need. A planet too small on screen to matt
 Detail falls with distance from the camera. The finest voxels reach the Planet's **LOD
 distance** (32 m by default), and each coarser level reaches twice as far, with voxels twice as
 big. Raise it for more detail further out, at the cost of blocks. To see the blocks, set the Debug
-view to **Instance Ids**: each colour is one block, and they grow with distance.
+view to **Instance Ids**: each colour is one block, kept while the block lives, and they grow with distance.
 
 The blocks are refined for the camera closest to them. In the editor that is the scene view and
 every active camera of the game, so the Game tab is as sharp as the Scene tab.
