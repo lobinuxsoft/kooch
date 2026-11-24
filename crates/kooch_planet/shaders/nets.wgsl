@@ -44,6 +44,8 @@ struct Near {
 
 const SLOT_MASK: u32 = 0xffffffu;
 const FINER: u32 = 0x80000000u;
+// A leaf of our level, in this slot; see `SAME` in seam.rs.
+const SAME: u32 = 0x40000000u;
 
 var<workgroup> near: Near;
 // Whether any side is a coarser leaf, or a finer one: most blocks have neither.
@@ -62,7 +64,11 @@ fn load_near(n: Near) {
 }
 
 fn levels(side: u32) -> u32 {
-    return (side >> 24u) & 0x7fu;
+    return (side >> 24u) & 0x3fu;
+}
+
+fn is_same(side: u32) -> bool {
+    return side != FINER && (side & SAME) != 0u;
 }
 
 fn side_of(d: vec3<i32>) -> u32 {
@@ -100,17 +106,31 @@ fn at(s: vec3<u32>) -> f32 {
     if (borrows == 0u || !border) {
         return own(s);
     }
-    return shared_at(s);
+    return shared_at(s, own(s));
 }
 
-// A border sample from the coarsest leaf around it that has it as a sample.
-fn shared_at(s: vec3<u32>) -> f32 {
+// A sample one past the tile, from the tile of the leaf of our level across `d` whose cell reads
+// it: a tile holds one sample either side, so it has every corner of its cells. Only where `owns`
+// found that side `SAME`. Same-level tiles store a shared sample with the same bits.
+fn past(s: vec3<u32>, d: vec3<i32>) -> f32 {
+    let side = side_of(d);
+    let base = textureLoad(atlas, tile_corner(side & SLOT_MASK) + vec3<i32>(s) - 16 * d, 0).x;
+    return shared_at(s, base);
+}
+
+// A border sample from the coarsest leaf around it that has it as a sample, else `base`. Past the
+// tile, the axis is the next leaf's interior: always across.
+fn shared_at(s: vec3<u32>, base: f32) -> f32 {
     var best = 0u;
-    var value = own(s);
-    for (var m = 1u; m < 8u; m++) {
+    var value = base;
+    for (var m = 0u; m < 8u; m++) {
         var d = vec3<i32>(0);
         var around = true;
         for (var a = 0u; a < 3u; a++) {
+            if (s[a] == TILE) {
+                d[a] = 1;
+                continue;
+            }
             if (((m >> a) & 1u) == 0u) {
                 continue;
             }
@@ -122,9 +142,12 @@ fn shared_at(s: vec3<u32>) -> f32 {
                 around = false;
             }
         }
+        if (!around || all(d == vec3<i32>(0))) {
+            continue;
+        }
         let side = side_of(d);
         let up = levels(side);
-        if (!around || up <= best) {
+        if (side == FINER || up <= best) {
             continue;
         }
         let rel = vec3<i32>(s) - vec3<i32>(1) - coarse_base(d, up);
@@ -147,9 +170,15 @@ fn cell_index(c: vec3<u32>) -> u32 {
 }
 
 fn corners(c: vec3<u32>) -> array<f32, 8> {
+    let d = outside(c);
     var v: array<f32, 8>;
     for (var k = 0u; k < 8u; k++) {
-        v[k] = at(c + vec3<u32>(k & 1u, (k >> 1u) & 1u, k >> 2u));
+        let s = c + vec3<u32>(k & 1u, (k >> 1u) & 1u, k >> 2u);
+        if (any(s == vec3<u32>(TILE))) {
+            v[k] = past(s, d);
+        } else {
+            v[k] = at(s);
+        }
     }
     return v;
 }
@@ -298,8 +327,10 @@ fn outside(c: vec3<u32>) -> vec3<i32> {
     return select(low, vec3<i32>(1), c == vec3<u32>(CELLS - 1u));
 }
 
-// Whether the block emits the edge from `s` along `axis`: none whose cells reach a finer leaf, which
-// emits it itself, and past the +plane only those whose cells there are a coarser leaf's.
+// Whether the block emits the edge from `s` along `axis`. None whose cells reach a finer leaf,
+// which emits it itself. One whose start is past a + plane belongs to the leaf holding that cell:
+// if it is coarser, to the first block of our level holding one of the other cells, in an order
+// every block shares (#393). That block reads the cells past its tile from the leaves there.
 fn owns(s: vec3<u32>, axis: u32) -> bool {
     if (s[axis] > 16u) {
         return false;
@@ -314,11 +345,32 @@ fn owns(s: vec3<u32>, axis: u32) -> bool {
             continue;
         }
         let side = side_of(d);
-        if (side == FINER || (any(d == vec3<i32>(1)) && levels(side) == 0u)) {
+        // A cell past a + plane of a leaf of our level is read from it, so it must be in hand.
+        let unread = any(d == vec3<i32>(1)) && levels(side) == 0u && !is_same(side);
+        if (side == FINER || unread) {
             return false;
         }
     }
-    return true;
+    let start = outside(s);
+    if (all(start == vec3<i32>(0))) {
+        return true;
+    }
+    if (levels(side_of(start)) == 0u) {
+        return false;
+    }
+    for (var k = 0u; k < 4u; k++) {
+        if (k == 2u) {
+            continue;
+        }
+        let d = outside(cells[k]);
+        if (all(d == vec3<i32>(0))) {
+            return true;
+        }
+        if (levels(side_of(d)) == 0u) {
+            return false;
+        }
+    }
+    return false;
 }
 
 // `edge` over the edges the block emits.
