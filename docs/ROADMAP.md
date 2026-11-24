@@ -9,7 +9,7 @@ disagree, `MEMORY.md` wins on *decisions* and this file wins on *order*.
 **There is exactly one "Next" heading.** Everything else is `Backlog` or `Done`. Three sections
 called Next is how a roadmap stops being read.
 
-Last updated 2026-11-11 — 🎯 **The UI plays GIFs and video.** A `.gif` or an AV1 `.webm` is a `background-image` or a mesh texture, and video frames are converted on the GPU, so a 4K video runs on the OneXFly. The meshlet frame makes 1 bind group instead of 138 (#1869), and load-time systems stopped walking their storage every frame (#1882). Open: the heap grows while a video plays (#1891). Next: that leak, then sound and playback controls for video (#1793 phase 2b).
+Last updated 2026-11-24 — 🎯 **Planets you can fly to, closed and cheap.** Earth-size voxel planets are generated and meshed on the GPU, positions are f64 so 6 400 km out nothing snaps, detail follows distance to the camera, a planet is one entity however many blocks it shows, and dual contouring closes every level change. `planets` went from 78.8 to 8.3 ms a frame. Next: ask — #1996 (the far surface), #1999 (seams while LOD changes), #2002 (clicking the ground).
 
 
 ---
@@ -207,6 +207,42 @@ what the engine did before any of this existed, for the reason
 `settings.rs:510` argues at length: a serde default is not a
 recommendation, it is what an old file silently becomes. A project that
 wants these values sets them.
+
+---
+
+## 🎯 2026-11-24 — voxel planets: generated on the GPU, f64 far out, closed at every level change
+
+**What the user gets:** a `Planet` with a generator graph is a whole sculptable-ready planet, from
+orbit to the ground. Several in one scene hold 120 FPS on the desktop; `earth_test` is Earth-size.
+
+- **Planets on the GPU** (#313 steps 3–4): a global voxel pool, generation from the shader graph in
+  compute, range analysis to skip core and sky, an LOD octree of blocks and meshing in compute
+  (#1925–#1936). The meshlet pack runs on every thread (#1938) and fills meshlets instead of cutting
+  them on a fixed grid (#1935). Budget in bytes, so a planet never outgrows the 128 MiB pool binding
+  (#1968).
+- **Shader graph for terrain** (#1943, #1930): Curve, SmoothMin/Max and Terrace nodes; the noise
+  hash is PCG, so the CPU twin reproduces the GPU planet (0 sign flips).
+- **Large worlds** (#51, epic #1971): `Transform` in f64, everything downstream origin-relative f32,
+  sector cells above that; render, physics, gameplay and the editor follow the origin shift.
+- **LOD by distance** (#1993): `Planet::lod_distance`, the finest level out to it and each coarser
+  one twice as far. 🔴 Decided: LOD follows distance to the camera, never pixels on screen.
+- **One entity per planet** (#1991): blocks are instances in `Submitted`, not 6 144 entities.
+  `planets`: frame 78.8 → 8.3 ms, CPU "other" 73.6 → 5.3 ms. Last frame's matrix is kept per drawn
+  mesh, not per entity (#1998).
+- **Dual contouring, watertight** (#393): QEF vertices, a 2:1 balanced octree, altitude anchored to
+  the grid so shared samples store the same bits, and one emitter for the edge where three fine
+  blocks meet a coarse one — the steady-state holes, found by a test that splits a sphere around
+  an edge and a corner.
+- **Also:** procedural space backdrop and physical starlight (#1900, #1903); video controls
+  (#1793); UI and video heap growth fixed (#1891, #1893, #1895, #1898); the book audited and given
+  recipes (#1725).
+
+**Decided:** the transactional seam swap is dropped (43 ms CPU on `earth_test`); seams that open
+while blocks change level get their own meshes (#1999). Past a voxel window the far surface is
+analytic, tessellated with concurrent binary trees (#1996).
+
+**Open:** clicking a planet's ground selects nothing since #1991 (#2002); Instance IDs colours by
+list index (#2001); the editor grid breaks up far away (#1992).
 
 ---
 
