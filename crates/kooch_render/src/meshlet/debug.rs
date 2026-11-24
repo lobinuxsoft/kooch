@@ -106,8 +106,6 @@ pub struct MeshletLodSettings {
     /// Whether the cull rejects instances first and expands only the survivors (#1002), instead of
     /// dispatching `instances × the heaviest mesh in the scene`.
     pub two_level: bool,
-    /// Pixels one voxel of planet ground may cover before its block splits (#1993).
-    pub planet_voxel_pixels: f32,
 }
 
 impl Default for MeshletLodSettings {
@@ -119,7 +117,6 @@ impl Default for MeshletLodSettings {
             // hides is a judgement and ships off.
             min_screen_pixels: 0.0,
             two_level: true,
-            planet_voxel_pixels: 4.0,
         }
     }
 }

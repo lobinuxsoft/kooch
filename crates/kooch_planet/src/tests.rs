@@ -29,6 +29,7 @@ fn solar_system(height: f64) -> Planets {
             relief: radius * 0.0015,
             depth: 2000.0,
             voxel: 0.5,
+            lod_distance: 32.0,
         };
         let viewer = DVec3::new(0.0, earth + height - distance * 1000.0, 0.0);
         let limits = Limits {
@@ -61,7 +62,7 @@ fn hills(planets: &Planets) -> impl Fn(BlockKey, DVec3, DVec3) -> bool + '_ {
 /// orbit and halfway to the Moon. Run with `--nocapture` for the table.
 #[test]
 fn the_solar_system_fits() {
-    let view = View::new(800.0, 60f64.to_radians(), 1.0);
+    let view = View::new(800.0, 60f64.to_radians());
     let mut wanted = Vec::new();
     for height in [1.8, 400_000.0, 192_000_000.0] {
         let planets = solar_system(height);

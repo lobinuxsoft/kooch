@@ -14,6 +14,7 @@ const SHAPE: Shape = Shape {
     relief: 10.0,
     depth: 10.0,
     voxel: 0.5,
+    lod_distance: 32.0,
 };
 
 /// Altitude into `node`'s first input, `pins` typed on the rest, into a planet's output.

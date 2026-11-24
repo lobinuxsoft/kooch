@@ -24,6 +24,8 @@ pub struct Shape {
     pub depth: f64,
     /// Edge of a voxel at the finest level.
     pub voxel: f64,
+    /// Reach of the finest level from the camera; each coarser level reaches twice as far.
+    pub lod_distance: f64,
 }
 
 /// Blocks a planet gets before the others compete, and the most it may hold.
@@ -118,27 +120,23 @@ impl Planets {
 pub struct View {
     /// Pixels per metre at one metre: `viewport_height / (2 · tan(fov_y / 2))`.
     pub proj_scale: f64,
-    /// A block at or under this error stops splitting, even with pool to spare.
-    pub target_px: f64,
     /// A planet drawn smaller than this keeps its root blocks and stops refining; its impostor
     /// (#342) will draw it instead.
     pub impostor_px: f64,
 }
 
 impl View {
-    /// A view of `viewport_height` pixels and `fov_y` radians, refining until a voxel covers
-    /// `target_px`.
-    pub fn new(viewport_height: f64, fov_y: f64, target_px: f64) -> Self {
+    /// A view of `viewport_height` pixels and `fov_y` radians.
+    pub fn new(viewport_height: f64, fov_y: f64) -> Self {
         Self {
             proj_scale: viewport_height / (2.0 * (fov_y * 0.5).tan()),
-            target_px,
             impostor_px: 32.0,
         }
     }
 }
 
 /// Writes into `out` the blocks to keep resident — at most `capacity` — and returns the worst
-/// error left, in pixels, over blocks the budget kept from splitting.
+/// error left, as in `Refine::error`, over blocks the budget kept from splitting.
 ///
 /// `surface(key, min, max)` is the generator's answer to "can this block hold surface?": false
 /// for a block it proves uniform (all rock or all air), which then takes no slot. Zylann answers it
@@ -318,11 +316,7 @@ impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'
             true => self.error(key) * KEEP_SPLIT,
             false => self.error(key),
         };
-        if key.level > 0
-            && error > self.view.target_px
-            && !self.hidden(key, kept)
-            && sees(self.planets, key)
-        {
+        if key.level > 0 && error > 1.0 && !self.hidden(key, kept) && sees(self.planets, key) {
             heap.push(Node { error, key });
         } else {
             self.out.push(key);
@@ -347,7 +341,7 @@ impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'
         !viewers.is_empty() && viewers.iter().all(|&v| behind_core(v, center, reach))
     }
 
-    /// One voxel of `key`, in pixels, seen from the closest point of the block.
+    /// How many times too close for its level `key` sits, from the closest point of the block.
     fn error(&self, key: BlockKey) -> f64 {
         let planet = key.planet as usize;
         let shape = self.planets.shape[planet];
@@ -358,7 +352,9 @@ impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'
             .iter()
             .map(|viewer| (viewer.clamp(min, max) - *viewer).length())
             .fold(f64::INFINITY, f64::min);
-        voxel_size(&shape, key.level) / distance * self.view.proj_scale
+        // Over 1 while the block sits inside its level's ring: level L reaches lod_distance · 2^L,
+        // so a level-L block belongs past the reach of level L − 1.
+        shape.lod_distance * (1u64 << key.level) as f64 * 0.5 / distance
     }
 }
 

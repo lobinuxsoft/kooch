@@ -43,6 +43,7 @@ fn small() -> Shape {
         relief: 12.0,
         depth: 4.0,
         voxel: 0.5,
+        lod_distance: 32.0,
     }
 }
 

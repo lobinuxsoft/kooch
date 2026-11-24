@@ -18,7 +18,7 @@ use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_ecs::perspective_camera::{PerspectiveCamera, ViewSize};
 use kooch_ecs::query::Query;
 use kooch_render::material::shader::{Shader, ShaderKind};
-use kooch_render::meshlet::{GpuMeshes, MeshletLodSettings};
+use kooch_render::meshlet::GpuMeshes;
 
 use crate::component::Planet;
 use crate::draw::{Blocks, Frame};
@@ -60,8 +60,9 @@ pub struct PlanetStats {
     /// Blocks the meshlet pool's bindings hold at the current cost per block; below `capacity`
     /// when the pool's bytes are the limit (#1968).
     pub budget: u32,
-    /// The worst error the pool left, in pixels.
-    pub worst_px: f32,
+    /// How many times closer than its ring allows the coarsest kept block sits; over 1 means the
+    /// pool ran out before the ground near the camera reached its level.
+    pub worst: f32,
     pub waiting: u32,
     pub in_flight: u32,
     pub meshed: u64,
@@ -303,7 +304,7 @@ pub fn sync_planets(resources: &mut Resources) {
         resident: state.pool.resident(),
         capacity: state.pool.capacity(),
         budget,
-        worst_px: worst as f32,
+        worst: worst as f32,
         waiting: state.terrain.as_ref().map_or(0, |t| t.waiting() as u32),
         in_flight: state.terrain.as_ref().map_or(0, |t| t.in_flight() as u32),
         meshed: state.terrain.as_ref().map_or(0, Terrain::meshed),
@@ -443,16 +444,7 @@ fn viewers(resources: &Resources) -> (Vec<DVec3>, Vec<Cone>, View) {
             }
         },
     );
-    let target = resources
-        .get::<MeshletLodSettings>()
-        .map_or(MeshletLodSettings::default().planet_voxel_pixels, |lod| {
-            lod.planet_voxel_pixels
-        });
-    let view = View::new(
-        f64::from(height.max(1)),
-        f64::from(fov).to_radians(),
-        f64::from(target),
-    );
+    let view = View::new(f64::from(height.max(1)), f64::from(fov).to_radians());
     (eyes, cones, view)
 }
 
@@ -514,6 +506,7 @@ impl From<&Planet> for Shape {
             relief: f64::from(planet.relief.max(0.0)),
             depth: f64::from(planet.depth.max(0.0)),
             voxel: f64::from(planet.voxel.max(0.01)),
+            lod_distance: f64::from(planet.lod_distance.max(0.0)),
         }
     }
 }
