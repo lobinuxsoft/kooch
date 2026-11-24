@@ -5,8 +5,6 @@
 use std::collections::HashSet;
 
 use kooch_core::resource::Resources;
-use kooch_ecs::MeshRenderer;
-use kooch_ecs::query::Query;
 use kooch_render::meshlet::GpuMeshes;
 
 use super::Blocks;
@@ -61,7 +59,7 @@ impl Blocks {
             }
         }
         for i in gone {
-            self.retire(resources, i, &mut meshes);
+            self.retire(i, &mut meshes);
         }
         // Every block holding a lingering one: a new block over or under it waits for it to go.
         let mut over = HashSet::new();
@@ -86,14 +84,14 @@ impl Blocks {
             }
         }
         for i in ready {
-            self.show(resources, i, &mut meshes);
+            self.show(i, &mut meshes);
         }
         resources.insert(meshes);
         self.settled = awaited.is_empty() && lingering.is_empty() && waiting == 0;
     }
 
     /// Puts the staged mesh on screen and gives back the one it replaces.
-    fn show(&mut self, resources: &mut Resources, i: u32, meshes: &mut GpuMeshes) {
+    fn show(&mut self, i: u32, meshes: &mut GpuMeshes) {
         let s = i as usize;
         let Some(mesh) = self.staged[s].take() else {
             return;
@@ -102,19 +100,13 @@ impl Blocks {
             meshes.release(old);
         }
         self.shown[s] = true;
-        if let Some(entity) = self.entity[s]
-            && let Some(renderer) = Query::<&mut MeshRenderer>::new(resources).get(entity)
-        {
-            renderer.mesh = Some(mesh);
-            renderer.visible = true;
-        }
     }
 
-    /// Hides the index, gives its meshes back and frees it; the entity is kept for the next block.
+    /// Hides the index, gives its meshes back and frees it.
     /// A grant still on its way finds no ask and goes back too.
-    fn retire(&mut self, resources: &mut Resources, i: u32, meshes: &mut GpuMeshes) {
+    fn retire(&mut self, i: u32, meshes: &mut GpuMeshes) {
         let s = i as usize;
-        self.drop_meshes(resources, s, meshes);
+        self.drop_meshes(s, meshes);
         if let Some(key) = self.key[s].take() {
             self.of_key.remove(&key);
         }

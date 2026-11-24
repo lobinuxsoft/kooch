@@ -65,10 +65,3 @@ impl Default for Planet {
 }
 
 impl Component for Planet {}
-
-/// Marks the entities that draw a planet's blocks. They are the terrain's to spawn and reuse, and
-/// never reach a saved scene.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct PlanetBlock;
-
-impl Component for PlanetBlock {}

@@ -31,7 +31,7 @@ mod tests;
 use glam::IVec3;
 
 pub use atlas::BlockAtlas;
-pub use component::{Planet, PlanetBlock};
+pub use component::Planet;
 pub use eval::Generator;
 pub use generate::{
     BARE_SPHERE, Backlog, GeneratePass, Job, PLANET_INPUT_WGSL, validate_generator,

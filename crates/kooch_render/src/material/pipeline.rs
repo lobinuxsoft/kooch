@@ -458,15 +458,14 @@ impl MaterialPipeline {
     /// Which materials something is drawing with this frame.
     ///
     /// 🔴 Two sources, and both have to be here or a texture is evicted mid-frame: a visible
-    /// `MeshRenderer`, and a `PostProcess` effect that is on and weighted above zero. The
+    /// renderer, an entity's or a submitted one, and a `PostProcess` effect that is on and weighted above zero. The
     /// AssetDatabase is NOT a source — it lists every material file in the project, drawn or not.
     fn drawn_materials(resources: &Resources) -> HashSet<Guid> {
-        use kooch_ecs::mesh_renderer::MeshRenderer;
         use kooch_ecs::post_process::PostProcess;
         use kooch_ecs::query::Query;
 
         let mut asked = HashSet::new();
-        Query::<&MeshRenderer>::new(resources).for_each(|renderer| {
+        crate::meshlet::for_each_drawn(resources, |_, renderer, _| {
             if let (true, Some(material)) = (renderer.visible, renderer.material) {
                 asked.insert(material);
             }
