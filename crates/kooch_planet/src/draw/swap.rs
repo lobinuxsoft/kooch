@@ -8,6 +8,8 @@ use kooch_core::resource::Resources;
 use kooch_render::meshlet::GpuMeshes;
 
 use super::{Blocks, PARTS};
+use crate::mesh::Part;
+use crate::seam::touching;
 use crate::select::root_level;
 use crate::{BlockKey, BlockPool, Planets};
 
@@ -83,6 +85,9 @@ impl Blocks {
         }
         let mut waiting = 0;
         let mut ready = Vec::new();
+        // The seams meeting a new block that waits hidden: changed now, they would fit a block not
+        // yet drawn and open a hole against the one still there (#1999).
+        let mut meets = HashSet::new();
         for (&key, &i) in &self.of_key {
             // A new block waits for both its meshes: an interior shown without its seam is a hole.
             let s = i as usize;
@@ -93,7 +98,11 @@ impl Blocks {
             let covered =
                 over.contains(&key) || key.ancestors(root(key)).any(|up| lingering.contains(&up));
             match covered {
-                true => waiting += 1,
+                true => {
+                    waiting += 1;
+                    let near = touching(pool, root(key), key).into_iter();
+                    meets.extend(near.filter_map(|slot| pool.key(slot)));
+                }
                 false => ready.push(i),
             }
         }
@@ -106,11 +115,12 @@ impl Blocks {
             if !self.pending[d] || !self.shown[d / PARTS] {
                 continue;
             }
-            match self.due(d) {
-                true => {
-                    self.early += u32::from(waiting > 0);
-                    self.apply(d, &mut meshes)
-                }
+            let meets_hidden = d % PARTS == Part::Seam as usize
+                && self.key[d / PARTS].is_some_and(|key| meets.contains(&key));
+            let due = self.due(d);
+            self.early += u32::from(due && meets_hidden);
+            match due && !meets_hidden {
+                true => self.apply(d, &mut meshes),
                 false => held_back += 1,
             }
         }

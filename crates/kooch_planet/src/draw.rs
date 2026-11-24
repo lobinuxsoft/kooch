@@ -83,7 +83,7 @@ pub(crate) struct Blocks {
     pub(crate) forced: u32,
     /// #1999 debug: lingering blocks dropped by the linger limit while still waited for.
     pub(crate) expired: u32,
-    /// #1999 debug: seam changes applied while a new block of the change waits hidden.
+    /// #1999 debug: due seam changes held for a new neighbour that waits hidden.
     pub(crate) early: u32,
 }
 
