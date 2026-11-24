@@ -4,6 +4,8 @@
 //! 🔴 Runs where the frame is drawn, never where it is simulated: the editor's remote host has no
 //! GPU, so the editor draws a playing game's planets itself, as it does a block's mesh.
 
+mod ray;
+
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -26,6 +28,8 @@ use crate::eval::{Generator, may_cross};
 use crate::roster::{Roster, Signature};
 use crate::select::{root_level, voxel_size};
 use crate::sight::Cone;
+pub use ray::{GroundHit, ground_hits};
+
 use crate::{
     BARE_SPHERE, BlockKey, BlockPool, CountedBlock, DEFAULT_CAPACITY, Leaves, Limits, Planets,
     Residency, Shape, Terrain, View, select,

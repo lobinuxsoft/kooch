@@ -40,6 +40,12 @@ impl Roster {
         self.entity.len()
     }
 
+    /// The index `entity` holds, if it was placed.
+    pub(crate) fn index_of(&self, entity: Entity) -> Option<u32> {
+        let index = self.entity.iter().position(|held| *held == Some(entity))?;
+        u32::try_from(index).ok()
+    }
+
     /// Frees every index whose entity is not in `alive`.
     pub(crate) fn retain(&mut self, alive: &[Entity]) {
         for held in &mut self.entity {

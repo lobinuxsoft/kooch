@@ -58,7 +58,9 @@ Two limits keep the ground smooth:
 ## What it costs
 
 A planet is one entity however many blocks it shows: the blocks are drawn as instances of it, so
-they never fill the World panel or cross to the editor.
+they never fill the World panel or cross to the editor. Clicking its ground in the viewport selects
+the planet, and a prefab dropped on the ground lands on it, against the generator's exact surface
+rather than the block that happens to be showing.
 
 Every planet in the scene shares one pool of 6144 voxel blocks, 68 MiB of GPU memory. The pool
 never grows: each frame the blocks go where they do the most good on screen, so the planet you stand
