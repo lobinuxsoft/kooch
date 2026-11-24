@@ -32,7 +32,8 @@ struct GridUniforms {
 struct Fragment {
     @builtin(position) clip: vec4<f32>,
     @location(0) near: vec3<f32>,
-    @location(1) far: vec3<f32>,
+    // Somewhere past `near` along the same pixel: the projection has no far plane to unproject.
+    @location(1) along: vec3<f32>,
 }
 
 fn unproject(x: f32, y: f32, z: f32) -> vec3<f32> {
@@ -55,7 +56,7 @@ fn vs_main(@builtin(vertex_index) index: u32) -> Fragment {
     // Reversed-Z: 1.0 is the near plane, which is why these look
     // swapped against every tutorial.
     out.near = unproject(corner.x, corner.y, 1.0);
-    out.far = unproject(corner.x, corner.y, 0.0);
+    out.along = unproject(corner.x, corner.y, 0.5);
     return out;
 }
 
@@ -74,10 +75,10 @@ struct Shaded {
 
 @fragment
 fn fs_main(in: Fragment) -> Shaded {
-    let direction = in.far - in.near;
+    let direction = in.along - in.near;
     let t = (grid.plane_y - in.near.y) / direction.y;
-    // Behind the eye, or past the far plane: nothing to draw.
-    if (t <= 0.0 || t >= 1.0) {
+    // Behind the eye, or level with it: nothing to draw.
+    if (!(t > 0.0)) {
         discard;
     }
     let world = in.near + direction * t;
