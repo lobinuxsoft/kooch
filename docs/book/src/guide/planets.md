@@ -103,5 +103,5 @@ rays, `gravity_up` and `teleport` expect.
 
 - **Collision is still yours.** The ground has no collider yet; a sphere `Collider` at `radius` is
   the stand-in until it does (#313).
-- **Seams between detail levels** can show a crack where a fine block meets a coarse one.
-- The ground is meshed with surface nets: smooth, without the sharp edges dual contouring keeps.
+- **Seams between detail levels** can open for a few frames while the camera moves and blocks
+  change level; once they settle the ground is closed (#1999).

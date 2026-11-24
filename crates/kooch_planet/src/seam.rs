@@ -21,6 +21,11 @@ pub const OWN: u32 = 0;
 /// Finer leaves lie across the direction, and they emit the seam.
 pub const FINER: u32 = 1 << 31;
 
+/// A leaf of the block's level lies across, in this slot. Set only on directions past a + plane of
+/// a block with a coarser neighbour: where three blocks of a level meet a coarser one, the block
+/// that emits the edge between them reads the other two's cells past its tile (#393).
+pub const SAME: u32 = 1 << 30;
+
 const SLOT_BITS: u32 = 24;
 const SLOT_MASK: u32 = (1 << SLOT_BITS) - 1;
 
@@ -37,7 +42,8 @@ pub struct Leaves<'a> {
 pub struct Near {
     /// The block's cell, which aligns its samples with a coarser neighbour's.
     pub cell: [i32; 3],
-    /// Per [`direction`]: [`OWN`], [`FINER`], or a coarser leaf's slot with the levels up to it.
+    /// Per [`direction`]: [`OWN`], [`FINER`], [`SAME`] with a slot, or a coarser leaf's slot with
+    /// the levels up to it.
     pub sides: [u32; 26],
 }
 
@@ -67,7 +73,7 @@ pub fn direction(d: usize) -> IVec3 {
 
 /// Levels up to the coarser leaf a side borrows from; zero when it borrows none.
 pub fn levels(side: u32) -> u32 {
-    (side >> SLOT_BITS) & 0x7f
+    (side >> SLOT_BITS) & 0x3f
 }
 
 /// Meshed blocks whose neighbours changed since they were counted (#313 step 4c piece 5): a leaf
@@ -162,6 +168,22 @@ pub(crate) fn near(leaves: Leaves, root: u8, key: BlockKey, ready: impl Fn(u32) 
             && ready(slot)
         {
             *side = slot | (u32::from(level - key.level) << SLOT_BITS);
+        }
+    }
+    if sides.iter().any(|&side| levels(side) != 0) {
+        for (d, side) in sides.iter_mut().enumerate() {
+            let across = BlockKey {
+                cell: key.cell + direction(d),
+                ..key
+            };
+            if *side == OWN
+                && direction(d).max_element() == 1
+                && let Some(slot) = leaves.pool.slot(across)
+                && slot <= SLOT_MASK
+                && ready(slot)
+            {
+                *side = SAME | slot;
+            }
         }
     }
     Near {

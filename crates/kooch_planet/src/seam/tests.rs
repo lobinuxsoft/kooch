@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use glam::IVec3;
 
-use super::{FINER, Leaves, OWN, direction, levels, near};
+use super::{FINER, Leaves, OWN, SAME, direction, levels, near};
 use crate::{BlockKey, BlockPool, Residency};
 
 const ROOT: u8 = 4;
@@ -20,8 +20,9 @@ fn side(of: &super::Near, offset: IVec3) -> u32 {
     of.sides[d]
 }
 
-/// A level-1 block with a coarser leaf at +X, finer ones at −X, a same-level one at +Y and none at
-/// −Y; the coarser tile stops holding once its leaf leaves the pool.
+/// A level-1 block with a coarser leaf at +X, finer ones at −X, a same-level one at +Y, read past
+/// the tile since a coarser leaf is near, and none at −Y; the coarser tile stops holding once its
+/// leaf leaves the pool.
 #[test]
 fn a_block_sees_its_neighbours() {
     let block = key(1, 1, 0);
@@ -40,7 +41,8 @@ fn a_block_sees_its_neighbours() {
     assert_eq!(levels(x), 1);
     assert_eq!(x & 0xff_ffff, pool.slot(coarse).unwrap());
     assert_eq!(side(&found, IVec3::NEG_X), FINER);
-    assert_eq!(side(&found, IVec3::Y), OWN);
+    let same = pool.slot(key(1, 1, 1)).unwrap();
+    assert_eq!(side(&found, IVec3::Y), SAME | same);
     assert_eq!(side(&found, IVec3::NEG_Y), OWN);
     assert!(found.holds(&pool, block));
 

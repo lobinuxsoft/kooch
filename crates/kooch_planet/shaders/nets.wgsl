@@ -1,7 +1,7 @@
-// Surface nets over one block's tile (#313), shared by the count and write passes. Both walk the
+// Dual contouring over one block's tile (#313, #393), shared by the count and write passes. Both walk the
 // same regions the same way, so the sizes one counts are the sizes the other fills.
 //
-// A cell holds a vertex when its eight samples change sign: the mean of its edge crossings. Each
+// A cell holds a vertex when its eight samples change sign: dual contouring's QEF point (#393). Each
 // sign-changing edge whose start lies in the block gives a quad over the four cells around it, so
 // two blocks of one level share their border cells and the mesh closes between them.
 //
@@ -44,6 +44,8 @@ struct Near {
 
 const SLOT_MASK: u32 = 0xffffffu;
 const FINER: u32 = 0x80000000u;
+// A leaf of our level, in this slot; see `SAME` in seam.rs.
+const SAME: u32 = 0x40000000u;
 
 var<workgroup> near: Near;
 // Whether any side is a coarser leaf, or a finer one: most blocks have neither.
@@ -62,7 +64,11 @@ fn load_near(n: Near) {
 }
 
 fn levels(side: u32) -> u32 {
-    return (side >> 24u) & 0x7fu;
+    return (side >> 24u) & 0x3fu;
+}
+
+fn is_same(side: u32) -> bool {
+    return side != FINER && (side & SAME) != 0u;
 }
 
 fn side_of(d: vec3<i32>) -> u32 {
@@ -100,17 +106,31 @@ fn at(s: vec3<u32>) -> f32 {
     if (borrows == 0u || !border) {
         return own(s);
     }
-    return shared_at(s);
+    return shared_at(s, own(s));
 }
 
-// A border sample from the coarsest leaf around it that has it as a sample.
-fn shared_at(s: vec3<u32>) -> f32 {
+// A sample one past the tile, from the tile of the leaf of our level across `d` whose cell reads
+// it: a tile holds one sample either side, so it has every corner of its cells. Only where `owns`
+// found that side `SAME`. Same-level tiles store a shared sample with the same bits.
+fn past(s: vec3<u32>, d: vec3<i32>) -> f32 {
+    let side = side_of(d);
+    let base = textureLoad(atlas, tile_corner(side & SLOT_MASK) + vec3<i32>(s) - 16 * d, 0).x;
+    return shared_at(s, base);
+}
+
+// A border sample from the coarsest leaf around it that has it as a sample, else `base`. Past the
+// tile, the axis is the next leaf's interior: always across.
+fn shared_at(s: vec3<u32>, base: f32) -> f32 {
     var best = 0u;
-    var value = own(s);
-    for (var m = 1u; m < 8u; m++) {
+    var value = base;
+    for (var m = 0u; m < 8u; m++) {
         var d = vec3<i32>(0);
         var around = true;
         for (var a = 0u; a < 3u; a++) {
+            if (s[a] == TILE) {
+                d[a] = 1;
+                continue;
+            }
             if (((m >> a) & 1u) == 0u) {
                 continue;
             }
@@ -122,9 +142,12 @@ fn shared_at(s: vec3<u32>) -> f32 {
                 around = false;
             }
         }
+        if (!around || all(d == vec3<i32>(0))) {
+            continue;
+        }
         let side = side_of(d);
         let up = levels(side);
-        if (!around || up <= best) {
+        if (side == FINER || up <= best) {
             continue;
         }
         let rel = vec3<i32>(s) - vec3<i32>(1) - coarse_base(d, up);
@@ -147,9 +170,15 @@ fn cell_index(c: vec3<u32>) -> u32 {
 }
 
 fn corners(c: vec3<u32>) -> array<f32, 8> {
+    let d = outside(c);
     var v: array<f32, 8>;
     for (var k = 0u; k < 8u; k++) {
-        v[k] = at(c + vec3<u32>(k & 1u, (k >> 1u) & 1u, k >> 2u));
+        let s = c + vec3<u32>(k & 1u, (k >> 1u) & 1u, k >> 2u);
+        if (any(s == vec3<u32>(TILE))) {
+            v[k] = past(s, d);
+        } else {
+            v[k] = at(s);
+        }
     }
     return v;
 }
@@ -162,10 +191,40 @@ fn crosses(v: array<f32, 8>) -> bool {
     return inside != 0u && inside != 8u;
 }
 
-// The mean of the cell's edge crossings, within the cell, and the gradient as its normal. A cell
-// with none, which only a finer neighbour borrows, takes one Newton step from its centre.
+// Gradient of the cell's trilinear interpolant at `p` in [0, 1]³: the Hermite normal of a crossing.
+// From the eight corners alone, so two blocks sharing the cell agree on it bit for bit.
+fn trilinear_gradient(v: array<f32, 8>, p: vec3<f32>) -> vec3<f32> {
+    let q = vec3<f32>(1.0) - p;
+    return vec3<f32>(
+        q.y * q.z * (v[1] - v[0]) + p.y * q.z * (v[3] - v[2]) + q.y * p.z * (v[5] - v[4])
+            + p.y * p.z * (v[7] - v[6]),
+        q.x * q.z * (v[2] - v[0]) + p.x * q.z * (v[3] - v[1]) + q.x * p.z * (v[6] - v[4])
+            + p.x * p.z * (v[7] - v[5]),
+        q.x * q.y * (v[4] - v[0]) + p.x * q.y * (v[5] - v[1]) + q.x * p.y * (v[6] - v[2])
+            + p.x * p.y * (v[7] - v[3]),
+    );
+}
+
+// Pull toward the crossings' mean, per crossing: keeps a flat or rank-deficient QEF from flinging
+// the vertex out, at a cost of under a hundredth of a voxel on a sharp corner.
+const QEF_BIAS: f32 = 0.05;
+
+// Dual contouring (#393): the point nearest every crossing's tangent plane, solved about the
+// crossings' mean with a small pull toward it, then kept in the cell. The normal is the mean of the
+// crossings'. A cell with no crossing, which only a finer neighbour borrows, takes one Newton step
+// from its centre.
 fn place(v: array<f32, 8>) -> array<vec3<f32>, 2> {
-    var sum = vec3<f32>(0.0);
+    // AᵀA (symmetric: six entries), Aᵀb and the crossings' sum, gathered in one pass: a per-thread
+    // array indexed at run time would go to scratch (#1938).
+    var xx = 0.0;
+    var xy = 0.0;
+    var xz = 0.0;
+    var yy = 0.0;
+    var yz = 0.0;
+    var zz = 0.0;
+    var atb = vec3<f32>(0.0);
+    var mass = vec3<f32>(0.0);
+    var normal = vec3<f32>(0.0);
     var count = 0.0;
     for (var k = 0u; k < 8u; k++) {
         for (var axis = 0u; axis < 3u; axis++) {
@@ -178,10 +237,19 @@ fn place(v: array<f32, 8>) -> array<vec3<f32>, 2> {
             if ((a < 0.0) == (b < 0.0)) {
                 continue;
             }
-            let start = vec3<f32>(f32(k & 1u), f32((k >> 1u) & 1u), f32(k >> 2u));
-            var step = vec3<f32>(0.0);
-            step[axis] = 1.0;
-            sum += start + step * (a / (a - b));
+            var p = vec3<f32>(f32(k & 1u), f32((k >> 1u) & 1u), f32(k >> 2u));
+            p[axis] = a / (a - b);
+            let grad = trilinear_gradient(v, p);
+            let n = select(vec3<f32>(0.0), normalize(grad), dot(grad, grad) > 0.0);
+            xx += n.x * n.x;
+            xy += n.x * n.y;
+            xz += n.x * n.z;
+            yy += n.y * n.y;
+            yz += n.y * n.z;
+            zz += n.z * n.z;
+            atb += n * dot(n, p);
+            mass += p;
+            normal += n;
             count += 1.0;
         }
     }
@@ -191,18 +259,37 @@ fn place(v: array<f32, 8>) -> array<vec3<f32>, 2> {
         (v[4] + v[5] + v[6] + v[7]) - (v[0] + v[1] + v[2] + v[3]),
     );
     let still = !(dot(g, g) > 0.0);
-    let normal = select(normalize(g), vec3<f32>(0.0, 1.0, 0.0), still);
-    if (count > 0.0) {
-        return array<vec3<f32>, 2>(sum / count, normal);
+    let fallback = select(normalize(g), vec3<f32>(0.0, 1.0, 0.0), still);
+    if (count == 0.0) {
+        var mean = 0.0;
+        for (var k = 0u; k < 8u; k++) {
+            mean += v[k] * 0.125;
+        }
+        // g is four times the gradient across the cell.
+        let newton = select(g * (4.0 * mean / dot(g, g)), vec3<f32>(0.0), still);
+        let inside = clamp(vec3<f32>(0.5) - newton, vec3<f32>(0.0), vec3<f32>(1.0));
+        return array<vec3<f32>, 2>(inside, fallback);
     }
-    var mean = 0.0;
-    for (var k = 0u; k < 8u; k++) {
-        mean += v[k] * 0.125;
+    mass /= count;
+    let ata = mat3x3<f32>(vec3<f32>(xx, xy, xz), vec3<f32>(xy, yy, yz), vec3<f32>(xz, yz, zz));
+    // Solved about the mean: (AᵀA + λI) y = Aᵀb − AᵀA·mass.
+    let rhs = atb - ata * mass;
+    let m = ata + mat3x3<f32>(
+        vec3<f32>(QEF_BIAS * count, 0.0, 0.0),
+        vec3<f32>(0.0, QEF_BIAS * count, 0.0),
+        vec3<f32>(0.0, 0.0, QEF_BIAS * count),
+    );
+    // Positive definite through the bias; the guard only catches a NaN sample.
+    let det = determinant(m);
+    var y = vec3<f32>(0.0);
+    if (det > 1e-12) {
+        // Cofactors: for a symmetric matrix, its inverse times the determinant.
+        let adj = mat3x3<f32>(cross(m[1], m[2]), cross(m[2], m[0]), cross(m[0], m[1]));
+        y = (adj * rhs) / det;
     }
-    // g is four times the gradient across the cell.
-    let newton = select(g * (4.0 * mean / dot(g, g)), vec3<f32>(0.0), still);
-    let inside = clamp(vec3<f32>(0.5) - newton, vec3<f32>(0.0), vec3<f32>(1.0));
-    return array<vec3<f32>, 2>(inside, normal);
+    let inside = clamp(mass + y, vec3<f32>(0.0), vec3<f32>(1.0));
+    let up = select(normalize(normal), fallback, !(dot(normal, normal) > 0.0));
+    return array<vec3<f32>, 2>(inside, up);
 }
 
 // Cell `c`'s vertex, in our samples, and its normal. A cell across a coarser leaf is the coarse cell
@@ -240,8 +327,10 @@ fn outside(c: vec3<u32>) -> vec3<i32> {
     return select(low, vec3<i32>(1), c == vec3<u32>(CELLS - 1u));
 }
 
-// Whether the block emits the edge from `s` along `axis`: none whose cells reach a finer leaf, which
-// emits it itself, and past the +plane only those whose cells there are a coarser leaf's.
+// Whether the block emits the edge from `s` along `axis`. None whose cells reach a finer leaf,
+// which emits it itself. One whose start is past a + plane belongs to the leaf holding that cell:
+// if it is coarser, to the first block of our level holding one of the other cells, in an order
+// every block shares (#393). That block reads the cells past its tile from the leaves there.
 fn owns(s: vec3<u32>, axis: u32) -> bool {
     if (s[axis] > 16u) {
         return false;
@@ -256,11 +345,32 @@ fn owns(s: vec3<u32>, axis: u32) -> bool {
             continue;
         }
         let side = side_of(d);
-        if (side == FINER || (any(d == vec3<i32>(1)) && levels(side) == 0u)) {
+        // A cell past a + plane of a leaf of our level is read from it, so it must be in hand.
+        let unread = any(d == vec3<i32>(1)) && levels(side) == 0u && !is_same(side);
+        if (side == FINER || unread) {
             return false;
         }
     }
-    return true;
+    let start = outside(s);
+    if (all(start == vec3<i32>(0))) {
+        return true;
+    }
+    if (levels(side_of(start)) == 0u) {
+        return false;
+    }
+    for (var k = 0u; k < 4u; k++) {
+        if (k == 2u) {
+            continue;
+        }
+        let d = outside(cells[k]);
+        if (all(d == vec3<i32>(0))) {
+            return true;
+        }
+        if (levels(side_of(d)) == 0u) {
+            return false;
+        }
+    }
+    return false;
 }
 
 // `edge` over the edges the block emits.

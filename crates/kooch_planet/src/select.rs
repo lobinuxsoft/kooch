@@ -1,8 +1,9 @@
 //! Budgeted octree refinement: the leaves of every planet's octree, split highest error first
-//! until the pool is full.
+//! until the pool is full, and 2:1 balanced: no two touching leaves are more than one level apart,
+//! so a seam between blocks meets at most one level change (#393).
 
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashSet};
 
 use glam::{DVec3, IVec3};
 
@@ -159,7 +160,7 @@ pub fn select(
         split,
         counts: vec![0; planets.len()],
         total: 0,
-        out,
+        leaves: HashSet::new(),
     };
     // Floors first, planet by planet, so a near planet cannot starve a visible far one.
     let mut global = BinaryHeap::new();
@@ -172,11 +173,12 @@ pub fn select(
         global.extend(held.drain(..));
     }
     refine.split(&mut global, &mut held, |p| planets.limits[p].ceiling);
-    let mut worst: f64 = 0.0;
-    for node in held {
-        worst = worst.max(node.error);
-        refine.out.push(node.key);
-    }
+    // A held leaf a neighbour's split forced apart since is no leaf any more.
+    let worst = held
+        .iter()
+        .filter(|node| refine.leaves.contains(&node.key))
+        .fold(0.0, |worst: f64, node| worst.max(node.error));
+    out.extend(refine.leaves.drain());
     worst
 }
 
@@ -215,7 +217,8 @@ struct Refine<'a, S, K> {
     split: K,
     counts: Vec<u32>,
     total: u32,
-    out: &'a mut Vec<BlockKey>,
+    /// Every leaf so far: in the heap, finished or held. CPU-only bookkeeping.
+    leaves: HashSet<BlockKey>,
 }
 
 impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'_, S, K> {
@@ -245,10 +248,10 @@ impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'
             if self.total < self.capacity && self.touches(&shape, key) {
                 self.total += 1;
                 self.counts[planet] += 1;
+                self.leaves.insert(key);
                 // Until its impostor exists, a distant planet keeps its root blocks, not nothing.
-                match small {
-                    true => self.out.push(key),
-                    false => self.place(key, heap),
+                if !small {
+                    self.place(key, heap);
                 }
             }
         }
@@ -262,26 +265,72 @@ impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'
         limit: impl Fn(usize) -> u32,
     ) {
         while let Some(node) = heap.pop() {
+            // Split already, to balance a finer neighbour.
+            if !self.leaves.contains(&node.key) {
+                continue;
+            }
             let planet = node.key.planet as usize;
-            let shape = self.planets.shape[planet];
-            let (children, count) = self.children(&shape, node.key);
-            if count == 0 {
-                // The parent's range was looser than its children's: the block is uniform after all.
-                self.total -= 1;
-                self.counts[planet] -= 1;
-                continue;
-            }
-            let grow = count as u32 - 1;
-            if self.total + grow > self.capacity || self.counts[planet] + grow > limit(planet) {
+            if !self.balanced_split(node.key, limit(planet), heap) {
                 held.push(node);
-                continue;
-            }
-            self.total += grow;
-            self.counts[planet] += grow;
-            for &child in &children[..count] {
-                self.place(child, heap);
             }
         }
+    }
+
+    /// Splits `key` once every coarser leaf touching it is split down to its level, so its children
+    /// meet nothing two levels up. Each split keeps the octree balanced, so one the budget refuses
+    /// halfway leaves it balanced too. False when the budget refused.
+    fn balanced_split(&mut self, key: BlockKey, limit: u32, heap: &mut BinaryHeap<Node>) -> bool {
+        // Balanced already: a leaf touching `key` is at most one level up, a child of a parent's
+        // neighbour. The parent itself is never a leaf.
+        let parent = key.parent();
+        for d in 0..27 {
+            let offset = IVec3::new(d % 3, (d / 3) % 3, d / 9) - IVec3::ONE;
+            let across = BlockKey {
+                cell: parent.cell + offset,
+                ..parent
+            };
+            if offset == IVec3::ZERO || !self.touching(key, across) {
+                continue;
+            }
+            // Recursion climbs a level each step, so it is bounded by the root's.
+            if self.leaves.contains(&across) && !self.balanced_split(across, limit, heap) {
+                return false;
+            }
+        }
+        self.split_one(key, limit, heap)
+    }
+
+    /// Whether `coarse`, one level up, touches `key` by a face, an edge or a corner.
+    fn touching(&self, key: BlockKey, coarse: BlockKey) -> bool {
+        let lo = coarse.cell * 2;
+        let hi = lo + IVec3::splat(2);
+        let near = |a: usize| key.cell[a] >= lo[a] - 1 && key.cell[a] <= hi[a];
+        near(0) && near(1) && near(2)
+    }
+
+    /// Replaces leaf `key` by its children that can hold surface, if the pool and `limit` allow.
+    fn split_one(&mut self, key: BlockKey, limit: u32, heap: &mut BinaryHeap<Node>) -> bool {
+        let planet = key.planet as usize;
+        let shape = self.planets.shape[planet];
+        let (children, count) = self.children(&shape, key);
+        let grow = count.saturating_sub(1) as u32;
+        if count > 0 && (self.total + grow > self.capacity || self.counts[planet] + grow > limit) {
+            return false;
+        }
+        self.leaves.remove(&key);
+        // The parent's range was looser than its children's: the block is uniform after all.
+        if count == 0 {
+            self.total -= 1;
+            self.counts[planet] -= 1;
+            return true;
+        }
+        self.total += grow;
+        self.counts[planet] += grow;
+        for &child in &children[..count] {
+            self.leaves.insert(child);
+            self.place(child, heap);
+        }
+        true
     }
 
     /// The children of a block that can hold surface.
@@ -309,7 +358,7 @@ impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'
         touches_shell(shape, min, max) && (self.surface)(key, min, max)
     }
 
-    /// Queues a block that can still split, or keeps it as a finished leaf.
+    /// Queues a leaf that can still split; one that cannot stays a finished leaf.
     fn place(&mut self, key: BlockKey, heap: &mut BinaryHeap<Node>) {
         let kept = (self.split)(key);
         let error = match kept {
@@ -318,8 +367,6 @@ impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'
         };
         if key.level > 0 && error > 1.0 && !self.hidden(key, kept) && sees(self.planets, key) {
             heap.push(Node { error, key });
-        } else {
-            self.out.push(key);
         }
     }
 

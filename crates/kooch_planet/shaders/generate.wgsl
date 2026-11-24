@@ -12,18 +12,21 @@ const WORKGROUP: u32 = 256u;
 // Voxels kept either side of the surface; beyond it a meshing pass needs only the sign, and f16
 // would lose a far value anyway.
 const BAND: f32 = 64.0;
+// Grid period of the altitude anchors. A tile spans 18 samples, so it meets at most two per axis.
+const ANCHOR: i32 = 32;
 
 struct Job {
-    // The tile's first sample from the planet's centre, and the edge of one voxel at its level.
-    origin: vec3<f32>,
-    voxel: f32,
-    radius: f32,
-    // |origin|² − radius², taken in f64 on the CPU: what keeps the altitude exact far out.
-    excess: f32,
-    slot: u32,
-    planet: u32,
     // The tile's first sample on the planet's grid, in voxels of this level.
     index: vec3<i32>,
+    // The edge of one voxel at the tile's level.
+    voxel: f32,
+    radius: f32,
+    slot: u32,
+    planet: u32,
+    _pad: u32,
+    // |anchor|² − radius² for the eight anchors the tile meets, x fastest, taken in f64 on the CPU:
+    // what keeps the altitude exact far out.
+    excess: array<f32, 8>,
 }
 
 @group(0) @binding(0) var<storage, read> jobs: array<Job>;
@@ -38,6 +41,7 @@ fn generate_main(
         return;
     }
     let job = jobs[wid.x];
+    let base = job.index & vec3<i32>(-ANCHOR);
     let tile = vec3<u32>(
         job.slot % TILES_X,
         (job.slot / TILES_X) % TILES_Y,
@@ -51,13 +55,19 @@ fn generate_main(
             break;
         }
         let v = vec3<u32>(i % TILE_DIM, (i / TILE_DIM) % TILE_DIM, i / (TILE_DIM * TILE_DIM));
-        let local = vec3<f32>(v) * job.voxel;
-        // From the grid index, not `origin + local`: a neighbour reaches the same sample through
-        // the same integers, so both get the same f32 and agree on its sign (#1933).
-        let position = vec3<f32>(job.index + vec3<i32>(v)) * job.voxel;
+        // From the grid index, and the altitude from an anchor fixed on the grid, not from the
+        // tile: a neighbour reaches a shared sample through the same integers, so both store the
+        // same bits and their meshes meet (#1933, #393).
+        let grid = job.index + vec3<i32>(v);
+        let position = vec3<f32>(grid) * job.voxel;
         let distance = length(position);
+        let anchor = grid & vec3<i32>(-ANCHOR);
+        let k = vec3<u32>((anchor - base) / ANCHOR);
+        let origin = vec3<f32>(anchor) * job.voxel;
+        let local = vec3<f32>(grid - anchor) * job.voxel;
         // |o + l| − R = (|o|² − R² + 2o·l + l²) / (|o + l| + R): no f32 radius is subtracted.
-        let altitude = (job.excess + 2.0 * dot(job.origin, local) + dot(local, local))
+        let excess = jobs[wid.x].excess[k.x + 2u * k.y + 4u * k.z];
+        let altitude = (excess + 2.0 * dot(origin, local) + dot(local, local))
             / (distance + job.radius);
         var input: PlanetInput;
         input.position = position;
