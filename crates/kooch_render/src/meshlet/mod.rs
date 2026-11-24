@@ -80,7 +80,7 @@ pub use reject_overlay::{MeshletRejectOverlay, RejectReason};
 pub use render_stage::{MeshletRenderStage, MeshletRenderStageConfig, MeshletRenderStats, ViewId};
 pub use scene::{MeshInstance, MeshletScene, SceneCullParams};
 pub use stage_counters::{CullStageCounts, MeshletStageCounters};
-pub use submitted::{Submitted, for_each_drawn};
+pub use submitted::{DrawKey, Submitted, for_each_drawn};
 pub use surface::{SurfaceHit, base_triangles, ray_hit, support};
 pub use system::{MESH_MAX_AGE, MeshletPipeline, instance_at_origin};
 pub use trim::{AlphaTrim, TRIM_SIDE};

@@ -271,7 +271,7 @@ impl MeshletPipeline {
     pub fn collect_scene_instances_with_entities(
         &self,
         resources: &Resources,
-    ) -> (Vec<MeshInstance>, Vec<kooch_ecs::entity::Entity>) {
+    ) -> (Vec<MeshInstance>, Vec<super::DrawKey>) {
         let material_pipeline = resources.get::<crate::material::MaterialPipeline>();
         // Side-channel lookup of optional LodForceLevel components. The MeshRenderer query is the
         // primary walk; per-entity we do a separate point query for LodForceLevel so absence costs
@@ -281,7 +281,7 @@ impl MeshletPipeline {
         let mut entities = Vec::new();
         // Kept apart and appended last: a cull is handed the opaque ones alone (#452).
         let mut transparent = Vec::new();
-        for_each_drawn(resources, |entity, renderer, matrix| {
+        for_each_drawn(resources, |key, renderer, matrix| {
             if !renderer.visible {
                 return;
             }
@@ -304,7 +304,7 @@ impl MeshletPipeline {
                 .and_then(|trimmed| self.lookup(trimmed));
             let mesh_id = cut.unwrap_or(mesh_handle).mesh_id;
             let mut instance = MeshInstance::new(*matrix, mesh_id, material_id);
-            if let Some(force_level) = lod_force_lookup.get(&entity).copied() {
+            if let Some(force_level) = lod_force_lookup.get(&key.0).copied() {
                 instance.lod_force_level = force_level as i32;
             } else {
                 instance.lod_force_level = LOD_FORCE_NONE;
@@ -326,15 +326,15 @@ impl MeshletPipeline {
                 .is_some_and(|(_, s)| s.kind.blends());
             if see_through {
                 instance.flags |= crate::meshlet::scene::INSTANCE_TRANSPARENT;
-                transparent.push((instance, entity));
+                transparent.push((instance, key));
             } else {
                 out.push(instance);
-                entities.push(entity);
+                entities.push(key);
             }
         });
-        for (instance, entity) in transparent {
+        for (instance, key) in transparent {
             out.push(instance);
-            entities.push(entity);
+            entities.push(key);
         }
         // Per-instance prefix sum into `group_max_err`, after the reorder: each instance reserves
         // `mesh_descriptors[mesh_id].group_count` consecutive slots starting at `running_base`.
