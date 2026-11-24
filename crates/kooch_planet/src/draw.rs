@@ -98,6 +98,11 @@ impl Blocks {
         self.settled = false;
     }
 
+    /// Nothing waits to be shown or retired.
+    pub(crate) fn settled(&self) -> bool {
+        self.settled
+    }
+
     /// Writes the meshes the pool granted since last frame, then asks for the ones just counted.
     /// A block already on screen takes its new mesh at once; a new one waits hidden for
     /// [`Blocks::swap`], which needs its transform propagated first.

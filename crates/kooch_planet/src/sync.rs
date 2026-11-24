@@ -13,6 +13,7 @@ use glam::{DVec3, Mat4};
 use kooch_core::Guid;
 use kooch_core::asset_loader::{AssetServer, ReloadedAssets};
 use kooch_core::assets::{Assets, Handle};
+use kooch_core::frame_pacing::{FramePace, FrameRequest};
 use kooch_core::gpu::GpuContext;
 use kooch_core::resource::Resources;
 use kooch_ecs::Entity;
@@ -349,6 +350,15 @@ pub fn sync_planets(resources: &mut Resources) {
         meshlets: blocks.meshlets(),
         gpu: state.terrain.as_ref().and_then(Terrain::times),
     };
+    // An idle editor sleeps between frames, and a level change spread over sleeping frames shows
+    // its seams half done (#1999). Wakes only while meshing; a game has no request and spins anyway.
+    let meshing = state
+        .terrain
+        .as_ref()
+        .is_some_and(|t| t.frontier() != u64::MAX);
+    if meshing || !blocks.settled() {
+        FrameRequest::raise(resources, FramePace::Continuous);
+    }
     state.blocks = blocks;
     state.meshed = meshed;
     resources.insert(state);
