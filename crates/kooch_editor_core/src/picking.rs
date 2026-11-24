@@ -103,9 +103,6 @@ fn cast(
     // Collected before resolving any asset: loading a mesh takes
     // `&mut Resources` and the query holds a borrow of it.
     let candidates = visible_meshes(resources);
-    if candidates.is_empty() {
-        return Vec::new();
-    }
 
     // 🔴 Two passes, because resolving a mesh needs `&mut Resources` and reading its triangles
     // needs a borrow of the asset store that lives across the whole test. One pass cannot hold
@@ -153,6 +150,19 @@ fn cast(
             // The inverse transpose, because a normal is a covector: under a non-uniform scale the
             // matrix that moves the surface tilts its normal the wrong way.
             normal: (normal_matrix(to_world) * local_normal).normalize_or(Vec3::Y),
+        });
+    }
+    // A planet's blocks are GPU meshes with no CPU triangles: its ground answers through the
+    // generator instead (#2002).
+    for ground in kooch_planet::ground_hits(resources, ray.origin, ray.direction) {
+        if exclude.contains(&ground.entity) {
+            continue;
+        }
+        hits.push(SurfaceHit {
+            entity: ground.entity,
+            distance: ground.distance,
+            point: ray.origin + ray.direction * ground.distance,
+            normal: ground.normal,
         });
     }
     hits.sort_by(|a, b| a.distance.total_cmp(&b.distance));

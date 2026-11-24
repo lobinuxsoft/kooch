@@ -43,7 +43,7 @@ pub use recent::{BatchMean, RECENT};
 pub use seam::{Leaves, Near};
 pub use select::{Limits, Planets, Shape, View, select};
 pub use sight::Cone;
-pub use sync::{PlanetStats, PlanetTerrain, PlanetViewers, sync_planets};
+pub use sync::{GroundHit, PlanetStats, PlanetTerrain, PlanetViewers, ground_hits, sync_planets};
 pub use terrain::{CountedBlock, GpuTimes, MESH_BATCH, Terrain};
 
 use kooch_world::voxel::SUBGRID_DIM;
