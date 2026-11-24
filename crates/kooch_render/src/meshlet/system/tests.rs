@@ -1,6 +1,8 @@
 use super::*;
 use crate::mesh::{Mesh, MeshVertex};
 use crate::meshlet::build_default_meshlets;
+use kooch_ecs::hierarchy::GlobalTransform;
+use kooch_ecs::mesh_renderer::MeshRenderer;
 
 fn cube_mesh() -> Mesh {
     let positions = [

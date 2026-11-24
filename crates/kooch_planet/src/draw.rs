@@ -32,6 +32,9 @@ struct Asked {
 #[derive(Default)]
 pub(crate) struct Blocks {
     key: Vec<Option<BlockKey>>,
+    /// Which of the planet's meshes it is to the renderer: new per block, never per index, so a
+    /// reused index never inherits a gone block's last matrix.
+    part: Vec<u32>,
     /// The block's corner in its planet's space.
     origin: Vec<DVec3>,
     /// About how many: counted from triangle bytes, which round up per meshlet.
@@ -52,6 +55,8 @@ pub(crate) struct Blocks {
     of_key: HashMap<BlockKey, u32>,
     /// Bumped per ask; half of every mesh GUID.
     asks: u32,
+    /// Bumped per block given an index.
+    parts: u32,
     frame: u32,
     /// Nothing waits and nothing lingers, so [`Blocks::swap`] has nothing to do.
     settled: bool,
@@ -239,7 +244,7 @@ impl Blocks {
                 ..Default::default()
             };
             submitted.push(
-                planet.entity,
+                (planet.entity, self.part[s]),
                 place(planet, self.origin[s], &origin),
                 renderer,
             );
@@ -278,6 +283,7 @@ impl Blocks {
         }
         let i = self.free.pop().unwrap_or_else(|| {
             self.key.push(None);
+            self.part.push(0);
             self.origin.push(DVec3::ZERO);
             self.triangles.push(0);
             self.meshlets.push(0);
@@ -290,6 +296,8 @@ impl Blocks {
             (self.key.len() - 1) as u32
         });
         self.key[i as usize] = Some(key);
+        self.parts = self.parts.wrapping_add(1);
+        self.part[i as usize] = self.parts;
         self.of_key.insert(key, i);
         i
     }

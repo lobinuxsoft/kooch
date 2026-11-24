@@ -121,8 +121,8 @@ pub struct MeshletScene {
     previous_transform_buffer: wgpu::Buffer,
     capacity: u32,
     bgl: wgpu::BindGroupLayout,
-    /// Last frame's transform for each entity that had one.
-    previous_transforms: std::collections::HashMap<kooch_ecs::entity::Entity, [[f32; 4]; 4]>,
+    /// Last frame's transform for each mesh drawn then.
+    previous_transforms: std::collections::HashMap<super::DrawKey, [[f32; 4]; 4]>,
     /// Scratch for the upload, kept so the per-frame gather does not
     /// allocate.
     previous_scratch: Vec<[[f32; 4]; 4]>,
@@ -240,7 +240,7 @@ impl MeshletScene {
         &mut self,
         queue: &wgpu::Queue,
         instances: &[MeshInstance],
-        entities: &[kooch_ecs::entity::Entity],
+        entities: &[super::DrawKey],
     ) {
         debug_assert_eq!(instances.len(), entities.len());
         self.previous_scratch.clear();
