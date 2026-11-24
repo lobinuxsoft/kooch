@@ -33,7 +33,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.98.222"
+version = "0.98.223"
 edition = "2024"
 license = "LicenseRef-Proprietary"
 repository = "https://github.com/lobinuxsoft/kooch"
