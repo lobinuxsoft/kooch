@@ -1,5 +1,7 @@
-//! The entities that draw the blocks, one per draw index. A block that changes level stays on
-//! screen until what replaces it has its mesh, as Zylann's octree does: see [`swap`].
+//! What draws the blocks: one mesh per draw index, handed to the renderer each frame for its
+//! planet's entity, so a planet is one entity however many blocks it shows (#1991). A block that
+//! changes level stays on screen until what replaces it has its mesh, as Zylann's octree does: see
+//! [`swap`].
 //!
 //! A block's mesh is counted, asked of the meshlet pool, granted the frame after and written in
 //! place by the GPU, under a GUID of its own per ask, so a stale grant never meets a newer ask.
@@ -11,12 +13,10 @@ use std::collections::HashMap;
 use glam::{DVec3, Mat4, Vec3};
 use kooch_core::Guid;
 use kooch_core::resource::Resources;
-use kooch_ecs::hierarchy::{CELL, GridCell};
-use kooch_ecs::query::Query;
-use kooch_ecs::{Commands, Entity, MeshRenderer, Transform};
-use kooch_render::meshlet::{GpuMeshes, MeshBounds};
+use kooch_ecs::MeshRenderer;
+use kooch_ecs::hierarchy::WorldOrigin;
+use kooch_render::meshlet::{GpuMeshes, MeshBounds, Submitted};
 
-use crate::component::PlanetBlock;
 use crate::seam::levels;
 use crate::sync::Found;
 use crate::{BLOCK_SAMPLES, BlockKey, BlockPool, CountedBlock, Near, Terrain, WriteJob};
@@ -31,7 +31,6 @@ struct Asked {
 /// Per draw index, as parallel arrays. An index outlives its block's pool slot while it lingers.
 #[derive(Default)]
 pub(crate) struct Blocks {
-    entity: Vec<Option<Entity>>,
     key: Vec<Option<BlockKey>>,
     /// The block's corner in its planet's space.
     origin: Vec<DVec3>,
@@ -56,9 +55,6 @@ pub(crate) struct Blocks {
     frame: u32,
     /// Nothing waits and nothing lingers, so [`Blocks::swap`] has nothing to do.
     settled: bool,
-    /// Per roster index: the matrix and material its blocks were last drawn with.
-    world: Vec<Mat4>,
-    material: Vec<Option<Guid>>,
 }
 
 /// What [`Blocks::draw`] reads of the frame.
@@ -90,14 +86,14 @@ impl Blocks {
             counted.clear();
             return;
         };
-        self.write(resources, frame, terrain, &mut meshes);
+        self.write(frame, terrain, &mut meshes);
         for block in counted.drain(..) {
-            self.ask(resources, block, &mut meshes);
+            self.ask(block, &mut meshes);
         }
         resources.insert(meshes);
     }
 
-    fn ask(&mut self, resources: &mut Resources, block: CountedBlock, meshes: &mut GpuMeshes) {
+    fn ask(&mut self, block: CountedBlock, meshes: &mut GpuMeshes) {
         self.settled = false;
         let s = self.index_of(block.key) as usize;
         self.origin[s] = block.origin;
@@ -107,7 +103,7 @@ impl Blocks {
             self.built[s] = true;
             self.triangles[s] = 0;
             self.meshlets[s] = 0;
-            self.drop_meshes(resources, s, meshes);
+            self.drop_meshes(s, meshes);
             return;
         }
         self.asks = self.asks.wrapping_add(1);
@@ -116,13 +112,7 @@ impl Blocks {
         meshes.reserve(mesh, block.sizes, bounds_of(block.voxel, &block.near));
     }
 
-    fn write(
-        &mut self,
-        resources: &mut Resources,
-        frame: &Frame,
-        terrain: &mut Terrain,
-        meshes: &mut GpuMeshes,
-    ) {
+    fn write(&mut self, frame: &Frame, terrain: &mut Terrain, meshes: &mut GpuMeshes) {
         // A refused ask would cross a binding: its block is counted again once the budget has
         // made room, instead of waiting for a grant that never comes (#1968).
         for mesh in meshes.take_refused() {
@@ -177,53 +167,42 @@ impl Blocks {
             terrain.write(frame.device, frame.queue, buffers, &jobs);
         }
         for (s, mesh, block) in done {
-            self.written(resources, frame, s, mesh, block, meshes);
+            self.written(frame, s, mesh, block, meshes);
         }
     }
 
     fn written(
         &mut self,
-        resources: &mut Resources,
         frame: &Frame,
         s: usize,
         mesh: Guid,
         block: CountedBlock,
         meshes: &mut GpuMeshes,
     ) {
-        let planet = frame
-            .placed
-            .get(block.key.planet as usize)
-            .copied()
+        let placed = frame.placed.get(block.key.planet as usize).copied();
+        if placed
             .flatten()
-            .and_then(|at| frame.found.get(at));
-        let Some(planet) = planet else {
+            .and_then(|at| frame.found.get(at))
+            .is_none()
+        {
             meshes.release(mesh);
             return;
-        };
+        }
         self.settled = false;
         self.built[s] = true;
         self.triangles[s] = block.sizes.triangle_bytes / 3;
         self.meshlets[s] = block.sizes.meshlets;
-        let visible = self.shown[s];
-        let held = match visible {
+        let held = match self.shown[s] {
             true => &mut self.mesh[s],
             false => &mut self.staged[s],
         };
         if let Some(old) = held.replace(mesh) {
             meshes.release(old);
         }
-        let renderer = MeshRenderer {
-            mesh: Some(mesh),
-            material: planet.planet.material,
-            visible,
-            ..Default::default()
-        };
-        let placed = place(planet, block.origin);
-        self.entity[s] = put(resources, self.entity[s], placed, renderer);
     }
 
     /// Hides the index and gives its meshes back.
-    fn drop_meshes(&mut self, resources: &mut Resources, s: usize, meshes: &mut GpuMeshes) {
+    fn drop_meshes(&mut self, s: usize, meshes: &mut GpuMeshes) {
         for mesh in [self.mesh[s].take(), self.staged[s].take()]
             .into_iter()
             .flatten()
@@ -231,47 +210,39 @@ impl Blocks {
             meshes.release(mesh);
         }
         self.shown[s] = false;
-        if let Some(entity) = self.entity[s]
-            && let Some(renderer) = Query::<&mut MeshRenderer>::new(resources).get(entity)
-        {
-            renderer.visible = false;
-        }
     }
 
-    /// Re-places the blocks of every planet that moved, turned or changed material since its blocks
-    /// were drawn.
-    pub(crate) fn follow(
-        &mut self,
+    /// Hands every block on screen to the renderer, drawn for its planet's entity. Every frame, so
+    /// a planet that moved, turned or changed material, or an origin that moved, is followed at once.
+    pub(crate) fn submit(
+        &self,
         resources: &mut Resources,
         placed: &[Option<usize>],
         found: &[Found],
     ) {
-        if self.world.len() < placed.len() {
-            self.world.resize(placed.len(), Mat4::NAN);
-            self.material.resize(placed.len(), None);
-        }
-        for (index, at) in placed.iter().enumerate() {
-            let Some(planet) = at.and_then(|at| found.get(at)) else {
+        let origin = WorldOrigin::get(resources);
+        let Some(submitted) = resources.get_mut::<Submitted>() else {
+            return;
+        };
+        submitted.clear();
+        for s in (0..self.key.len()).filter(|&s| self.shown[s]) {
+            let (Some(key), Some(mesh)) = (self.key[s], self.mesh[s]) else {
                 continue;
             };
-            let material = planet.planet.material;
-            if self.world[index] == planet.world && self.material[index] == material {
+            let planet = placed.get(key.planet as usize).copied().flatten();
+            let Some(planet) = planet.and_then(|at| found.get(at)) else {
                 continue;
-            }
-            self.world[index] = planet.world;
-            self.material[index] = material;
-            for s in 0..self.entity.len() {
-                let ours = self.key[s].is_some_and(|key| key.planet == index as u32);
-                let Some(entity) = self.entity[s].filter(|_| ours) else {
-                    continue;
-                };
-                let query =
-                    Query::<(&mut Transform, &mut GridCell, &mut MeshRenderer)>::new(resources);
-                if let Some((transform, cell, renderer)) = query.get(entity) {
-                    (*transform, *cell) = place(planet, self.origin[s]);
-                    renderer.material = material;
-                }
-            }
+            };
+            let renderer = MeshRenderer {
+                mesh: Some(mesh),
+                material: planet.planet.material,
+                ..Default::default()
+            };
+            submitted.push(
+                planet.entity,
+                place(planet, self.origin[s], &origin),
+                renderer,
+            );
         }
     }
 
@@ -306,7 +277,6 @@ impl Blocks {
             return i;
         }
         let i = self.free.pop().unwrap_or_else(|| {
-            self.entity.push(None);
             self.key.push(None);
             self.origin.push(DVec3::ZERO);
             self.triangles.push(0);
@@ -317,7 +287,7 @@ impl Blocks {
             self.built.push(false);
             self.shown.push(false);
             self.left.push(None);
-            (self.entity.len() - 1) as u32
+            (self.key.len() - 1) as u32
         });
         self.key[i as usize] = Some(key);
         self.of_key.insert(key, i);
@@ -342,45 +312,14 @@ fn bounds_of(voxel: f32, near: &Near) -> MeshBounds {
     }
 }
 
-/// Updates the index's entity, or spawns one when it has none or it was despawned under us.
-fn put(
-    resources: &mut Resources,
-    held: Option<Entity>,
-    (transform, cell): (Transform, GridCell),
-    renderer: MeshRenderer,
-) -> Option<Entity> {
-    if let Some(entity) = held
-        && let Some((t, c, r)) =
-            Query::<(&mut Transform, &mut GridCell, &mut MeshRenderer)>::new(resources).get(entity)
-    {
-        (*t, *c, *r) = (transform, cell, renderer);
-        return Some(entity);
-    }
-    let mut commands = resources.remove::<Commands>()?;
-    let entity = commands
-        .spawn(resources)
-        .insert(PlanetBlock)
-        .insert(transform)
-        .insert(cell)
-        .insert(renderer)
-        .id();
-    resources.insert(commands);
-    Some(entity)
-}
-
-/// A block's transform: its corner carried by the planet's, in f64 from the planet's centre, then
-/// homed into its own cell. The corner is a planet radius out, where f32 steps half a metre (#51).
-fn place(planet: &Found, origin: DVec3) -> (Transform, GridCell) {
+/// A block's matrix relative to the world origin: its corner carried by the planet's in f64, the
+/// cells subtracted in integers, and only then narrowed. The corner is a planet radius out, where
+/// f32 steps half a metre (#51).
+fn place(planet: &Found, origin: DVec3, world: &WorldOrigin) -> Mat4 {
     let (scale, rotation, _) = planet.world.to_scale_rotation_translation();
     let corner = planet.at + planet.world.as_dmat4().transform_vector3(origin);
-    let whole = (corner / CELL).round();
-    let by = whole.as_i64vec3() + planet.cell.cell();
-    let cell = GridCell {
-        x: by.x,
-        y: by.y,
-        z: by.z,
-    };
-    (Transform::new(corner - whole * CELL, rotation, scale), cell)
+    let corner = corner - world.from(Some(&planet.cell));
+    Mat4::from_scale_rotation_translation(scale, rotation, corner.as_vec3())
 }
 
 const PREFIX: &[u8; 8] = b"kooch:pl";

@@ -6,14 +6,13 @@ use glam::Mat4;
 use kooch_core::Guid;
 use kooch_core::resource::Resources;
 use kooch_ecs::entity::Entity;
-use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_ecs::lod_force_level::LodForceLevel;
-use kooch_ecs::mesh_renderer::MeshRenderer;
 use kooch_ecs::query::Query;
 
 use super::asset::MeshletMesh;
 use super::pool::{GlobalMeshPool, GpuMeshSizes, MeshBounds, MeshDescriptor, MeshHandle};
 use super::scene::{LOD_FORCE_NONE, MeshInstance};
+use super::submitted::for_each_drawn;
 use super::trim::{AlphaTrim, TrimPair};
 
 /// Owns the CPU-side state that bridges the ECS to the meshlet
@@ -210,9 +209,8 @@ impl MeshletPipeline {
     /// duplicates collapse, order is unspecified.
     pub fn collect_referenced_guids(&self, resources: &Resources) -> Vec<Guid> {
         use std::collections::HashSet;
-        let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
         let mut seen: HashSet<Guid> = HashSet::new();
-        query.for_each(|(renderer, _)| {
+        for_each_drawn(resources, |_, renderer, _| {
             if !renderer.visible {
                 return;
             }
@@ -228,9 +226,8 @@ impl MeshletPipeline {
         let Some(materials) = resources.get::<crate::material::MaterialPipeline>() else {
             return Vec::new();
         };
-        let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
         let mut out: Vec<TrimPair> = Vec::new();
-        query.for_each(|(renderer, _)| {
+        for_each_drawn(resources, |_, renderer, _| {
             let (Some(mesh), Some(material)) = (renderer.mesh, renderer.material) else {
                 return;
             };
@@ -280,12 +277,11 @@ impl MeshletPipeline {
         // primary walk; per-entity we do a separate point query for LodForceLevel so absence costs
         // nothing (most entities don't carry the override).
         let lod_force_lookup = collect_lod_force_levels(resources);
-        let query = Query::<(&MeshRenderer, &GlobalTransform)>::new(resources);
         let mut out = Vec::new();
         let mut entities = Vec::new();
         // Kept apart and appended last: a cull is handed the opaque ones alone (#452).
         let mut transparent = Vec::new();
-        query.for_each_entity(|entity, (renderer, transform)| {
+        for_each_drawn(resources, |entity, renderer, matrix| {
             if !renderer.visible {
                 return;
             }
@@ -307,7 +303,7 @@ impl MeshletPipeline {
                 .and_then(|material| self.trim.mesh_for(guid, material))
                 .and_then(|trimmed| self.lookup(trimmed));
             let mesh_id = cut.unwrap_or(mesh_handle).mesh_id;
-            let mut instance = MeshInstance::new(transform.matrix, mesh_id, material_id);
+            let mut instance = MeshInstance::new(*matrix, mesh_id, material_id);
             if let Some(force_level) = lod_force_lookup.get(&entity).copied() {
                 instance.lod_force_level = force_level as i32;
             } else {

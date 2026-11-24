@@ -299,7 +299,7 @@ pub fn sync_planets(resources: &mut Resources) {
         }
         None => meshed.clear(),
     }
-    blocks.follow(resources, &placed, &found);
+    blocks.submit(resources, &placed, &found);
     let stats = PlanetStats {
         resident: state.pool.resident(),
         capacity: state.pool.capacity(),
