@@ -1,4 +1,4 @@
-use glam::Mat4;
+use glam::{Mat4, Vec3, Vec4};
 use kooch_core::resource::Resources;
 use kooch_ecs::PerspectiveCamera;
 use kooch_ecs::hierarchy::GlobalTransform;
@@ -71,19 +71,27 @@ fn active_camera(resources: &Resources) -> Option<(PerspectiveCamera, Mat4)> {
     best
 }
 
-/// Where the active camera is, in world space — the grid fades from it and angles against it.
-pub(super) fn camera_world_position(resources: &Resources) -> Option<glam::Vec3> {
-    active_camera(resources).map(|(_, world)| world.to_scale_rotation_translation().2)
+/// The active camera's position, and its view-projection with that position taken out. The grid
+/// unprojects through the second: with the eye in the matrix, two points 0.1 m apart a kilometre
+/// from the origin differ by a few f32 ulps, and the ray built from them shook (#1992).
+pub(super) fn camera_eye(resources: &Resources, aspect: f32) -> Option<(Vec3, Mat4)> {
+    let (cam, mut world) = active_camera(resources)?;
+    let eye = world.w_axis.truncate();
+    world.w_axis = Vec4::W;
+    Some((eye, projection(&cam, aspect) * world.inverse()))
+}
+
+fn projection(cam: &PerspectiveCamera, aspect: f32) -> Mat4 {
+    kooch_render::projection::perspective_infinite_rh_reverse_z(
+        cam.fov.to_radians(),
+        aspect.max(0.001),
+        cam.near.max(0.001),
+    )
 }
 
 /// 🔴 Infinite, like the scene's (#1992): cut at `camera.far`, everything past it vanished, and the
 /// depth the grid writes disagreed with the scene's it is tested against.
 pub(crate) fn active_camera_view_proj(resources: &Resources, aspect: f32) -> Option<Mat4> {
     let (cam, world) = active_camera(resources)?;
-    let projection = kooch_render::projection::perspective_infinite_rh_reverse_z(
-        cam.fov.to_radians(),
-        aspect.max(0.001),
-        cam.near.max(0.001),
-    );
-    Some(projection * world.inverse())
+    Some(projection(&cam, aspect) * world.inverse())
 }

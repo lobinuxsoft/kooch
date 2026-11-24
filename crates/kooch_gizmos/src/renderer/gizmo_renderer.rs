@@ -8,7 +8,7 @@ use kooch_render::VIEWPORT_DEPTH_FORMAT;
 use crate::SHADER_SOURCE;
 
 use super::batch::GizmoBatch;
-use super::helpers::{active_camera_view_proj, camera_world_position, push_quad};
+use super::helpers::{active_camera_view_proj, camera_eye, push_quad};
 use super::types::{CameraUniforms, GizmoVertex, INITIAL_VERTEX_CAPACITY};
 use super::{GridPass, GridPlane};
 
@@ -233,12 +233,13 @@ impl GizmoRenderer {
         });
         // Grids first: they are the only thing here that reads depth,
         // and the lines drawn after are meant to sit over them.
-        let camera = camera_world_position(resources).unwrap_or(glam::Vec3::ZERO);
-        for (plane, grid) in grids
-            .iter()
-            .zip([&self.world_grid, &self.guide_grid].into_iter())
-        {
-            grid.draw(queue, &mut pass, view_proj, camera, *plane);
+        if let Some((camera, relative)) = camera_eye(resources, aspect) {
+            for (plane, grid) in grids
+                .iter()
+                .zip([&self.world_grid, &self.guide_grid].into_iter())
+            {
+                grid.draw(queue, &mut pass, relative, camera, *plane);
+            }
         }
 
         if vertices.is_empty() {

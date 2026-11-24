@@ -2,6 +2,8 @@
 // Adapted from Godot's editor grid (MIT): a level from `log(distance)` whose fraction crossfades,
 // plus angle and camera-distance fades.
 
+// Both matrices are relative to the eye, its translation taken out: a ray unprojected through one
+// with the eye in it is the difference of two nearly equal far-off points.
 struct GridUniforms {
     inverse_view_proj: mat4x4<f32>,
     view_proj: mat4x4<f32>,
@@ -78,12 +80,13 @@ struct Shaded {
 @fragment
 fn fs_main(in: Fragment) -> Shaded {
     let direction = in.along - in.near;
-    let t = (grid.plane_y - in.near.y) / direction.y;
+    let t = (grid.plane_y - grid.camera_position.y - in.near.y) / direction.y;
     // Behind the eye, or level with it: nothing to draw.
     if (!(t > 0.0)) {
         discard;
     }
-    let world = in.near + direction * t;
+    let from_eye = in.near + direction * t;
+    let world = grid.camera_position + from_eye;
 
     // 🔴 The crossfade: `fine` fades out by `blend` while `coarse` takes over, landing exactly on
     // the next level's fine lines.
@@ -105,7 +108,7 @@ fn fs_main(in: Fragment) -> Shaded {
 
     // Looking ALONG the plane turns a grid into a solid sheet at the
     // horizon. The view's angle to the normal is what removes it.
-    let to_eye = normalize(grid.camera_position - world);
+    let to_eye = normalize(-from_eye);
     let angle_fade = smoothstep(0.05, 0.2, abs(to_eye.y));
 
     var color = mix(grid.cell_color, grid.counting_color, coarse);
@@ -134,7 +137,7 @@ fn fs_main(in: Fragment) -> Shaded {
     // Written so the grid sits IN the scene rather than over it: a block
     // in front of it occludes it, which is the whole complaint about
     // gizmos drawing with `CompareFunction::Always`.
-    let clip = grid.view_proj * vec4<f32>(world, 1.0);
+    let clip = grid.view_proj * vec4<f32>(from_eye, 1.0);
     out.depth = clip.z / clip.w;
     return out;
 }

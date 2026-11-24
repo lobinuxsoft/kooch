@@ -157,7 +157,8 @@ impl GridPass {
         }
     }
 
-    /// Draws one plane. Call once per grid, into an open pass.
+    /// Draws one plane. Call once per grid, into an open pass. `view_proj` is relative to `camera`,
+    /// its translation taken out.
     pub fn draw(
         &self,
         queue: &wgpu::Queue,
