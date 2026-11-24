@@ -32,8 +32,11 @@ pub(crate) fn grid_planes(resources: &Resources) -> Vec<GridPlane> {
         return Vec::new();
     }
 
+    let world = kooch_ecs::hierarchy::WorldOrigin::of(resources);
     let mut planes = vec![GridPlane {
-        height: 0.0,
+        // Absolute y = 0: the editor camera anchors the origin, so relative zero moves with it.
+        height: -world.y as f32,
+        origin: glam::DVec2::new(world.x, world.z),
         step,
         cell: CELL,
         counting: COUNTING,
@@ -49,10 +52,11 @@ pub(crate) fn grid_planes(resources: &Resources) -> Vec<GridPlane> {
         .map(|handles| handles.origin())
         // Already on the ground: the world grid is drawing this exact
         // lattice, and two at one height is a moiré.
-        .filter(|origin| origin.y.abs() > 1e-3)
+        .filter(|origin| (f64::from(origin.y) + world.y).abs() > 1e-3)
     {
         planes.push(GridPlane {
             height: origin.y,
+            origin: glam::DVec2::new(world.x, world.z),
             step,
             cell: GUIDE_CELL,
             counting: GUIDE_COUNTING,

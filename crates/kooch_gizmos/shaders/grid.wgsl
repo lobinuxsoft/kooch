@@ -25,6 +25,8 @@ struct GridUniforms {
     //     pivot for a guide — a guide faded around the eye never reaches what it is measuring.
     // A vec4, not a scalar plus padding: WGSL aligns a trailing vec3 to 16, Rust's [f32; 3] to 4.
     flags: vec4<f32>,
+    // xy: the world origin within one coarse cell. zw: where the world axes cross, from the origin.
+    lattice: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> grid: GridUniforms;
@@ -85,8 +87,9 @@ fn fs_main(in: Fragment) -> Shaded {
 
     // 🔴 The crossfade: `fine` fades out by `blend` while `coarse` takes over, landing exactly on
     // the next level's fine lines.
-    let fine = coverage(world.xz / grid.small_step) * (1.0 - grid.blend);
-    let coarse = coverage(world.xz / (grid.small_step * grid.steps));
+    let absolute = world.xz + grid.lattice.xy;
+    let fine = coverage(absolute / grid.small_step) * (1.0 - grid.blend);
+    let coarse = coverage(absolute / (grid.small_step * grid.steps));
     var line = max(fine, coarse);
     if (line <= 0.0) {
         discard;
@@ -110,7 +113,7 @@ fn fs_main(in: Fragment) -> Shaded {
     // The axes over the cells crossing them, and only where a world
     // grid asked for them.
     if (grid.flags.x > 0.5) {
-        let axis = abs(world.xz) / fwidth(world.xz);
+        let axis = abs(world.xz - grid.lattice.zw) / fwidth(world.xz);
         if (axis.y < 1.0) {
             color = grid.axis_x_color;
             line = max(line, 1.0 - axis.y);
