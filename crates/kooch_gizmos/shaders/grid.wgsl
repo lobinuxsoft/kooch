@@ -2,6 +2,8 @@
 // Adapted from Godot's editor grid (MIT): a level from `log(distance)` whose fraction crossfades,
 // plus angle and camera-distance fades.
 
+// Both matrices are relative to the eye, its translation taken out: a ray unprojected through one
+// with the eye in it is the difference of two nearly equal far-off points.
 struct GridUniforms {
     inverse_view_proj: mat4x4<f32>,
     view_proj: mat4x4<f32>,
@@ -25,6 +27,8 @@ struct GridUniforms {
     //     pivot for a guide — a guide faded around the eye never reaches what it is measuring.
     // A vec4, not a scalar plus padding: WGSL aligns a trailing vec3 to 16, Rust's [f32; 3] to 4.
     flags: vec4<f32>,
+    // xy: the world origin within one coarse cell. zw: where the world axes cross, from the origin.
+    lattice: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> grid: GridUniforms;
@@ -32,7 +36,8 @@ struct GridUniforms {
 struct Fragment {
     @builtin(position) clip: vec4<f32>,
     @location(0) near: vec3<f32>,
-    @location(1) far: vec3<f32>,
+    // Somewhere past `near` along the same pixel: the projection has no far plane to unproject.
+    @location(1) along: vec3<f32>,
 }
 
 fn unproject(x: f32, y: f32, z: f32) -> vec3<f32> {
@@ -55,7 +60,7 @@ fn vs_main(@builtin(vertex_index) index: u32) -> Fragment {
     // Reversed-Z: 1.0 is the near plane, which is why these look
     // swapped against every tutorial.
     out.near = unproject(corner.x, corner.y, 1.0);
-    out.far = unproject(corner.x, corner.y, 0.0);
+    out.along = unproject(corner.x, corner.y, 0.5);
     return out;
 }
 
@@ -74,18 +79,20 @@ struct Shaded {
 
 @fragment
 fn fs_main(in: Fragment) -> Shaded {
-    let direction = in.far - in.near;
-    let t = (grid.plane_y - in.near.y) / direction.y;
-    // Behind the eye, or past the far plane: nothing to draw.
-    if (t <= 0.0 || t >= 1.0) {
+    let direction = in.along - in.near;
+    let t = (grid.plane_y - grid.camera_position.y - in.near.y) / direction.y;
+    // Behind the eye, or level with it: nothing to draw.
+    if (!(t > 0.0)) {
         discard;
     }
-    let world = in.near + direction * t;
+    let from_eye = in.near + direction * t;
+    let world = grid.camera_position + from_eye;
 
     // 🔴 The crossfade: `fine` fades out by `blend` while `coarse` takes over, landing exactly on
     // the next level's fine lines.
-    let fine = coverage(world.xz / grid.small_step) * (1.0 - grid.blend);
-    let coarse = coverage(world.xz / (grid.small_step * grid.steps));
+    let absolute = world.xz + grid.lattice.xy;
+    let fine = coverage(absolute / grid.small_step) * (1.0 - grid.blend);
+    let coarse = coverage(absolute / (grid.small_step * grid.steps));
     var line = max(fine, coarse);
     if (line <= 0.0) {
         discard;
@@ -101,7 +108,7 @@ fn fs_main(in: Fragment) -> Shaded {
 
     // Looking ALONG the plane turns a grid into a solid sheet at the
     // horizon. The view's angle to the normal is what removes it.
-    let to_eye = normalize(grid.camera_position - world);
+    let to_eye = normalize(-from_eye);
     let angle_fade = smoothstep(0.05, 0.2, abs(to_eye.y));
 
     var color = mix(grid.cell_color, grid.counting_color, coarse);
@@ -109,7 +116,7 @@ fn fs_main(in: Fragment) -> Shaded {
     // The axes over the cells crossing them, and only where a world
     // grid asked for them.
     if (grid.flags.x > 0.5) {
-        let axis = abs(world.xz) / fwidth(world.xz);
+        let axis = abs(world.xz - grid.lattice.zw) / fwidth(world.xz);
         if (axis.y < 1.0) {
             color = grid.axis_x_color;
             line = max(line, 1.0 - axis.y);
@@ -130,7 +137,7 @@ fn fs_main(in: Fragment) -> Shaded {
     // Written so the grid sits IN the scene rather than over it: a block
     // in front of it occludes it, which is the whole complaint about
     // gizmos drawing with `CompareFunction::Always`.
-    let clip = grid.view_proj * vec4<f32>(world, 1.0);
+    let clip = grid.view_proj * vec4<f32>(from_eye, 1.0);
     out.depth = clip.z / clip.w;
     return out;
 }

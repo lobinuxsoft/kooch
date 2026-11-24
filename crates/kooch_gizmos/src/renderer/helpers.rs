@@ -1,4 +1,4 @@
-use glam::Mat4;
+use glam::{Mat4, Vec3, Vec4};
 use kooch_core::resource::Resources;
 use kooch_ecs::PerspectiveCamera;
 use kooch_ecs::hierarchy::GlobalTransform;
@@ -54,50 +54,44 @@ pub(super) fn push_quad(seg: &LineSegment, vertices: &mut Vec<GizmoVertex>) {
     vertices.push(c);
 }
 
-/// Where the active camera is, in world space — the grid fades from it and angles against it.
-pub(super) fn camera_world_position(resources: &Resources) -> Option<glam::Vec3> {
+/// The camera the gizmos belong to: the active one of highest priority. An overlay is not that view
+/// (#1221): it draws over the base, and a high-priority one would otherwise hand them its lens.
+fn active_camera(resources: &Resources) -> Option<(PerspectiveCamera, Mat4)> {
     let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
-    let mut best: Option<(i32, Mat4)> = None;
+    let mut best: Option<(PerspectiveCamera, Mat4)> = None;
     query.for_each(|(cam, gt)| {
-        // An overlay is not the view the gizmos belong to (#1221): it draws over the base, and a
-        // high-priority one would otherwise hand them its lens.
         if !cam.active || cam.overlay {
             return;
         }
-        if best.is_none_or(|(priority, _)| cam.priority > priority) {
-            best = Some((cam.priority, gt.matrix));
+        if best.is_none_or(|(held, _)| cam.priority > held.priority) {
+            best = Some((*cam, gt.matrix));
         }
     });
     drop(query);
-    best.map(|(_, world)| world.to_scale_rotation_translation().2)
+    best
 }
 
-pub(super) fn active_camera_view_proj(resources: &Resources, aspect: f32) -> Option<Mat4> {
-    let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
-    let mut best: Option<(i32, PerspectiveCamera, Mat4)> = None;
-    query.for_each(|(cam, gt)| {
-        // An overlay is not the view the gizmos belong to (#1221): it draws over the base, and a
-        // high-priority one would otherwise hand them its lens.
-        if !cam.active || cam.overlay {
-            return;
-        }
-        let better = match &best {
-            Some((p, _, _)) => cam.priority > *p,
-            None => true,
-        };
-        if better {
-            best = Some((cam.priority, *cam, gt.matrix));
-        }
-    });
-    drop(query);
+/// The active camera's position, and its view-projection with that position taken out. The grid
+/// unprojects through the second: with the eye in the matrix, two points 0.1 m apart a kilometre
+/// from the origin differ by a few f32 ulps, and the ray built from them shook (#1992).
+pub(super) fn camera_eye(resources: &Resources, aspect: f32) -> Option<(Vec3, Mat4)> {
+    let (cam, mut world) = active_camera(resources)?;
+    let eye = world.w_axis.truncate();
+    world.w_axis = Vec4::W;
+    Some((eye, projection(&cam, aspect) * world.inverse()))
+}
 
-    let (_, cam, world) = best?;
-    let view = world.inverse();
-    let projection = kooch_render::perspective_rh_reverse_z(
+fn projection(cam: &PerspectiveCamera, aspect: f32) -> Mat4 {
+    kooch_render::projection::perspective_infinite_rh_reverse_z(
         cam.fov.to_radians(),
         aspect.max(0.001),
         cam.near.max(0.001),
-        cam.far.max(cam.near + 0.001),
-    );
-    Some(projection * view)
+    )
+}
+
+/// 🔴 Infinite, like the scene's (#1992): cut at `camera.far`, everything past it vanished, and the
+/// depth the grid writes disagreed with the scene's it is tested against.
+pub(crate) fn active_camera_view_proj(resources: &Resources, aspect: f32) -> Option<Mat4> {
+    let (cam, world) = active_camera(resources)?;
+    Some(projection(&cam, aspect) * world.inverse())
 }

@@ -723,6 +723,10 @@ Two things follow, and both are load-bearing:
   unprojects to `w = 0`. Anything that builds a ray from a cursor takes
   `ndc.z = 1` — same ray through the eye, always finite.
 
+The editor's gizmos and grid project the same way (#1992). Bounded at
+`camera.far`, everything past it vanished and the grid's depth disagreed
+with the scene's it is tested against.
+
 The bounded `perspective_rh_reverse_z` survives for shadow cascades: a
 slice of an unbounded frustum is unbounded. Rationale and the full list
 of what this touched: [ADR 0002](../../../decisions/0002_infinite_reverse_z.md).

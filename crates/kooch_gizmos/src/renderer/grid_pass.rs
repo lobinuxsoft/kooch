@@ -1,7 +1,7 @@
 //! The infinite ground grid, drawn into the scene rather than over it.
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3};
+use glam::{DVec2, Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
 use crate::grid::{GridLevel, STEPS};
@@ -24,17 +24,21 @@ struct GridUniforms {
     axis_z_color: [f32; 3],
     fade_distance: f32,
     flags: [f32; 4],
+    lattice: [f32; 4],
 }
 
 // The whole reason `flags` is a vec4: a uniform's size has to agree
 // with the shader's, and WGSL rounds a struct up to 16.
-const _: () = assert!(size_of::<GridUniforms>() == 224);
+const _: () = assert!(size_of::<GridUniforms>() == 240);
 
 /// How a grid should look and where it lives.
 #[derive(Debug, Clone, Copy)]
 pub struct GridPlane {
-    /// Height of the plane. Zero for the ground.
+    /// Height of the plane, relative to the world origin like everything drawn.
     pub height: f32,
+    /// The world origin's x and z in metres: the lattice and the axes are absolute, and drawn from
+    /// a camera the origin follows they would otherwise move with it (#1992).
+    pub origin: DVec2,
     /// The value the handles snap to — the finest cell it may draw.
     pub step: f32,
     pub cell: Vec3,
@@ -153,7 +157,8 @@ impl GridPass {
         }
     }
 
-    /// Draws one plane. Call once per grid, into an open pass.
+    /// Draws one plane. Call once per grid, into an open pass. `view_proj` is relative to `camera`,
+    /// its translation taken out.
     pub fn draw(
         &self,
         queue: &wgpu::Queue,
@@ -199,6 +204,7 @@ impl GridPass {
                     centre.z,
                     0.0,
                 ],
+                lattice: lattice(plane.origin, level.large_step()),
             }),
         );
 
@@ -206,4 +212,17 @@ impl GridPass {
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
+}
+
+/// xy: the origin within one coarse cell, which is all the pattern needs and keeps it in f32 range.
+/// zw: where the world axes cross the plane, from the origin.
+fn lattice(origin: DVec2, coarse: f32) -> [f32; 4] {
+    let within = origin.rem_euclid(DVec2::splat(f64::from(coarse.max(f32::EPSILON))));
+    let axes = -origin;
+    [
+        within.x as f32,
+        within.y as f32,
+        axes.x as f32,
+        axes.y as f32,
+    ]
 }

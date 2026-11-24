@@ -1,17 +1,14 @@
 use std::mem::size_of;
 
 use bytemuck::{Pod, Zeroable};
-use glam::Mat4;
 use kooch_core::resource::Resources;
-use kooch_ecs::PerspectiveCamera;
-use kooch_ecs::hierarchy::GlobalTransform;
-use kooch_ecs::query::Query;
 use wgpu::util::DeviceExt;
 
 use kooch_render::VIEWPORT_DEPTH_FORMAT;
 
 use super::SHADER_SOURCE;
 use super::batch::{MeshBatch, MeshVertex};
+use crate::renderer::active_camera_view_proj;
 
 /// Matches the `CameraUniforms` struct in `gizmo_mesh.wgsl`.
 #[repr(C)]
@@ -256,34 +253,4 @@ impl MeshGizmoRenderer {
         pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
     }
-}
-
-fn active_camera_view_proj(resources: &Resources, aspect: f32) -> Option<Mat4> {
-    let query = Query::<(&PerspectiveCamera, &GlobalTransform)>::new(resources);
-    let mut best: Option<(i32, PerspectiveCamera, Mat4)> = None;
-    query.for_each(|(cam, gt)| {
-        // An overlay is not the view the gizmos belong to (#1221): it draws over the base, and a
-        // high-priority one would otherwise hand them its lens.
-        if !cam.active || cam.overlay {
-            return;
-        }
-        let better = match &best {
-            Some((p, _, _)) => cam.priority > *p,
-            None => true,
-        };
-        if better {
-            best = Some((cam.priority, *cam, gt.matrix));
-        }
-    });
-    drop(query);
-
-    let (_, cam, world) = best?;
-    let view = world.inverse();
-    let projection = kooch_render::perspective_rh_reverse_z(
-        cam.fov.to_radians(),
-        aspect.max(0.001),
-        cam.near.max(0.001),
-        cam.far.max(cam.near + 0.001),
-    );
-    Some(projection * view)
 }
