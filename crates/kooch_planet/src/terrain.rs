@@ -400,6 +400,11 @@ impl Terrain {
         self.backlog.len()
     }
 
+    /// Seams waiting for a batch, and the current epoch. #1999 debug.
+    pub(crate) fn seams_and_epoch(&self) -> (usize, u64) {
+        (self.stale.slots().count(), self.epoch)
+    }
+
     /// Batches sent and not back yet.
     pub fn in_flight(&self) -> usize {
         self.flights.iter().filter(|flight| flight.busy).count()

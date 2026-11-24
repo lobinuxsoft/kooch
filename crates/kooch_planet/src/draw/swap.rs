@@ -128,6 +128,10 @@ impl Blocks {
     /// Mesh `d`'s waiting change, on screen: the staged mesh, or none.
     fn apply(&mut self, d: usize, meshes: &mut GpuMeshes) {
         self.pending[d] = false;
+        match self.staged_epoch[d] < self.frontier {
+            true => self.on_time += 1,
+            false => self.forced += 1,
+        }
         let staged = self.staged[d].take();
         if let Some(old) = std::mem::replace(&mut self.mesh[d], staged) {
             meshes.release(old);

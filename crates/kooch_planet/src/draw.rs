@@ -78,6 +78,9 @@ pub(crate) struct Blocks {
     settled: bool,
     /// The earliest epoch still being counted or written, this frame; see [`Terrain::frontier`].
     frontier: u64,
+    /// Changes put on screen with their epoch whole, and by [`HOLD`] running out. #1999 debug.
+    pub(crate) on_time: u32,
+    pub(crate) forced: u32,
 }
 
 /// What [`Blocks::draw`] reads of the frame.

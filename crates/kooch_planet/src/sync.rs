@@ -319,6 +319,24 @@ pub fn sync_planets(resources: &mut Resources) {
         None => meshed.clear(),
     }
     blocks.submit(resources, &placed, &found);
+    // #1999 debug: whether a level change goes on screen whole or is forced out by the hold.
+    if state.frame % 120 == 0
+        && let Some(terrain) = &state.terrain
+        && blocks.on_time + blocks.forced > 0
+    {
+        let (seams, epoch) = terrain.seams_and_epoch();
+        tracing::info!(
+            target: "kooch_planet",
+            on_time = blocks.on_time,
+            forced = blocks.forced,
+            behind = epoch.saturating_sub(terrain.frontier().min(epoch)),
+            backlog = terrain.waiting(),
+            seams,
+            "planet swaps over 120 frames"
+        );
+        blocks.on_time = 0;
+        blocks.forced = 0;
+    }
     let stats = PlanetStats {
         resident: state.pool.resident(),
         capacity: state.pool.capacity(),
