@@ -33,6 +33,7 @@ fn sphere_blocks() -> (Planets, Vec<BlockKey>) {
         relief: 1.0,
         depth: 1.0,
         voxel: 0.5,
+        lod_distance: 32.0,
     };
     planets.push(
         shape,

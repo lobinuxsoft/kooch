@@ -29,9 +29,10 @@ pub(super) fn planet_readout(ui: &mut egui::Ui, stats: PlanetStats) {
         metric_with_tooltip(
             ui,
             "Worst error",
-            &format!("{:.1} px", stats.worst_px),
-            "How big one voxel looks on screen where the pool ran out before refining further. \
-             Under a pixel or two the ground is as fine as the screen can show.",
+            &format!("{:.2}×", stats.worst),
+            "How many times closer than its level's ring the block the pool stopped at sits. \
+             Up to 1 every block has the level its distance asks for; over 1 the pool ran out \
+             first and the ground near the camera is coarser than the Planet's LOD distance.",
         );
         metric(
             ui,

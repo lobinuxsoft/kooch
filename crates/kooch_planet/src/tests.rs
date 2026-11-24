@@ -29,6 +29,7 @@ fn solar_system(height: f64) -> Planets {
             relief: radius * 0.0015,
             depth: 2000.0,
             voxel: 0.5,
+            lod_distance: 32.0,
         };
         let viewer = DVec3::new(0.0, earth + height - distance * 1000.0, 0.0);
         let limits = Limits {

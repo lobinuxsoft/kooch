@@ -364,9 +364,11 @@ impl Terrain {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("kooch_planet::terrain"),
         });
+        // A middle group times nothing, and wgpu rejects writes with neither index.
         let writes = |first: u32, begins: bool, ends: bool| {
             self.timer
                 .as_ref()
+                .filter(|_| begins || ends)
                 .map(|(set, _)| wgpu::ComputePassTimestampWrites {
                     query_set: set,
                     beginning_of_pass_write_index: begins.then_some(first),

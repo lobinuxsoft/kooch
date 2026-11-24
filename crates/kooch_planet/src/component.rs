@@ -25,6 +25,10 @@ pub struct Planet {
     /// The edge of a voxel next to the camera: the finest detail the ground can have.
     #[reflect(range = VOXEL_RANGE)]
     pub voxel: f32,
+    /// How far from the camera the finest voxels reach; each coarser level reaches twice as far.
+    /// Higher keeps detail further out and costs blocks.
+    #[reflect(range = LENGTH_RANGE)]
+    pub lod_distance: f32,
     /// A `planet` shader — usually a planet graph — that gives the ground's signed distance.
     /// None is the bare sphere.
     #[reflect(asset = "kooch_render::material::shader::Shader")]
@@ -53,6 +57,7 @@ impl Default for Planet {
             relief: 10.0,
             depth: 10.0,
             voxel: 0.5,
+            lod_distance: 32.0,
             generator: None,
             material: None,
         }
