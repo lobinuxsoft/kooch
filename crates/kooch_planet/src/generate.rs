@@ -8,9 +8,10 @@
 use std::collections::VecDeque;
 
 use bytemuck::{Pod, Zeroable};
+use glam::IVec3;
 
 use super::atlas::BlockAtlas;
-use super::select::{bounds, voxel_size};
+use super::select::voxel_size;
 use super::{BLOCK_SAMPLES, TILE_SAMPLES};
 use super::{BlockKey, BlockPool, Planets, Residency, Shape};
 use kooch_world::voxel::POOL_TEXTURE_FORMAT;
@@ -65,35 +66,51 @@ fn validate(source: &str) -> Result<(), String> {
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug, PartialEq)]
 pub struct Job {
-    pub origin: [f32; 3],
-    pub voxel: f32,
-    pub radius: f32,
-    pub excess: f32,
-    pub slot: u32,
-    pub planet: u32,
     /// The tile's first sample on the planet's grid, in voxels of its level: neighbours derive a
     /// shared sample's position from the same integers, so they agree on it bit for bit (#1933).
     pub index: [i32; 3],
+    pub voxel: f32,
+    pub radius: f32,
+    pub slot: u32,
+    pub planet: u32,
     pub _pad: u32,
+    /// Per [`anchors`] of the tile, `|anchor|² − radius²`.
+    pub excess: [f32; 8],
 }
 
 impl Job {
     /// `key`'s block in `slot`. The f64 terms are taken here, so the GPU never subtracts radii.
-    /// `origin` is the tile's first sample, one voxel before the block's corner.
+    /// The tile starts one voxel before the block's corner.
     pub fn new(key: BlockKey, slot: u32, shape: &Shape) -> Self {
         let voxel = voxel_size(shape, key.level);
-        let origin = bounds(shape, key).0 - glam::DVec3::splat(voxel);
+        let index = key.cell * BLOCK_SAMPLES as i32 - 1;
+        let excess = anchors(index).map(|anchor| {
+            let at = anchor.as_dvec3() * voxel;
+            (at.length_squared() - shape.radius * shape.radius) as f32
+        });
         Self {
-            origin: origin.as_vec3().to_array(),
+            index: index.to_array(),
             voxel: voxel as f32,
             radius: shape.radius as f32,
-            excess: (origin.length_squared() - shape.radius * shape.radius) as f32,
             slot,
             planet: key.planet,
-            index: (key.cell * BLOCK_SAMPLES as i32 - 1).to_array(),
             _pad: 0,
+            excess,
         }
     }
+}
+
+/// Grid period of the altitude anchors. Mirrors `ANCHOR` in `generate.wgsl`.
+const ANCHOR: i32 = 32;
+
+/// The eight anchors a tile starting at `index` meets, x fastest: the altitude of a sample is taken
+/// from the one below it on the grid, never from its tile, so two tiles sharing it agree.
+fn anchors(index: IVec3) -> [IVec3; 8] {
+    let base = index & IVec3::splat(-ANCHOR);
+    std::array::from_fn(|k| {
+        let k = k as i32;
+        base + IVec3::new(k & 1, (k >> 1) & 1, k >> 2) * ANCHOR
+    })
 }
 
 /// Slots waiting for their block, each once; a batch takes the nearest visible first.
