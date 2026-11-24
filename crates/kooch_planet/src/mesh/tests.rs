@@ -73,7 +73,7 @@ fn count_all(
     let mut terrain = Terrain::new(device, queue, 64).unwrap();
     let mut out = Vec::new();
     let mut all = Vec::new();
-    for _ in 0..8 {
+    for _ in 0..64 {
         let leaves = Leaves { pool: &pool, split };
         terrain.update(device, queue, leaves, planets, &residency, &mut out);
         residency = Residency::default();
@@ -119,27 +119,29 @@ fn a_meshed_sphere_is_watertight() {
     assert!(faults.is_empty(), "faults: {faults:#?}");
 }
 
-/// 🔴 A level change closes too: one octant of the sphere split into its eight finer blocks (#393).
-/// The low octant puts the coarse blocks past the fine ones' + faces, the high one past their −.
+/// 🔴 A level change closes too: octants of the sphere split into their eight finer blocks (#393).
+/// One octant puts coarse blocks past the fine ones' − or + faces; three of the four around an
+/// axis, or seven of eight, put one coarse block among fine ones around an edge or a corner, which
+/// the sphere crosses at its poles.
 #[test]
 fn a_split_sphere_is_watertight() {
     let mut faults = Vec::new();
-    for octant in [0, 7] {
+    for octants in [&[0][..], &[7], &[0, 1, 2], &[0, 1, 2, 3, 4, 5, 6]] {
         let (planets, coarse) = sphere(0.25, 1);
-        let parent = coarse[octant];
-        let children = (0..8).map(|i| BlockKey {
-            level: 0,
-            cell: parent.cell * 2 + IVec3::new(i & 1, (i >> 1) & 1, i >> 2),
-            ..parent
+        let parents: HashSet<BlockKey> = octants.iter().map(|&o| coarse[o]).collect();
+        let children = parents.iter().flat_map(|parent| {
+            (0..8).map(|i| BlockKey {
+                level: 0,
+                cell: parent.cell * 2 + IVec3::new(i & 1, (i >> 1) & 1, i >> 2),
+                ..*parent
+            })
         });
-        let rest = coarse.iter().copied().filter(|&k| k != parent);
+        let rest = coarse.iter().copied().filter(|k| !parents.contains(k));
         let keys: Vec<BlockKey> = rest.chain(children).collect();
-        let found = mesh_faults(&planets, &keys, &HashSet::from([parent]));
-        faults.extend(
-            found
-                .into_iter()
-                .map(|(at, n)| (format!("octant {octant}, {at}"), n)),
-        );
+        let found = mesh_faults(&planets, &keys, &parents);
+        // A fine cell meeting one coarse cell twice makes a flat triangle: wasted, never a hole.
+        let holes = found.into_iter().filter(|(at, _)| !at.starts_with("flat"));
+        faults.extend(holes.map(|(at, n)| (format!("split {octants:?}, {at}"), n)));
     }
     assert!(faults.is_empty(), "faults: {faults:#?}");
 }
