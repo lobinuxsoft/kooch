@@ -41,7 +41,8 @@ struct MeshInstance {
     flags: u32,
     // Which layers the instance is in (#1218). `MeshInstance` in `scene.rs`.
     layers: u32,
-    _pad2: u32,
+    // What the Instance IDs view colours by (#2001).
+    tint: u32,
 }
 
 @group(1) @binding(0) var<storage, read> vertices: array<MeshVertexStored>;

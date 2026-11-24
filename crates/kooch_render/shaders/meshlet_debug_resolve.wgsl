@@ -18,6 +18,21 @@ struct ScreenUniforms {
 @group(0) @binding(2) var density_accumulator: texture_storage_2d<r32uint, read>;
 @group(0) @binding(3) var<storage, read> visible_meshlets: array<vec2<u32>>;
 
+// `MeshInstance` in scene.rs; only `tint` is read.
+struct MeshInstance {
+    transform: mat4x4<f32>,
+    mesh_id: u32,
+    material_id: u32,
+    lod_bias: f32,
+    lod_force_level: i32,
+    group_base: u32,
+    flags: u32,
+    layers: u32,
+    tint: u32,
+}
+
+@group(0) @binding(4) var<storage, read> instances: array<MeshInstance>;
+
 struct FsInput {
     @builtin(position) position: vec4<f32>,
 }
@@ -104,7 +119,8 @@ fn fs_debug(in: FsInput) -> @location(0) vec4<f32> {
     if (screen.debug_mode == 1u) {
         rgb = hash_to_rgb(meshlet_id);
     } else if (screen.debug_mode == 2u) {
-        rgb = hash_to_rgb(inst_id);
+        // By the instance's tint, not its index, which moves as the list reorders (#2001).
+        rgb = hash_to_rgb(instances[inst_id].tint);
     } else if (screen.debug_mode == 3u) {
         // TriangleDensity — per-pixel contribution count.
         let count = textureLoad(density_accumulator, pixel).x;

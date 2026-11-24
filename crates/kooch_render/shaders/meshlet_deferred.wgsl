@@ -160,8 +160,9 @@ fn cs_shade_scene(@builtin(global_invocation_id) gid: vec3<u32>) {
             let meshlet_id = visible.y;
             // MeshletIds uses the global descriptor index so two instances of the same mesh share
             // the cluster colour (the cluster identity is what is being visualized); InstanceIds
-            // colours by entity coverage.
-            rgb = select(hash_to_rgb(inst_id), hash_to_rgb(meshlet_id), screen.debug_mode == 1u);
+            // colours by the instance's tint, which holds while the list reorders (#2001).
+            let tint = instances[inst_id].tint;
+            rgb = select(hash_to_rgb(tint), hash_to_rgb(meshlet_id), screen.debug_mode == 1u);
         } else if (screen.debug_mode == 7u) {
             // CullPassthrough — any pixel reaching this branch is one
             // the meshlet pipeline classified as visible (passed cull,

@@ -45,6 +45,10 @@ impl Vbuf64Stage {
         // #452 — the transparent instances' meshlets, far to near.
         forward_list: &ForwardList,
     ) -> Option<Deferred> {
+        let ids = debug_resolve::Ids {
+            visible: cull.visible_meshlets_buffer(),
+            instances: scene.instance_buffer(),
+        };
         // 🔴 DLSS hands back a command buffer of its own that has to be
         // submitted immediately after this frame's encoder, so it
         // travels all the way out of here rather than being recorded.
@@ -84,7 +88,7 @@ impl Vbuf64Stage {
                 &self.vbuf_view,
                 color_view,
                 density_view,
-                cull,
+                ids,
                 self.size,
                 self.output_size,
                 debug_mode,
@@ -182,7 +186,7 @@ impl Vbuf64Stage {
                     &self.vbuf_view,
                     color_view,
                     density_view,
-                    cull,
+                    ids,
                     self.size,
                     self.output_size,
                     debug_mode,
@@ -403,7 +407,7 @@ impl Vbuf64Stage {
                         &self.vbuf_view,
                         color_view,
                         density_view,
-                        cull,
+                        ids,
                         self.size,
                         self.output_size,
                         debug_mode,

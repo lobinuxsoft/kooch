@@ -42,7 +42,9 @@ pub struct MeshInstance {
     /// Which layers this instance is in (#1218), from its renderer. A view keeps what its own mask
     /// meets; everything reads it off the instance buffer rather than asking the ECS again.
     pub layers: u32,
-    pub _pad2: u32,
+    /// What the Instance IDs view colours by: a hash of the instance's [`super::DrawKey`], so a mesh
+    /// keeps its colour while the list around it reorders (#2001).
+    pub tint: u32,
 }
 
 impl MeshInstance {
@@ -58,7 +60,7 @@ impl MeshInstance {
             // thought about looks the way it always has.
             flags: INSTANCE_RECEIVES_SHADOWS,
             layers: kooch_core::layers::DEFAULT_LAYER,
-            _pad2: 0,
+            tint: 0,
         }
     }
 
