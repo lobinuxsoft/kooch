@@ -4,8 +4,8 @@
 struct CountJob {
     slot: u32,
     near: Near,
-    _pad0: u32,
-    _pad1: u32,
+    part: u32,
+    _pad: u32,
 }
 
 @group(0) @binding(1) var<storage, read> jobs: array<CountJob>;
@@ -25,6 +25,7 @@ fn count_main(
     if (lid == 0u) {
         corner = tile_corner(jobs[block].slot);
         load_near(jobs[block].near);
+        part = jobs[block].part;
     }
     if (lid < 4u) {
         atomicStore(&totals[lid], 0u);

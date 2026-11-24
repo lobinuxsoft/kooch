@@ -11,7 +11,8 @@ use kooch_render::meshlet::{GpuMeshSizes, PoolBuffers};
 use super::atlas::BlockAtlas;
 use super::generate::{BARE_SPHERE, Backlog, GeneratePass, Job};
 use super::mesh::{
-    COUNT_WORDS, CountJob, Cuts, MeshPass, WRITE_SHARED_BYTES, WriteJob, counts_bytes, sizes_of,
+    COUNT_WORDS, CountJob, Cuts, MeshPass, Part, WRITE_SHARED_BYTES, WriteJob, counts_bytes,
+    sizes_of,
 };
 use super::recent::{BatchMean, Recent};
 use super::seam::{Stale, near};
@@ -54,6 +55,7 @@ pub struct CountedBlock {
     /// The neighbours it was counted with, which its write must use too.
     pub near: Near,
     pub cuts: Cuts,
+    pub part: Part,
 }
 
 /// What the last batch cost the GPU, and the mean of the last [`RECENT`](crate::RECENT) batches: one batch
@@ -76,6 +78,7 @@ struct Sent {
     /// Its planet's revision.
     revision: u32,
     near: Near,
+    part: Part,
 }
 
 struct Flight {
@@ -123,7 +126,8 @@ impl Terrain {
         }
         let atlas = BlockAtlas::new(device, capacity);
         let bare = GeneratePass::new(device, BARE_SPHERE, &atlas, MESH_BATCH)?;
-        let mesh = MeshPass::new(device, &atlas, MESH_BATCH);
+        // A generated block counts both its meshes.
+        let mesh = MeshPass::new(device, &atlas, MESH_BATCH * 2);
         let size = counts_bytes(mesh.batch) + u64::from(QUERIES) * 8;
         let flights = (0..RING)
             .map(|_| Flight {
@@ -277,9 +281,13 @@ impl Terrain {
         }
     }
 
-    /// Queues a resident block to be meshed again from the tile it holds.
-    pub(crate) fn remesh(&mut self, slot: u32) {
-        self.stale.queue(slot);
+    /// Queues a resident block's `part` to be meshed again. The seam meshes from the tile it holds;
+    /// the interior, which is only ever meshed with its tile, is generated again.
+    pub(crate) fn remesh(&mut self, slot: u32, part: Part) {
+        match part {
+            Part::Seam => self.stale.queue(slot),
+            Part::Interior => self.backlog.retry(slot),
+        }
     }
 
     /// Fills granted pool ranges with the meshes of blocks counted earlier. Blocks must still hold
@@ -408,12 +416,15 @@ impl Terrain {
         for job in &self.jobs {
             if let Some(key) = pool.key(job.slot) {
                 let revision = revision_of(&self.revision, key.planet);
-                flight.blocks.push(Sent {
-                    slot: job.slot,
-                    key,
-                    revision,
-                    near: Near::default(),
-                });
+                for part in [Part::Interior, Part::Seam] {
+                    flight.blocks.push(Sent {
+                        slot: job.slot,
+                        key,
+                        revision,
+                        near: Near::default(),
+                        part,
+                    });
+                }
                 if let Some(held) = self.generated.get_mut(job.slot as usize) {
                     *held = Some((key, revision));
                 }
@@ -425,6 +436,7 @@ impl Terrain {
         let (generated, revisions) = (&self.generated, &self.revision);
         let ready = |slot: u32| is_ready(generated, revisions, pool, slot);
         // Only a block whose tile is current meshes from it; one queued since is generated anyway.
+        // A neighbour's change reaches only the seam: the interior reads none.
         for &slot in &self.again {
             if let Some(key) = pool.key(slot).filter(|_| ready(slot)) {
                 let revision = revision_of(revisions, key.planet);
@@ -433,6 +445,7 @@ impl Terrain {
                     key,
                     revision,
                     near: Near::default(),
+                    part: Part::Seam,
                 });
             }
         }
@@ -444,7 +457,8 @@ impl Terrain {
                 .map_or(0, root_level);
             sent.near = near(leaves, root, sent.key, ready);
             self.stale.counted(sent.slot, sent.near);
-            self.counting.push(CountJob::new(sent.slot, sent.near));
+            self.counting
+                .push(CountJob::new(sent.slot, sent.near, sent.part));
         }
         self.mesh.record(
             device,
@@ -514,6 +528,7 @@ impl Terrain {
                 key,
                 revision,
                 near,
+                part,
             } = sent;
             // Freed, reused or reshaped since it was sent: the backlog has it again if still wanted.
             if pool.key(slot) != Some(key) || revision_of(&self.revision, key.planet) != revision {
@@ -534,6 +549,7 @@ impl Terrain {
                         sizes: sizes_of(counts),
                         near,
                         cuts,
+                        part,
                     });
                 }
                 None => self.backlog.retry(slot),

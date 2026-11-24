@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use kooch_core::resource::Resources;
 use kooch_render::meshlet::GpuMeshes;
 
-use super::Blocks;
+use super::{Blocks, PARTS};
 use crate::select::root_level;
 use crate::{BlockKey, BlockPool, Planets};
 
@@ -73,7 +73,12 @@ impl Blocks {
         let mut waiting = 0;
         let mut ready = Vec::new();
         for (&key, &i) in &self.of_key {
-            if self.shown[i as usize] || self.staged[i as usize].is_none() {
+            // A new block waits for both its meshes: an interior shown without its seam is a hole.
+            let s = i as usize;
+            let staged = self.staged[s * PARTS..(s + 1) * PARTS]
+                .iter()
+                .any(Option::is_some);
+            if self.shown[s] || !staged || !self.complete(s) {
                 continue;
             }
             let covered =
@@ -90,14 +95,16 @@ impl Blocks {
         self.settled = awaited.is_empty() && lingering.is_empty() && waiting == 0;
     }
 
-    /// Puts the staged mesh on screen and gives back the one it replaces.
+    /// Puts the staged meshes on screen and gives back the ones they replace.
     fn show(&mut self, i: u32, meshes: &mut GpuMeshes) {
         let s = i as usize;
-        let Some(mesh) = self.staged[s].take() else {
-            return;
-        };
-        if let Some(old) = self.mesh[s].replace(mesh) {
-            meshes.release(old);
+        for d in s * PARTS..(s + 1) * PARTS {
+            let Some(mesh) = self.staged[d].take() else {
+                continue;
+            };
+            if let Some(old) = self.mesh[d].replace(mesh) {
+                meshes.release(old);
+            }
         }
         self.shown[s] = true;
     }
@@ -110,11 +117,13 @@ impl Blocks {
         if let Some(key) = self.key[s].take() {
             self.of_key.remove(&key);
         }
-        self.asked[s] = None;
-        self.built[s] = false;
         self.left[s] = None;
-        self.triangles[s] = 0;
-        self.meshlets[s] = 0;
+        for d in s * PARTS..(s + 1) * PARTS {
+            self.asked[d] = None;
+            self.held[d] = false;
+            self.triangles[d] = 0;
+            self.meshlets[d] = 0;
+        }
         self.free.push(i);
     }
 }

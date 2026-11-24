@@ -62,6 +62,10 @@ they never fill the World panel or cross to the editor. Clicking its ground in t
 the planet, and a prefab dropped on the ground lands on it, against the generator's exact surface
 rather than the block that happens to be showing.
 
+Each block draws two meshes: its interior, made once from its own samples, and its seam, the shell
+that meets its neighbours. When a neighbour changes level only the seam is made again, and a new
+block appears once both are ready.
+
 Every planet in the scene shares one pool of 6144 voxel blocks, 68 MiB of GPU memory. The pool
 never grows: each frame the blocks go where they do the most good on screen, so the planet you stand
 on takes what the distant ones do not need. A planet too small on screen to matter gets none.

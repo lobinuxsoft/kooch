@@ -47,6 +47,12 @@ const FINER: u32 = 0x80000000u;
 // A leaf of our level, in this slot; see `SAME` in seam.rs.
 const SAME: u32 = 0x40000000u;
 
+// Which of the block's two meshes a job makes (#1999). The interior reads only the block's own
+// samples, so it is made once per tile; the seam is the rest, made again when a neighbour changes.
+const INTERIOR: u32 = 0u;
+const SEAM: u32 = 1u;
+var<workgroup> part: u32;
+
 var<workgroup> near: Near;
 // Whether any side is a coarser leaf, or a finer one: most blocks have neither.
 var<workgroup> borrows: u32;
@@ -373,9 +379,26 @@ fn owns(s: vec3<u32>, axis: u32) -> bool {
     return false;
 }
 
-// `edge` over the edges the block emits.
+// Whether no sample the edge's quad reads is a border one: its samples, and its four cells'
+// corners, lie in 2..16, where `at` reads the block's own tile and `cell_vertex` places in it.
+fn inner_edge(s: vec3<u32>, axis: u32) -> bool {
+    var lo = vec3<u32>(3u);
+    lo[axis] = 2u;
+    return all(s >= lo) && all(s <= vec3<u32>(15u));
+}
+
+// Whether cell `c` can hold a vertex of the job's part: the interior's cells are 2..15, the seam's
+// every cell with a coordinate outside 3..14. Cells 2 and 15 are in both, placed alike by each.
+fn in_part(c: vec3<u32>) -> bool {
+    if (part == INTERIOR) {
+        return all(c >= vec3<u32>(2u)) && all(c <= vec3<u32>(15u));
+    }
+    return any(c < vec3<u32>(3u)) || any(c > vec3<u32>(14u));
+}
+
+// `edge` over the edges the block emits, of the job's part.
 fn emits(s: vec3<u32>, axis: u32) -> vec2<u32> {
-    if (!owns(s, axis)) {
+    if (inner_edge(s, axis) != (part == INTERIOR) || !owns(s, axis)) {
         return vec2<u32>(0u);
     }
     return edge(s, axis);
@@ -384,6 +407,9 @@ fn emits(s: vec3<u32>, axis: u32) -> vec2<u32> {
 // Whether cell `c` takes a vertex. Cell 17's samples are past the tile, so it takes one only when an
 // emitted edge reaches it.
 fn has_vertex(c: vec3<u32>) -> bool {
+    if (!in_part(c)) {
+        return false;
+    }
     if (all(c < vec3<u32>(CELLS - 1u))) {
         return crosses(corners(c));
     }

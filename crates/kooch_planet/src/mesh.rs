@@ -41,21 +41,32 @@ pub(super) fn sizes_of(counts: [u32; 4]) -> GpuMeshSizes {
     }
 }
 
+/// Which of a block's two meshes (#1999). The interior reads only the block's own samples, so it is
+/// meshed once per tile; the seam reads its neighbours and is meshed again when they change.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Part {
+    #[default]
+    Interior = 0,
+    Seam = 1,
+}
+
 /// One block for the count pass. Mirrors `CountJob` in `count.wgsl`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct CountJob {
     pub slot: u32,
     pub near: Near,
-    _pad: [u32; 2],
+    part: u32,
+    _pad: u32,
 }
 
 impl CountJob {
-    pub fn new(slot: u32, near: Near) -> Self {
+    pub fn new(slot: u32, near: Near, part: Part) -> Self {
         Self {
             slot,
             near,
-            _pad: [0; 2],
+            part: part as u32,
+            _pad: 0,
         }
     }
 }
@@ -77,7 +88,7 @@ pub struct WriteJob {
     bytes: u32,
     near: Near,
     cuts: Cuts,
-    _pad: u32,
+    part: u32,
 }
 
 impl WriteJob {
@@ -88,6 +99,7 @@ impl WriteJob {
         at: &MeshDescriptor,
         near: Near,
         cuts: Cuts,
+        part: Part,
     ) -> Self {
         Self {
             slot,
@@ -102,7 +114,7 @@ impl WriteJob {
             bytes: sizes.triangle_bytes,
             near,
             cuts,
-            _pad: 0,
+            part: part as u32,
         }
     }
 }

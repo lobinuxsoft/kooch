@@ -6,7 +6,8 @@ use kooch_render::meshlet::{GlobalMeshPool, MeshBounds, PoolBuffers};
 use super::{COUNT_WGSL, NETS_WGSL, WRITE_WGSL};
 use crate::test_device::try_acquire;
 use crate::{
-    BlockKey, BlockPool, CountedBlock, Leaves, Limits, Planets, Residency, Shape, Terrain, WriteJob,
+    BlockKey, BlockPool, CountedBlock, Leaves, Limits, Part, Planets, Residency, Shape, Terrain,
+    WriteJob,
 };
 
 const RADIUS: f64 = 6.0;
@@ -79,7 +80,8 @@ fn count_all(
         residency = Residency::default();
         all.append(&mut out);
         wait(device);
-        if all.len() == keys.len() {
+        // Two meshes a block: its interior and its seam.
+        if all.len() == keys.len() * 2 {
             break;
         }
     }
@@ -158,7 +160,11 @@ fn mesh_faults(
         return Vec::new();
     };
     let (mut terrain, blocks) = count_all(&device, &queue, planets, keys, split);
-    assert_eq!(blocks.len(), keys.len(), "every block comes back");
+    assert_eq!(
+        blocks.len(),
+        keys.len() * 2,
+        "both meshes of every block come back"
+    );
     let mut pool = GlobalMeshPool::new();
     let ids: Vec<u32> = blocks
         .iter()
@@ -174,7 +180,17 @@ fn mesh_faults(
     let jobs: Vec<WriteJob> = blocks
         .iter()
         .zip(&ids)
-        .map(|(b, &id)| WriteJob::new(b.slot, b.voxel, b.sizes, &descriptor(id), b.near, b.cuts))
+        .map(|(b, &id)| {
+            WriteJob::new(
+                b.slot,
+                b.voxel,
+                b.sizes,
+                &descriptor(id),
+                b.near,
+                b.cuts,
+                b.part,
+            )
+        })
         .collect();
     terrain.write(&device, &queue, &buffers, &jobs);
     let vertices = read(&device, &queue, &buffers.vertices);
@@ -191,6 +207,7 @@ fn mesh_faults(
     let place = |p: DVec3| {
         blocks
             .iter()
+            .filter(|b| b.part == Part::Interior)
             .filter_map(|b| {
                 let side = f64::from(b.voxel) * 16.0;
                 let local = (p - b.origin) / side;

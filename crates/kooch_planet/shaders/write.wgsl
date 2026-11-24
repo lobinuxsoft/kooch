@@ -16,7 +16,7 @@ struct Job {
     near: Near,
     // Per region, the bricks its meshlets start at, as the count pass packed them.
     cuts: array<u32, CUT_WORDS>,
-    _pad: u32,
+    part: u32,
 }
 
 const MAP_WORDS: u32 = 2916u;
@@ -273,6 +273,7 @@ fn write_main(
         job = jobs[wid.x];
         corner = tile_corner(job.slot);
         load_near(job.near);
+        part = job.part;
         atomicStore(&counter, 0u);
         fits = 0u;
     }
