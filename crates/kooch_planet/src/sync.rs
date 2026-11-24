@@ -18,7 +18,7 @@ use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_ecs::perspective_camera::{PerspectiveCamera, ViewSize};
 use kooch_ecs::query::Query;
 use kooch_render::material::shader::{Shader, ShaderKind};
-use kooch_render::meshlet::GpuMeshes;
+use kooch_render::meshlet::{GpuMeshes, MeshletLodSettings};
 
 use crate::component::Planet;
 use crate::draw::{Blocks, Frame};
@@ -443,7 +443,16 @@ fn viewers(resources: &Resources) -> (Vec<DVec3>, Vec<Cone>, View) {
             }
         },
     );
-    let view = View::new(f64::from(height.max(1)), f64::from(fov).to_radians());
+    let target = resources
+        .get::<MeshletLodSettings>()
+        .map_or(MeshletLodSettings::default().planet_voxel_pixels, |lod| {
+            lod.planet_voxel_pixels
+        });
+    let view = View::new(
+        f64::from(height.max(1)),
+        f64::from(fov).to_radians(),
+        f64::from(target),
+    );
     (eyes, cones, view)
 }
 

@@ -126,11 +126,12 @@ pub struct View {
 }
 
 impl View {
-    /// A view of `viewport_height` pixels and `fov_y` radians, refining to one pixel.
-    pub fn new(viewport_height: f64, fov_y: f64) -> Self {
+    /// A view of `viewport_height` pixels and `fov_y` radians, refining until a voxel covers
+    /// `target_px`.
+    pub fn new(viewport_height: f64, fov_y: f64, target_px: f64) -> Self {
         Self {
             proj_scale: viewport_height / (2.0 * (fov_y * 0.5).tan()),
-            target_px: 1.0,
+            target_px,
             impostor_px: 32.0,
         }
     }

@@ -181,6 +181,12 @@ pub(super) fn default_meshlet_lod_error() -> f32 {
     0.5
 }
 
+/// Four pixels: one voxel per pixel spent the whole block budget on pixel-size triangles far away
+/// (#1993), and the voxel engines studied there stop a level at several pixels per voxel.
+pub(super) fn default_planet_voxel_pixels() -> f32 {
+    4.0
+}
+
 /// 🔴 Zero — every instance the frustum holds is drawn, which is what shipped. Turning it on hides
 /// geometry, and what a non-zero value hides is a judgement the author makes, not a default anyone
 /// inherits.
@@ -337,6 +343,13 @@ pub(super) const MESHLET_LOD_ERROR_RANGE: kooch_ecs::reflect::FieldRange =
         min: 0.01,
         max: 8.0,
         step: 0.01,
+    };
+
+pub(super) const PLANET_VOXEL_PIXELS_RANGE: kooch_ecs::reflect::FieldRange =
+    kooch_ecs::reflect::FieldRange {
+        min: 0.5,
+        max: 32.0,
+        step: 0.5,
     };
 
 pub(super) const SHADOW_LIGHT_REACH_CHOICES: &[kooch_ecs::reflect::FieldChoice] = &[

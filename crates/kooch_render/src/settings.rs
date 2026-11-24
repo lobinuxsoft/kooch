@@ -139,6 +139,11 @@ pub struct RenderSettings {
     #[serde(default = "default_meshlet_lod_error")]
     #[reflect(group = "Geometry", range = MESHLET_LOD_ERROR_RANGE)]
     pub meshlet_lod_error: f32,
+    /// Pixels one voxel of planet ground may cover before its block splits into finer ones. Higher
+    /// keeps far ground coarser and leaves the blocks to the ground near the camera.
+    #[serde(default = "default_planet_voxel_pixels")]
+    #[reflect(group = "Geometry", range = PLANET_VOXEL_PIXELS_RANGE)]
+    pub planet_voxel_pixels: f32,
     /// Projected radius, in pixels, under which an instance is dropped before it becomes meshlets
     /// (#1002). `0` = draw everything the frustum holds, which is what shipped.
     #[serde(default = "default_meshlet_min_pixels")]
@@ -273,6 +278,7 @@ impl Default for RenderSettings {
             shadow_page_geometry: default_shadow_page_geometry(),
             shadow_page_halo: default_shadow_page_halo(),
             meshlet_lod_error: default_meshlet_lod_error(),
+            planet_voxel_pixels: default_planet_voxel_pixels(),
             meshlet_min_pixels: default_meshlet_min_pixels(),
             meshlet_two_level: default_meshlet_two_level(),
             aperture_f_stops: default_aperture(),
@@ -337,6 +343,8 @@ impl RenderSettings {
             // the meaningful "off", not a degenerate value.
             min_screen_pixels: self.meshlet_min_pixels.clamp(0.0, 256.0),
             two_level: self.meshlet_two_level,
+            // Clamped like the LOD target: zero would split every block down to the finest level.
+            planet_voxel_pixels: self.planet_voxel_pixels.clamp(0.5, 32.0),
         }
     }
 

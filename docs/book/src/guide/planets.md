@@ -60,6 +60,12 @@ Every planet in the scene shares one pool of 6144 voxel blocks, 68 MiB of GPU me
 never grows: each frame the blocks go where they do the most good on screen, so the planet you stand
 on takes what the distant ones do not need. A planet too small on screen to matter gets none.
 
+A block splits into finer ones while one of its voxels covers more than **Planet voxel pixels** on
+screen, a render setting in the Geometry group (4 by default). Ground far away is therefore drawn
+with bigger voxels. Raise the value for coarser, cheaper ground; lower it for sharper ground at the
+cost of blocks. To see the blocks, set the Debug view to **Instance Ids**: each colour is one block,
+and they should look about the same size on screen near and far.
+
 The blocks are refined for the camera closest to them. In the editor that is the scene view and
 every active camera of the game, so the Game tab is as sharp as the Scene tab.
 

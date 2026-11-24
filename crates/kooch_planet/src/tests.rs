@@ -61,7 +61,7 @@ fn hills(planets: &Planets) -> impl Fn(BlockKey, DVec3, DVec3) -> bool + '_ {
 /// orbit and halfway to the Moon. Run with `--nocapture` for the table.
 #[test]
 fn the_solar_system_fits() {
-    let view = View::new(800.0, 60f64.to_radians());
+    let view = View::new(800.0, 60f64.to_radians(), 1.0);
     let mut wanted = Vec::new();
     for height in [1.8, 400_000.0, 192_000_000.0] {
         let planets = solar_system(height);
