@@ -80,8 +80,7 @@ fn count_all(
         residency = Residency::default();
         all.append(&mut out);
         wait(device);
-        // Two meshes a block: its interior and its seam.
-        if all.len() == keys.len() * 2 {
+        if all.len() == keys.len() * PARTS {
             break;
         }
     }
