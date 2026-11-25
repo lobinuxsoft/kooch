@@ -38,24 +38,24 @@ impl Rerun {
     /// Whether `inputs` differ enough from the last selection's to select again.
     pub fn due(&self, inputs: &Inputs) -> bool {
         let planets = inputs.planets;
-        // One empty scope per reason, so a capture counts which input keeps changing.
-        let reasons = [
-            (self.forced, "rerun: forced"),
-            (self.budget != inputs.budget, "rerun: budget"),
-            (self.view != Some(view_key(inputs.view)), "rerun: view"),
-            (self.revisions != inputs.revisions, "rerun: revisions"),
-            (self.shapes != planets.shape, "rerun: shapes"),
-            (self.limits != planets.limits, "rerun: limits"),
-            (self.split != fingerprint(inputs.split), "rerun: split"),
-            (self.viewers != snapped_viewers(planets), "rerun: moved"),
-        ];
+        // One literal scope per reason: puffin keeps a scope's name per call site.
         let mut due = false;
-        for (changed, name) in reasons {
-            if changed {
-                profiling::scope!(name);
-                due = true;
-            }
+        macro_rules! reason {
+            ($changed:expr, $name:literal) => {
+                if $changed {
+                    profiling::scope!($name);
+                    due = true;
+                }
+            };
         }
+        reason!(self.forced, "rerun: forced");
+        reason!(self.budget != inputs.budget, "rerun: budget");
+        reason!(self.view != Some(view_key(inputs.view)), "rerun: view");
+        reason!(self.revisions != inputs.revisions, "rerun: revisions");
+        reason!(self.shapes != planets.shape, "rerun: shapes");
+        reason!(self.limits != planets.limits, "rerun: limits");
+        reason!(self.split != fingerprint(inputs.split), "rerun: split");
+        reason!(self.viewers != snapped_viewers(planets), "rerun: moved");
         due
     }
 
