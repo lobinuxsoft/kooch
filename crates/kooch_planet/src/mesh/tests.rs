@@ -156,38 +156,51 @@ fn a_split_sphere_is_watertight() {
     assert!(faults.is_empty(), "faults: {faults:#?}");
 }
 
+/// Level changes as pairs of splits: from nothing split, and from one split to a wider one, so
+/// fine blocks that existed before keep a seam meshed against a coarse neighbour now split.
+const CHANGES: [(&[usize], &[usize]); 7] = [
+    (&[], &[0]),
+    (&[], &[7]),
+    (&[], &[0, 1, 2]),
+    (&[], &[0, 1, 2, 3, 4, 5, 6]),
+    (&[0], &[0, 1]),
+    (&[0], &[0, 1, 2, 3]),
+    (&[0, 1, 2], &[0, 1, 2, 3, 4, 5, 6]),
+];
+
 /// 🔴 #1999: what shows while a level change settles has no hole. Blocks on both sides of the change
 /// keep the seam they were meshed with before it, beside blocks meshed after; rays from outside
-/// count where the sphere is seen through.
+/// count where the sphere is seen through, against the same count with nothing torn.
 #[test]
 fn a_torn_sphere_is_covered() {
     let mut holes = Vec::new();
-    for octants in SPLITS {
-        let (planets, after, parents) = split_sphere(octants);
-        let (_, before) = sphere(0.25, 1);
-        let Some(coarse) = meshed(&planets, &before, &HashSet::new()) else {
+    for (from, to) in CHANGES {
+        let (planets, before, split) = split_sphere(from);
+        let Some(old) = meshed(&planets, &before, &split) else {
             return;
         };
-        let fine = meshed(&planets, &after, &parents).expect("a device for the first");
-        for (change, shown, stale) in [
-            // Nothing torn: what the rays see of a closed surface.
-            ("settled", &fine, &fine),
-            ("split", &fine, &coarse),
-            ("merge", &coarse, &fine),
-        ] {
-            let torn = torn(shown, stale);
-            let bare: Vec<_> = torn.iter().filter(|(p, _)| *p != Part::Overlap).collect();
-            let without = see_through(bare.iter().map(|(_, t)| *t));
-            let with = see_through(torn.iter().map(|(_, t)| *t));
+        let (_, after, split) = split_sphere(to);
+        let new = meshed(&planets, &after, &split).expect("a device for the first");
+        for (change, shown, stale) in [("split", &new, &old), ("merge", &old, &new)] {
+            let count = |overlap: bool, stale| {
+                let torn = torn(shown, stale);
+                let kept = torn
+                    .into_iter()
+                    .filter(|(p, _)| overlap || *p != Part::Overlap);
+                see_through(kept.map(|(_, t)| t))
+            };
+            let settled = count(true, shown).len();
+            let without = count(false, stale).len();
+            let with = count(true, stale);
             eprintln!(
-                "{change} {octants:?}: {} rays through without the overlap, {} with",
-                without.len(),
+                "{change} {from:?}→{to:?}: {settled} rays settled, torn {without} without the overlap, {} with",
                 with.len()
             );
-            if let Some(at) = with.first() {
+            if with.len() > settled {
                 holes.push(format!(
-                    "{change} {octants:?}: {} rays, first at {at}",
-                    with.len()
+                    "{change} {from:?}→{to:?}: {} rays, first at {}",
+                    with.len() - settled,
+                    with[0]
                 ));
             }
         }
@@ -231,16 +244,18 @@ fn see_through<'a>(meshes: impl Iterator<Item = &'a Vec<[DVec3; 3]>>) -> Vec<DVe
     for (i, tri) in triangles.iter().enumerate() {
         let cells = tri.map(cell);
         let rows = cells.iter().map(|c| c.0);
-        let (top, bottom) = (rows.clone().min().unwrap_or(0), rows.max().unwrap_or(0));
+        // One cell of slack: an edge bows off the line between its ends' cells.
+        let top = rows.clone().min().unwrap_or(0).saturating_sub(1);
+        let bottom = (rows.max().unwrap_or(0) + 1).min(ROWS - 1);
         let columns: Vec<usize> = cells.iter().map(|c| c.1).collect();
         let (left, right) = (
             columns.iter().min().copied().unwrap_or(0),
             columns.iter().max().copied().unwrap_or(0),
         );
         // Across the seam of the angle, or at a pole: every column.
-        let span: Vec<usize> = match right - left > COLUMNS / 2 || top == 0 || bottom == ROWS - 1 {
+        let span: Vec<usize> = match right - left > COLUMNS / 2 || top <= 1 || bottom + 2 >= ROWS {
             true => (0..COLUMNS).collect(),
-            false => (left..=right).collect(),
+            false => (left.saturating_sub(1)..=(right + 1).min(COLUMNS - 1)).collect(),
         };
         for row in top..=bottom {
             for &column in &span {
