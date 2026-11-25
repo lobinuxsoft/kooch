@@ -18,8 +18,9 @@ use glam::{DVec3, Mat4, Vec3};
 use kooch_core::Guid;
 use kooch_core::resource::Resources;
 use kooch_ecs::MeshRenderer;
-use kooch_ecs::hierarchy::WorldOrigin;
-use kooch_render::meshlet::{GpuMeshes, MeshBounds, Submitted};
+use kooch_ecs::entity::Entity;
+use kooch_ecs::hierarchy::{GridCell, WorldOrigin};
+use kooch_render::meshlet::{DrawKey, GpuMeshes, MeshBounds, Submitted};
 
 use crate::mesh::{PARTS, Part};
 use crate::seam::levels;
@@ -75,6 +76,10 @@ pub(crate) struct Blocks {
     settled: bool,
     /// The earliest epoch still being counted or written, this frame; see [`Terrain::frontier`].
     frontier: u64,
+    /// Per mesh, the row the renderer holds for it (#2014).
+    sent: Vec<Option<(DrawKey, Guid)>>,
+    /// Per planet, what its rows were placed from.
+    poses: Vec<Option<Pose>>,
 }
 
 /// What [`Blocks::draw`] reads of the frame.
@@ -248,10 +253,10 @@ impl Blocks {
         self.shown[s] = false;
     }
 
-    /// Hands every block on screen to the renderer, drawn for its planet's entity. Every frame, so
-    /// a planet that moved, turned or changed material, or an origin that moved, is followed at once.
+    /// Hands the renderer the rows that changed: a block shown, hidden or given another mesh, and
+    /// every block of a planet that moved, turned, changed material or saw the origin move.
     pub(crate) fn submit(
-        &self,
+        &mut self,
         resources: &mut Resources,
         placed: &[Option<usize>],
         found: &[Found],
@@ -260,28 +265,47 @@ impl Blocks {
         let Some(submitted) = resources.get_mut::<Submitted>() else {
             return;
         };
-        submitted.clear();
-        for s in (0..self.key.len()).filter(|&s| self.shown[s]) {
-            let Some(key) = self.key[s] else {
-                continue;
-            };
-            let planet = placed.get(key.planet as usize).copied().flatten();
-            let Some(planet) = planet.and_then(|at| found.get(at)) else {
-                continue;
-            };
-            let at = place(planet, self.origin[s], &origin);
+        submitted.begin();
+        let poses: Vec<Option<Pose>> = placed
+            .iter()
+            .map(|at| at.and_then(|at| found.get(at)).map(|f| Pose::of(f, origin)))
+            .collect();
+        let moved: Vec<bool> = (0..poses.len())
+            .map(|i| poses[i] != self.poses.get(i).copied().flatten())
+            .collect();
+        self.sent.resize(self.mesh.len(), None);
+        for s in 0..self.key.len() {
+            let planet = self.key[s].map(|key| key.planet as usize);
+            let pose = planet.and_then(|p| poses.get(p).copied().flatten());
+            let moved = planet.is_some_and(|p| moved.get(p).copied().unwrap_or(true));
             for p in 0..PARTS {
-                let Some(mesh) = self.mesh[s * PARTS + p] else {
+                let d = s * PARTS + p;
+                let want = match (self.shown[s], pose, self.mesh[d]) {
+                    (true, Some(pose), Some(mesh)) => {
+                        Some(((pose.entity, self.part[s] + p as u32), mesh))
+                    }
+                    _ => None,
+                };
+                if want == self.sent[d] && !(moved && want.is_some()) {
                     continue;
-                };
-                let renderer = MeshRenderer {
-                    mesh: Some(mesh),
-                    material: planet.planet.material,
-                    ..Default::default()
-                };
-                submitted.push((planet.entity, self.part[s] + p as u32), at, renderer);
+                }
+                if let Some((old, _)) = self.sent[d]
+                    && want.map(|(key, _)| key) != Some(old)
+                {
+                    submitted.remove(old);
+                }
+                if let (Some((key, mesh)), Some(pose)) = (want, pose) {
+                    let renderer = MeshRenderer {
+                        mesh: Some(mesh),
+                        material: pose.material,
+                        ..Default::default()
+                    };
+                    submitted.set(key, pose.place(self.origin[s]), renderer);
+                }
+                self.sent[d] = want;
             }
         }
+        self.poses = poses;
     }
 
     /// Triangles on screen, lingering blocks included.
@@ -380,11 +404,36 @@ fn bounds_of(voxel: f32, near: &Near) -> MeshBounds {
 /// A block's matrix relative to the world origin: its corner carried by the planet's in f64, the
 /// cells subtracted in integers, and only then narrowed. The corner is a planet radius out, where
 /// f32 steps half a metre (#51).
-fn place(planet: &Found, origin: DVec3, world: &WorldOrigin) -> Mat4 {
-    let (scale, rotation, _) = planet.world.to_scale_rotation_translation();
-    let corner = planet.at + planet.world.as_dmat4().transform_vector3(origin);
-    let corner = corner - world.from(Some(&planet.cell));
-    Mat4::from_scale_rotation_translation(scale, rotation, corner.as_vec3())
+/// What a planet's blocks are placed from: when it changes, every block is placed again.
+#[derive(Clone, Copy, PartialEq)]
+struct Pose {
+    entity: Entity,
+    world: Mat4,
+    at: DVec3,
+    cell: GridCell,
+    origin: WorldOrigin,
+    material: Option<Guid>,
+}
+
+impl Pose {
+    fn of(planet: &Found, origin: WorldOrigin) -> Self {
+        Self {
+            entity: planet.entity,
+            world: planet.world,
+            at: planet.at,
+            cell: planet.cell,
+            origin,
+            material: planet.planet.material,
+        }
+    }
+
+    /// A block's matrix relative to the world origin, from its corner in the planet's space.
+    fn place(&self, corner: DVec3) -> Mat4 {
+        let (scale, rotation, _) = self.world.to_scale_rotation_translation();
+        let corner = self.at + self.world.as_dmat4().transform_vector3(corner);
+        let corner = corner - self.origin.from(Some(&self.cell));
+        Mat4::from_scale_rotation_translation(scale, rotation, corner.as_vec3())
+    }
 }
 
 const PREFIX: &[u8; 8] = b"kooch:pl";

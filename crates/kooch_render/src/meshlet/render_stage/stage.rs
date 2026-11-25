@@ -69,6 +69,8 @@ pub struct MeshletRenderStage {
     pub(super) forward_list: crate::meshlet::vbuf64_stage::ForwardList,
     /// Every drawn mesh's row, kept from frame to frame (#2014).
     pub(super) slots: crate::meshlet::instance_slots::InstanceSlots,
+    /// Where the slots are in the submitted rows' log (#2014).
+    pub(super) kept: super::frame::kept::Kept,
     pub(super) point_cube_cache: Vec<Option<crate::shadow::CubeKey>>,
 
     /// GPU mirror of [`MeshletPipeline::pool`]. Lazy-rebuilt by [`Self::render_with_assets`] when

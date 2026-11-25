@@ -51,7 +51,9 @@ impl InstanceSlots {
             let count = groups(instance.mesh_id);
             let region = self.region(instance.flags);
             match region.of_key.contains_key(&key) {
-                true => region.place(instance, key, count, frame),
+                true => {
+                    region.place(instance, key, count, frame);
+                }
                 false => arrived.push((instance, key, count)),
             }
         }
@@ -67,6 +69,57 @@ impl InstanceSlots {
         }
         self.arrived = arrived;
         self.lay_out();
+    }
+
+    /// Starts the kept rows' frame: those changed last frame stand still now, so their previous
+    /// transform catches up. Before any [`Self::keep`].
+    pub fn settle(&mut self) {
+        for region in [&mut self.opaque, &mut self.transparent] {
+            for slot in region.touched.drain(..) {
+                let slot = slot as usize;
+                if let (Some(previous), Some(row)) =
+                    (region.previous.get_mut(slot), region.rows.get(slot))
+                {
+                    *previous = row.transform;
+                }
+            }
+        }
+    }
+
+    /// Places a row its producer keeps (#2014): it stays until [`Self::unkeep`], not only while
+    /// [`Self::place`] is handed it.
+    pub fn keep(&mut self, instance: MeshInstance, key: DrawKey, groups: u32) {
+        let empty = self.empty;
+        let frame = self.frame;
+        match instance.flags & INSTANCE_TRANSPARENT {
+            0 => self.transparent.unkeep(key, empty),
+            _ => self.opaque.unkeep(key, empty),
+        }
+        let region = self.region(instance.flags);
+        let slot = region.place(instance, key, groups, frame);
+        region.kept[slot] = true;
+        region.touched.push(slot as u32);
+    }
+
+    /// Frees a kept row.
+    pub fn unkeep(&mut self, key: DrawKey) {
+        let empty = self.empty;
+        self.opaque.unkeep(key, empty);
+        self.transparent.unkeep(key, empty);
+    }
+
+    /// Frees every kept row, to keep them all again.
+    pub fn unkeep_all(&mut self) {
+        let empty = self.empty;
+        for region in [&mut self.opaque, &mut self.transparent] {
+            let kept: Vec<DrawKey> = (0..region.key.len())
+                .filter(|&slot| region.kept[slot])
+                .filter_map(|slot| region.key[slot])
+                .collect();
+            for key in kept {
+                region.unkeep(key, empty);
+            }
+        }
     }
 
     /// Compares the rows with what the GPU holds. Call after the last write to the rows.
@@ -185,6 +238,10 @@ struct Region {
     previous: Vec<Matrix>,
     groups: Vec<Span>,
     seen: Vec<u32>,
+    /// Held by a producer until it lets go, whatever [`InstanceSlots::place`] is handed.
+    kept: Vec<bool>,
+    /// Kept slots changed this frame, whose previous transform catches up next frame.
+    touched: Vec<u32>,
     free: Holes,
     free_groups: Holes,
     group_end: u32,
@@ -199,6 +256,8 @@ impl Default for Region {
             previous: Vec::new(),
             groups: Vec::new(),
             seen: Vec::new(),
+            kept: Vec::new(),
+            touched: Vec::new(),
             free: Holes::aligned(1),
             free_groups: Holes::aligned(1),
             group_end: 0,
@@ -207,7 +266,13 @@ impl Default for Region {
 }
 
 impl Region {
-    fn place(&mut self, mut instance: MeshInstance, key: DrawKey, groups: u32, frame: u32) {
+    fn place(
+        &mut self,
+        mut instance: MeshInstance,
+        key: DrawKey,
+        groups: u32,
+        frame: u32,
+    ) -> usize {
         let slot = match self.of_key.get(&key) {
             Some(&slot) => slot as usize,
             None => {
@@ -228,29 +293,46 @@ impl Region {
         self.previous[slot] = self.rows[slot].transform;
         self.rows[slot] = instance;
         self.seen[slot] = frame;
+        slot
+    }
+
+    fn unkeep(&mut self, key: DrawKey, empty: u32) {
+        let Some(slot) = self.of_key.remove(&key) else {
+            return;
+        };
+        self.free_slot(slot as usize, empty);
+    }
+
+    fn free_slot(&mut self, slot: usize, empty: u32) {
+        self.key[slot] = None;
+        self.kept[slot] = false;
+        self.free.give(Span {
+            start: slot as u32,
+            len: 1,
+        });
+        self.free_groups
+            .give(std::mem::take(&mut self.groups[slot]));
+        self.rows[slot] = free_row(empty);
+        self.previous[slot] = free_row(empty).transform;
     }
 
     /// Frees every slot not placed this frame, and drops the free tail.
     fn retire(&mut self, frame: u32, empty: u32, renumbered: bool) {
         for slot in 0..self.rows.len() {
-            if self.seen[slot] == frame {
+            if self.seen[slot] == frame || self.kept[slot] {
                 continue;
             }
-            match self.key[slot].take() {
+            match self.key[slot] {
                 Some(key) => {
                     self.of_key.remove(&key);
-                    self.free.give(Span {
-                        start: slot as u32,
-                        len: 1,
-                    });
-                    self.free_groups
-                        .give(std::mem::take(&mut self.groups[slot]));
+                    self.free_slot(slot, empty);
                 }
-                None if !renumbered => continue,
+                None if renumbered => {
+                    self.rows[slot] = free_row(empty);
+                    self.previous[slot] = free_row(empty).transform;
+                }
                 None => {}
             }
-            self.rows[slot] = free_row(empty);
-            self.previous[slot] = free_row(empty).transform;
         }
         let len = self.free.trim(self.rows.len() as u32) as usize;
         self.key.truncate(len);
@@ -258,6 +340,7 @@ impl Region {
         self.previous.truncate(len);
         self.groups.truncate(len);
         self.seen.truncate(len);
+        self.kept.truncate(len);
         self.group_end = self.free_groups.trim(self.group_end);
     }
 
@@ -270,6 +353,7 @@ impl Region {
         self.previous.push(MeshInstance::default().transform);
         self.groups.push(Span::default());
         self.seen.push(0);
+        self.kept.push(false);
         self.rows.len() - 1
     }
 

@@ -2,6 +2,7 @@
 //! the cull → vbuf → deferred chain.
 
 mod assets;
+pub(in crate::meshlet::render_stage) mod kept;
 mod pages;
 mod render;
 mod render_hi_z_2pass;

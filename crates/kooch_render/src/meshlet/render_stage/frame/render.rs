@@ -162,25 +162,21 @@ impl MeshletRenderStage {
         let (drawn, keys) = self
             .pipeline
             .collect_scene_instances_with_entities(resources);
-        if drawn.is_empty() {
+        let empty = self.pipeline.empty_mesh();
+        self.keep_submitted(resources);
+        {
+            profiling::scope!("place instances");
+            let descriptors = &self.pipeline.pool().mesh_descriptors;
+            let groups = |id: u32| descriptors.get(id as usize).map_or(0, |d| d.group_count);
+            self.slots.place(drawn.into_iter().zip(keys), groups, empty);
+        }
+        if self.slots.rows().is_empty() {
             tracing::debug!(
                 target: "kooch_render::meshlet::render",
                 pipeline_registered = self.pipeline.registered_count(),
                 "render skipped: zero instances",
             );
             return MeshletRenderStats::default();
-        }
-        tracing::debug!(
-            target: "kooch_render::meshlet::render",
-            instances = drawn.len(),
-            "render dispatching meshlet pipeline",
-        );
-        let empty = self.pipeline.empty_mesh();
-        {
-            profiling::scope!("place instances");
-            let descriptors = &self.pipeline.pool().mesh_descriptors;
-            let groups = |id: u32| descriptors.get(id as usize).map_or(0, |d| d.group_count);
-            self.slots.place(drawn.into_iter().zip(keys), groups, empty);
         }
         // Grow to fit rather than abort. A scene is authored, not declared: the count arrives from
         // the ECS walk above, and the construction-time capacity was only ever a starting guess.

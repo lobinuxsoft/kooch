@@ -33,6 +33,9 @@ pub struct MeshletPipeline {
     pub trim: AlphaTrim,
     /// A mesh with no meshlets that free instance slots point at (#2014). Kept by the repack.
     empty: Option<u32>,
+    /// Bumped whenever a registered GUID's mesh id changes: a row kept from an earlier frame
+    /// (#2014) names a stale id after it.
+    generation: u32,
 }
 
 /// Frames a mesh may go unasked before its slot goes back to the pool (#1589).
@@ -99,6 +102,7 @@ impl MeshletPipeline {
     pub fn replace_mesh(&mut self, guid: Guid, mesh: &MeshletMesh) -> MeshHandle {
         if let Some(stale) = self.registry.get(&guid).copied() {
             self.pool.release(stale.mesh_id);
+            self.generation = self.generation.wrapping_add(1);
         }
         self.owned.remove(&guid);
         let mesh_handle = self.pool.register(mesh);
@@ -123,6 +127,7 @@ impl MeshletPipeline {
             self.pool.release(stale.mesh_id);
             self.registry.remove(&guid);
             self.owned.remove(&guid);
+            self.generation = self.generation.wrapping_add(1);
         }
         if !self.pool.admits(sizes) {
             return None;
@@ -211,6 +216,7 @@ impl MeshletPipeline {
         if free <= self.pool.byte_size().saturating_sub(free) {
             return;
         }
+        self.generation = self.generation.wrapping_add(1);
         let live: Vec<(Guid, u32)> = self
             .registry
             .iter()
@@ -228,6 +234,11 @@ impl MeshletPipeline {
                 None => self.registry.remove(guid),
             };
         }
+    }
+
+    /// Changes whenever a registered GUID may name another mesh id.
+    pub(crate) fn generation(&self) -> u32 {
+        self.generation
     }
 
     /// Bytes the pool is holding in holes, waiting for a mesh that fits.
@@ -303,7 +314,7 @@ impl MeshletPipeline {
         &self,
         resources: &Resources,
     ) -> (Vec<MeshInstance>, Vec<super::DrawKey>) {
-        let material_pipeline = resources.get::<crate::material::MaterialPipeline>();
+        let materials = resources.get::<crate::material::MaterialPipeline>();
         // Side-channel lookup of optional LodForceLevel components. The MeshRenderer query is the
         // primary walk; per-entity we do a separate point query for LodForceLevel so absence costs
         // nothing (most entities don't carry the override).
@@ -313,55 +324,18 @@ impl MeshletPipeline {
         // Kept apart and appended last: a cull is handed the opaque ones alone (#452).
         let mut transparent = Vec::new();
         for_each_drawn(resources, |key, renderer, matrix| {
-            if !renderer.visible {
-                return;
-            }
-            let Some(guid) = renderer.mesh else {
+            let Some(mut instance) = self.instance(key, renderer, matrix, materials) else {
                 return;
             };
-            let Some(mesh_handle) = self.lookup(guid) else {
-                return;
-            };
-            let material_id = match material_pipeline.as_deref() {
-                Some(mp) => mp.lookup_or_fallback(renderer.material),
-                None => crate::material::FALLBACK_MATERIAL_ID,
-            };
-            // The hull cut around the coverage (#452). Until one is built the mesh draws as it was,
-            // so a pair that cannot be cut is never left undrawn; the material cuts per pixel
-            // either way.
-            let cut = renderer
-                .material
-                .and_then(|material| self.trim.mesh_for(guid, material))
-                .and_then(|trimmed| self.lookup(trimmed));
-            let mesh_id = cut.unwrap_or(mesh_handle).mesh_id;
-            let mut instance = MeshInstance::new(*matrix, mesh_id, material_id);
-            if let Some(force_level) = lod_force_lookup.get(&key.0).copied() {
-                instance.lod_force_level = force_level as i32;
-            } else {
-                instance.lod_force_level = LOD_FORCE_NONE;
+            if let Some(&level) = lod_force_lookup.get(&key.0) {
+                instance.lod_force_level = level as i32;
             }
-            // it was written and nothing ever read it: unticking it in the Inspector changed
-            // nothing at all. This is the bit that makes the checkbox mean something.
-            instance.flags = match renderer.receive_shadows {
-                true => crate::meshlet::scene::INSTANCE_RECEIVES_SHADOWS,
-                false => 0,
-            };
-            if !renderer.cast_shadows {
-                instance.flags |= crate::meshlet::scene::INSTANCE_CASTS_NO_SHADOW;
-            }
-            instance.layers = renderer.layer_mask();
-            instance.tint = tint(key);
-
-            let see_through = material_pipeline
-                .as_deref()
-                .and_then(|mp| mp.slot_surface(material_id))
-                .is_some_and(|(_, s)| s.kind.blends());
-            if see_through {
-                instance.flags |= crate::meshlet::scene::INSTANCE_TRANSPARENT;
-                transparent.push((instance, key));
-            } else {
-                out.push(instance);
-                entities.push(key);
+            match instance.flags & crate::meshlet::scene::INSTANCE_TRANSPARENT {
+                0 => {
+                    out.push(instance);
+                    entities.push(key);
+                }
+                _ => transparent.push((instance, key)),
             }
         });
         for (instance, key) in transparent {
@@ -369,6 +343,52 @@ impl MeshletPipeline {
             entities.push(key);
         }
         (out, entities)
+    }
+
+    /// One renderer's row, or `None` while it is hidden or its mesh is not in the pool.
+    pub(crate) fn instance(
+        &self,
+        key: super::DrawKey,
+        renderer: &kooch_ecs::mesh_renderer::MeshRenderer,
+        matrix: &glam::Mat4,
+        materials: Option<&crate::material::MaterialPipeline>,
+    ) -> Option<MeshInstance> {
+        if !renderer.visible {
+            return None;
+        }
+        let guid = renderer.mesh?;
+        let mesh_handle = self.lookup(guid)?;
+        let material_id = match materials {
+            Some(mp) => mp.lookup_or_fallback(renderer.material),
+            None => crate::material::FALLBACK_MATERIAL_ID,
+        };
+        // The hull cut around the coverage (#452). Until one is built the mesh draws as it was,
+        // so a pair that cannot be cut is never left undrawn; the material cuts per pixel either way.
+        let cut = renderer
+            .material
+            .and_then(|material| self.trim.mesh_for(guid, material))
+            .and_then(|trimmed| self.lookup(trimmed));
+        let mesh_id = cut.unwrap_or(mesh_handle).mesh_id;
+        let mut instance = MeshInstance::new(*matrix, mesh_id, material_id);
+        instance.lod_force_level = LOD_FORCE_NONE;
+        // Without this the receive flag was written and never read: unticking it in the Inspector
+        // changed nothing at all.
+        instance.flags = match renderer.receive_shadows {
+            true => crate::meshlet::scene::INSTANCE_RECEIVES_SHADOWS,
+            false => 0,
+        };
+        if !renderer.cast_shadows {
+            instance.flags |= crate::meshlet::scene::INSTANCE_CASTS_NO_SHADOW;
+        }
+        instance.layers = renderer.layer_mask();
+        instance.tint = tint(key);
+        let see_through = materials
+            .and_then(|mp| mp.slot_surface(material_id))
+            .is_some_and(|(_, s)| s.kind.blends());
+        if see_through {
+            instance.flags |= crate::meshlet::scene::INSTANCE_TRANSPARENT;
+        }
+        Some(instance)
     }
 }
 

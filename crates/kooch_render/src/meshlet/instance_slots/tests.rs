@@ -57,3 +57,16 @@ fn a_still_row_stops_uploading() {
     }
     assert_eq!(written, [vec![0..1], vec![0..1], vec![0..1], vec![]]);
 }
+
+#[test]
+fn a_kept_row_outlives_place() {
+    let mut slots = InstanceSlots::default();
+    let kept = MeshInstance::new(glam::Mat4::IDENTITY, 7, 0);
+    slots.keep(kept, (Entity::new(7, 0), 1), 2);
+    place(&mut slots, &[1]);
+    place(&mut slots, &[1]);
+    assert!(slots.rows().iter().any(|row| row.mesh_id == 7));
+    slots.unkeep((Entity::new(7, 0), 1));
+    place(&mut slots, &[1]);
+    assert!(slots.rows().iter().all(|row| row.mesh_id != 7));
+}
