@@ -226,7 +226,6 @@ pub fn sync_planets(resources: &mut Resources) {
         view: &view,
         budget,
         revisions: &revisions,
-        split: &state.split,
     };
     let due = viewers.is_empty() || state.rerun.due(&inputs);
     let worst = match due {
@@ -279,7 +278,6 @@ pub fn sync_planets(resources: &mut Resources) {
                 view: &view,
                 budget,
                 revisions: &revisions,
-                split: &state.split,
             };
             state.rerun.ran(&inputs, deferred, worst);
             // Only a selection refreshes `seen`, so a kept one must not age what it last met.
@@ -293,10 +291,17 @@ pub fn sync_planets(resources: &mut Resources) {
     };
     {
         profiling::scope!("planet: pool");
-        state.pool.apply(&state.wanted, &mut state.residency);
-        // After the pool changes, so the meshes see this frame's leaves; the next selection's
-        // hysteresis reads the same set, as nothing moves the pool in between.
-        fill_split(&mut state.split, &state.pool, &state.planets);
+        // Applying the same `wanted` again is a no-op: nothing leaves, and what did not fit still
+        // does not, so the pool and its split set only change after a choice.
+        match due {
+            true => {
+                state.pool.apply(&state.wanted, &mut state.residency);
+                // After the pool changes, so the meshes see this frame's leaves; the next choice's
+                // hysteresis reads the same set, as nothing moves the pool in between.
+                fill_split(&mut state.split, &state.pool, &state.planets);
+            }
+            false => state.residency.clear(),
+        }
     }
     let mut meshed = std::mem::take(&mut state.meshed);
     if let Some(terrain) = &mut state.terrain {

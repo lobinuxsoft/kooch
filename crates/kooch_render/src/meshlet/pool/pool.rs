@@ -298,7 +298,6 @@ impl GlobalMeshPool {
             return;
         };
         let slot = std::mem::take(slot);
-        profiling::scope!("pool: give holes");
         self.free_vertices.give(slot.vertices);
         self.free_meshlet_vertices.give(slot.meshlet_vertices);
         self.free_triangles.give(slot.triangles);
@@ -455,13 +454,9 @@ impl GlobalMeshPool {
 /// overwrites.
 pub(super) fn take<T: Copy>(holes: &mut Holes, array: &mut Vec<T>, len: usize, filler: T) -> Span {
     let len = holes.rounded(len as u32);
-    if let Some(span) = {
-        profiling::scope!("pool: find hole");
-        holes.take(len)
-    } {
+    if let Some(span) = holes.take(len) {
         return span;
     }
-    profiling::scope!("pool: zero fill");
     let span = Span {
         start: array.len() as u32,
         len,

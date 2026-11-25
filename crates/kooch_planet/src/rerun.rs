@@ -1,12 +1,9 @@
 //! When the levels have to be chosen again (#2013): only once something the choice reads has
-//! changed. A viewer counts as moved only when it crosses into another finest block.
-
-use std::collections::HashSet;
-use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+//! changed. A viewer counts as moved only when it crosses into another finest block. The split set
+//! is not compared: only a choice changes it, as the pool applies `wanted` only after one.
 
 use glam::DVec3;
 
-use crate::BlockKey;
 use crate::lod::{Limits, Planets, Shape, View, snapped_viewers};
 
 /// What the last choice read.
@@ -18,7 +15,6 @@ pub(crate) struct Rerun {
     view: Option<(f64, f64)>,
     budget: u32,
     revisions: Vec<u32>,
-    split: (usize, u64),
     /// Set when the last selection left a block unbounded, or new answers about surface arrived.
     forced: bool,
     /// The last selection's worst error, reported again while it is kept.
@@ -31,32 +27,19 @@ pub(crate) struct Inputs<'a> {
     pub view: &'a View,
     pub budget: u32,
     pub revisions: &'a [u32],
-    pub split: &'a HashSet<BlockKey>,
 }
 
 impl Rerun {
     /// Whether `inputs` differ enough from the last selection's to select again.
     pub fn due(&self, inputs: &Inputs) -> bool {
         let planets = inputs.planets;
-        // One literal scope per reason: puffin keeps a scope's name per call site.
-        let mut due = false;
-        macro_rules! reason {
-            ($changed:expr, $name:literal) => {
-                if $changed {
-                    profiling::scope!($name);
-                    due = true;
-                }
-            };
-        }
-        reason!(self.forced, "rerun: forced");
-        reason!(self.budget != inputs.budget, "rerun: budget");
-        reason!(self.view != Some(view_key(inputs.view)), "rerun: view");
-        reason!(self.revisions != inputs.revisions, "rerun: revisions");
-        reason!(self.shapes != planets.shape, "rerun: shapes");
-        reason!(self.limits != planets.limits, "rerun: limits");
-        reason!(self.split != fingerprint(inputs.split), "rerun: split");
-        reason!(self.viewers != snapped_viewers(planets), "rerun: moved");
-        due
+        self.forced
+            || self.budget != inputs.budget
+            || self.view != Some(view_key(inputs.view))
+            || self.revisions != inputs.revisions
+            || self.shapes != planets.shape
+            || self.limits != planets.limits
+            || self.viewers != snapped_viewers(planets)
     }
 
     /// Records the inputs a selection just ran on; `deferred` when it ran out of time to bound
@@ -70,7 +53,6 @@ impl Rerun {
         self.budget = inputs.budget;
         self.revisions.clear();
         self.revisions.extend_from_slice(inputs.revisions);
-        self.split = fingerprint(inputs.split);
         self.forced = deferred;
         self.worst = worst;
     }
@@ -83,13 +65,4 @@ impl Rerun {
 
 fn view_key(view: &View) -> (f64, f64) {
     (view.proj_scale, view.impostor_px)
-}
-
-/// An order-free summary of `set`: a `HashSet` iterates in no fixed order.
-fn fingerprint(set: &HashSet<BlockKey>) -> (usize, u64) {
-    let hasher = BuildHasherDefault::<DefaultHasher>::default();
-    let sum = set
-        .iter()
-        .fold(0u64, |sum, key| sum.wrapping_add(hasher.hash_one(key)));
-    (set.len(), sum)
 }
