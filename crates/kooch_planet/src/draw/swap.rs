@@ -130,7 +130,7 @@ impl Blocks {
             }
         }
         resources.insert(meshes);
-        self.audit();
+        self.audit(pool);
         self.settled = awaited.is_empty() && lingering.is_empty() && waiting == 0 && held_back == 0;
     }
 

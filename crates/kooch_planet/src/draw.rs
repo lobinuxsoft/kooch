@@ -92,6 +92,8 @@ pub(crate) struct Blocks {
     /// #1999 debug: blocks with geometry retired with nothing on screen in their place.
     pub(crate) bare: u32,
     pub(crate) bare_example: Option<String>,
+    /// #1999 debug: the most wanted blocks the pool had no slot for in one frame.
+    pub(crate) turned_away: u32,
     /// #1999 debug: meshes on screen replaced by none.
     pub(crate) emptied: u32,
     /// #1999 debug: seams counted again because a tile they read changed hands before the write.

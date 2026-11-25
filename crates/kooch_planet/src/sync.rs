@@ -258,6 +258,12 @@ pub fn sync_planets(resources: &mut Resources) {
         .retain(|_, known| frame.wrapping_sub(known.seen) < KNOWN_GRACE);
     state.frame = frame.wrapping_add(1);
     state.pool.apply(&state.wanted, &mut state.residency);
+    let away = state
+        .wanted
+        .iter()
+        .filter(|k| state.pool.slot(**k).is_none())
+        .count();
+    state.blocks.turned_away = state.blocks.turned_away.max(away as u32);
     // After the pool changes, so the meshes see this frame's leaves; the next selection's
     // hysteresis reads the same set, as nothing moves the pool in between.
     fill_split(&mut state.split, &state.pool, &state.planets);
@@ -336,7 +342,7 @@ pub fn sync_planets(resources: &mut Resources) {
             .map(|(now, then)| now.wrapping_sub(then))
             .collect();
         state.skipped = totals;
-        tracing::trace!(
+        tracing::info!(
             target: "kooch_planet",
             on_time = blocks.on_time,
             forced = blocks.forced,
@@ -348,6 +354,7 @@ pub fn sync_planets(resources: &mut Resources) {
             bare_example = blocks.bare_example.as_deref().unwrap_or("-"),
             emptied = blocks.emptied,
             moved = blocks.moved,
+            turned_away = blocks.turned_away,
             skipped = ?skipped,
             behind = epoch.saturating_sub(terrain.frontier().min(epoch)),
             backlog = terrain.waiting(),
@@ -364,6 +371,7 @@ pub fn sync_planets(resources: &mut Resources) {
         blocks.bare_example = None;
         blocks.emptied = 0;
         blocks.moved = 0;
+        blocks.turned_away = 0;
     }
     let stats = PlanetStats {
         resident: state.pool.resident(),

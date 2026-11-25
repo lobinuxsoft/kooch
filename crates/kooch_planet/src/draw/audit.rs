@@ -6,9 +6,9 @@ use std::collections::HashSet;
 use glam::IVec3;
 
 use super::{Blocks, PARTS};
-use crate::BlockKey;
 use crate::mesh::Part;
 use crate::seam::{FINER, OWN, SAME, direction, levels};
+use crate::{BlockKey, BlockPool};
 
 #[derive(Debug, PartialEq)]
 enum Side {
@@ -19,7 +19,7 @@ enum Side {
 }
 
 impl Blocks {
-    pub(super) fn audit(&mut self) {
+    pub(super) fn audit(&mut self, pool: &BlockPool) {
         let changed = std::mem::take(&mut self.changed);
         let mut around = HashSet::new();
         for &key in &changed {
@@ -38,19 +38,12 @@ impl Blocks {
             self.check(key);
         }
         for key in std::mem::take(&mut self.left_solid) {
-            if self.covered(key) {
+            let Some(hole) = self.hole(key, pool) else {
                 continue;
-            }
+            };
             self.bare += 1;
             if self.bare_example.is_none() {
-                let shown_children = children(key).into_iter().filter(|&c| self.shown(c)).count();
-                self.bare_example = Some(format!(
-                    "{key:?} children shown {shown_children} child known {}",
-                    children(key)
-                        .into_iter()
-                        .filter(|c| self.of_key.contains_key(c))
-                        .count(),
-                ));
+                self.bare_example = Some(format!("{key:?} left, {hole}"));
             }
         }
         self.changed = changed;
@@ -63,19 +56,35 @@ impl Blocks {
             .is_some_and(|&i| self.shown[i as usize])
     }
 
-    /// Whether something on screen holds `key`'s space: itself, an ancestor, or a descendant within
-    /// two levels, which the 2:1 balance makes every level that can replace it.
-    fn covered(&self, key: BlockKey) -> bool {
-        let mut up = key;
-        for _ in 0..32 {
-            if self.shown(up) {
-                return true;
-            }
-            up = up.parent();
+    /// Whether `key` or an ancestor is on screen.
+    fn drawn(&self, key: BlockKey) -> bool {
+        std::iter::successors(Some(key), |k| Some(k.parent()))
+            .take(32)
+            .any(|k| self.shown(k))
+    }
+
+    /// A resident block in or around `key`'s space that nothing on screen draws: what replaces
+    /// `key` has not appeared yet. Also when the pool turned away a block meant to replace it.
+    fn hole(&self, key: BlockKey, pool: &BlockPool) -> Option<String> {
+        if self.drawn(key) {
+            return None;
         }
-        children(key)
+        let below = children(key)
             .into_iter()
-            .any(|c| self.shown(c) || children(c).into_iter().any(|g| self.shown(g)))
+            .flat_map(|c| std::iter::once(c).chain(children(c)));
+        let above = std::iter::successors(Some(key.parent()), |k| Some(k.parent())).take(32);
+        for k in below.chain(above) {
+            if pool.slot(k).is_some() && !self.drawn(k) {
+                let built = self.built(k);
+                return Some(format!("level {} resident, hidden, built={built}", k.level));
+            }
+        }
+        let resident = children(key)
+            .into_iter()
+            .filter(|&c| pool.slot(c).is_some() || self.drawn(c))
+            .count();
+        // Children with no surface take no slot, so fewer than eight is not a hole by itself.
+        (resident == 0).then(|| "nothing resident under or over it".to_string())
     }
 
     /// On screen with geometry: the only kind a seam can tear against.
