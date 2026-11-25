@@ -72,6 +72,8 @@ pub struct MeshletRenderStage {
     /// movement diff (#477): a caster whose hash changed invalidates
     /// the shadow pages both its old and its new bounds reach.
     pub(super) previous_bounds: Vec<crate::shadow::InstanceBounds>,
+    /// Every drawn mesh's row, kept from frame to frame (#2014).
+    pub(super) slots: crate::meshlet::instance_slots::InstanceSlots,
     /// This frame's moved-caster spheres, old and new bounds alike,
     /// rebuilt where `instance_bounds` is.
     pub(super) moved_casters: Vec<[f32; 4]>,

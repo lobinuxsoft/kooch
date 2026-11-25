@@ -115,6 +115,7 @@ impl MeshletRenderStage {
             shadow_alpha: crate::shadow::ShadowAlpha::new(device),
             masked,
             previous_bounds: Vec::new(),
+            slots: Default::default(),
             moved_casters: Vec::new(),
             point_cube_cache: Vec::new(),
             gpu_pool: None,

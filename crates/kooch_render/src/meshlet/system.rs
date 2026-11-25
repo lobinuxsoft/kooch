@@ -31,6 +31,8 @@ pub struct MeshletPipeline {
     frame: u32,
     /// Which masked pairs draw a cut mesh instead of discarding per pixel (#452).
     pub trim: AlphaTrim,
+    /// A mesh with no meshlets that free instance slots point at (#2014). Kept by the repack.
+    empty: Option<u32>,
 }
 
 /// Frames a mesh may go unasked before its slot goes back to the pool (#1589).
@@ -43,6 +45,20 @@ pub const MESH_MAX_AGE: u32 = 60;
 impl MeshletPipeline {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A mesh with no meshlets, for an instance slot nothing holds: it culls to nothing in every
+    /// pass. Reserved once, and carried through every repack.
+    pub fn empty_mesh(&mut self) -> u32 {
+        if let Some(id) = self.empty {
+            return id;
+        }
+        let id = self
+            .pool
+            .reserve_gpu(GpuMeshSizes::default(), MeshBounds::default())
+            .mesh_id;
+        self.empty = Some(id);
+        id
     }
 
     pub fn pool_mut(&mut self) -> &mut GlobalMeshPool {
@@ -200,9 +216,12 @@ impl MeshletPipeline {
             .iter()
             .map(|(guid, handle)| (*guid, handle.mesh_id))
             .collect();
-        let moved = self
-            .pool
-            .retain(&live.iter().map(|(_, id)| *id).collect::<Vec<_>>());
+        let mut ids: Vec<u32> = live.iter().map(|(_, id)| *id).collect();
+        ids.extend(self.empty);
+        let mut moved = self.pool.retain(&ids);
+        if self.empty.is_some() {
+            self.empty = moved.pop().flatten();
+        }
         for ((guid, _), moved) in live.iter().zip(moved) {
             match moved {
                 Some(mesh_id) => self.registry.insert(*guid, MeshHandle { mesh_id }),
@@ -349,35 +368,7 @@ impl MeshletPipeline {
             out.push(instance);
             entities.push(key);
         }
-        // Per-instance prefix sum into `group_max_err`, after the reorder: each instance reserves
-        // `mesh_descriptors[mesh_id].group_count` consecutive slots starting at `running_base`.
-        let mut running_base: u32 = 0;
-        for instance in &mut out {
-            instance.group_base = running_base;
-            let group_count = self
-                .pool
-                .mesh_descriptors
-                .get(instance.mesh_id as usize)
-                .map(|d| d.group_count)
-                .unwrap_or(0);
-            running_base = running_base.saturating_add(group_count);
-        }
         (out, entities)
-    }
-
-    /// Total `group_max_err` slots the scene needs given an already- collected `MeshInstance`
-    /// slice.
-    pub fn instance_group_capacity(&self, instances: &[MeshInstance]) -> u32 {
-        let Some(last) = instances.last() else {
-            return 0;
-        };
-        let last_count = self
-            .pool
-            .mesh_descriptors
-            .get(last.mesh_id as usize)
-            .map(|d| d.group_count)
-            .unwrap_or(0);
-        last.group_base.saturating_add(last_count)
     }
 }
 

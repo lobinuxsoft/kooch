@@ -159,10 +159,10 @@ impl MeshletRenderStage {
                 return MeshletRenderStats::default();
             }
         };
-        let (instances, instance_entities) = self
+        let (drawn, keys) = self
             .pipeline
             .collect_scene_instances_with_entities(resources);
-        if instances.is_empty() {
+        if drawn.is_empty() {
             tracing::debug!(
                 target: "kooch_render::meshlet::render",
                 pipeline_registered = self.pipeline.registered_count(),
@@ -172,21 +172,27 @@ impl MeshletRenderStage {
         }
         tracing::debug!(
             target: "kooch_render::meshlet::render",
-            instances = instances.len(),
+            instances = drawn.len(),
             "render dispatching meshlet pipeline",
         );
+        let empty = self.pipeline.empty_mesh();
+        {
+            profiling::scope!("place instances");
+            let descriptors = &self.pipeline.pool().mesh_descriptors;
+            let groups = |id: u32| descriptors.get(id as usize).map_or(0, |d| d.group_count);
+            self.slots.place(drawn.into_iter().zip(keys), groups, empty);
+        }
         // Grow to fit rather than abort. A scene is authored, not declared: the count arrives from
         // the ECS walk above, and the construction-time capacity was only ever a starting guess.
         // Before this, the 257th instance panicked — in the editor and in a shipped game alike.
         // Before the upload: the opaque draws skip what this flags as masked (#452).
-        let mut instances = instances;
         self.masked.assign(
             device,
             queue,
             resources.get::<crate::material::MaterialPipeline>(),
-            &mut instances,
+            self.slots.rows_mut(),
         );
-        let required = instances.len() as u32;
+        let required = self.slots.rows().len() as u32;
         self.scene.ensure_capacity(device, required);
         self.instance_capacity = self.scene.capacity();
 
@@ -195,8 +201,9 @@ impl MeshletRenderStage {
         // was actually the upload, with the whole render path nested underneath.
         {
             profiling::scope!("upload instances");
+            let instances = self.slots.rows();
             self.scene
-                .upload_instances_with_history(queue, &instances, &instance_entities);
+                .upload_rows(queue, instances, self.slots.previous());
             // Every instance as a world-space sphere and a hash of its own bytes, for the
             // point-shadow cube cache (#778, #847).
             self.instance_bounds.clear();
@@ -205,7 +212,7 @@ impl MeshletRenderStage {
             let frame = resources
                 .get::<kooch_core::time::Time>()
                 .map(|t| t.frame_count());
-            for instance in &instances {
+            for instance in instances {
                 use std::hash::{Hash, Hasher};
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
                 bytemuck::bytes_of(instance).hash(&mut hasher);
@@ -262,8 +269,8 @@ impl MeshletRenderStage {
             self.previous_bounds.clone_from(&self.instance_bounds);
             let pool = self.pipeline.pool();
             self.forward_list.rebuild(
-                &instances,
-                crate::meshlet::scene::opaque_count(&instances),
+                instances,
+                self.slots.opaque(),
                 &self.instance_bounds,
                 cam_pos,
                 &pool.mesh_descriptors,
@@ -274,16 +281,17 @@ impl MeshletRenderStage {
         // 🔴 The shadow culls — the cascades', the pages' — see every instance, so transparent ones
         // cast a solid shadow (#452; by alpha is #1224). The view's cull sees the opaque ones alone:
         // they lead the buffer, and only the transparent passes draw the rest.
-        let opaque = crate::meshlet::scene::opaque_count(&instances);
-        let scene_params = SceneCullParams::new(instances.len() as u32, max_meshlets_per_mesh);
+        let opaque = self.slots.opaque();
+        let scene_params =
+            SceneCullParams::new(self.slots.rows().len() as u32, max_meshlets_per_mesh);
         // Worst case for every cull this frame, the view's and the four
         // cascades': one thread per instance-meshlet pair.
         let required_capacity = scene_params
             .instance_count
             .saturating_mul(scene_params.meshlets_per_mesh);
-        // group_max_err sized to the per-instance prefix-sum total (Σ over instances of
-        // mesh_descriptors[mesh_id].group_count), not the pool's group_capacity.
-        let required_group_capacity = self.pipeline.instance_group_capacity(&instances).max(1);
+        // group_max_err sized to the rows' group ranges, holes included (#2014), not the pool's
+        // group_capacity.
+        let required_group_capacity = self.slots.groups().max(1);
         // 🔴 Carried on the params so the LAMP cull sizes its arena by the same number.
         let required_chunks = crate::meshlet::dispatcher::chunks_for(
             scene_params.instance_count,
@@ -414,7 +422,7 @@ impl MeshletRenderStage {
             self.gpu_timers.write_start(&mut encoder);
         }
 
-        let instance_count = instances.len() as u32;
+        let instance_count = self.slots.rows().len() as u32;
         let view_params = SceneCullParams {
             instance_count: opaque as u32,
             ..scene_params
@@ -437,12 +445,16 @@ impl MeshletRenderStage {
         // Before any shadow raster: the transparent and masked casters' coverage they read (#1224,
         // #452).
         if let Some(materials) = resources.get::<crate::material::MaterialPipeline>() {
-            use crate::meshlet::scene::{INSTANCE_CASTS_NO_SHADOW, INSTANCE_MASKED};
-            let see_through: Vec<u32> = instances
+            use crate::meshlet::scene::{
+                INSTANCE_CASTS_NO_SHADOW, INSTANCE_EMPTY, INSTANCE_MASKED,
+            };
+            let see_through: Vec<u32> = self
+                .slots
+                .rows()
                 .iter()
                 .enumerate()
                 .filter(|(at, i)| *at >= opaque || i.flags & INSTANCE_MASKED != 0)
-                .filter(|(_, i)| i.flags & INSTANCE_CASTS_NO_SHADOW == 0)
+                .filter(|(_, i)| i.flags & (INSTANCE_CASTS_NO_SHADOW | INSTANCE_EMPTY) == 0)
                 .map(|(_, i)| i.material_id)
                 .collect();
             let time = kooch_core::time::Time::of(resources).elapsed_secs();

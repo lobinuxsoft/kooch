@@ -13,6 +13,7 @@ mod generated;
 mod gpu_meshes;
 mod gpu_meshlet;
 mod gpu_timers;
+mod instance_slots;
 mod loader;
 mod masked;
 mod material_pass;
