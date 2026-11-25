@@ -182,26 +182,29 @@ fn a_torn_sphere_is_covered() {
         let (_, after, split) = split_sphere(to);
         let new = meshed(&planets, &after, &split).expect("a device for the first");
         for (change, shown, stale) in [("split", &new, &old), ("merge", &old, &new)] {
-            let count = |overlap: bool, stale| {
-                let torn = torn(shown, stale);
-                let kept = torn
-                    .into_iter()
-                    .filter(|(p, _)| overlap || *p != Part::Overlap);
-                see_through(kept.map(|(_, t)| t))
-            };
-            let settled = count(true, shown).len();
-            let without = count(false, stale).len();
-            let with = count(true, stale);
-            eprintln!(
-                "{change} {from:?}→{to:?}: {settled} rays settled, torn {without} without the overlap, {} with",
-                with.len()
-            );
-            if with.len() > settled {
-                holes.push(format!(
-                    "{change} {from:?}→{to:?}: {} rays, first at {}",
-                    with.len() - settled,
-                    with[0]
-                ));
+            for degrees in [0.0f64, 60.0, 80.0] {
+                let tilt = degrees.to_radians();
+                let count = |overlap: bool, stale| {
+                    let torn = torn(shown, stale);
+                    let kept = torn
+                        .into_iter()
+                        .filter(|(p, _)| overlap || *p != Part::Overlap);
+                    see_through(kept.map(|(_, t)| t), tilt)
+                };
+                let settled = count(true, shown).len();
+                let without = count(false, stale).len();
+                let with = count(true, stale);
+                eprintln!(
+                    "{change} {from:?}→{to:?} at {degrees}°: {settled} settled, torn {without} without the overlap, {} with",
+                    with.len()
+                );
+                if with.len() > settled {
+                    holes.push(format!(
+                        "{change} {from:?}→{to:?} at {degrees}°: {} rays, first at {}",
+                        with.len() - settled,
+                        with[0]
+                    ));
+                }
             }
         }
     }
@@ -227,9 +230,10 @@ fn torn<'a>(
         .collect()
 }
 
-/// Rays aimed at the centre from evenly spread directions; the points on the sphere of those that
-/// meet no triangle before the centre.
-fn see_through<'a>(meshes: impl Iterator<Item = &'a Vec<[DVec3; 3]>>) -> Vec<DVec3> {
+/// Rays aimed at evenly spread points of the sphere, `tilt` radians off its normal; the points of
+/// those that meet no triangle before passing a metre under them. A tilted ray sees through a crack
+/// beside a sunk strip that a straight one would meet.
+fn see_through<'a>(meshes: impl Iterator<Item = &'a Vec<[DVec3; 3]>>, tilt: f64) -> Vec<DVec3> {
     const ROWS: usize = 128;
     const COLUMNS: usize = 256;
     let cell = |p: DVec3| {
@@ -264,22 +268,38 @@ fn see_through<'a>(meshes: impl Iterator<Item = &'a Vec<[DVec3; 3]>>) -> Vec<DVe
         }
     }
     const RAYS: usize = 200_000;
+    // From this far out along the ray, to this deep under the point it aims at.
+    const OUT: f64 = 3.0;
+    const UNDER: f64 = 1.0;
     let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
-    let far = RADIUS + 4.0;
     (0..RAYS)
-        .map(|i| {
+        .filter_map(|i| {
             let y = 1.0 - 2.0 * (i as f64 + 0.5) / RAYS as f64;
             let r = (1.0 - y * y).sqrt();
             let a = i as f64 * golden;
-            DVec3::new(r * a.cos(), y, r * a.sin())
+            let d = DVec3::new(r * a.cos(), y, r * a.sin());
+            // Tilted off the normal towards a tangent that turns from ray to ray.
+            let side = if d.y.abs() < 0.9 { DVec3::Y } else { DVec3::X };
+            let (t1, t2) = (
+                d.cross(side).normalize(),
+                d.cross(d.cross(side)).normalize(),
+            );
+            let turn = i as f64 * 2.399_963;
+            let tangent = t1 * turn.cos() + t2 * turn.sin();
+            let back = d * tilt.cos() + tangent * tilt.sin();
+            let aim = d * RADIUS;
+            let from = aim + back * OUT;
+            let mut seen = HashSet::new();
+            let crossed = (0..=16).any(|k| {
+                let at = from - back * ((OUT + UNDER) * f64::from(k) / 16.0);
+                let (row, column) = cell(at);
+                seen.insert(row * COLUMNS + column)
+                    && buckets[row * COLUMNS + column]
+                        .iter()
+                        .any(|&t| hits(from, -back, triangles[t], OUT + UNDER))
+            });
+            (!crossed).then_some(aim)
         })
-        .filter(|&d| {
-            let (row, column) = cell(d);
-            !buckets[row * COLUMNS + column]
-                .iter()
-                .any(|&t| hits(d * far, -d, triangles[t], far))
-        })
-        .map(|d| d * RADIUS)
         .collect()
 }
 
