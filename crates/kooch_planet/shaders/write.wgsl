@@ -355,7 +355,10 @@ fn write_main(
             continue;
         }
         let placed = cell_vertex(cell_of(i));
-        let sunk = placed[0] - placed[1] * select(0.0, SINK, part == OVERLAP);
+        let c = vec3<i32>(cell_of(i));
+        let past = max(max(vec3<i32>(2) - c, c - vec3<i32>(15)), vec3<i32>(0));
+        let depth = f32(max(past.x, max(past.y, past.z))) * SINK;
+        let sunk = placed[0] - placed[1] * select(0.0, depth, part == OVERLAP);
         // Sample 1 is the block's corner.
         let p = (sunk - vec3<f32>(1.0)) * job.voxel;
         let o = (job.first_vertex + n - 1u) * VERTEX_FLOATS;

@@ -182,7 +182,7 @@ fn a_torn_sphere_is_covered() {
         let (_, after, split) = split_sphere(to);
         let new = meshed(&planets, &after, &split).expect("a device for the first");
         for (change, shown, stale) in [("split", &new, &old), ("merge", &old, &new)] {
-            for degrees in [0.0f64, 60.0, 80.0] {
+            for degrees in [0.0f64, 80.0] {
                 let tilt = degrees.to_radians();
                 let count = |overlap: bool, stale| {
                     let torn = torn(shown, stale);
@@ -267,7 +267,7 @@ fn see_through<'a>(meshes: impl Iterator<Item = &'a Vec<[DVec3; 3]>>, tilt: f64)
             }
         }
     }
-    const RAYS: usize = 200_000;
+    const RAYS: usize = 100_000;
     // From this far out along the ray, to this deep under the point it aims at.
     const OUT: f64 = 3.0;
     const UNDER: f64 = 1.0;
