@@ -2869,6 +2869,7 @@ dependencies = [
  "kooch_world",
  "naga",
  "pollster 1.0.1",
+ "profiling",
  "tracing",
  "wgpu",
 ]

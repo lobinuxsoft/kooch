@@ -8,6 +8,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+profiling.workspace = true
 kooch_core.workspace = true
 kooch_ecs.workspace = true
 kooch_ecs_macros.workspace = true

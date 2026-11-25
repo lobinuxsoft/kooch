@@ -159,7 +159,10 @@ pub fn sync_planets(resources: &mut Resources) {
     else {
         return;
     };
-    let found = gather(resources);
+    let found = {
+        profiling::scope!("planet: gather");
+        gather(resources)
+    };
     let Some(mut state) = resources.remove::<PlanetTerrain>() else {
         return;
     };
@@ -212,41 +215,44 @@ pub fn sync_planets(resources: &mut Resources) {
             crate::budget::blocks_within(state.pool.resident(), usage, DEFAULT_CAPACITY)
         });
     fill_planets(&mut state.planets, &placed, &found, &viewers, &cones);
-    let worst = match viewers.is_empty() {
-        true => {
-            state.wanted.clear();
-            0.0
-        }
-        false => {
-            let started = Instant::now();
-            select(
-                &state.planets,
-                &view,
-                budget,
-                |key, min, max| {
-                    let revision = state.terrain.as_ref().map_or(0, |t| t.revision(key.planet));
-                    let frame = state.frame;
-                    if let Some(known) = state.known.get_mut(&key)
-                        && known.revision == revision
-                    {
-                        known.seen = frame;
-                        return known.surface;
-                    }
-                    if started.elapsed() > RANGE_BUDGET {
-                        return true;
-                    }
-                    let surface = crosses(&state.generators, &state.planets, key, min, max);
-                    let known = Known {
-                        revision,
-                        seen: frame,
-                        surface,
-                    };
-                    state.known.insert(key, known);
-                    surface
-                },
-                |key| state.split.contains(&key),
-                &mut state.wanted,
-            )
+    let worst = {
+        profiling::scope!("planet: select");
+        match viewers.is_empty() {
+            true => {
+                state.wanted.clear();
+                0.0
+            }
+            false => {
+                let started = Instant::now();
+                select(
+                    &state.planets,
+                    &view,
+                    budget,
+                    |key, min, max| {
+                        let revision = state.terrain.as_ref().map_or(0, |t| t.revision(key.planet));
+                        let frame = state.frame;
+                        if let Some(known) = state.known.get_mut(&key)
+                            && known.revision == revision
+                        {
+                            known.seen = frame;
+                            return known.surface;
+                        }
+                        if started.elapsed() > RANGE_BUDGET {
+                            return true;
+                        }
+                        let surface = crosses(&state.generators, &state.planets, key, min, max);
+                        let known = Known {
+                            revision,
+                            seen: frame,
+                            surface,
+                        };
+                        state.known.insert(key, known);
+                        surface
+                    },
+                    |key| state.split.contains(&key),
+                    &mut state.wanted,
+                )
+            }
         }
     };
     let frame = state.frame;
@@ -254,12 +260,16 @@ pub fn sync_planets(resources: &mut Resources) {
         .known
         .retain(|_, known| frame.wrapping_sub(known.seen) < KNOWN_GRACE);
     state.frame = frame.wrapping_add(1);
-    state.pool.apply(&state.wanted, &mut state.residency);
-    // After the pool changes, so the meshes see this frame's leaves; the next selection's
-    // hysteresis reads the same set, as nothing moves the pool in between.
-    fill_split(&mut state.split, &state.pool, &state.planets);
+    {
+        profiling::scope!("planet: pool");
+        state.pool.apply(&state.wanted, &mut state.residency);
+        // After the pool changes, so the meshes see this frame's leaves; the next selection's
+        // hysteresis reads the same set, as nothing moves the pool in between.
+        fill_split(&mut state.split, &state.pool, &state.planets);
+    }
     let mut meshed = std::mem::take(&mut state.meshed);
     if let Some(terrain) = &mut state.terrain {
+        profiling::scope!("planet: generate and count");
         let leaves = Leaves {
             pool: &state.pool,
             split: &state.split,
@@ -300,12 +310,15 @@ pub fn sync_planets(resources: &mut Resources) {
     }
     let counting = meshed.iter().map(|b| b.epoch);
     let frontier = state.terrain.as_ref().map_or(u64::MAX, Terrain::frontier);
-    blocks.swap(
-        resources,
-        &state.pool,
-        &state.planets,
-        counting.fold(frontier, u64::min),
-    );
+    {
+        profiling::scope!("planet: swap");
+        blocks.swap(
+            resources,
+            &state.pool,
+            &state.planets,
+            counting.fold(frontier, u64::min),
+        );
+    }
     match &mut state.terrain {
         Some(terrain) => {
             let frame = Frame {
@@ -315,11 +328,15 @@ pub fn sync_planets(resources: &mut Resources) {
                 placed: &placed,
                 found: &found,
             };
+            profiling::scope!("planet: write");
             blocks.draw(resources, &frame, terrain, &mut meshed);
         }
         None => meshed.clear(),
     }
-    blocks.submit(resources, &placed, &found);
+    {
+        profiling::scope!("planet: submit");
+        blocks.submit(resources, &placed, &found);
+    }
     let stats = PlanetStats {
         resident: state.pool.resident(),
         capacity: state.pool.capacity(),
