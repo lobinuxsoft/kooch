@@ -109,7 +109,7 @@ fn anchors(index: IVec3) -> [IVec3; 8] {
     let base = index & IVec3::splat(-ANCHOR);
     std::array::from_fn(|k| {
         let k = k as i32;
-        base + IVec3::new(k & 1, (k >> 1) & 1, k >> 2) * ANCHOR
+        base + crate::octant(k) * ANCHOR
     })
 }
 
