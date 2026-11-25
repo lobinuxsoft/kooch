@@ -332,6 +332,8 @@ pub fn sync_planets(resources: &mut Resources) {
             forced = blocks.forced,
             expired = blocks.expired,
             early = blocks.early,
+            torn = blocks.torn,
+            example = blocks.torn_example.as_deref().unwrap_or("-"),
             behind = epoch.saturating_sub(terrain.frontier().min(epoch)),
             backlog = terrain.waiting(),
             seams,
@@ -341,6 +343,8 @@ pub fn sync_planets(resources: &mut Resources) {
         blocks.forced = 0;
         blocks.expired = 0;
         blocks.early = 0;
+        blocks.torn = 0;
+        blocks.torn_example = None;
     }
     let stats = PlanetStats {
         resident: state.pool.resident(),

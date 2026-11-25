@@ -10,6 +10,7 @@
 //! [`Part`] `d % 2`. A neighbour's change re-meshes the seam alone, and a new block is shown once
 //! both are in hand.
 
+mod audit;
 mod swap;
 
 use std::collections::HashMap;
@@ -58,6 +59,9 @@ pub(crate) struct Blocks {
     staged: Vec<Option<Guid>>,
     staged_epoch: Vec<u64>,
     staged_at: Vec<u32>,
+    /// #1999 debug: per mesh, the neighbours the staged and the shown one were counted with.
+    staged_near: Vec<Near>,
+    near: Vec<Near>,
     /// Per mesh, whether a change waits: `staged`, or with none, taking the mesh away.
     pending: Vec<bool>,
     asked: Vec<Option<Asked>>,
@@ -85,6 +89,9 @@ pub(crate) struct Blocks {
     pub(crate) expired: u32,
     /// #1999 debug: due seam changes held for a new neighbour that waits hidden.
     pub(crate) early: u32,
+    /// #1999 debug: frames with a seam on screen fitting neighbours other than the shown ones.
+    pub(crate) torn: u32,
+    pub(crate) torn_example: Option<String>,
 }
 
 /// What [`Blocks::draw`] reads of the frame.
@@ -140,6 +147,7 @@ impl Blocks {
             self.triangles[d] = 0;
             self.meshlets[d] = 0;
             self.stage(d, None, block.epoch, meshes);
+            self.staged_near[d] = block.near;
             return;
         }
         self.asks = self.asks.wrapping_add(1);
@@ -231,6 +239,7 @@ impl Blocks {
         self.meshlets[d] = block.sizes.meshlets;
         // Staged even on screen: a seam counted for its neighbours' change waits for them (#1999).
         self.stage(d, Some(mesh), block.epoch, meshes);
+        self.staged_near[d] = block.near;
     }
 
     fn stage(&mut self, d: usize, mesh: Option<Guid>, epoch: u64, meshes: &mut GpuMeshes) {
@@ -356,6 +365,8 @@ impl Blocks {
                 self.staged.push(None);
                 self.staged_epoch.push(0);
                 self.staged_at.push(0);
+                self.staged_near.push(Near::default());
+                self.near.push(Near::default());
                 self.pending.push(false);
                 self.asked.push(None);
                 self.held.push(false);

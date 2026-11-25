@@ -125,6 +125,7 @@ impl Blocks {
             }
         }
         resources.insert(meshes);
+        self.audit(&roots);
         self.settled = awaited.is_empty() && lingering.is_empty() && waiting == 0 && held_back == 0;
     }
 
@@ -146,6 +147,7 @@ impl Blocks {
             true => self.on_time += 1,
             false => self.forced += 1,
         }
+        self.near[d] = self.staged_near[d];
         let staged = self.staged[d].take();
         if let Some(old) = std::mem::replace(&mut self.mesh[d], staged) {
             meshes.release(old);
