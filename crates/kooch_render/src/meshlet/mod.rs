@@ -4,6 +4,7 @@ mod asset;
 mod blit;
 mod builder;
 mod caps;
+mod casters;
 mod cull;
 mod debug;
 pub(crate) mod deferred;

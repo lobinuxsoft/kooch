@@ -193,7 +193,9 @@ impl MeshletRenderStage {
             self.slots.rows_mut(),
         );
         let required = self.slots.rows().len() as u32;
-        self.scene.ensure_capacity(device, required);
+        if self.scene.ensure_capacity(device, required) {
+            self.slots.resend();
+        }
         self.instance_capacity = self.scene.capacity();
 
         // 🔴 Braced. A `profiling::scope!` lives until the end of its enclosing block, so this one —
@@ -201,77 +203,37 @@ impl MeshletRenderStage {
         // was actually the upload, with the whole render path nested underneath.
         {
             profiling::scope!("upload instances");
-            let instances = self.slots.rows();
-            self.scene
-                .upload_rows(queue, instances, self.slots.previous());
-            // Every instance as a world-space sphere and a hash of its own bytes, for the
-            // point-shadow cube cache (#778, #847).
-            self.instance_bounds.clear();
-            self.instance_bounds.reserve(instances.len());
+            self.slots.diff();
+            self.scene.upload_rows(
+                queue,
+                self.slots.rows(),
+                self.slots.previous(),
+                self.slots.runs(),
+            );
+        }
+        {
+            profiling::scope!("casters");
+            let pool = self.pipeline.pool();
             let materials = resources.get::<crate::material::MaterialPipeline>();
-            let frame = resources
-                .get::<kooch_core::time::Time>()
-                .map(|t| t.frame_count());
-            for instance in instances {
-                use std::hash::{Hash, Hasher};
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                bytemuck::bytes_of(instance).hash(&mut hasher);
-                // 🔴 A see-through caster whose coverage moves with time is a caster that moved:
-                // its pages and cube faces redraw, or its shadow freezes at the frame they were
-                // cached (#1224).
-                let see_through = crate::meshlet::scene::INSTANCE_TRANSPARENT
-                    | crate::meshlet::scene::INSTANCE_MASKED;
-                if instance.flags & see_through != 0
-                    && materials
-                        .and_then(|m| m.slot_surface(instance.material_id))
-                        .is_some_and(|(_, s)| s.source.contains("input.time"))
-                {
-                    frame.hash(&mut hasher);
-                }
-                let bounds = self
-                    .pipeline
-                    .pool()
+            let sphere = |row: &crate::meshlet::scene::MeshInstance| {
+                let bounds = pool
                     .mesh_bounds
-                    .get(instance.mesh_id as usize)
+                    .get(row.mesh_id as usize)
                     .copied()
                     .unwrap_or_default();
-                let (center, radius) =
-                    bounds.transformed(glam::Mat4::from_cols_array_2d(&instance.transform));
-                self.instance_bounds.push(crate::shadow::InstanceBounds {
-                    center,
-                    radius,
-                    hash: hasher.finish(),
-                });
-            }
-
-            // The page cache's movement diff (#477): index against index, because the walk order is
-            // the buffer order and is stable frame to frame. A reorder reads as moves — extra
-            // redraws, never a stale page.
-            self.moved_casters.clear();
-            let frames = self.instance_bounds.len().max(self.previous_bounds.len());
-            for i in 0..frames {
-                let previous = self.previous_bounds.get(i);
-                let current = self.instance_bounds.get(i);
-                if let (Some(p), Some(c)) = (previous, current)
-                    && p.hash == c.hash
-                {
-                    continue;
-                }
-                if let Some(p) = previous {
-                    self.moved_casters
-                        .push([p.center.x, p.center.y, p.center.z, p.radius]);
-                }
-                if let Some(c) = current {
-                    self.moved_casters
-                        .push([c.center.x, c.center.y, c.center.z, c.radius]);
-                }
-            }
-            self.previous_bounds.clone_from(&self.instance_bounds);
-            let pool = self.pipeline.pool();
+                bounds.transformed(glam::Mat4::from_cols_array_2d(&row.transform))
+            };
+            let animated = |row: &crate::meshlet::scene::MeshInstance| {
+                materials
+                    .and_then(|m| m.slot_surface(row.material_id))
+                    .is_some_and(|(_, s)| s.source.contains("input.time"))
+            };
+            self.casters
+                .update(self.slots.rows(), self.slots.moved(), sphere, animated);
             self.forward_list.rebuild(
-                instances,
+                self.slots.rows(),
                 self.slots.opaque(),
-                &self.instance_bounds,
+                self.casters.bounds(),
                 cam_pos,
                 &pool.mesh_descriptors,
                 &pool.meshlets,

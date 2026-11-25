@@ -42,3 +42,18 @@ fn a_freed_slot_is_reused() {
     assert_eq!(slots.rows()[1].mesh_id, 4);
     assert_eq!(slots.groups(), 6);
 }
+
+/// A row that stops moving is written once more, for its previous transform, then never again.
+#[test]
+fn a_still_row_stops_uploading() {
+    let mut slots = InstanceSlots::default();
+    let mut written = Vec::new();
+    for x in [0.0, 1.0, 1.0, 1.0] {
+        let moved = glam::Mat4::from_translation(glam::Vec3::X * x);
+        let row = MeshInstance::new(moved, 1, 0);
+        slots.place([(row, (Entity::new(1, 0), 0))], |_| 2, 99);
+        slots.diff();
+        written.push(slots.runs().to_vec());
+    }
+    assert_eq!(written, [vec![0..1], vec![0..1], vec![0..1], vec![]]);
+}

@@ -2,6 +2,7 @@
 //! LOD-group range for as long as it draws, so one entering or leaving moves no other row.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use super::DrawKey;
 use super::pool::{Holes, Span};
@@ -20,7 +21,16 @@ pub(crate) struct InstanceSlots {
     rows: Vec<MeshInstance>,
     previous: Vec<Matrix>,
     arrived: Vec<(MeshInstance, DrawKey, u32)>,
+    /// What the GPU holds, row for row: only the rows that differ are written.
+    sent: Vec<MeshInstance>,
+    sent_previous: Vec<Matrix>,
+    moved: Vec<u32>,
+    dirty: Vec<u32>,
+    runs: Vec<Range<usize>>,
 }
+
+/// Clean rows a run may span to save a write: 64 rows are 8 KiB.
+const GAP: usize = 64;
 
 impl InstanceSlots {
     /// Places this frame's drawn meshes, frees the slots of those no longer drawn, and lays out the
@@ -57,6 +67,67 @@ impl InstanceSlots {
         }
         self.arrived = arrived;
         self.lay_out();
+    }
+
+    /// Compares the rows with what the GPU holds. Call after the last write to the rows.
+    pub fn diff(&mut self) {
+        self.moved.clear();
+        self.dirty.clear();
+        for (i, row) in self.rows.iter().enumerate() {
+            let moved = self
+                .sent
+                .get(i)
+                .is_none_or(|sent| bytemuck::bytes_of(sent) != bytemuck::bytes_of(row));
+            // A row standing still still owes one write: its previous transform catches up.
+            let caught_up = self.sent_previous.get(i).is_some_and(|sent| {
+                bytemuck::bytes_of(sent) == bytemuck::bytes_of(&self.previous[i])
+            });
+            if moved {
+                self.moved.push(i as u32);
+            }
+            if moved || !caught_up {
+                self.dirty.push(i as u32);
+            }
+        }
+        let len = self.rows.len();
+        self.sent.truncate(len);
+        self.sent_previous.truncate(len);
+        // Ascending, and every row past the old end is dirty, so a push lands at its index.
+        for &i in &self.dirty {
+            let i = i as usize;
+            match self.sent.get_mut(i) {
+                Some(sent) => *sent = self.rows[i],
+                None => self.sent.push(self.rows[i]),
+            }
+            match self.sent_previous.get_mut(i) {
+                Some(sent) => *sent = self.previous[i],
+                None => self.sent_previous.push(self.previous[i]),
+            }
+        }
+        self.runs.clear();
+        for &i in &self.dirty {
+            let i = i as usize;
+            match self.runs.last_mut() {
+                Some(run) if i <= run.end + GAP => run.end = i + 1,
+                _ => self.runs.push(i..i + 1),
+            }
+        }
+    }
+
+    /// The GPU lost every row: a grown buffer starts empty.
+    pub fn resend(&mut self) {
+        self.sent.clear();
+        self.sent_previous.clear();
+    }
+
+    /// Rows whose own bytes changed since the last [`Self::diff`]: what moves a shadow.
+    pub fn moved(&self) -> &[u32] {
+        &self.moved
+    }
+
+    /// Row ranges to write, from the last [`Self::diff`].
+    pub fn runs(&self) -> &[Range<usize>] {
+        &self.runs
     }
 
     /// Every row, opaque then transparent.

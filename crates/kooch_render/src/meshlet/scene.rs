@@ -144,9 +144,11 @@ impl MeshletScene {
     }
 
     /// Grows the instance buffer to hold at least `required` slots.
-    pub fn ensure_capacity(&mut self, device: &wgpu::Device, required: u32) {
+    /// Grows the buffers to hold `required` rows; `true` when they were replaced, which leaves
+    /// every row to upload again.
+    pub fn ensure_capacity(&mut self, device: &wgpu::Device, required: u32) -> bool {
         if required <= self.capacity {
-            return;
+            return false;
         }
         let new_capacity = kooch_core::gpu::grown(required, self.capacity);
         self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -164,6 +166,7 @@ impl MeshletScene {
             "grew the instance buffer",
         );
         self.capacity = new_capacity;
+        true
     }
 
     /// What the scene's instance mirror holds on the device.
@@ -223,22 +226,31 @@ impl MeshletScene {
         self.upload_instance_data(queue, instances);
     }
 
-    /// Uploads the rows and each row's transform from the previous frame (#481).
+    /// Uploads the `runs` of rows that changed, and each one's transform from the previous frame
+    /// (#481). The rest already sit on the GPU (#2014).
     pub fn upload_rows(
         &self,
         queue: &wgpu::Queue,
         rows: &[MeshInstance],
         previous: &[[[f32; 4]; 4]],
+        runs: &[std::ops::Range<usize>],
     ) {
         debug_assert_eq!(rows.len(), previous.len());
-        if !previous.is_empty() {
+        let row = std::mem::size_of::<MeshInstance>() as u64;
+        let matrix = std::mem::size_of::<[[f32; 4]; 4]>() as u64;
+        for run in runs {
+            let (Some(rows), Some(previous)) = (rows.get(run.clone()), previous.get(run.clone()))
+            else {
+                continue;
+            };
+            let at = run.start as u64;
+            queue.write_buffer(&self.instance_buffer, at * row, bytemuck::cast_slice(rows));
             queue.write_buffer(
                 &self.previous_transform_buffer,
-                0,
+                at * matrix,
                 bytemuck::cast_slice(previous),
             );
         }
-        self.upload_instance_data(queue, rows);
     }
 
     fn upload_instance_data(&self, queue: &wgpu::Queue, instances: &[MeshInstance]) {
