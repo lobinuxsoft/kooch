@@ -120,6 +120,25 @@ fn a_meshed_sphere_is_watertight() {
     assert!(faults.is_empty(), "faults: {faults:#?}");
 }
 
+/// The sphere at level 1 with `octants` split into their eight level-0 blocks, and those parents.
+fn split_sphere(octants: &[usize]) -> (Planets, Vec<BlockKey>, HashSet<BlockKey>) {
+    let (planets, coarse) = sphere(0.25, 1);
+    let parents: HashSet<BlockKey> = octants.iter().map(|&o| coarse[o]).collect();
+    let children = parents.iter().flat_map(|parent| {
+        (0..8).map(|i| BlockKey {
+            level: 0,
+            cell: parent.cell * 2 + IVec3::new(i & 1, (i >> 1) & 1, i >> 2),
+            ..*parent
+        })
+    });
+    let rest = coarse.iter().copied().filter(|k| !parents.contains(k));
+    let keys = rest.chain(children).collect();
+    (planets, keys, parents)
+}
+
+/// Splits whose level changes meet around a face, an edge and a corner.
+const SPLITS: [&[usize]; 4] = [&[0], &[7], &[0, 1, 2], &[0, 1, 2, 3, 4, 5, 6]];
+
 /// 🔴 A level change closes too: octants of the sphere split into their eight finer blocks (#393).
 /// One octant puts coarse blocks past the fine ones' − or + faces; three of the four around an
 /// axis, or seven of eight, put one coarse block among fine ones around an edge or a corner, which
@@ -127,18 +146,8 @@ fn a_meshed_sphere_is_watertight() {
 #[test]
 fn a_split_sphere_is_watertight() {
     let mut faults = Vec::new();
-    for octants in [&[0][..], &[7], &[0, 1, 2], &[0, 1, 2, 3, 4, 5, 6]] {
-        let (planets, coarse) = sphere(0.25, 1);
-        let parents: HashSet<BlockKey> = octants.iter().map(|&o| coarse[o]).collect();
-        let children = parents.iter().flat_map(|parent| {
-            (0..8).map(|i| BlockKey {
-                level: 0,
-                cell: parent.cell * 2 + IVec3::new(i & 1, (i >> 1) & 1, i >> 2),
-                ..*parent
-            })
-        });
-        let rest = coarse.iter().copied().filter(|k| !parents.contains(k));
-        let keys: Vec<BlockKey> = rest.chain(children).collect();
+    for octants in SPLITS {
+        let (planets, keys, parents) = split_sphere(octants);
         let found = mesh_faults(&planets, &keys, &parents);
         // A fine cell meeting one coarse cell twice makes a flat triangle: wasted, never a hole.
         let holes = found.into_iter().filter(|(at, _)| !at.starts_with("flat"));
@@ -147,25 +156,150 @@ fn a_split_sphere_is_watertight() {
     assert!(faults.is_empty(), "faults: {faults:#?}");
 }
 
-/// Where the mesh fails to close, counted by kind and place. Every edge is used once each way. A crack between blocks leaves an edge used once; a flipped
-/// triangle uses one twice the same way. Read back from the meshlets the write pass put in the
-/// pool, as the renderer reads them.
-fn mesh_faults(
+/// 🔴 #1999: what shows while a level change settles has no hole. Blocks on both sides of the change
+/// keep the seam they were meshed with before it, beside blocks meshed after; rays from outside
+/// count where the sphere is seen through.
+#[test]
+fn a_torn_sphere_is_covered() {
+    let mut holes = Vec::new();
+    for octants in SPLITS {
+        let (planets, after, parents) = split_sphere(octants);
+        let (_, before) = sphere(0.25, 1);
+        let Some(coarse) = meshed(&planets, &before, &HashSet::new()) else {
+            return;
+        };
+        let fine = meshed(&planets, &after, &parents).expect("a device for the first");
+        for (change, shown, stale) in [
+            // Nothing torn: what the rays see of a closed surface.
+            ("settled", &fine, &fine),
+            ("split", &fine, &coarse),
+            ("merge", &coarse, &fine),
+        ] {
+            let torn = torn(shown, stale);
+            let bare: Vec<_> = torn.iter().filter(|(p, _)| *p != Part::Overlap).collect();
+            let without = see_through(bare.iter().map(|(_, t)| *t));
+            let with = see_through(torn.iter().map(|(_, t)| *t));
+            eprintln!(
+                "{change} {octants:?}: {} rays through without the overlap, {} with",
+                without.len(),
+                with.len()
+            );
+            if let Some(at) = with.first() {
+                holes.push(format!(
+                    "{change} {octants:?}: {} rays, first at {at}",
+                    with.len()
+                ));
+            }
+        }
+    }
+    assert!(holes.is_empty(), "holes: {holes:#?}");
+}
+
+/// The meshes of `shown`, each seam swapped for the one `stale` meshed for the same block.
+fn torn<'a>(
+    shown: &'a [(CountedBlock, Vec<[DVec3; 3]>)],
+    stale: &'a [(CountedBlock, Vec<[DVec3; 3]>)],
+) -> Vec<(Part, &'a Vec<[DVec3; 3]>)> {
+    let seams: HashMap<BlockKey, &Vec<[DVec3; 3]>> = stale
+        .iter()
+        .filter(|(b, _)| b.part == Part::Seam)
+        .map(|(b, t)| (b.key, t))
+        .collect();
+    shown
+        .iter()
+        .map(|(b, t)| match b.part {
+            Part::Seam => (b.part, seams.get(&b.key).copied().unwrap_or(t)),
+            _ => (b.part, t),
+        })
+        .collect()
+}
+
+/// Rays aimed at the centre from evenly spread directions; the points on the sphere of those that
+/// meet no triangle before the centre.
+fn see_through<'a>(meshes: impl Iterator<Item = &'a Vec<[DVec3; 3]>>) -> Vec<DVec3> {
+    const ROWS: usize = 128;
+    const COLUMNS: usize = 256;
+    let cell = |p: DVec3| {
+        let d = p.normalize();
+        let row = (d.y.clamp(-1.0, 1.0).acos() / std::f64::consts::PI * ROWS as f64) as usize;
+        let angle = d.z.atan2(d.x) + std::f64::consts::PI;
+        let column = (angle / std::f64::consts::TAU * COLUMNS as f64) as usize;
+        (row.min(ROWS - 1), column.min(COLUMNS - 1))
+    };
+    let triangles: Vec<[DVec3; 3]> = meshes.flatten().copied().collect();
+    let mut buckets = vec![Vec::new(); ROWS * COLUMNS];
+    for (i, tri) in triangles.iter().enumerate() {
+        let cells = tri.map(cell);
+        let rows = cells.iter().map(|c| c.0);
+        let (top, bottom) = (rows.clone().min().unwrap_or(0), rows.max().unwrap_or(0));
+        let columns: Vec<usize> = cells.iter().map(|c| c.1).collect();
+        let (left, right) = (
+            columns.iter().min().copied().unwrap_or(0),
+            columns.iter().max().copied().unwrap_or(0),
+        );
+        // Across the seam of the angle, or at a pole: every column.
+        let span: Vec<usize> = match right - left > COLUMNS / 2 || top == 0 || bottom == ROWS - 1 {
+            true => (0..COLUMNS).collect(),
+            false => (left..=right).collect(),
+        };
+        for row in top..=bottom {
+            for &column in &span {
+                buckets[row * COLUMNS + column].push(i);
+            }
+        }
+    }
+    const RAYS: usize = 200_000;
+    let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
+    let far = RADIUS + 4.0;
+    (0..RAYS)
+        .map(|i| {
+            let y = 1.0 - 2.0 * (i as f64 + 0.5) / RAYS as f64;
+            let r = (1.0 - y * y).sqrt();
+            let a = i as f64 * golden;
+            DVec3::new(r * a.cos(), y, r * a.sin())
+        })
+        .filter(|&d| {
+            let (row, column) = cell(d);
+            !buckets[row * COLUMNS + column]
+                .iter()
+                .any(|&t| hits(d * far, -d, triangles[t], far))
+        })
+        .map(|d| d * RADIUS)
+        .collect()
+}
+
+/// Whether the ray from `from` along unit `along` meets `tri` within `reach`, either side facing.
+fn hits(from: DVec3, along: DVec3, tri: [DVec3; 3], reach: f64) -> bool {
+    let [a, b, c] = tri;
+    let (ab, ac) = (b - a, c - a);
+    let p = along.cross(ac);
+    let det = ab.dot(p);
+    if !(det.abs() > 1e-15) {
+        return false;
+    }
+    let to = from - a;
+    let u = to.dot(p) / det;
+    let q = to.cross(ab);
+    let v = along.dot(q) / det;
+    let t = ac.dot(q) / det;
+    const SLACK: f64 = 1e-9;
+    u >= -SLACK && v >= -SLACK && u + v <= 1.0 + SLACK && t > 0.0 && t < reach
+}
+
+/// Every block's mesh of `keys`, each part apart, as triangles in the planet's space. Read back
+/// from the meshlets the write pass put in the pool, as the renderer reads them.
+fn meshed(
     planets: &Planets,
     keys: &[BlockKey],
     split: &HashSet<BlockKey>,
-) -> Vec<(String, u32)> {
-    let Some((device, queue)) = try_acquire() else {
-        return Vec::new();
-    };
-    let (mut terrain, mut blocks) = count_all(&device, &queue, planets, keys, split);
+) -> Option<Vec<(CountedBlock, Vec<[DVec3; 3]>)>> {
+    let (device, queue) = try_acquire()?;
+    let (mut terrain, blocks) = count_all(&device, &queue, planets, keys, split);
     assert_eq!(
         blocks.len(),
         keys.len() * PARTS,
         "every mesh of every block comes back"
     );
-    // The overlap is a sunk copy under the seam: open by design, never part of the closed surface.
-    blocks.retain(|b| b.part != Part::Overlap);
     let mut pool = GlobalMeshPool::new();
     let ids: Vec<u32> = blocks
         .iter()
@@ -201,13 +335,52 @@ fn mesh_faults(
         .flat_map(|w| w.to_le_bytes())
         .collect();
     let meshlets = read(&device, &queue, &buffers.meshlets);
+    let meshes = blocks.into_iter().zip(&ids).map(|(block, &id)| {
+        let mesh = descriptor(id);
+        let range = mesh.vertex_offset..mesh.vertex_offset + block.sizes.vertices;
+        let mut triangles = Vec::new();
+        for m in mesh.first_meshlet..mesh.first_meshlet + mesh.meshlet_count {
+            let d = &meshlets[m as usize * 28..m as usize * 28 + 28];
+            let (first_mv, first_byte, count, tris) = (d[0], d[1], d[2], d[3]);
+            assert!(
+                count <= 64 && tris <= 124,
+                "{count} vertices, {tris} triangles"
+            );
+            let corner = |t: u32, k: u32| -> DVec3 {
+                let local = u32::from(bytes[(first_byte + t * 3 + k) as usize]);
+                assert!(local < count, "a corner outside its meshlet");
+                let v = meshlet_vertices[(first_mv + local) as usize];
+                assert!(range.contains(&v), "a vertex outside its mesh");
+                let p = &vertices[v as usize * 8..v as usize * 8 + 3];
+                let p = Vec3::from_array([0, 1, 2].map(|k| f32::from_bits(p[k])));
+                block.origin + p.as_dvec3()
+            };
+            triangles.extend((0..tris).map(|t| [corner(t, 0), corner(t, 1), corner(t, 2)]));
+        }
+        (block, triangles)
+    });
+    Some(meshes.collect())
+}
 
+/// Where the mesh fails to close, counted by kind and place. Every edge is used once each way. A
+/// crack between blocks leaves an edge used once; a flipped triangle uses one twice the same way.
+fn mesh_faults(
+    planets: &Planets,
+    keys: &[BlockKey],
+    split: &HashSet<BlockKey>,
+) -> Vec<(String, u32)> {
+    let Some(mut blocks) = meshed(planets, keys, split) else {
+        return Vec::new();
+    };
+    // The overlap is a sunk copy under the seam: open by design, never part of the closed surface.
+    blocks.retain(|(b, _)| b.part != Part::Overlap);
     let quantise = |p: DVec3| (p * 1000.0).round().as_ivec3();
     // Which blocks a point lies on and where in each: `-`/`+` on a low/high face, `.` inside. What
     // tells a face seam from an edge or corner one.
     let place = |p: DVec3| {
         blocks
             .iter()
+            .map(|(b, _)| b)
             .filter(|b| b.part == Part::Interior)
             .filter_map(|b| {
                 let side = f64::from(b.voxel) * 16.0;
@@ -229,45 +402,25 @@ fn mesh_faults(
     let mut edges: HashMap<(IVec3, IVec3), i32> = HashMap::new();
     let mut worst = 0.0f64;
     let mut triangles = 0;
-    for (block, &id) in blocks.iter().zip(&ids) {
-        let mesh = descriptor(id);
-        let range = mesh.vertex_offset..mesh.vertex_offset + block.sizes.vertices;
-        for m in mesh.first_meshlet..mesh.first_meshlet + mesh.meshlet_count {
-            let d = &meshlets[m as usize * 28..m as usize * 28 + 28];
-            let (first_mv, first_byte, count, tris) = (d[0], d[1], d[2], d[3]);
-            assert!(
-                count <= 64 && tris <= 124,
-                "{count} vertices, {tris} triangles"
-            );
-            let corner = |t: u32, k: u32| -> DVec3 {
-                let local = u32::from(bytes[(first_byte + t * 3 + k) as usize]);
-                assert!(local < count, "a corner outside its meshlet");
-                let v = meshlet_vertices[(first_mv + local) as usize];
-                assert!(range.contains(&v), "a vertex outside its mesh");
-                let p = &vertices[v as usize * 8..v as usize * 8 + 3];
-                let p = Vec3::from_array([0, 1, 2].map(|k| f32::from_bits(p[k])));
-                block.origin + p.as_dvec3()
-            };
-            for t in 0..tris {
-                let [a, b, c] = [corner(t, 0), corner(t, 1), corner(t, 2)];
-                for p in [a, b, c] {
-                    worst = worst.max((p.length() - RADIUS).abs());
+    for (block, mesh) in &blocks {
+        for &[a, b, c] in mesh {
+            for p in [a, b, c] {
+                worst = worst.max((p.length() - RADIUS).abs());
+            }
+            let centre = (a + b + c) / 3.0;
+            let facing = (b - a).cross(c - a).dot(centre);
+            triangles += 1;
+            if !(facing > 0.0) {
+                let kind = if facing == 0.0 { "flat" } else { "inward" };
+                let key = format!("{kind} by L{}: {}", block.key.level, place(centre));
+                *faults.entry(key).or_default() += 1;
+                // A flat one repeats a corner and would twin its own edges.
+                if facing == 0.0 {
+                    continue;
                 }
-                let centre = (a + b + c) / 3.0;
-                let facing = (b - a).cross(c - a).dot(centre);
-                triangles += 1;
-                if !(facing > 0.0) {
-                    let kind = if facing == 0.0 { "flat" } else { "inward" };
-                    let key = format!("{kind} by L{}: {}", block.key.level, place(centre));
-                    *faults.entry(key).or_default() += 1;
-                    // A flat one repeats a corner and would twin its own edges.
-                    if facing == 0.0 {
-                        continue;
-                    }
-                }
-                for (from, to) in [(a, b), (b, c), (c, a)] {
-                    *edges.entry((quantise(from), quantise(to))).or_default() += 1;
-                }
+            }
+            for (from, to) in [(a, b), (b, c), (c, a)] {
+                *edges.entry((quantise(from), quantise(to))).or_default() += 1;
             }
         }
     }
