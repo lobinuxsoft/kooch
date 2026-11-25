@@ -288,7 +288,7 @@ impl MeshletRenderStage {
             sun_shadow_layers,
             self.lamp_pace.lamps(),
             lamps,
-            &self.moved_casters,
+            self.casters.moved(),
             lod_target,
             self.shadow_alpha.bind_group(),
             track,

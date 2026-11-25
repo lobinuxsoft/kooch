@@ -24,14 +24,3 @@ fn mesh_instance_round_trip_transform() {
     assert_eq!(inst.mesh_id, 7);
     assert_eq!(inst.material_id, 11);
 }
-
-/// The culls are handed everything before the first transparent instance.
-#[test]
-fn transparent_instances_are_counted_out() {
-    use glam::Mat4;
-    let mut glass = MeshInstance::new(Mat4::IDENTITY, 0, 0);
-    glass.flags |= INSTANCE_TRANSPARENT;
-    let solid = MeshInstance::new(Mat4::IDENTITY, 0, 0);
-    assert_eq!(opaque_count(&[solid, solid, glass]), 2);
-    assert_eq!(opaque_count(&[solid]), 1);
-}

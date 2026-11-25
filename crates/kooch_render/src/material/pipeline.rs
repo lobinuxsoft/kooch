@@ -470,6 +470,9 @@ impl MaterialPipeline {
                 asked.insert(material);
             }
         });
+        if let Some(submitted) = resources.get::<crate::meshlet::Submitted>() {
+            asked.extend(submitted.materials());
+        }
         Query::<&PostProcess>::new(resources).for_each(|post| {
             if !post.enabled {
                 return;

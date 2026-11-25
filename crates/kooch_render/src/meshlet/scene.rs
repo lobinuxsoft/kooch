@@ -10,7 +10,7 @@ pub const LOD_FORCE_NONE: i32 = i32::MIN;
 /// This instance samples shadow maps.
 pub const INSTANCE_RECEIVES_SHADOWS: u32 = 1u32 << 0;
 /// Drawn by the forward pass, blended and sorted, and by no cull (#452). Such instances sit after
-/// every opaque one; see [`opaque_count`].
+/// every opaque one; see `InstanceSlots::opaque`.
 pub const INSTANCE_TRANSPARENT: u32 = 1u32 << 1;
 
 /// Left out of every shadow view: its renderer's `cast_shadows` is off.
@@ -18,14 +18,8 @@ pub const INSTANCE_CASTS_NO_SHADOW: u32 = 1u32 << 2;
 /// Rasterised by its material's masked bin, so the opaque draw leaves it out (#452). Set per frame
 /// by `MaskedRaster::assign`, only once the bin exists.
 pub const INSTANCE_MASKED: u32 = 1u32 << 3;
-
-/// How many instances lead the list before the first transparent one: what every cull is given.
-pub fn opaque_count(instances: &[MeshInstance]) -> usize {
-    instances
-        .iter()
-        .position(|i| i.flags & INSTANCE_TRANSPARENT != 0)
-        .unwrap_or(instances.len())
-}
+/// A slot no mesh holds (#2014): no layer and a mesh with no meshlets, so nothing draws it.
+pub const INSTANCE_EMPTY: u32 = 1u32 << 4;
 
 /// Per-instance scene record consumed by `cs_cull_scene`.
 #[repr(C)]
@@ -84,7 +78,7 @@ impl Default for MeshInstance {
 pub struct SceneCullParams {
     pub instance_count: u32,
     pub meshlets_per_mesh: u32,
-    /// LOD groups the scene actually has — `instance_group_capacity`'s O(1) prefix sum, not
+    /// LOD groups the scene's rows span, holes included (#2014), not
     /// `instance_count * meshlets_per_mesh`.
     pub group_capacity: u32,
     /// Chunk slots the two-level cull's list holds (#1002).
@@ -123,11 +117,6 @@ pub struct MeshletScene {
     previous_transform_buffer: wgpu::Buffer,
     capacity: u32,
     bgl: wgpu::BindGroupLayout,
-    /// Last frame's transform for each mesh drawn then.
-    previous_transforms: std::collections::HashMap<super::DrawKey, [[f32; 4]; 4]>,
-    /// Scratch for the upload, kept so the per-frame gather does not
-    /// allocate.
-    previous_scratch: Vec<[[f32; 4]; 4]>,
 }
 
 impl MeshletScene {
@@ -147,8 +136,6 @@ impl MeshletScene {
             previous_transform_buffer,
             capacity,
             bgl,
-            previous_transforms: std::collections::HashMap::new(),
-            previous_scratch: Vec::new(),
         }
     }
 
@@ -157,9 +144,11 @@ impl MeshletScene {
     }
 
     /// Grows the instance buffer to hold at least `required` slots.
-    pub fn ensure_capacity(&mut self, device: &wgpu::Device, required: u32) {
+    /// Grows the buffers to hold `required` rows; `true` when they were replaced, which leaves
+    /// every row to upload again.
+    pub fn ensure_capacity(&mut self, device: &wgpu::Device, required: u32) -> bool {
         if required <= self.capacity {
-            return;
+            return false;
         }
         let new_capacity = kooch_core::gpu::grown(required, self.capacity);
         self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -177,6 +166,7 @@ impl MeshletScene {
             "grew the instance buffer",
         );
         self.capacity = new_capacity;
+        true
     }
 
     /// What the scene's instance mirror holds on the device.
@@ -236,42 +226,31 @@ impl MeshletScene {
         self.upload_instance_data(queue, instances);
     }
 
-    /// Uploads the instances **and** each one's transform from the previous frame, then remembers
-    /// this frame's for the next one (#481).
-    pub fn upload_instances_with_history(
-        &mut self,
+    /// Uploads the `runs` of rows that changed, and each one's transform from the previous frame
+    /// (#481). The rest already sit on the GPU (#2014).
+    pub fn upload_rows(
+        &self,
         queue: &wgpu::Queue,
-        instances: &[MeshInstance],
-        entities: &[super::DrawKey],
+        rows: &[MeshInstance],
+        previous: &[[[f32; 4]; 4]],
+        runs: &[std::ops::Range<usize>],
     ) {
-        debug_assert_eq!(instances.len(), entities.len());
-        self.previous_scratch.clear();
-        self.previous_scratch
-            .extend(instances.iter().zip(entities).map(|(instance, entity)| {
-                self.previous_transforms
-                    .get(entity)
-                    .copied()
-                    .unwrap_or(instance.transform)
-            }));
-        if !self.previous_scratch.is_empty() {
+        debug_assert_eq!(rows.len(), previous.len());
+        let row = std::mem::size_of::<MeshInstance>() as u64;
+        let matrix = std::mem::size_of::<[[f32; 4]; 4]>() as u64;
+        for run in runs {
+            let (Some(rows), Some(previous)) = (rows.get(run.clone()), previous.get(run.clone()))
+            else {
+                continue;
+            };
+            let at = run.start as u64;
+            queue.write_buffer(&self.instance_buffer, at * row, bytemuck::cast_slice(rows));
             queue.write_buffer(
                 &self.previous_transform_buffer,
-                0,
-                bytemuck::cast_slice(&self.previous_scratch),
+                at * matrix,
+                bytemuck::cast_slice(previous),
             );
         }
-        self.upload_instance_data(queue, instances);
-
-        // Rebuilt rather than updated: an entity that stopped rendering has to leave, or the map
-        // grows for the lifetime of the process and a despawned object's matrix comes back if its
-        // entity id is reused.
-        self.previous_transforms.clear();
-        self.previous_transforms.extend(
-            entities
-                .iter()
-                .zip(instances)
-                .map(|(entity, instance)| (*entity, instance.transform)),
-        );
     }
 
     fn upload_instance_data(&self, queue: &wgpu::Queue, instances: &[MeshInstance]) {

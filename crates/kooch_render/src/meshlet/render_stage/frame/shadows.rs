@@ -203,7 +203,7 @@ impl MeshletRenderStage {
             .iter()
             .map(|draw| {
                 draw.key(crate::shadow::light_scene_hash(
-                    &self.instance_bounds,
+                    self.casters.bounds(),
                     draw.eye,
                     draw.range,
                 ))

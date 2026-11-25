@@ -9,7 +9,7 @@ mod layouts;
 use bytemuck::{Pod, Zeroable, bytes_of};
 
 use crate::material::{MaterialPipeline, ShaderKind};
-use crate::meshlet::scene::{INSTANCE_MASKED, INSTANCE_TRANSPARENT, MeshInstance};
+use crate::meshlet::scene::{INSTANCE_EMPTY, INSTANCE_MASKED, INSTANCE_TRANSPARENT, MeshInstance};
 use crate::meshlet::{MATERIAL_SURFACE_PRELUDE, SURFACE_RECONSTRUCT_SHADER, ShaderPipelines};
 
 pub use bins::MaskedBins;
@@ -149,7 +149,9 @@ impl MaskedRaster {
         for instance in instances.iter_mut() {
             instance.flags &= !INSTANCE_MASKED;
             let slot = instance.material_id as usize;
-            if instance.flags & INSTANCE_TRANSPARENT != 0 || slot >= MATERIAL_SLOTS || refused[slot]
+            if instance.flags & (INSTANCE_TRANSPARENT | INSTANCE_EMPTY) != 0
+                || slot >= MATERIAL_SLOTS
+                || refused[slot]
             {
                 continue;
             }

@@ -3,7 +3,7 @@
 
 /// A range of slots in one of the pool's arrays.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
-pub(super) struct Span {
+pub(crate) struct Span {
     pub start: u32,
     pub len: u32,
 }
@@ -39,7 +39,7 @@ pub(super) struct Slot {
 /// `align` keeps the triangle byte array on u32 boundaries: the cull shader reads `array<u32>` and
 /// extracts bytes by shift-mask, so an unaligned base offset mis-reads the first byte.
 #[derive(Debug, Default)]
-pub(super) struct Holes {
+pub(crate) struct Holes {
     free: Vec<Span>,
     align: u32,
 }

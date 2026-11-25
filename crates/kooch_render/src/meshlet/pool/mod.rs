@@ -14,3 +14,4 @@ pub use descriptor::{MeshDescriptor, MeshHandle};
 pub use gpu::GpuGlobalMeshPool;
 pub use gpu_owned::GpuMeshSizes;
 pub use pool::{GlobalMeshPool, MeshBounds};
+pub(crate) use slots::{Holes, Span};

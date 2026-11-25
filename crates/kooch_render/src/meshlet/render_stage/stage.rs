@@ -58,23 +58,19 @@ pub struct MeshletRenderStage {
     /// editor dragging a divider — which knows the panel's size and nothing about upscaling.
     pub(super) upscale_technique: crate::quality::UpscaleTechnique,
     pub(super) render_scale: u32,
-    /// Hash of every instance uploaded this frame, and the cached cube key per point-shadow slot
-    /// (#778). Together they answer "may last frame's six faces stand". One entry per instance this
-    /// frame — see [`InstanceBounds`](crate::shadow::InstanceBounds).
-    pub(super) instance_bounds: Vec<crate::shadow::InstanceBounds>,
+    /// Every row's bounds and change stamp, and the cached cube key per point-shadow slot (#778).
+    /// Together they answer "may last frame's six faces stand".
+    pub(super) casters: crate::meshlet::casters::Casters,
     /// Transparent casters' coverage for the shadow rasters (#1224).
     pub(super) shadow_alpha: crate::shadow::ShadowAlpha,
     /// Masked materials' rasters (#452), shared by every view.
     pub(super) masked: crate::meshlet::MaskedRaster,
     /// The transparent instances' meshlets, far to near, for the forward pass (#452).
     pub(super) forward_list: crate::meshlet::vbuf64_stage::ForwardList,
-    /// Last frame's [`Self::instance_bounds`], for the page cache's
-    /// movement diff (#477): a caster whose hash changed invalidates
-    /// the shadow pages both its old and its new bounds reach.
-    pub(super) previous_bounds: Vec<crate::shadow::InstanceBounds>,
-    /// This frame's moved-caster spheres, old and new bounds alike,
-    /// rebuilt where `instance_bounds` is.
-    pub(super) moved_casters: Vec<[f32; 4]>,
+    /// Every drawn mesh's row, kept from frame to frame (#2014).
+    pub(super) slots: crate::meshlet::instance_slots::InstanceSlots,
+    /// Where the slots are in the submitted rows' log (#2014).
+    pub(super) kept: super::frame::kept::Kept,
     pub(super) point_cube_cache: Vec<Option<crate::shadow::CubeKey>>,
 
     /// GPU mirror of [`MeshletPipeline::pool`]. Lazy-rebuilt by [`Self::render_with_assets`] when
