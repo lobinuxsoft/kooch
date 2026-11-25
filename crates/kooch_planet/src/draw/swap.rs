@@ -67,16 +67,10 @@ impl Blocks {
             if waited && self.frame.wrapping_sub(left) <= LINGER {
                 lingering.insert(key);
             } else {
-                self.expired += u32::from(waited);
                 gone.push(i);
             }
         }
         for i in gone {
-            let s = i as usize;
-            if (s * PARTS..(s + 1) * PARTS).any(|d| self.mesh[d].is_some()) {
-                self.left_solid.extend(self.key[s]);
-            }
-            self.changed.extend(self.key[i as usize]);
             self.retire(i, &mut meshes);
         }
         // Every block holding a lingering one: a new block over or under it waits for it to go.
@@ -123,14 +117,12 @@ impl Blocks {
             let meets_hidden = d % PARTS == Part::Seam as usize
                 && self.key[d / PARTS].is_some_and(|key| meets.contains(&key));
             let due = self.due(d);
-            self.early += u32::from(due && meets_hidden);
             match due && !meets_hidden {
                 true => self.apply(d, &mut meshes),
                 false => held_back += 1,
             }
         }
         resources.insert(meshes);
-        self.audit();
         self.settled = awaited.is_empty() && lingering.is_empty() && waiting == 0 && held_back == 0;
     }
 
@@ -143,20 +135,12 @@ impl Blocks {
             }
         }
         self.shown[s] = true;
-        self.changed.extend(self.key[s]);
     }
 
     /// Mesh `d`'s waiting change, on screen: the staged mesh, or none.
     fn apply(&mut self, d: usize, meshes: &mut GpuMeshes) {
         self.pending[d] = false;
-        match self.staged_epoch[d] < self.frontier {
-            true => self.on_time += 1,
-            false => self.forced += 1,
-        }
-        self.near[d] = self.staged_near[d];
-        self.changed.extend(self.key[d / PARTS]);
         let staged = self.staged[d].take();
-        self.emptied += u32::from(staged.is_none() && self.mesh[d].is_some());
         if let Some(old) = std::mem::replace(&mut self.mesh[d], staged) {
             meshes.release(old);
         }

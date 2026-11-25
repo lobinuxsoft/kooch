@@ -54,8 +54,8 @@ const SAME: u32 = 0x40000000u;
 const INTERIOR: u32 = 0u;
 const SEAM: u32 = 1u;
 const OVERLAP: u32 = 2u;
-// How far the overlap sinks along its normal, in voxels: under the seam, small enough to show as no
-// step where it fills a crack.
+// How far the overlap sinks along its normal per cell past the interior, in voxels: none where it
+// meets the interior, so a grazing view finds no slit; deeper outwards, so it stays under the seam.
 const SINK: f32 = 0.1;
 var<workgroup> part: u32;
 
@@ -421,28 +421,18 @@ fn inner_edge(s: vec3<u32>, axis: u32) -> bool {
 }
 
 // Whether cell `c` can hold a vertex of the job's part: the interior's cells are 2..15, the seam's
-// every cell with a coordinate outside 3..14. Cells 2 and 15 are in both, placed alike by each. The
-// overlap's are the two either side of each plane.
+// and the overlap's every cell with a coordinate outside 3..14. Cells 2 and 15 are in all, placed
+// alike by each, so the overlap joins the interior with no slit.
 fn in_part(c: vec3<u32>) -> bool {
-    if (part == OVERLAP) {
-        return any(c < vec3<u32>(2u)) || any(c > vec3<u32>(15u));
-    }
     if (part == INTERIOR) {
         return all(c >= vec3<u32>(2u)) && all(c <= vec3<u32>(15u));
     }
     return any(c < vec3<u32>(3u)) || any(c > vec3<u32>(14u));
 }
 
-// Whether the edge's quad straddles one of the block's planes: its cells reach cell 0 or 17.
-fn across_plane(s: vec3<u32>, axis: u32) -> bool {
-    let u = s[(axis + 1u) % 3u];
-    let v = s[(axis + 2u) % 3u];
-    return u == 1u || v == 1u || u == TILE - 1u || v == TILE - 1u;
-}
-
 // `edge` over the edges the block emits, of the job's part.
 fn emits(s: vec3<u32>, axis: u32) -> vec2<u32> {
-    let mine = select(inner_edge(s, axis) == (part == INTERIOR), across_plane(s, axis), part == OVERLAP);
+    let mine = inner_edge(s, axis) == (part == INTERIOR);
     if (!mine || !owns(s, axis)) {
         return vec2<u32>(0u);
     }

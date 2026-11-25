@@ -30,9 +30,6 @@ const NONE: u32 = 0xffffffffu;
 @group(0) @binding(3) var<storage, read_write> pool_meshlet_vertices: array<u32>;
 @group(0) @binding(4) var<storage, read_write> pool_triangles: array<u32>;
 @group(0) @binding(5) var<storage, read_write> pool_meshlets: array<u32>;
-// #1999 debug: writes skipped, per part, then per mismatch (vertices, meshlets, meshlet vertices,
-// bytes) and packs past MAX_PACKS. Never reset; the CPU logs the difference.
-@group(0) @binding(6) var<storage, read_write> skips: array<atomic<u32>, 8>;
 
 // Cell → its vertex + 1, two 16-bit entries per word; 0 is no vertex.
 var<workgroup> map: array<atomic<u32>, MAP_WORDS>;
@@ -336,13 +333,6 @@ fn write_main(
         let reserved = vec4<u32>(job.vertices, job.meshlets, job.meshlet_vertices, job.bytes);
         let found = vec4<u32>(atomicLoad(&counter), n, mv, bytes);
         fits = select(0u, 1u, all(found == reserved) && inner <= MAX_PACKS);
-        if (fits == 0u) {
-            atomicAdd(&skips[min(part, 2u)], 1u);
-            for (var k = 0u; k < 4u; k++) {
-                atomicAdd(&skips[3u + k], select(0u, 1u, found[k] != reserved[k]));
-            }
-            atomicAdd(&skips[7u], select(0u, 1u, inner > MAX_PACKS));
-        }
     }
     // Writing past what was counted would land in another mesh's ranges.
     if (workgroupUniformLoad(&fits) == 0u) {
@@ -355,7 +345,10 @@ fn write_main(
             continue;
         }
         let placed = cell_vertex(cell_of(i));
-        let sunk = placed[0] - placed[1] * select(0.0, SINK, part == OVERLAP);
+        let c = vec3<i32>(cell_of(i));
+        let past = max(max(vec3<i32>(2) - c, c - vec3<i32>(15)), vec3<i32>(0));
+        let depth = f32(max(past.x, max(past.y, past.z))) * SINK;
+        let sunk = placed[0] - placed[1] * select(0.0, depth, part == OVERLAP);
         // Sample 1 is the block's corner.
         let p = (sunk - vec3<f32>(1.0)) * job.voxel;
         let o = (job.first_vertex + n - 1u) * VERTEX_FLOATS;

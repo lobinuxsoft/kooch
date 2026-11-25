@@ -380,11 +380,6 @@ impl Terrain {
             .write(device, queue, &self.atlas, pool, jobs, stamps);
     }
 
-    /// #1999 debug: write jobs the GPU skipped since the start.
-    pub(crate) fn skips(&mut self) -> crate::mesh::SkipCounts {
-        self.mesh.skips()
-    }
-
     /// A count bumped whenever `planet`'s generator or shape changes.
     pub fn revision(&self, planet: u32) -> u32 {
         revision_of(&self.revision, planet)
@@ -403,11 +398,6 @@ impl Terrain {
     /// Blocks waiting for a batch.
     pub fn waiting(&self) -> usize {
         self.backlog.len()
-    }
-
-    /// Seams waiting for a batch, and the current epoch. #1999 debug.
-    pub(crate) fn seams_and_epoch(&self) -> (usize, u64) {
-        (self.stale.slots().count(), self.epoch)
     }
 
     /// Batches sent and not back yet.

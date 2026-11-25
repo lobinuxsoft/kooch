@@ -118,8 +118,6 @@ pub struct PlanetTerrain {
     broken: bool,
     meshed: Vec<CountedBlock>,
     pub(crate) blocks: Blocks,
-    /// #1999 debug: the GPU's skipped writes at the last log.
-    skipped: crate::mesh::SkipCounts,
 }
 
 impl Default for PlanetTerrain {
@@ -138,7 +136,6 @@ impl Default for PlanetTerrain {
             broken: false,
             meshed: Vec::new(),
             blocks: Blocks::default(),
-            skipped: Default::default(),
         }
     }
 }
@@ -323,48 +320,6 @@ pub fn sync_planets(resources: &mut Resources) {
         None => meshed.clear(),
     }
     blocks.submit(resources, &placed, &found);
-    // #1999 debug: whether a level change goes on screen whole or is forced out by the hold.
-    if state.frame % 120 == 0
-        && let Some(terrain) = &mut state.terrain
-        && blocks.on_time + blocks.forced + blocks.expired > 0
-    {
-        let (seams, epoch) = terrain.seams_and_epoch();
-        let totals = terrain.skips();
-        let skipped: Vec<u32> = totals
-            .iter()
-            .zip(state.skipped)
-            .map(|(now, then)| now.wrapping_sub(then))
-            .collect();
-        state.skipped = totals;
-        tracing::trace!(
-            target: "kooch_planet",
-            on_time = blocks.on_time,
-            forced = blocks.forced,
-            expired = blocks.expired,
-            early = blocks.early,
-            torn = blocks.torn,
-            example = blocks.torn_example.as_deref().unwrap_or("-"),
-            bare = blocks.bare,
-            bare_example = blocks.bare_example.as_deref().unwrap_or("-"),
-            emptied = blocks.emptied,
-            moved = blocks.moved,
-            skipped = ?skipped,
-            behind = epoch.saturating_sub(terrain.frontier().min(epoch)),
-            backlog = terrain.waiting(),
-            seams,
-            "planet swaps over 120 frames"
-        );
-        blocks.on_time = 0;
-        blocks.forced = 0;
-        blocks.expired = 0;
-        blocks.early = 0;
-        blocks.torn = 0;
-        blocks.torn_example = None;
-        blocks.bare = 0;
-        blocks.bare_example = None;
-        blocks.emptied = 0;
-        blocks.moved = 0;
-    }
     let stats = PlanetStats {
         resident: state.pool.resident(),
         capacity: state.pool.capacity(),

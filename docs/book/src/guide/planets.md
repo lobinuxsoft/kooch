@@ -62,9 +62,10 @@ they never fill the World panel or cross to the editor. Clicking its ground in t
 the planet, and a prefab dropped on the ground lands on it, against the generator's exact surface
 rather than the block that happens to be showing.
 
-Each block draws two meshes: its interior, made once from its own samples, and its seam, the shell
-that meets its neighbours. When a neighbour changes level only the seam is made again, and a new
-block appears once both are ready.
+Each block draws three meshes: its interior, made once from its own samples; its seam, the shell
+that meets its neighbours; and an overlap, a skirt that leaves the interior's edge and sinks under
+the seam. When a neighbour changes level only the seam is made again, and while it is on its way
+the overlap covers the crack, from any angle. A new block appears once all three are ready.
 
 Every planet in the scene shares one pool of 6144 voxel blocks, 68 MiB of GPU memory. The pool
 never grows: each frame the blocks go where they do the most good on screen, so the planet you stand
@@ -109,5 +110,3 @@ rays, `gravity_up` and `teleport` expect.
 
 - **Collision is still yours.** The ground has no collider yet; a sphere `Collider` at `radius` is
   the stand-in until it does (#313).
-- **Seams between detail levels** can open for a few frames while the camera moves and blocks
-  change level; once they settle the ground is closed (#1999).
