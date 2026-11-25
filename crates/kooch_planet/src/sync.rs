@@ -13,6 +13,7 @@ use glam::{DVec3, Mat4};
 use kooch_core::Guid;
 use kooch_core::asset_loader::{AssetServer, ReloadedAssets};
 use kooch_core::assets::{Assets, Handle};
+use kooch_core::frame_pacing::{FramePace, FrameRequest};
 use kooch_core::gpu::GpuContext;
 use kooch_core::resource::Resources;
 use kooch_ecs::Entity;
@@ -31,8 +32,8 @@ use crate::sight::Cone;
 pub use ray::{GroundHit, ground_hits};
 
 use crate::{
-    BARE_SPHERE, BlockKey, BlockPool, CountedBlock, DEFAULT_CAPACITY, Leaves, Limits, Planets,
-    Residency, Shape, Terrain, View, select,
+    BARE_SPHERE, BlockKey, BlockPool, CountedBlock, DEFAULT_CAPACITY, Leaves, Limits, Part,
+    Planets, Residency, Shape, Terrain, View, select,
 };
 
 /// Blocks every planet in view gets before the others compete for the rest of the pool.
@@ -117,6 +118,8 @@ pub struct PlanetTerrain {
     broken: bool,
     meshed: Vec<CountedBlock>,
     pub(crate) blocks: Blocks,
+    /// #1999 debug: the GPU's skipped writes at the last log.
+    skipped: crate::mesh::SkipCounts,
 }
 
 impl Default for PlanetTerrain {
@@ -135,6 +138,7 @@ impl Default for PlanetTerrain {
             broken: false,
             meshed: Vec::new(),
             blocks: Blocks::default(),
+            skipped: Default::default(),
         }
     }
 }
@@ -274,10 +278,18 @@ pub fn sync_planets(resources: &mut Resources) {
     }
     // Only the finest level's empty count is final: a coarser block samples every 2^level voxels
     // and misses a ridge thinner than that, and calling it empty would prune its children (#1945).
-    for block in meshed
+    // Empty means every mesh: a generated block counts all of them in the same batch.
+    let surfaced: HashSet<BlockKey> = meshed
         .iter()
-        .filter(|b| b.sizes.meshlets == 0 && b.key.level == 0)
-    {
+        .filter(|b| b.sizes.meshlets != 0)
+        .map(|b| b.key)
+        .collect();
+    for block in meshed.iter().filter(|b| {
+        b.part == Part::Interior
+            && b.sizes.meshlets == 0
+            && b.key.level == 0
+            && !surfaced.contains(&b.key)
+    }) {
         let known = Known {
             revision: block.revision,
             seen: state.frame,
@@ -289,7 +301,14 @@ pub fn sync_planets(resources: &mut Resources) {
     if !state.residency.added.is_empty() || !state.residency.removed.is_empty() {
         blocks.unsettle();
     }
-    blocks.swap(resources, &state.pool, &state.planets);
+    let counting = meshed.iter().map(|b| b.epoch);
+    let frontier = state.terrain.as_ref().map_or(u64::MAX, Terrain::frontier);
+    blocks.swap(
+        resources,
+        &state.pool,
+        &state.planets,
+        counting.fold(frontier, u64::min),
+    );
     match &mut state.terrain {
         Some(terrain) => {
             let frame = Frame {
@@ -304,6 +323,48 @@ pub fn sync_planets(resources: &mut Resources) {
         None => meshed.clear(),
     }
     blocks.submit(resources, &placed, &found);
+    // #1999 debug: whether a level change goes on screen whole or is forced out by the hold.
+    if state.frame % 120 == 0
+        && let Some(terrain) = &mut state.terrain
+        && blocks.on_time + blocks.forced + blocks.expired > 0
+    {
+        let (seams, epoch) = terrain.seams_and_epoch();
+        let totals = terrain.skips();
+        let skipped: Vec<u32> = totals
+            .iter()
+            .zip(state.skipped)
+            .map(|(now, then)| now.wrapping_sub(then))
+            .collect();
+        state.skipped = totals;
+        tracing::trace!(
+            target: "kooch_planet",
+            on_time = blocks.on_time,
+            forced = blocks.forced,
+            expired = blocks.expired,
+            early = blocks.early,
+            torn = blocks.torn,
+            example = blocks.torn_example.as_deref().unwrap_or("-"),
+            bare = blocks.bare,
+            bare_example = blocks.bare_example.as_deref().unwrap_or("-"),
+            emptied = blocks.emptied,
+            moved = blocks.moved,
+            skipped = ?skipped,
+            behind = epoch.saturating_sub(terrain.frontier().min(epoch)),
+            backlog = terrain.waiting(),
+            seams,
+            "planet swaps over 120 frames"
+        );
+        blocks.on_time = 0;
+        blocks.forced = 0;
+        blocks.expired = 0;
+        blocks.early = 0;
+        blocks.torn = 0;
+        blocks.torn_example = None;
+        blocks.bare = 0;
+        blocks.bare_example = None;
+        blocks.emptied = 0;
+        blocks.moved = 0;
+    }
     let stats = PlanetStats {
         resident: state.pool.resident(),
         capacity: state.pool.capacity(),
@@ -316,6 +377,15 @@ pub fn sync_planets(resources: &mut Resources) {
         meshlets: blocks.meshlets(),
         gpu: state.terrain.as_ref().and_then(Terrain::times),
     };
+    // An idle editor sleeps between frames, and a level change spread over sleeping frames shows
+    // its seams half done (#1999). Wakes only while meshing; a game has no request and spins anyway.
+    let meshing = state
+        .terrain
+        .as_ref()
+        .is_some_and(|t| t.frontier() != u64::MAX);
+    if meshing || !blocks.settled() {
+        FrameRequest::raise(resources, FramePace::Continuous);
+    }
     state.blocks = blocks;
     state.meshed = meshed;
     resources.insert(state);

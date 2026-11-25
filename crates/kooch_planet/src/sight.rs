@@ -1,5 +1,5 @@
-//! What a viewer can see of a planet: a cone around its view direction. Blocks outside every cone
-//! stay coarse, and the generator meshes the nearest visible blocks first.
+//! What a viewer can see of a planet: a cone around its view direction. The generator meshes the
+//! nearest visible blocks first; a block's level never depends on it, only on distance (#1999).
 
 use glam::DVec3;
 

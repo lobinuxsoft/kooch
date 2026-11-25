@@ -7,7 +7,9 @@ use std::collections::HashSet;
 use kooch_core::resource::Resources;
 use kooch_render::meshlet::GpuMeshes;
 
-use super::Blocks;
+use super::{Blocks, PARTS};
+use crate::mesh::Part;
+use crate::seam::touching;
 use crate::select::root_level;
 use crate::{BlockKey, BlockPool, Planets};
 
@@ -18,11 +20,21 @@ const LINGER: u32 = 240;
 impl Blocks {
     /// Retires the blocks whose replacements are in and shows the new ones nothing overlaps. Runs
     /// before this frame's meshes are drawn, so every block it shows has a propagated transform.
-    pub(crate) fn swap(&mut self, resources: &mut Resources, pool: &BlockPool, planets: &Planets) {
+    /// `frontier` is the earliest epoch the terrain still counts: a change goes on screen with every
+    /// other of its epoch, so a seam and the block it meets appear in the same frame (#1999).
+    pub(crate) fn swap(
+        &mut self,
+        resources: &mut Resources,
+        pool: &BlockPool,
+        planets: &Planets,
+        frontier: u64,
+    ) {
         self.frame = self.frame.wrapping_add(1);
         if self.settled {
             return;
         }
+        let asked = self.asked.iter().flatten().map(|asked| asked.block.epoch);
+        self.frontier = asked.fold(frontier, u64::min);
         let Some(mut meshes) = resources.remove::<GpuMeshes>() else {
             return;
         };
@@ -55,10 +67,16 @@ impl Blocks {
             if waited && self.frame.wrapping_sub(left) <= LINGER {
                 lingering.insert(key);
             } else {
+                self.expired += u32::from(waited);
                 gone.push(i);
             }
         }
         for i in gone {
+            let s = i as usize;
+            if (s * PARTS..(s + 1) * PARTS).any(|d| self.mesh[d].is_some()) {
+                self.left_solid.extend(self.key[s]);
+            }
+            self.changed.extend(self.key[i as usize]);
             self.retire(i, &mut meshes);
         }
         // Every block holding a lingering one: a new block over or under it waits for it to go.
@@ -72,34 +90,76 @@ impl Blocks {
         }
         let mut waiting = 0;
         let mut ready = Vec::new();
+        // The seams meeting a new block that waits hidden: changed now, they would fit a block not
+        // yet drawn and open a hole against the one still there (#1999).
+        let mut meets = HashSet::new();
         for (&key, &i) in &self.of_key {
-            if self.shown[i as usize] || self.staged[i as usize].is_none() {
+            // A new block waits for both its meshes: an interior shown without its seam is a hole.
+            let s = i as usize;
+            let staged = self.pending[s * PARTS..(s + 1) * PARTS].iter().any(|&p| p);
+            if self.shown[s] || !staged || !self.ready(s) {
                 continue;
             }
             let covered =
                 over.contains(&key) || key.ancestors(root(key)).any(|up| lingering.contains(&up));
             match covered {
-                true => waiting += 1,
+                true => {
+                    waiting += 1;
+                    let near = touching(pool, root(key), key).into_iter();
+                    meets.extend(near.filter_map(|slot| pool.key(slot)));
+                }
                 false => ready.push(i),
             }
         }
         for i in ready {
             self.show(i, &mut meshes);
         }
+        // What changes on screen: a seam counted again for its neighbours', or one taken away.
+        let mut held_back = 0;
+        for d in 0..self.pending.len() {
+            if !self.pending[d] || !self.shown[d / PARTS] {
+                continue;
+            }
+            let meets_hidden = d % PARTS == Part::Seam as usize
+                && self.key[d / PARTS].is_some_and(|key| meets.contains(&key));
+            let due = self.due(d);
+            self.early += u32::from(due && meets_hidden);
+            match due && !meets_hidden {
+                true => self.apply(d, &mut meshes),
+                false => held_back += 1,
+            }
+        }
         resources.insert(meshes);
-        self.settled = awaited.is_empty() && lingering.is_empty() && waiting == 0;
+        self.audit();
+        self.settled = awaited.is_empty() && lingering.is_empty() && waiting == 0 && held_back == 0;
     }
 
-    /// Puts the staged mesh on screen and gives back the one it replaces.
+    /// Puts the staged meshes on screen and gives back the ones they replace.
     fn show(&mut self, i: u32, meshes: &mut GpuMeshes) {
         let s = i as usize;
-        let Some(mesh) = self.staged[s].take() else {
-            return;
-        };
-        if let Some(old) = self.mesh[s].replace(mesh) {
-            meshes.release(old);
+        for d in s * PARTS..(s + 1) * PARTS {
+            if self.pending[d] {
+                self.apply(d, meshes);
+            }
         }
         self.shown[s] = true;
+        self.changed.extend(self.key[s]);
+    }
+
+    /// Mesh `d`'s waiting change, on screen: the staged mesh, or none.
+    fn apply(&mut self, d: usize, meshes: &mut GpuMeshes) {
+        self.pending[d] = false;
+        match self.staged_epoch[d] < self.frontier {
+            true => self.on_time += 1,
+            false => self.forced += 1,
+        }
+        self.near[d] = self.staged_near[d];
+        self.changed.extend(self.key[d / PARTS]);
+        let staged = self.staged[d].take();
+        self.emptied += u32::from(staged.is_none() && self.mesh[d].is_some());
+        if let Some(old) = std::mem::replace(&mut self.mesh[d], staged) {
+            meshes.release(old);
+        }
     }
 
     /// Hides the index, gives its meshes back and frees it.
@@ -110,11 +170,13 @@ impl Blocks {
         if let Some(key) = self.key[s].take() {
             self.of_key.remove(&key);
         }
-        self.asked[s] = None;
-        self.built[s] = false;
         self.left[s] = None;
-        self.triangles[s] = 0;
-        self.meshlets[s] = 0;
+        for d in s * PARTS..(s + 1) * PARTS {
+            self.asked[d] = None;
+            self.held[d] = false;
+            self.triangles[d] = 0;
+            self.meshlets[d] = 0;
+        }
         self.free.push(i);
     }
 }

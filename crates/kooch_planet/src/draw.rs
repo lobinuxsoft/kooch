@@ -5,7 +5,12 @@
 //!
 //! A block's mesh is counted, asked of the meshlet pool, granted the frame after and written in
 //! place by the GPU, under a GUID of its own per ask, so a stale grant never meets a newer ask.
+//!
+//! Each block has [`PARTS`] meshes, its interior, seam and overlap (#1999): a draw `d` is index
+//! `d / PARTS`'s [`Part`] `d % PARTS`. A neighbour's change re-meshes the seam alone, and a new
+//! block is shown once all are in hand.
 
+mod audit;
 mod swap;
 
 use std::collections::HashMap;
@@ -17,9 +22,13 @@ use kooch_ecs::MeshRenderer;
 use kooch_ecs::hierarchy::WorldOrigin;
 use kooch_render::meshlet::{GpuMeshes, MeshBounds, Submitted};
 
+use crate::mesh::{PARTS, Part};
 use crate::seam::levels;
 use crate::sync::Found;
 use crate::{BLOCK_SAMPLES, BlockKey, BlockPool, CountedBlock, Near, Terrain, WriteJob};
+
+/// Frames a change may wait for the rest of its epoch before it goes on screen anyway.
+const HOLD: u32 = 30;
 
 /// A mesh asked of the pool and not granted yet.
 #[derive(Clone, Copy)]
@@ -28,25 +37,33 @@ struct Asked {
     block: CountedBlock,
 }
 
-/// Per draw index, as parallel arrays. An index outlives its block's pool slot while it lingers.
+/// Per draw index, as parallel arrays; the per-mesh ones hold [`PARTS`] entries an index. An index
+/// outlives its block's pool slot while it lingers.
 #[derive(Default)]
 pub(crate) struct Blocks {
     key: Vec<Option<BlockKey>>,
-    /// Which of the planet's meshes it is to the renderer: new per block, never per index, so a
-    /// reused index never inherits a gone block's last matrix.
+    /// Which of the planet's meshes its interior is to the renderer, the seam the next: new per
+    /// block, never per index, so a reused index never inherits a gone block's last matrix.
     part: Vec<u32>,
     /// The block's corner in its planet's space.
     origin: Vec<DVec3>,
-    /// About how many: counted from triangle bytes, which round up per meshlet.
+    /// Per mesh, about how many: counted from triangle bytes, which round up per meshlet.
     triangles: Vec<u32>,
     meshlets: Vec<u32>,
-    /// The mesh on screen.
+    /// Per mesh, the one on screen.
     mesh: Vec<Option<Guid>>,
-    /// Written and waiting for its swap.
+    /// Per mesh, written and waiting for its swap, the epoch it answers and the frame it came.
     staged: Vec<Option<Guid>>,
+    staged_epoch: Vec<u64>,
+    staged_at: Vec<u32>,
+    /// #1999 debug: per mesh, the neighbours the staged and the shown one were counted with.
+    staged_near: Vec<Near>,
+    near: Vec<Near>,
+    /// Per mesh, whether a change waits: `staged`, or with none, taking the mesh away.
+    pending: Vec<bool>,
     asked: Vec<Option<Asked>>,
-    /// Whether the block's mesh is in hand: written, or nothing to draw.
-    built: Vec<bool>,
+    /// Per mesh, whether it is in hand: written, or nothing to draw.
+    held: Vec<bool>,
     shown: Vec<bool>,
     /// The frame the block left the pool, while it lingers on screen.
     left: Vec<Option<u32>>,
@@ -55,11 +72,34 @@ pub(crate) struct Blocks {
     of_key: HashMap<BlockKey, u32>,
     /// Bumped per ask; half of every mesh GUID.
     asks: u32,
-    /// Bumped per block given an index.
+    /// Bumped by [`PARTS`] per block given an index.
     parts: u32,
     frame: u32,
     /// Nothing waits and nothing lingers, so [`Blocks::swap`] has nothing to do.
     settled: bool,
+    /// The earliest epoch still being counted or written, this frame; see [`Terrain::frontier`].
+    frontier: u64,
+    /// Changes put on screen with their epoch whole, and by [`HOLD`] running out. #1999 debug.
+    pub(crate) on_time: u32,
+    pub(crate) forced: u32,
+    /// #1999 debug: lingering blocks dropped by the linger limit while still waited for.
+    pub(crate) expired: u32,
+    /// #1999 debug: due seam changes held for a new neighbour that waits hidden.
+    pub(crate) early: u32,
+    /// #1999 debug: frames with a seam on screen fitting neighbours other than the shown ones.
+    pub(crate) torn: u32,
+    pub(crate) torn_example: Option<String>,
+    /// #1999 debug: blocks with geometry retired with nothing on screen in their place.
+    pub(crate) bare: u32,
+    pub(crate) bare_example: Option<String>,
+    /// #1999 debug: meshes on screen replaced by none.
+    pub(crate) emptied: u32,
+    /// #1999 debug: seams counted again because a tile they read changed hands before the write.
+    pub(crate) moved: u32,
+    /// #1999 debug: blocks whose screen state changed this frame, audited next to their neighbours.
+    changed: Vec<BlockKey>,
+    /// #1999 debug: blocks with geometry retired this frame.
+    left_solid: Vec<BlockKey>,
 }
 
 /// What [`Blocks::draw`] reads of the frame.
@@ -75,6 +115,11 @@ impl Blocks {
     /// The pool changed: something may now wait or linger.
     pub(crate) fn unsettle(&mut self) {
         self.settled = false;
+    }
+
+    /// Nothing waits to be shown or retired.
+    pub(crate) fn settled(&self) -> bool {
+        self.settled
     }
 
     /// Writes the meshes the pool granted since last frame, then asks for the ones just counted.
@@ -101,19 +146,21 @@ impl Blocks {
     fn ask(&mut self, block: CountedBlock, meshes: &mut GpuMeshes) {
         self.settled = false;
         let s = self.index_of(block.key) as usize;
+        let d = s * PARTS + block.part as usize;
         self.origin[s] = block.origin;
         self.left[s] = None;
         if block.sizes.meshlets == 0 {
-            self.asked[s] = None;
-            self.built[s] = true;
-            self.triangles[s] = 0;
-            self.meshlets[s] = 0;
-            self.drop_meshes(s, meshes);
+            self.asked[d] = None;
+            self.held[d] = true;
+            self.triangles[d] = 0;
+            self.meshlets[d] = 0;
+            self.stage(d, None, block.epoch, meshes);
+            self.staged_near[d] = block.near;
             return;
         }
         self.asks = self.asks.wrapping_add(1);
-        let mesh = Guid::from_bytes(slot_guid(s as u32, self.asks));
-        self.asked[s] = Some(Asked { mesh, block });
+        let mesh = Guid::from_bytes(slot_guid(d as u32, self.asks));
+        self.asked[d] = Some(Asked { mesh, block });
         meshes.reserve(mesh, block.sizes, bounds_of(block.voxel, &block.near));
     }
 
@@ -121,14 +168,14 @@ impl Blocks {
         // A refused ask would cross a binding: its block is counted again once the budget has
         // made room, instead of waiting for a grant that never comes (#1968).
         for mesh in meshes.take_refused() {
-            let Some(s) = index_in(mesh) else {
+            let Some(d) = index_in(mesh) else {
                 continue;
             };
-            if let Some(Some(asked)) = self.asked.get(s).copied()
+            if let Some(Some(asked)) = self.asked.get(d).copied()
                 && asked.mesh == mesh
             {
-                self.asked[s] = None;
-                terrain.remesh(asked.block.slot);
+                self.asked[d] = None;
+                terrain.remesh(asked.block.slot, asked.block.part, asked.block.epoch);
             }
         }
         let granted = meshes.take_granted();
@@ -137,13 +184,13 @@ impl Blocks {
         let mut done = Vec::with_capacity(granted.len());
         for (mesh, at) in granted {
             let asked = index_in(mesh)
-                .and_then(|s| Some((s, self.asked.get(s).copied().flatten()?)))
+                .and_then(|d| Some((d, self.asked.get(d).copied().flatten()?)))
                 .filter(|(_, asked)| asked.mesh == mesh);
-            let Some((s, Asked { block, .. })) = asked else {
+            let Some((d, Asked { block, .. })) = asked else {
                 meshes.release(mesh);
                 continue;
             };
-            self.asked[s] = None;
+            self.asked[d] = None;
             // Its slot went to another block, or its planet regenerated: the tile is not its mesh.
             let fresh = frame.pool.key(block.slot) == Some(block.key)
                 && terrain.revision(block.key.planet) == block.revision;
@@ -152,9 +199,10 @@ impl Blocks {
                 continue;
             }
             // A tile it borrowed changed hands since the count: the write would mesh otherwise.
-            if !block.near.holds(frame.pool, block.key) {
+            if block.part == Part::Seam && !block.near.holds(frame.pool, block.key) {
+                self.moved += 1;
                 meshes.release(mesh);
-                terrain.remesh(block.slot);
+                terrain.remesh(block.slot, Part::Seam, block.epoch);
                 continue;
             }
             let job = WriteJob::new(
@@ -164,22 +212,23 @@ impl Blocks {
                 &at,
                 block.near,
                 block.cuts,
+                block.part,
             );
             jobs.push(job);
-            done.push((s, mesh, block));
+            done.push((d, mesh, block));
         }
         if let Some(buffers) = &buffers {
             terrain.write(frame.device, frame.queue, buffers, &jobs);
         }
-        for (s, mesh, block) in done {
-            self.written(frame, s, mesh, block, meshes);
+        for (d, mesh, block) in done {
+            self.written(frame, d, mesh, block, meshes);
         }
     }
 
     fn written(
         &mut self,
         frame: &Frame,
-        s: usize,
+        d: usize,
         mesh: Guid,
         block: CountedBlock,
         meshes: &mut GpuMeshes,
@@ -194,25 +243,35 @@ impl Blocks {
             return;
         }
         self.settled = false;
-        self.built[s] = true;
-        self.triangles[s] = block.sizes.triangle_bytes / 3;
-        self.meshlets[s] = block.sizes.meshlets;
-        let held = match self.shown[s] {
-            true => &mut self.mesh[s],
-            false => &mut self.staged[s],
-        };
-        if let Some(old) = held.replace(mesh) {
+        self.held[d] = true;
+        self.triangles[d] = block.sizes.triangle_bytes / 3;
+        self.meshlets[d] = block.sizes.meshlets;
+        // Staged even on screen: a seam counted for its neighbours' change waits for them (#1999).
+        self.stage(d, Some(mesh), block.epoch, meshes);
+        self.staged_near[d] = block.near;
+    }
+
+    fn stage(&mut self, d: usize, mesh: Option<Guid>, epoch: u64, meshes: &mut GpuMeshes) {
+        self.settled = false;
+        self.pending[d] = true;
+        self.staged_epoch[d] = epoch;
+        self.staged_at[d] = self.frame;
+        let old = std::mem::replace(&mut self.staged[d], mesh);
+        if let Some(old) = old {
             meshes.release(old);
         }
     }
 
     /// Hides the index and gives its meshes back.
     fn drop_meshes(&mut self, s: usize, meshes: &mut GpuMeshes) {
-        for mesh in [self.mesh[s].take(), self.staged[s].take()]
-            .into_iter()
-            .flatten()
-        {
-            meshes.release(mesh);
+        for d in s * PARTS..(s + 1) * PARTS {
+            for mesh in [self.mesh[d].take(), self.staged[d].take()]
+                .into_iter()
+                .flatten()
+            {
+                meshes.release(mesh);
+            }
+            self.pending[d] = false;
         }
         self.shown[s] = false;
     }
@@ -231,49 +290,70 @@ impl Blocks {
         };
         submitted.clear();
         for s in (0..self.key.len()).filter(|&s| self.shown[s]) {
-            let (Some(key), Some(mesh)) = (self.key[s], self.mesh[s]) else {
+            let Some(key) = self.key[s] else {
                 continue;
             };
             let planet = placed.get(key.planet as usize).copied().flatten();
             let Some(planet) = planet.and_then(|at| found.get(at)) else {
                 continue;
             };
-            let renderer = MeshRenderer {
-                mesh: Some(mesh),
-                material: planet.planet.material,
-                ..Default::default()
-            };
-            submitted.push(
-                (planet.entity, self.part[s]),
-                place(planet, self.origin[s], &origin),
-                renderer,
-            );
+            let at = place(planet, self.origin[s], &origin);
+            for p in 0..PARTS {
+                let Some(mesh) = self.mesh[s * PARTS + p] else {
+                    continue;
+                };
+                let renderer = MeshRenderer {
+                    mesh: Some(mesh),
+                    material: planet.planet.material,
+                    ..Default::default()
+                };
+                submitted.push((planet.entity, self.part[s] + p as u32), at, renderer);
+            }
         }
     }
 
     /// Triangles on screen, lingering blocks included.
     pub(crate) fn triangles(&self) -> u64 {
-        let shown = self.triangles.iter().zip(&self.shown);
-        shown
-            .filter(|(_, on)| **on)
-            .map(|(&t, _)| u64::from(t))
-            .sum()
+        self.on_screen(&self.triangles)
     }
 
     /// Meshlets on screen, lingering blocks included.
     pub(crate) fn meshlets(&self) -> u64 {
-        let shown = self.meshlets.iter().zip(&self.shown);
+        self.on_screen(&self.meshlets)
+    }
+
+    fn on_screen(&self, per_mesh: &[u32]) -> u64 {
+        let shown = per_mesh.iter().enumerate();
         shown
-            .filter(|(_, on)| **on)
-            .map(|(&m, _)| u64::from(m))
+            .filter(|(d, _)| self.shown[d / PARTS])
+            .map(|(_, &n)| u64::from(n))
             .sum()
     }
 
-    /// Whether `key`'s mesh is in hand.
+    /// Whether every one of index `s`'s meshes is in hand.
+    fn complete(&self, s: usize) -> bool {
+        self.held[s * PARTS..(s + 1) * PARTS].iter().all(|&h| h)
+    }
+
+    /// Whether mesh `d`'s waiting change may go on screen: every change of its epoch is in, or it
+    /// has waited [`HOLD`] frames for one that never comes.
+    fn due(&self, d: usize) -> bool {
+        self.pending[d]
+            && (self.staged_epoch[d] < self.frontier
+                || self.frame.wrapping_sub(self.staged_at[d]) > HOLD)
+    }
+
+    /// Whether index `s` can go on screen as it is: every mesh in hand, every waiting change due.
+    fn ready(&self, s: usize) -> bool {
+        self.complete(s) && (s * PARTS..(s + 1) * PARTS).all(|d| !self.pending[d] || self.due(d))
+    }
+
+    /// Whether `key` is on screen or ready to be.
     fn built(&self, key: BlockKey) -> bool {
-        self.of_key
-            .get(&key)
-            .is_some_and(|&i| self.built[i as usize])
+        self.of_key.get(&key).is_some_and(|&i| {
+            let s = i as usize;
+            self.complete(s) && (self.shown[s] || self.ready(s))
+        })
     }
 
     /// The draw index of `key`, taken from the free list when it has none.
@@ -285,18 +365,25 @@ impl Blocks {
             self.key.push(None);
             self.part.push(0);
             self.origin.push(DVec3::ZERO);
-            self.triangles.push(0);
-            self.meshlets.push(0);
-            self.mesh.push(None);
-            self.staged.push(None);
-            self.asked.push(None);
-            self.built.push(false);
             self.shown.push(false);
             self.left.push(None);
+            for _ in 0..PARTS {
+                self.triangles.push(0);
+                self.meshlets.push(0);
+                self.mesh.push(None);
+                self.staged.push(None);
+                self.staged_epoch.push(0);
+                self.staged_at.push(0);
+                self.staged_near.push(Near::default());
+                self.near.push(Near::default());
+                self.pending.push(false);
+                self.asked.push(None);
+                self.held.push(false);
+            }
             (self.key.len() - 1) as u32
         });
         self.key[i as usize] = Some(key);
-        self.parts = self.parts.wrapping_add(1);
+        self.parts = self.parts.wrapping_add(PARTS as u32);
         self.part[i as usize] = self.parts;
         self.of_key.insert(key, i);
         i
@@ -332,7 +419,7 @@ fn place(planet: &Found, origin: DVec3, world: &WorldOrigin) -> Mat4 {
 
 const PREFIX: &[u8; 8] = b"kooch:pl";
 
-/// A mesh id of the draw index's own ask, in a namespace no asset's GUID uses.
+/// A mesh id of the draw's own ask, in a namespace no asset's GUID uses.
 fn slot_guid(index: u32, ask: u32) -> [u8; 16] {
     let mut bytes = [0u8; 16];
     bytes[..8].copy_from_slice(PREFIX);
@@ -341,7 +428,7 @@ fn slot_guid(index: u32, ask: u32) -> [u8; 16] {
     bytes
 }
 
-/// The draw index a [`slot_guid`] names.
+/// The draw a [`slot_guid`] names: index `d / PARTS`, mesh `d % PARTS`.
 fn index_in(mesh: Guid) -> Option<usize> {
     let uuid = mesh.as_uuid();
     let bytes = uuid.as_bytes();

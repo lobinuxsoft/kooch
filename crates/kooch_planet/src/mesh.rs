@@ -8,8 +8,12 @@ use kooch_render::meshlet::{GpuMeshSizes, MeshDescriptor, PoolBuffers};
 use super::atlas::BlockAtlas;
 use super::{Near, TILE_SAMPLES};
 
+mod skips;
 #[cfg(test)]
 mod tests;
+
+pub use skips::SkipCounts;
+use skips::Skips;
 
 const NETS_WGSL: &str = concat!(
     include_str!("../shaders/nets.wgsl"),
@@ -41,21 +45,41 @@ pub(super) fn sizes_of(counts: [u32; 4]) -> GpuMeshSizes {
     }
 }
 
+/// Which of a block's meshes (#1999). The interior reads only the block's own samples, so it is
+/// meshed once per tile; the seam reads its neighbours and is meshed again when they change. The
+/// overlap is the strip across all six of its planes from its own samples alone, sunk under the
+/// seam: it covers the crack while a neighbour shows another level than the seam was meshed for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Part {
+    #[default]
+    Interior = 0,
+    Seam = 1,
+    Overlap = 2,
+}
+
+/// Meshes a block draws with.
+pub const PARTS: usize = 3;
+
+/// The parts meshed with a freshly generated tile.
+pub const ALL_PARTS: [Part; PARTS] = [Part::Interior, Part::Seam, Part::Overlap];
+
 /// One block for the count pass. Mirrors `CountJob` in `count.wgsl`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct CountJob {
     pub slot: u32,
     pub near: Near,
-    _pad: [u32; 2],
+    part: u32,
+    _pad: u32,
 }
 
 impl CountJob {
-    pub fn new(slot: u32, near: Near) -> Self {
+    pub fn new(slot: u32, near: Near, part: Part) -> Self {
         Self {
             slot,
             near,
-            _pad: [0; 2],
+            part: part as u32,
+            _pad: 0,
         }
     }
 }
@@ -77,7 +101,7 @@ pub struct WriteJob {
     bytes: u32,
     near: Near,
     cuts: Cuts,
-    _pad: u32,
+    part: u32,
 }
 
 impl WriteJob {
@@ -88,6 +112,7 @@ impl WriteJob {
         at: &MeshDescriptor,
         near: Near,
         cuts: Cuts,
+        part: Part,
     ) -> Self {
         Self {
             slot,
@@ -102,7 +127,7 @@ impl WriteJob {
             bytes: sizes.triangle_bytes,
             near,
             cuts,
-            _pad: 0,
+            part: part as u32,
         }
     }
 }
@@ -118,6 +143,7 @@ pub struct MeshPass {
     /// Grown to the largest frame of writes seen.
     jobs: Option<wgpu::Buffer>,
     pub(super) batch: u32,
+    skips: Skips,
 }
 
 impl MeshPass {
@@ -129,7 +155,7 @@ impl MeshPass {
             ("TILES_Y", f64::from(tiles.y)),
         ];
         let (count, count_layout) = pipeline(device, COUNT_WGSL, "count_main", constants, 1);
-        let (write, write_layout) = pipeline(device, WRITE_WGSL, "write_main", constants, 4);
+        let (write, write_layout) = pipeline(device, WRITE_WGSL, "write_main", constants, 5);
         let batch = batch.max(1);
         let buffer = |label, size: u64, usage| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -156,6 +182,7 @@ impl MeshPass {
             ),
             jobs: None,
             batch,
+            skips: Skips::new(device),
         }
     }
 
@@ -229,6 +256,7 @@ impl MeshPass {
                 entry(3, &pool.meshlet_vertices),
                 entry(4, &pool.meshlet_triangles),
                 entry(5, &pool.meshlets),
+                entry(6, &self.skips.total),
             ],
         });
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -243,7 +271,16 @@ impl MeshPass {
             pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups(jobs.len() as u32, 1, 1);
         }
+        let reading = self.skips.record(&mut encoder);
         queue.submit([encoder.finish()]);
+        if reading {
+            self.skips.mapped();
+        }
+    }
+
+    /// #1999 debug: write jobs the GPU skipped since the start, as of the last read.
+    pub fn skips(&mut self) -> SkipCounts {
+        self.skips.totals()
     }
 }
 

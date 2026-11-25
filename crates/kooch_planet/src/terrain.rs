@@ -11,10 +11,11 @@ use kooch_render::meshlet::{GpuMeshSizes, PoolBuffers};
 use super::atlas::BlockAtlas;
 use super::generate::{BARE_SPHERE, Backlog, GeneratePass, Job};
 use super::mesh::{
-    COUNT_WORDS, CountJob, Cuts, MeshPass, WRITE_SHARED_BYTES, WriteJob, counts_bytes, sizes_of,
+    ALL_PARTS, COUNT_WORDS, CountJob, Cuts, MeshPass, PARTS, Part, WRITE_SHARED_BYTES, WriteJob,
+    counts_bytes, sizes_of,
 };
 use super::recent::{BatchMean, Recent};
-use super::seam::{Stale, near};
+use super::seam::{OWN, Stale, near, touching};
 use readback::Readback;
 
 mod readback;
@@ -54,6 +55,9 @@ pub struct CountedBlock {
     /// The neighbours it was counted with, which its write must use too.
     pub near: Near,
     pub cuts: Cuts,
+    pub part: Part,
+    /// The pool change it answers; see [`Terrain::frontier`].
+    pub epoch: u64,
 }
 
 /// What the last batch cost the GPU, and the mean of the last [`RECENT`](crate::RECENT) batches: one batch
@@ -76,6 +80,8 @@ struct Sent {
     /// Its planet's revision.
     revision: u32,
     near: Near,
+    part: Part,
+    epoch: u64,
 }
 
 struct Flight {
@@ -101,7 +107,14 @@ pub struct Terrain {
     /// Per slot, the block and revision its tile was last generated for.
     generated: Vec<Option<(BlockKey, u32)>>,
     stale: Stale,
-    again: Vec<u32>,
+    /// Seams to count again, with the epoch each was queued for.
+    again: Vec<(u32, u64)>,
+    /// Bumped per pool change. Everything one change asks for, the neighbours' seams included,
+    /// carries its epoch, so the change goes on screen whole (#1999).
+    epoch: u64,
+    /// Per slot, the earliest epoch it is queued for.
+    tag: Vec<u64>,
+    found: Vec<u32>,
     flights: Vec<Flight>,
     timer: Option<(wgpu::QuerySet, wgpu::Buffer)>,
     period_ns: f32,
@@ -123,7 +136,8 @@ impl Terrain {
         }
         let atlas = BlockAtlas::new(device, capacity);
         let bare = GeneratePass::new(device, BARE_SPHERE, &atlas, MESH_BATCH)?;
-        let mesh = MeshPass::new(device, &atlas, MESH_BATCH);
+        // A generated block counts all its meshes.
+        let mesh = MeshPass::new(device, &atlas, MESH_BATCH * PARTS as u32);
         let size = counts_bytes(mesh.batch) + u64::from(QUERIES) * 8;
         let flights = (0..RING)
             .map(|_| Flight {
@@ -167,6 +181,9 @@ impl Terrain {
             generated,
             stale: Stale::default(),
             again: Vec::new(),
+            epoch: 0,
+            tag: Vec::new(),
+            found: Vec::new(),
             jobs: Vec::new(),
             counting: Vec::new(),
             flights,
@@ -261,13 +278,30 @@ impl Terrain {
         out: &mut Vec<CountedBlock>,
     ) {
         out.clear();
-        self.backlog.push(residency);
         if !residency.added.is_empty() || !residency.removed.is_empty() {
+            self.epoch += 1;
             self.stale.touch(leaves.pool);
+        }
+        for &slot in &residency.added {
+            self.mark(slot, self.epoch);
+        }
+        self.backlog.push(residency);
+        // A block that left changes its neighbours' seams now; one that came, once generated.
+        for &key in &residency.gone {
+            let root = planets.shape.get(key.planet as usize).map_or(0, root_level);
+            for slot in touching(leaves.pool, root, key) {
+                self.queue_seam(slot, self.epoch);
+            }
         }
         let (generated, revisions, pool) = (&self.generated, &self.revision, leaves.pool);
         let ready = |slot| is_ready(generated, revisions, pool, slot);
-        self.stale.sweep(leaves, planets, ready, SWEEP);
+        let mut found = std::mem::take(&mut self.found);
+        found.clear();
+        self.stale.sweep(leaves, planets, ready, SWEEP, &mut found);
+        for &slot in &found {
+            self.queue_seam(slot, self.epoch);
+        }
+        self.found = found;
         let _ = device.poll(wgpu::PollType::Poll);
         for at in 0..self.flights.len() {
             self.collect(at, leaves.pool, planets, out);
@@ -277,9 +311,52 @@ impl Terrain {
         }
     }
 
-    /// Queues a resident block to be meshed again from the tile it holds.
-    pub(crate) fn remesh(&mut self, slot: u32) {
+    /// Queues a resident block's `part` to be meshed again for `epoch`. The seam meshes from the
+    /// tile it holds; the interior, which is only ever meshed with its tile, is generated again.
+    pub(crate) fn remesh(&mut self, slot: u32, part: Part, epoch: u64) {
+        self.mark(slot, epoch);
+        match part {
+            Part::Seam => self.stale.queue(slot),
+            Part::Interior | Part::Overlap => self.backlog.retry(slot),
+        }
+    }
+
+    fn queue_seam(&mut self, slot: u32, epoch: u64) {
+        self.mark(slot, epoch);
         self.stale.queue(slot);
+    }
+
+    /// Tags `slot` with `epoch` before it is queued, keeping the earlier one while it waits.
+    fn mark(&mut self, slot: u32, epoch: u64) {
+        let i = slot as usize;
+        if self.tag.len() <= i {
+            self.tag.resize(i + 1, 0);
+        }
+        let waiting = self.backlog.holds(slot) || self.stale.holds(slot);
+        self.tag[i] = match waiting {
+            true => self.tag[i].min(epoch),
+            false => epoch,
+        };
+    }
+
+    fn tag_of(&self, slot: u32) -> u64 {
+        self.tag.get(slot as usize).copied().unwrap_or(self.epoch)
+    }
+
+    /// The earliest epoch with work queued or in flight here; `u64::MAX` with none. Every change
+    /// of an earlier epoch has been counted.
+    pub(crate) fn frontier(&self) -> u64 {
+        let queued = self.backlog.slots().chain(self.stale.slots());
+        let flying = self
+            .flights
+            .iter()
+            .filter(|f| f.busy)
+            .flat_map(|f| &f.blocks);
+        queued
+            .map(|slot| self.tag_of(slot))
+            .chain(flying.map(|sent| sent.epoch))
+            .min()
+            .unwrap_or(u64::MAX)
     }
 
     /// Fills granted pool ranges with the meshes of blocks counted earlier. Blocks must still hold
@@ -303,6 +380,11 @@ impl Terrain {
             .write(device, queue, &self.atlas, pool, jobs, stamps);
     }
 
+    /// #1999 debug: write jobs the GPU skipped since the start.
+    pub(crate) fn skips(&mut self) -> crate::mesh::SkipCounts {
+        self.mesh.skips()
+    }
+
     /// A count bumped whenever `planet`'s generator or shape changes.
     pub fn revision(&self, planet: u32) -> u32 {
         revision_of(&self.revision, planet)
@@ -321,6 +403,11 @@ impl Terrain {
     /// Blocks waiting for a batch.
     pub fn waiting(&self) -> usize {
         self.backlog.len()
+    }
+
+    /// Seams waiting for a batch, and the current epoch. #1999 debug.
+    pub(crate) fn seams_and_epoch(&self) -> (usize, u64) {
+        (self.stale.slots().count(), self.epoch)
     }
 
     /// Batches sent and not back yet.
@@ -349,8 +436,10 @@ impl Terrain {
             let Some(slot) = self.stale.pop() else {
                 break;
             };
-            if !self.jobs.iter().any(|job| job.slot == slot) && !self.again.contains(&slot) {
-                self.again.push(slot);
+            if !self.jobs.iter().any(|job| job.slot == slot)
+                && !self.again.iter().any(|&(held, _)| held == slot)
+            {
+                self.again.push((slot, self.tag_of(slot)));
             }
         }
         if self.jobs.is_empty() && self.again.is_empty() {
@@ -403,18 +492,28 @@ impl Terrain {
             );
         }
         // Generated before the mesh pass reads it, in this encoder: a neighbour in this batch is ready.
-        let flight = &mut self.flights[at];
-        flight.blocks.clear();
-        for job in &self.jobs {
-            if let Some(key) = pool.key(job.slot) {
+        let mut blocks = std::mem::take(&mut self.flights[at].blocks);
+        blocks.clear();
+        let mut touched = Vec::new();
+        for j in 0..self.jobs.len() {
+            let slot = self.jobs[j].slot;
+            if let Some(key) = pool.key(slot) {
                 let revision = revision_of(&self.revision, key.planet);
-                flight.blocks.push(Sent {
-                    slot: job.slot,
-                    key,
-                    revision,
-                    near: Near::default(),
-                });
-                if let Some(held) = self.generated.get_mut(job.slot as usize) {
+                let epoch = self.tag_of(slot);
+                for part in ALL_PARTS {
+                    blocks.push(Sent {
+                        slot,
+                        key,
+                        revision,
+                        near: Near::default(),
+                        part,
+                        epoch,
+                    });
+                }
+                // Its tile is in: the neighbours' seams can read it now, for the same change.
+                let root = planets.shape.get(key.planet as usize).map_or(0, root_level);
+                touched.extend(touching(pool, root, key).into_iter().map(|n| (n, epoch)));
+                if let Some(held) = self.generated.get_mut(slot as usize) {
                     *held = Some((key, revision));
                 }
             }
@@ -425,26 +524,39 @@ impl Terrain {
         let (generated, revisions) = (&self.generated, &self.revision);
         let ready = |slot: u32| is_ready(generated, revisions, pool, slot);
         // Only a block whose tile is current meshes from it; one queued since is generated anyway.
-        for &slot in &self.again {
+        // A neighbour's change reaches only the seam: the interior reads none.
+        for &(slot, epoch) in &self.again {
             if let Some(key) = pool.key(slot).filter(|_| ready(slot)) {
                 let revision = revision_of(revisions, key.planet);
-                flight.blocks.push(Sent {
+                blocks.push(Sent {
                     slot,
                     key,
                     revision,
                     near: Near::default(),
+                    part: Part::Seam,
+                    epoch,
                 });
             }
         }
         self.counting.clear();
-        for sent in &mut flight.blocks {
+        for sent in &mut blocks {
             let root = planets
                 .shape
                 .get(sent.key.planet as usize)
                 .map_or(0, root_level);
-            sent.near = near(leaves, root, sent.key, ready);
-            self.stale.counted(sent.slot, sent.near);
-            self.counting.push(CountJob::new(sent.slot, sent.near));
+            // The overlap reads only its own tile, as if every side were its own.
+            sent.near = match sent.part {
+                Part::Overlap => Near {
+                    cell: sent.key.cell.to_array(),
+                    sides: [OWN; 26],
+                },
+                _ => near(leaves, root, sent.key, ready),
+            };
+            if sent.part == Part::Seam {
+                self.stale.counted(sent.slot, sent.near);
+            }
+            self.counting
+                .push(CountJob::new(sent.slot, sent.near, sent.part));
         }
         self.mesh.record(
             device,
@@ -454,6 +566,11 @@ impl Terrain {
             &self.counting,
             writes(2, true, true),
         );
+        for (slot, epoch) in touched {
+            self.queue_seam(slot, epoch);
+        }
+        let flight = &mut self.flights[at];
+        flight.blocks = blocks;
         let stamps = counts_bytes(self.mesh.batch);
         encoder.copy_buffer_to_buffer(&self.mesh.counts, 0, &flight.staging, 0, stamps);
         if let Some((set, resolve)) = &self.timer {
@@ -514,6 +631,8 @@ impl Terrain {
                 key,
                 revision,
                 near,
+                part,
+                epoch,
             } = sent;
             // Freed, reused or reshaped since it was sent: the backlog has it again if still wanted.
             if pool.key(slot) != Some(key) || revision_of(&self.revision, key.planet) != revision {
@@ -534,6 +653,8 @@ impl Terrain {
                         sizes: sizes_of(counts),
                         near,
                         cuts,
+                        part,
+                        epoch,
                     });
                 }
                 None => self.backlog.retry(slot),
