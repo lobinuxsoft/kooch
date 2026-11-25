@@ -17,6 +17,7 @@ mod mesh;
 mod plugin;
 mod pool;
 mod recent;
+mod rerun;
 mod roster;
 mod seam;
 mod select;

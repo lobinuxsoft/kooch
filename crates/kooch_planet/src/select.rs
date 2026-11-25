@@ -15,7 +15,7 @@ use crate::sight::Cone;
 const KEEP_SPLIT: f64 = 1.5;
 
 /// What a planet is made of, in metres.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Shape {
     /// Sea-level radius.
     pub radius: f64,
@@ -30,7 +30,7 @@ pub struct Shape {
 }
 
 /// Blocks a planet gets before the others compete, and the most it may hold.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Limits {
     pub floor: u32,
     pub ceiling: u32,

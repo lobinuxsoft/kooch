@@ -1,0 +1,105 @@
+//! When the LOD selection has to run again (#2013): only once something it reads has changed, as
+//! the Voxel Plugin rebuilds its octree only when an invoker moves past a distance threshold.
+
+use std::collections::HashSet;
+use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+
+use glam::DVec3;
+
+use crate::BlockKey;
+use crate::select::{Limits, Planets, Shape, View};
+
+/// A viewer moving less than `lod_distance / MOVE_SPLIT` keeps the last selection: at 32 m, one
+/// metre. A split arrives that much late, well inside the [`KEEP_SPLIT`](crate::select) band.
+const MOVE_SPLIT: f64 = 32.0;
+
+/// What the last selection read.
+#[derive(Default)]
+pub(crate) struct Rerun {
+    viewers: Vec<DVec3>,
+    shapes: Vec<Shape>,
+    limits: Vec<Limits>,
+    view: Option<(f64, f64)>,
+    budget: u32,
+    revisions: Vec<u32>,
+    split: (usize, u64),
+    /// Set when the last selection left a block unbounded, or new answers about surface arrived.
+    forced: bool,
+    /// The last selection's worst error, reported again while it is kept.
+    pub worst: f64,
+}
+
+/// One frame's inputs to the selection.
+pub(crate) struct Inputs<'a> {
+    pub planets: &'a Planets,
+    pub view: &'a View,
+    pub budget: u32,
+    pub revisions: &'a [u32],
+    pub split: &'a HashSet<BlockKey>,
+}
+
+impl Rerun {
+    /// Whether `inputs` differ enough from the last selection's to select again.
+    pub fn due(&self, inputs: &Inputs) -> bool {
+        let planets = inputs.planets;
+        self.forced
+            || self.budget != inputs.budget
+            || self.view != Some(view_key(inputs.view))
+            || self.revisions != inputs.revisions
+            || self.shapes != planets.shape
+            || self.limits != planets.limits
+            || self.viewers.len() != planets.viewer.len()
+            || self.split != fingerprint(inputs.split)
+            || self.moved(planets)
+    }
+
+    /// Records the inputs a selection just ran on; `deferred` when it ran out of time to bound
+    /// every block.
+    pub fn ran(&mut self, inputs: &Inputs, deferred: bool, worst: f64) {
+        let planets = inputs.planets;
+        self.viewers.clone_from(&planets.viewer);
+        self.shapes.clone_from(&planets.shape);
+        self.limits.clone_from(&planets.limits);
+        self.view = Some(view_key(inputs.view));
+        self.budget = inputs.budget;
+        self.revisions.clear();
+        self.revisions.extend_from_slice(inputs.revisions);
+        self.split = fingerprint(inputs.split);
+        self.forced = deferred;
+        self.worst = worst;
+    }
+
+    /// The GPU proved blocks empty, which changes what the selection keeps.
+    pub fn force(&mut self) {
+        self.forced = true;
+    }
+
+    fn moved(&self, planets: &Planets) -> bool {
+        let views = planets.views.max(1);
+        self.viewers
+            .iter()
+            .zip(&planets.viewer)
+            .enumerate()
+            .any(|(at, (last, now))| {
+                let reach = planets
+                    .shape
+                    .get(at / views)
+                    .map_or(0.0, |shape| shape.lod_distance / MOVE_SPLIT);
+                // A viewer out of view sits at infinity: equal there means unmoved.
+                last != now && !(last.distance(*now) <= reach)
+            })
+    }
+}
+
+fn view_key(view: &View) -> (f64, f64) {
+    (view.proj_scale, view.impostor_px)
+}
+
+/// An order-free summary of `set`: a `HashSet` iterates in no fixed order.
+fn fingerprint(set: &HashSet<BlockKey>) -> (usize, u64) {
+    let hasher = BuildHasherDefault::<DefaultHasher>::default();
+    let sum = set
+        .iter()
+        .fold(0u64, |sum, key| sum.wrapping_add(hasher.hash_one(key)));
+    (set.len(), sum)
+}
