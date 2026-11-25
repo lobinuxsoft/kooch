@@ -337,6 +337,7 @@ pub fn sync_planets(resources: &mut Resources) {
             bare = blocks.bare,
             bare_example = blocks.bare_example.as_deref().unwrap_or("-"),
             emptied = blocks.emptied,
+            moved = blocks.moved,
             behind = epoch.saturating_sub(terrain.frontier().min(epoch)),
             backlog = terrain.waiting(),
             seams,
@@ -351,6 +352,7 @@ pub fn sync_planets(resources: &mut Resources) {
         blocks.bare = 0;
         blocks.bare_example = None;
         blocks.emptied = 0;
+        blocks.moved = 0;
     }
     let stats = PlanetStats {
         resident: state.pool.resident(),

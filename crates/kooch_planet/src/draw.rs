@@ -94,6 +94,8 @@ pub(crate) struct Blocks {
     pub(crate) bare_example: Option<String>,
     /// #1999 debug: meshes on screen replaced by none.
     pub(crate) emptied: u32,
+    /// #1999 debug: seams counted again because a tile they read changed hands before the write.
+    pub(crate) moved: u32,
     /// #1999 debug: blocks whose screen state changed this frame, audited next to their neighbours.
     changed: Vec<BlockKey>,
     /// #1999 debug: blocks with geometry retired this frame.
@@ -198,6 +200,7 @@ impl Blocks {
             }
             // A tile it borrowed changed hands since the count: the write would mesh otherwise.
             if block.part == Part::Seam && !block.near.holds(frame.pool, block.key) {
+                self.moved += 1;
                 meshes.release(mesh);
                 terrain.remesh(block.slot, Part::Seam, block.epoch);
                 continue;

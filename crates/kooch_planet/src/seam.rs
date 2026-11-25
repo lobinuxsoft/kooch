@@ -48,17 +48,21 @@ pub struct Near {
 }
 
 impl Near {
-    /// Whether every coarser leaf it borrows from still holds its slot, so its tile is unchanged.
+    /// Whether every leaf it reads past its tile, coarser or [`SAME`], still holds its slot, so the
+    /// write meshes what the count counted. A slot that changed hands makes the write skip.
     pub fn holds(&self, pool: &BlockPool, key: BlockKey) -> bool {
         self.sides.iter().enumerate().all(|(d, &side)| {
-            let up = levels(side);
-            if up == 0 {
-                return true;
-            }
             let across = BlockKey {
                 cell: key.cell + direction(d),
                 ..key
             };
+            if side != FINER && side & SAME != 0 {
+                return pool.key(side & SLOT_MASK) == Some(across);
+            }
+            let up = levels(side);
+            if up == 0 {
+                return true;
+            }
             let leaf = std::iter::successors(Some(across), |k| Some(k.parent())).nth(up as usize);
             leaf.is_some_and(|leaf| pool.key(side & SLOT_MASK) == Some(leaf))
         })
