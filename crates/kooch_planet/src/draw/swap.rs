@@ -74,7 +74,8 @@ impl Blocks {
         for i in gone {
             let s = i as usize;
             if (s * PARTS..(s + 1) * PARTS).any(|d| self.mesh[d].is_some()) {
-                self.left_solid.extend(self.key[s]);
+                let interior = self.mesh[s * PARTS + Part::Interior as usize].is_some();
+                self.left_solid.extend(self.key[s].map(|k| (k, interior)));
             }
             self.changed.extend(self.key[i as usize]);
             self.retire(i, &mut meshes);

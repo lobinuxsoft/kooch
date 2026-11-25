@@ -336,6 +336,34 @@ pub fn sync_planets(resources: &mut Resources) {
     {
         let (seams, epoch) = terrain.seams_and_epoch();
         let totals = terrain.skips();
+        // Why the selection let it go: the band and the generator's range, for it and its children.
+        let why = blocks.bare_key.map(|key| {
+            let test = |k: BlockKey| {
+                let Some(shape) = state.planets.shape.get(k.planet as usize) else {
+                    return "?".to_string();
+                };
+                let (min, max) = crate::select::bounds(shape, k);
+                let shell = crate::select::touches_shell(shape, min, max);
+                let range = crosses(&state.generators, &state.planets, k, min, max);
+                format!("{}{}", u8::from(shell), u8::from(range))
+            };
+            let children: Vec<String> = (0..8)
+                .map(|i| {
+                    let offset = glam::IVec3::new(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+                    test(BlockKey {
+                        level: key.level.wrapping_sub(1),
+                        cell: key.cell * 2 + offset,
+                        ..key
+                    })
+                })
+                .collect();
+            format!(
+                "{key:?} shell+range {} children {}",
+                test(key),
+                children.join(" ")
+            )
+        });
+        blocks.bare_key = None;
         let skipped: Vec<u32> = totals
             .iter()
             .zip(state.skipped)
@@ -352,6 +380,7 @@ pub fn sync_planets(resources: &mut Resources) {
             example = blocks.torn_example.as_deref().unwrap_or("-"),
             bare = blocks.bare,
             bare_example = blocks.bare_example.as_deref().unwrap_or("-"),
+            bare_why = why.as_deref().unwrap_or("-"),
             emptied = blocks.emptied,
             moved = blocks.moved,
             turned_away = blocks.turned_away,

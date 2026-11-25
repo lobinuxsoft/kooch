@@ -92,6 +92,8 @@ pub(crate) struct Blocks {
     /// #1999 debug: blocks with geometry retired with nothing on screen in their place.
     pub(crate) bare: u32,
     pub(crate) bare_example: Option<String>,
+    /// #1999 debug: the first such block that had an interior of its own.
+    pub(crate) bare_key: Option<BlockKey>,
     /// #1999 debug: the most wanted blocks the pool had no slot for in one frame.
     pub(crate) turned_away: u32,
     /// #1999 debug: meshes on screen replaced by none.
@@ -101,7 +103,8 @@ pub(crate) struct Blocks {
     /// #1999 debug: blocks whose screen state changed this frame, audited next to their neighbours.
     changed: Vec<BlockKey>,
     /// #1999 debug: blocks with geometry retired this frame.
-    left_solid: Vec<BlockKey>,
+    /// #1999 debug: blocks retired this frame with a mesh, and whether one was the interior.
+    left_solid: Vec<(BlockKey, bool)>,
 }
 
 /// What [`Blocks::draw`] reads of the frame.

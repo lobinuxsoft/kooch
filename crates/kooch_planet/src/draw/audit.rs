@@ -37,13 +37,16 @@ impl Blocks {
         for key in around {
             self.check(key);
         }
-        for key in std::mem::take(&mut self.left_solid) {
+        for (key, interior) in std::mem::take(&mut self.left_solid) {
             let Some(hole) = self.hole(key, pool) else {
                 continue;
             };
             self.bare += 1;
             if self.bare_example.is_none() {
-                self.bare_example = Some(format!("{key:?} left, {hole}"));
+                self.bare_example = Some(format!("{key:?} left, {hole}, interior={interior}"));
+            }
+            if interior && self.bare_key.is_none() {
+                self.bare_key = Some(key);
             }
         }
         self.changed = changed;
