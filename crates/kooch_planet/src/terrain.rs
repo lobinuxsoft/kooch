@@ -380,6 +380,11 @@ impl Terrain {
             .write(device, queue, &self.atlas, pool, jobs, stamps);
     }
 
+    /// #1999 debug: write jobs the GPU skipped since the start.
+    pub(crate) fn skips(&mut self) -> crate::mesh::SkipCounts {
+        self.mesh.skips()
+    }
+
     /// A count bumped whenever `planet`'s generator or shape changes.
     pub fn revision(&self, planet: u32) -> u32 {
         revision_of(&self.revision, planet)

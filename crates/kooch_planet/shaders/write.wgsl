@@ -30,6 +30,9 @@ const NONE: u32 = 0xffffffffu;
 @group(0) @binding(3) var<storage, read_write> pool_meshlet_vertices: array<u32>;
 @group(0) @binding(4) var<storage, read_write> pool_triangles: array<u32>;
 @group(0) @binding(5) var<storage, read_write> pool_meshlets: array<u32>;
+// #1999 debug: writes skipped, per part, then per mismatch (vertices, meshlets, meshlet vertices,
+// bytes) and packs past MAX_PACKS. Never reset; the CPU logs the difference.
+@group(0) @binding(6) var<storage, read_write> skips: array<atomic<u32>, 8>;
 
 // Cell → its vertex + 1, two 16-bit entries per word; 0 is no vertex.
 var<workgroup> map: array<atomic<u32>, MAP_WORDS>;
@@ -333,6 +336,13 @@ fn write_main(
         let reserved = vec4<u32>(job.vertices, job.meshlets, job.meshlet_vertices, job.bytes);
         let found = vec4<u32>(atomicLoad(&counter), n, mv, bytes);
         fits = select(0u, 1u, all(found == reserved) && inner <= MAX_PACKS);
+        if (fits == 0u) {
+            atomicAdd(&skips[min(part, 2u)], 1u);
+            for (var k = 0u; k < 4u; k++) {
+                atomicAdd(&skips[3u + k], select(0u, 1u, found[k] != reserved[k]));
+            }
+            atomicAdd(&skips[7u], select(0u, 1u, inner > MAX_PACKS));
+        }
     }
     // Writing past what was counted would land in another mesh's ranges.
     if (workgroupUniformLoad(&fits) == 0u) {
