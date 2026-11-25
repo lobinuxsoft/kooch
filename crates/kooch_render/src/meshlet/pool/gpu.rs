@@ -44,10 +44,14 @@ impl GpuGlobalMeshPool {
         self.max_meshlets_per_mesh = pool.max_meshlets_per_mesh();
         let moves = pool.take_moves();
         if !moves.is_empty() {
+            profiling::scope!("pool: relocate");
             self.relocate(device, queue, pool, &moves);
         }
         let mut dirty = pool.take_dirty();
-        let pins = Pins::of(pool.slots());
+        let pins = {
+            profiling::scope!("pool: pins");
+            Pins::of(pool.slots())
+        };
         let gpu = Gpu { device, queue };
 
         gpu.write(
@@ -81,6 +85,7 @@ impl GpuGlobalMeshPool {
             (descriptors.clone(), &[]),
             "global_pool_mesh_descriptors",
         );
+        profiling::scope!("pool: bounds");
         // One vec4 per mesh, parallel to the descriptors, for the lamp cull's light/instance
         // pre-pass (#939) — so it is dirty exactly when they are.
         let bounds: Vec<[f32; 4]> = pool

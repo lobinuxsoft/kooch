@@ -99,7 +99,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
 
     // Cloned out (an `Arc`): a borrow of `Resources` would collide with the poll's mutable one.
     let log_buffer = resources.get::<kooch_core::LogBuffer>().cloned();
-    let is_playing = poll_play(resources, log_buffer.as_ref());
+    let is_playing = {
+        profiling::scope!("editor: poll play");
+        poll_play(resources, log_buffer.as_ref())
+    };
     // The host's own output: everything a mirrored project says, physics events included.
     forward_remote_output(resources);
     if poll_launcher(resources) {
@@ -422,7 +425,10 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     stages.input_ms = crate::perf::ms_since(input_start);
 
     let viewport_start = std::time::Instant::now();
-    taken.render_views(resources, project_loaded, &requests);
+    {
+        profiling::scope!("editor: views");
+        taken.render_views(resources, project_loaded, &requests);
+    }
     if let Some(mut panels) = ui_panels {
         panels.render(&taken.gpu);
         if let Some(handlers) = panels.handlers.take() {
@@ -454,13 +460,16 @@ pub(crate) fn editor_render_system(resources: &mut Resources) {
     let present_start = std::time::Instant::now();
     // Out and back like `gpu`: the frame's resolve and boundary need `&mut`.
     let mut scopes = resources.remove::<kooch_core::gpu::GpuScopes>();
-    let presented = present_editor_frame(
-        &taken.gpu,
-        &mut taken.overlay,
-        &window,
-        full_output,
-        scopes.as_mut(),
-    );
+    let presented = {
+        profiling::scope!("editor: present");
+        present_editor_frame(
+            &taken.gpu,
+            &mut taken.overlay,
+            &window,
+            full_output,
+            scopes.as_mut(),
+        )
+    };
     if let Some(scopes) = scopes {
         resources.insert(scopes);
     }
