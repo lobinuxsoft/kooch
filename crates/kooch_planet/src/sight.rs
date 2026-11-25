@@ -4,7 +4,7 @@
 use glam::DVec3;
 
 use crate::BlockKey;
-use crate::lod::{Planets, bounds};
+use crate::lod::{Planets, bounds, nearest};
 
 /// Added to the view cone's half-angle, so turning the camera finds detail already there.
 const MARGIN: f64 = 0.35;
@@ -74,11 +74,7 @@ pub(crate) fn urgency(planets: &Planets, key: BlockKey) -> f64 {
         return f64::INFINITY;
     };
     let (min, max) = bounds(shape, key);
-    let distance = planets
-        .viewers(planet)
-        .iter()
-        .map(|viewer| (viewer.clamp(min, max) - *viewer).length())
-        .fold(f64::INFINITY, f64::min);
+    let distance = nearest(planets.viewers(planet), min, max);
     match sees(planets, key) {
         true => distance,
         false => distance + 1e12,

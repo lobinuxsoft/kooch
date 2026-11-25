@@ -71,6 +71,11 @@ pub struct BlockKey {
     pub cell: IVec3,
 }
 
+/// Corner `i` in `0..8` of a unit cube, x fastest.
+pub(crate) fn octant(i: i32) -> IVec3 {
+    IVec3::new(i & 1, (i >> 1) & 1, (i >> 2) & 1)
+}
+
 impl BlockKey {
     /// The block one level coarser that holds this one.
     pub fn parent(self) -> Self {
@@ -78,6 +83,15 @@ impl BlockKey {
             planet: self.planet,
             level: self.level.saturating_add(1),
             cell: self.cell.div_euclid(IVec3::splat(2)),
+        }
+    }
+
+    /// Child `i` in `0..8`, x fastest.
+    pub fn child(self, i: i32) -> Self {
+        Self {
+            planet: self.planet,
+            level: self.level.saturating_sub(1),
+            cell: self.cell * 2 + octant(i),
         }
     }
 

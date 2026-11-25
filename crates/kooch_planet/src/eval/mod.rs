@@ -152,8 +152,7 @@ fn range_input(
     max: DVec3,
     planet: u32,
 ) -> Result<Value, Fault> {
-    let near = DVec3::ZERO.clamp(min, max).length();
-    let far = min.abs().max(max.abs()).length();
+    let (near, far) = crate::lod::radial(min, max);
     // The GPU's altitude is exact to a few f32 steps of the excess it starts from.
     let slack = 1e-5 * (near - shape.radius).abs().max((far - shape.radius).abs()) + 1e-3;
     let altitude = Num::new(near - shape.radius, far - shape.radius).pad(slack);
