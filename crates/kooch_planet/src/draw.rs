@@ -6,9 +6,9 @@
 //! A block's mesh is counted, asked of the meshlet pool, granted the frame after and written in
 //! place by the GPU, under a GUID of its own per ask, so a stale grant never meets a newer ask.
 //!
-//! Each block has two meshes, its interior and its seam (#1999): a draw `d` is index `d / 2`'s
-//! [`Part`] `d % 2`. A neighbour's change re-meshes the seam alone, and a new block is shown once
-//! both are in hand.
+//! Each block has [`PARTS`] meshes, its interior, seam and overlap (#1999): a draw `d` is index
+//! `d / PARTS`'s [`Part`] `d % PARTS`. A neighbour's change re-meshes the seam alone, and a new
+//! block is shown once all are in hand.
 
 mod audit;
 mod swap;
@@ -22,13 +22,10 @@ use kooch_ecs::MeshRenderer;
 use kooch_ecs::hierarchy::WorldOrigin;
 use kooch_render::meshlet::{GpuMeshes, MeshBounds, Submitted};
 
-use crate::mesh::Part;
+use crate::mesh::{PARTS, Part};
 use crate::seam::levels;
 use crate::sync::Found;
 use crate::{BLOCK_SAMPLES, BlockKey, BlockPool, CountedBlock, Near, Terrain, WriteJob};
-
-/// Meshes a block draws with: its interior and its seam.
-const PARTS: usize = 2;
 
 /// Frames a change may wait for the rest of its epoch before it goes on screen anyway.
 const HOLD: u32 = 30;
@@ -323,7 +320,7 @@ impl Blocks {
             .sum()
     }
 
-    /// Whether both of index `s`'s meshes are in hand.
+    /// Whether every one of index `s`'s meshes is in hand.
     fn complete(&self, s: usize) -> bool {
         self.held[s * PARTS..(s + 1) * PARTS].iter().all(|&h| h)
     }
@@ -336,7 +333,7 @@ impl Blocks {
                 || self.frame.wrapping_sub(self.staged_at[d]) > HOLD)
     }
 
-    /// Whether index `s` can go on screen as it is: both meshes in hand, every waiting change due.
+    /// Whether index `s` can go on screen as it is: every mesh in hand, every waiting change due.
     fn ready(&self, s: usize) -> bool {
         self.complete(s) && (s * PARTS..(s + 1) * PARTS).all(|d| !self.pending[d] || self.due(d))
     }

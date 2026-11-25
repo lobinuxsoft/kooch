@@ -47,10 +47,16 @@ const FINER: u32 = 0x80000000u;
 // A leaf of our level, in this slot; see `SAME` in seam.rs.
 const SAME: u32 = 0x40000000u;
 
-// Which of the block's two meshes a job makes (#1999). The interior reads only the block's own
-// samples, so it is made once per tile; the seam is the rest, made again when a neighbour changes.
+// Which of the block's meshes a job makes (#1999). The interior reads only the block's own samples,
+// so it is made once per tile; the seam is the rest, made again when a neighbour changes. The
+// overlap is the strip across the − planes from the block's own samples, sent with every side
+// `OWN`: sunk under the seam, it covers the crack while a neighbour shows another level.
 const INTERIOR: u32 = 0u;
 const SEAM: u32 = 1u;
+const OVERLAP: u32 = 2u;
+// How far the overlap sinks along its normal, in voxels: under the seam, small enough to show as no
+// step where it fills a crack.
+const SINK: f32 = 0.1;
 var<workgroup> part: u32;
 
 var<workgroup> near: Near;
@@ -388,17 +394,27 @@ fn inner_edge(s: vec3<u32>, axis: u32) -> bool {
 }
 
 // Whether cell `c` can hold a vertex of the job's part: the interior's cells are 2..15, the seam's
-// every cell with a coordinate outside 3..14. Cells 2 and 15 are in both, placed alike by each.
+// every cell with a coordinate outside 3..14. Cells 2 and 15 are in both, placed alike by each. The
+// overlap's are the two either side of a − plane.
 fn in_part(c: vec3<u32>) -> bool {
+    if (part == OVERLAP) {
+        return any(c < vec3<u32>(2u));
+    }
     if (part == INTERIOR) {
         return all(c >= vec3<u32>(2u)) && all(c <= vec3<u32>(15u));
     }
     return any(c < vec3<u32>(3u)) || any(c > vec3<u32>(14u));
 }
 
+// Whether the edge's quad straddles a − plane: its cells reach cell 0 across one.
+fn across_low(s: vec3<u32>, axis: u32) -> bool {
+    return s[(axis + 1u) % 3u] == 1u || s[(axis + 2u) % 3u] == 1u;
+}
+
 // `edge` over the edges the block emits, of the job's part.
 fn emits(s: vec3<u32>, axis: u32) -> vec2<u32> {
-    if (inner_edge(s, axis) != (part == INTERIOR) || !owns(s, axis)) {
+    let mine = select(inner_edge(s, axis) == (part == INTERIOR), across_low(s, axis), part == OVERLAP);
+    if (!mine || !owns(s, axis)) {
         return vec2<u32>(0u);
     }
     return edge(s, axis);

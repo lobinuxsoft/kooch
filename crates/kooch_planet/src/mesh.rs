@@ -41,14 +41,23 @@ pub(super) fn sizes_of(counts: [u32; 4]) -> GpuMeshSizes {
     }
 }
 
-/// Which of a block's two meshes (#1999). The interior reads only the block's own samples, so it is
-/// meshed once per tile; the seam reads its neighbours and is meshed again when they change.
+/// Which of a block's meshes (#1999). The interior reads only the block's own samples, so it is
+/// meshed once per tile; the seam reads its neighbours and is meshed again when they change. The
+/// overlap is the strip across its − planes from its own samples alone, sunk under the seam: it
+/// covers the crack while a neighbour shows another level than the seam was meshed for.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Part {
     #[default]
     Interior = 0,
     Seam = 1,
+    Overlap = 2,
 }
+
+/// Meshes a block draws with.
+pub const PARTS: usize = 3;
+
+/// The parts meshed with a freshly generated tile.
+pub const ALL_PARTS: [Part; PARTS] = [Part::Interior, Part::Seam, Part::Overlap];
 
 /// One block for the count pass. Mirrors `CountJob` in `count.wgsl`.
 #[repr(C)]

@@ -11,11 +11,11 @@ use kooch_render::meshlet::{GpuMeshSizes, PoolBuffers};
 use super::atlas::BlockAtlas;
 use super::generate::{BARE_SPHERE, Backlog, GeneratePass, Job};
 use super::mesh::{
-    COUNT_WORDS, CountJob, Cuts, MeshPass, Part, WRITE_SHARED_BYTES, WriteJob, counts_bytes,
-    sizes_of,
+    ALL_PARTS, COUNT_WORDS, CountJob, Cuts, MeshPass, PARTS, Part, WRITE_SHARED_BYTES, WriteJob,
+    counts_bytes, sizes_of,
 };
 use super::recent::{BatchMean, Recent};
-use super::seam::{Stale, near, touching};
+use super::seam::{OWN, Stale, near, touching};
 use readback::Readback;
 
 mod readback;
@@ -136,8 +136,8 @@ impl Terrain {
         }
         let atlas = BlockAtlas::new(device, capacity);
         let bare = GeneratePass::new(device, BARE_SPHERE, &atlas, MESH_BATCH)?;
-        // A generated block counts both its meshes.
-        let mesh = MeshPass::new(device, &atlas, MESH_BATCH * 2);
+        // A generated block counts all its meshes.
+        let mesh = MeshPass::new(device, &atlas, MESH_BATCH * PARTS as u32);
         let size = counts_bytes(mesh.batch) + u64::from(QUERIES) * 8;
         let flights = (0..RING)
             .map(|_| Flight {
@@ -317,7 +317,7 @@ impl Terrain {
         self.mark(slot, epoch);
         match part {
             Part::Seam => self.stale.queue(slot),
-            Part::Interior => self.backlog.retry(slot),
+            Part::Interior | Part::Overlap => self.backlog.retry(slot),
         }
     }
 
@@ -495,7 +495,7 @@ impl Terrain {
             if let Some(key) = pool.key(slot) {
                 let revision = revision_of(&self.revision, key.planet);
                 let epoch = self.tag_of(slot);
-                for part in [Part::Interior, Part::Seam] {
+                for part in ALL_PARTS {
                     blocks.push(Sent {
                         slot,
                         key,
@@ -539,8 +539,17 @@ impl Terrain {
                 .shape
                 .get(sent.key.planet as usize)
                 .map_or(0, root_level);
-            sent.near = near(leaves, root, sent.key, ready);
-            self.stale.counted(sent.slot, sent.near);
+            // The overlap reads only its own tile, as if every side were its own.
+            sent.near = match sent.part {
+                Part::Overlap => Near {
+                    cell: sent.key.cell.to_array(),
+                    sides: [OWN; 26],
+                },
+                _ => near(leaves, root, sent.key, ready),
+            };
+            if sent.part == Part::Seam {
+                self.stale.counted(sent.slot, sent.near);
+            }
             self.counting
                 .push(CountJob::new(sent.slot, sent.near, sent.part));
         }

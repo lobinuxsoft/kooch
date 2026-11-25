@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use glam::{DVec3, IVec3, Vec3};
 use kooch_render::meshlet::{GlobalMeshPool, MeshBounds, PoolBuffers};
 
-use super::{COUNT_WGSL, NETS_WGSL, WRITE_WGSL};
+use super::{COUNT_WGSL, NETS_WGSL, PARTS, WRITE_WGSL};
 use crate::test_device::try_acquire;
 use crate::{
     BlockKey, BlockPool, CountedBlock, Leaves, Limits, Part, Planets, Residency, Shape, Terrain,
@@ -159,12 +159,14 @@ fn mesh_faults(
     let Some((device, queue)) = try_acquire() else {
         return Vec::new();
     };
-    let (mut terrain, blocks) = count_all(&device, &queue, planets, keys, split);
+    let (mut terrain, mut blocks) = count_all(&device, &queue, planets, keys, split);
     assert_eq!(
         blocks.len(),
-        keys.len() * 2,
-        "both meshes of every block come back"
+        keys.len() * PARTS,
+        "every mesh of every block comes back"
     );
+    // The overlap is a sunk copy under the seam: open by design, never part of the closed surface.
+    blocks.retain(|b| b.part != Part::Overlap);
     let mut pool = GlobalMeshPool::new();
     let ids: Vec<u32> = blocks
         .iter()

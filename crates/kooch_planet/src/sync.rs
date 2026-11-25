@@ -275,7 +275,7 @@ pub fn sync_planets(resources: &mut Resources) {
     }
     // Only the finest level's empty count is final: a coarser block samples every 2^level voxels
     // and misses a ridge thinner than that, and calling it empty would prune its children (#1945).
-    // Empty means both meshes: a generated block counts both in the same batch.
+    // Empty means every mesh: a generated block counts all of them in the same batch.
     let surfaced: HashSet<BlockKey> = meshed
         .iter()
         .filter(|b| b.sizes.meshlets != 0)
