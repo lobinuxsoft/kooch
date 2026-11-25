@@ -51,6 +51,7 @@ impl MeshletRenderStage {
         let (released, reserved) = meshes.take_asked();
         self.pool_dirty |= !released.is_empty() || !reserved.is_empty();
         for guid in released {
+            profiling::scope!("meshlet: release one");
             self.pipeline.release_gpu(guid);
         }
         {
@@ -58,6 +59,7 @@ impl MeshletRenderStage {
             self.pipeline.defragment();
         }
         for (guid, sizes, bounds) in reserved {
+            profiling::scope!("meshlet: reserve one");
             match self.pipeline.reserve_gpu(guid, sizes, bounds) {
                 Some(descriptor) => meshes.grant(guid, descriptor),
                 None => meshes.refuse(guid),
