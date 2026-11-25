@@ -143,7 +143,7 @@ impl View {
 /// for a block it proves uniform (all rock or all air), which then takes no slot. Zylann answers it
 /// with interval range analysis of the graph. `split(key)` says whether the block was split last
 /// frame, for the hysteresis.
-pub fn select(
+pub fn choose_lods(
     planets: &Planets,
     view: &View,
     capacity: u32,
@@ -152,6 +152,11 @@ pub fn select(
     out: &mut Vec<BlockKey>,
 ) -> f64 {
     out.clear();
+    let snapped = Planets {
+        viewer: snapped_viewers(planets),
+        ..planets.clone()
+    };
+    let planets = &snapped;
     let mut refine = Refine {
         planets,
         view,
@@ -180,6 +185,25 @@ pub fn select(
         .fold(0.0, |worst: f64, node| worst.max(node.error));
     out.extend(refine.leaves.drain());
     worst
+}
+
+/// Every viewer moved to the centre of the finest block it stands in, so the levels change only
+/// when a viewer crosses into another block (#2013), as godot_voxel's clipbox does.
+pub(crate) fn snapped_viewers(planets: &Planets) -> Vec<DVec3> {
+    let views = planets.views.max(1);
+    let snap = |at: usize, viewer: DVec3| match planets.shape.get(at / views) {
+        Some(shape) => {
+            let side = block_side(shape, 0);
+            ((viewer / side).floor() + DVec3::splat(0.5)) * side
+        }
+        None => viewer,
+    };
+    planets
+        .viewer
+        .iter()
+        .enumerate()
+        .map(|(at, &viewer)| snap(at, viewer))
+        .collect()
 }
 
 /// A leaf that may still split, ordered by its error.

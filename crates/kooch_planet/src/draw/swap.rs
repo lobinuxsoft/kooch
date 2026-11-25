@@ -8,9 +8,9 @@ use kooch_core::resource::Resources;
 use kooch_render::meshlet::GpuMeshes;
 
 use super::{Blocks, PARTS};
+use crate::lod::root_level;
 use crate::mesh::Part;
 use crate::seam::touching;
-use crate::select::root_level;
 use crate::{BlockKey, BlockPool, Planets};
 
 /// Frames a block may linger when what replaces it never arrives — the pool thrashing, or a

@@ -4,7 +4,7 @@
 use glam::DVec3;
 
 use crate::BlockKey;
-use crate::select::{Planets, bounds};
+use crate::lod::{Planets, bounds};
 
 /// Added to the view cone's half-angle, so turning the camera finds detail already there.
 const MARGIN: f64 = 0.35;

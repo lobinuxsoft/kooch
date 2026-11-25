@@ -1,6 +1,6 @@
 //! The generator on the CPU (#313 step 3b): naga's IR of a `planet` shader, walked over intervals.
 //!
-//! [`Generator::range`] bounds the SDF over a box, so `select` can give no slot to a block the
+//! [`Generator::range`] bounds the SDF over a box, so `choose_lods` can give no slot to a block the
 //! generator proves all rock or all air (Zylann's range analysis). [`Generator::sample`] is the
 //! same walk at one point, rounded as the GPU rounds, for the collision of step 6. Any construct
 //! it cannot bound makes the answer unknown, never wrong.
@@ -17,7 +17,7 @@ use glam::DVec3;
 use naga::{Expression as E, Function, Handle, Module};
 
 use crate::PLANET_INPUT_WGSL;
-use crate::select::Shape;
+use crate::lod::Shape;
 use num::{Mode, Num, to_f32};
 use run::Machine;
 use value::{Kind, Lanes, Value, zero};

@@ -19,7 +19,7 @@ use super::seam::{OWN, Stale, near, touching};
 use readback::Readback;
 
 mod readback;
-use super::select::{bounds, root_level, voxel_size};
+use super::lod::{bounds, root_level, voxel_size};
 use super::{BlockKey, BlockPool, Leaves, Near, Planets, Residency};
 
 /// Batches in flight at once; a fourth waits for the first to come back.

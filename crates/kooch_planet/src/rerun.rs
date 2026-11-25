@@ -1,5 +1,5 @@
-//! When the LOD selection has to run again (#2013): only once something it reads has changed, as
-//! the Voxel Plugin rebuilds its octree only when an invoker moves past a distance threshold.
+//! When the levels have to be chosen again (#2013): only once something the choice reads has
+//! changed. A viewer counts as moved only when it crosses into another finest block.
 
 use std::collections::HashSet;
 use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
@@ -7,13 +7,9 @@ use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
 use glam::DVec3;
 
 use crate::BlockKey;
-use crate::select::{Limits, Planets, Shape, View};
+use crate::lod::{Limits, Planets, Shape, View, snapped_viewers};
 
-/// A viewer moving less than `lod_distance / MOVE_SPLIT` keeps the last selection: at 32 m, one
-/// metre. A split arrives that much late, well inside the [`KEEP_SPLIT`](crate::select) band.
-const MOVE_SPLIT: f64 = 32.0;
-
-/// What the last selection read.
+/// What the last choice read.
 #[derive(Default)]
 pub(crate) struct Rerun {
     viewers: Vec<DVec3>,
@@ -48,16 +44,15 @@ impl Rerun {
             || self.revisions != inputs.revisions
             || self.shapes != planets.shape
             || self.limits != planets.limits
-            || self.viewers.len() != planets.viewer.len()
             || self.split != fingerprint(inputs.split)
-            || self.moved(planets)
+            || self.viewers != snapped_viewers(planets)
     }
 
     /// Records the inputs a selection just ran on; `deferred` when it ran out of time to bound
     /// every block.
     pub fn ran(&mut self, inputs: &Inputs, deferred: bool, worst: f64) {
         let planets = inputs.planets;
-        self.viewers.clone_from(&planets.viewer);
+        self.viewers = snapped_viewers(planets);
         self.shapes.clone_from(&planets.shape);
         self.limits.clone_from(&planets.limits);
         self.view = Some(view_key(inputs.view));
@@ -72,22 +67,6 @@ impl Rerun {
     /// The GPU proved blocks empty, which changes what the selection keeps.
     pub fn force(&mut self) {
         self.forced = true;
-    }
-
-    fn moved(&self, planets: &Planets) -> bool {
-        let views = planets.views.max(1);
-        self.viewers
-            .iter()
-            .zip(&planets.viewer)
-            .enumerate()
-            .any(|(at, (last, now))| {
-                let reach = planets
-                    .shape
-                    .get(at / views)
-                    .map_or(0.0, |shape| shape.lod_distance / MOVE_SPLIT);
-                // A viewer out of view sits at infinity: equal there means unmoved.
-                last != now && !(last.distance(*now) <= reach)
-            })
     }
 }
 

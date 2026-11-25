@@ -2,7 +2,7 @@ use glam::{DVec3, IVec3, Vec3};
 
 use super::{Generator, may_cross};
 use crate::generate::{GeneratePass, Job};
-use crate::select::{bounds, voxel_size};
+use crate::lod::{bounds, voxel_size};
 use crate::test_device::{read_tile, try_acquire};
 use crate::{BARE_SPHERE, BlockAtlas, BlockKey, Shape, TILE_SAMPLES};
 

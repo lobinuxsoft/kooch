@@ -11,7 +11,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::IVec3;
 
 use super::atlas::BlockAtlas;
-use super::select::voxel_size;
+use super::lod::voxel_size;
 use super::{BLOCK_SAMPLES, TILE_SAMPLES};
 use super::{BlockKey, BlockPool, Planets, Residency, Shape};
 use kooch_world::voxel::POOL_TEXTURE_FORMAT;

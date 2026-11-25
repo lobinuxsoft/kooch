@@ -26,15 +26,15 @@ use kooch_render::meshlet::GpuMeshes;
 use crate::component::Planet;
 use crate::draw::{Blocks, Frame};
 use crate::eval::{Generator, may_cross};
+use crate::lod::{root_level, voxel_size};
 use crate::rerun::{Inputs, Rerun};
 use crate::roster::{Roster, Signature};
-use crate::select::{root_level, voxel_size};
 use crate::sight::Cone;
 pub use ray::{GroundHit, ground_hits};
 
 use crate::{
     BARE_SPHERE, BlockKey, BlockPool, CountedBlock, DEFAULT_CAPACITY, Leaves, Limits, Part,
-    Planets, Residency, Shape, Terrain, View, select,
+    Planets, Residency, Shape, Terrain, View, choose_lods,
 };
 
 /// Blocks every planet in view gets before the others compete for the rest of the pool.
@@ -232,7 +232,7 @@ pub fn sync_planets(resources: &mut Resources) {
     let worst = match due {
         false => state.rerun.worst,
         true => {
-            profiling::scope!("planet: select");
+            profiling::scope!("planet: choose lods");
             let mut deferred = false;
             let worst = match viewers.is_empty() {
                 true => {
@@ -241,7 +241,7 @@ pub fn sync_planets(resources: &mut Resources) {
                 }
                 false => {
                     let started = Instant::now();
-                    select(
+                    choose_lods(
                         &state.planets,
                         &view,
                         budget,
