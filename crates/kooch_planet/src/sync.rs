@@ -336,7 +336,7 @@ pub fn sync_planets(resources: &mut Resources) {
             .map(|(now, then)| now.wrapping_sub(then))
             .collect();
         state.skipped = totals;
-        tracing::info!(
+        tracing::trace!(
             target: "kooch_planet",
             on_time = blocks.on_time,
             forced = blocks.forced,
