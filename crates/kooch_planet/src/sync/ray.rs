@@ -9,7 +9,7 @@ use kooch_ecs::hierarchy::WorldOrigin;
 
 use super::{PlanetTerrain, gather};
 use crate::eval::Generator;
-use crate::select::{Shape, voxel_size};
+use crate::lod::{Shape, voxel_size};
 
 /// Generator evaluations one planet may spend on a ray: a click or a drag, never a stall.
 const EVALUATIONS: u32 = 2048;

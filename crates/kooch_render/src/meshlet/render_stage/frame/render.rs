@@ -38,6 +38,7 @@ impl MeshletRenderStage {
         if !self.pool_dirty && self.gpu_pool.is_some() {
             return true;
         }
+        profiling::scope!("meshlet: pool sync");
         if self.pipeline.registered_count() == 0 {
             return false;
         }

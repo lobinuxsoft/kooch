@@ -47,12 +47,16 @@ impl MeshletRenderStage {
         let Some(mut meshes) = resources.remove::<crate::meshlet::GpuMeshes>() else {
             return;
         };
+        profiling::scope!("meshlet: serve gpu meshes");
         let (released, reserved) = meshes.take_asked();
         self.pool_dirty |= !released.is_empty() || !reserved.is_empty();
         for guid in released {
             self.pipeline.release_gpu(guid);
         }
-        self.pipeline.defragment();
+        {
+            profiling::scope!("meshlet: repack");
+            self.pipeline.defragment();
+        }
         for (guid, sizes, bounds) in reserved {
             match self.pipeline.reserve_gpu(guid, sizes, bounds) {
                 Some(descriptor) => meshes.grant(guid, descriptor),
@@ -77,6 +81,7 @@ impl MeshletRenderStage {
         let Some(mut meshes) = resources.remove::<crate::meshlet::GpuMeshes>() else {
             return;
         };
+        profiling::scope!("meshlet: publish gpu meshes");
         if self.sync_pool(device, queue)
             && let Some(pool) = &self.gpu_pool
         {
@@ -102,6 +107,7 @@ impl MeshletRenderStage {
         queue: &wgpu::Queue,
         resources: &mut Resources,
     ) {
+        profiling::scope!("meshlet: assets");
         self.sync_assets(device, queue, resources);
         self.publish_gpu_meshes(device, queue, resources);
     }
@@ -114,7 +120,10 @@ impl MeshletRenderStage {
     ) {
         // Before the material sync and the generated drain below: what the trim publishes this call
         // is uploaded by the same call, so the cut mesh draws on the next frame (#452).
-        self.trim_static_masks(device, queue, resources);
+        {
+            profiling::scope!("meshlet: trim");
+            self.trim_static_masks(device, queue, resources);
+        }
 
         let mut textures_freed = false;
         // Material pool sync first: the meshlet scene system reads
@@ -122,6 +131,7 @@ impl MeshletRenderStage {
         // newly-picked GUID has to be in the registry before the cull dispatch fires.
         if let Some(mut material_pipeline) = resources.remove::<crate::material::MaterialPipeline>()
         {
+            profiling::scope!("meshlet: materials");
             material_pipeline.sync_from_resources(device, queue, resources);
             textures_freed = material_pipeline.take_released();
             resources.insert(material_pipeline);
@@ -147,7 +157,10 @@ impl MeshletRenderStage {
 
         self.serve_gpu_meshes(resources);
 
-        let referenced = self.pipeline.collect_referenced_guids(resources);
+        let referenced = {
+            profiling::scope!("meshlet: referenced");
+            self.pipeline.collect_referenced_guids(resources)
+        };
         let pending: Vec<Guid> = referenced
             .iter()
             .copied()
@@ -161,9 +174,11 @@ impl MeshletRenderStage {
         // nothing has asked to draw for a second goes back to the pool (#1589). `referenced`
         // already skips invisible renderers, so a despawned entity, a closed scene and a hidden
         // renderer are the same event to this.
-        let released = self
-            .pipeline
-            .sweep(&referenced, crate::meshlet::MESH_MAX_AGE);
+        let released = {
+            profiling::scope!("meshlet: sweep");
+            self.pipeline
+                .sweep(&referenced, crate::meshlet::MESH_MAX_AGE)
+        };
         if !released.is_empty() {
             self.pool_dirty = true;
             // The pool slot is the GPU half; `Assets<MeshletMesh>` holds a second full copy in
@@ -183,6 +198,7 @@ impl MeshletRenderStage {
         }
         // Once per frame, and only on a frame that freed something: a scene change, a deletion.
         if textures_freed || !released.is_empty() {
+            profiling::scope!("meshlet: return freed");
             let took = kooch_core::memory::return_freed();
             tracing::debug!(
                 target: "kooch_render::memory",

@@ -26,14 +26,15 @@ use kooch_render::meshlet::GpuMeshes;
 use crate::component::Planet;
 use crate::draw::{Blocks, Frame};
 use crate::eval::{Generator, may_cross};
+use crate::lod::{root_level, voxel_size};
+use crate::rerun::{Inputs, Rerun};
 use crate::roster::{Roster, Signature};
-use crate::select::{root_level, voxel_size};
 use crate::sight::Cone;
 pub use ray::{GroundHit, ground_hits};
 
 use crate::{
     BARE_SPHERE, BlockKey, BlockPool, CountedBlock, DEFAULT_CAPACITY, Leaves, Limits, Part,
-    Planets, Residency, Shape, Terrain, View, select,
+    Planets, Residency, Shape, Terrain, View, choose_lods,
 };
 
 /// Blocks every planet in view gets before the others compete for the rest of the pool.
@@ -117,6 +118,7 @@ pub struct PlanetTerrain {
     /// Set when the GPU side could not be built, so it is not tried every frame.
     broken: bool,
     meshed: Vec<CountedBlock>,
+    rerun: Rerun,
     pub(crate) blocks: Blocks,
 }
 
@@ -135,6 +137,7 @@ impl Default for PlanetTerrain {
             terrain: None,
             broken: false,
             meshed: Vec::new(),
+            rerun: Rerun::default(),
             blocks: Blocks::default(),
         }
     }
@@ -159,7 +162,10 @@ pub fn sync_planets(resources: &mut Resources) {
     else {
         return;
     };
-    let found = gather(resources);
+    let found = {
+        profiling::scope!("planet: gather");
+        gather(resources)
+    };
     let Some(mut state) = resources.remove::<PlanetTerrain>() else {
         return;
     };
@@ -212,54 +218,94 @@ pub fn sync_planets(resources: &mut Resources) {
             crate::budget::blocks_within(state.pool.resident(), usage, DEFAULT_CAPACITY)
         });
     fill_planets(&mut state.planets, &placed, &found, &viewers, &cones);
-    let worst = match viewers.is_empty() {
+    let revisions: Vec<u32> = (0..state.planets.len() as u32)
+        .map(|p| state.terrain.as_ref().map_or(0, |t| t.revision(p)))
+        .collect();
+    let inputs = Inputs {
+        planets: &state.planets,
+        view: &view,
+        budget,
+        revisions: &revisions,
+    };
+    let due = viewers.is_empty() || state.rerun.due(&inputs);
+    let worst = match due {
+        false => state.rerun.worst,
         true => {
-            state.wanted.clear();
-            0.0
-        }
-        false => {
-            let started = Instant::now();
-            select(
-                &state.planets,
-                &view,
+            profiling::scope!("planet: choose lods");
+            let mut deferred = false;
+            let worst = match viewers.is_empty() {
+                true => {
+                    state.wanted.clear();
+                    0.0
+                }
+                false => {
+                    let started = Instant::now();
+                    choose_lods(
+                        &state.planets,
+                        &view,
+                        budget,
+                        |key, min, max| {
+                            let revision =
+                                state.terrain.as_ref().map_or(0, |t| t.revision(key.planet));
+                            let frame = state.frame;
+                            if let Some(known) = state.known.get_mut(&key)
+                                && known.revision == revision
+                            {
+                                known.seen = frame;
+                                return known.surface;
+                            }
+                            if started.elapsed() > RANGE_BUDGET {
+                                deferred = true;
+                                return true;
+                            }
+                            profiling::scope!("planet: bound");
+                            let surface = crosses(&state.generators, &state.planets, key, min, max);
+                            let known = Known {
+                                revision,
+                                seen: frame,
+                                surface,
+                            };
+                            state.known.insert(key, known);
+                            surface
+                        },
+                        |key| state.split.contains(&key),
+                        &mut state.wanted,
+                    )
+                }
+            };
+            let inputs = Inputs {
+                planets: &state.planets,
+                view: &view,
                 budget,
-                |key, min, max| {
-                    let revision = state.terrain.as_ref().map_or(0, |t| t.revision(key.planet));
-                    let frame = state.frame;
-                    if let Some(known) = state.known.get_mut(&key)
-                        && known.revision == revision
-                    {
-                        known.seen = frame;
-                        return known.surface;
-                    }
-                    if started.elapsed() > RANGE_BUDGET {
-                        return true;
-                    }
-                    let surface = crosses(&state.generators, &state.planets, key, min, max);
-                    let known = Known {
-                        revision,
-                        seen: frame,
-                        surface,
-                    };
-                    state.known.insert(key, known);
-                    surface
-                },
-                |key| state.split.contains(&key),
-                &mut state.wanted,
-            )
+                revisions: &revisions,
+            };
+            state.rerun.ran(&inputs, deferred, worst);
+            // Only a selection refreshes `seen`, so a kept one must not age what it last met.
+            let frame = state.frame;
+            state
+                .known
+                .retain(|_, known| frame.wrapping_sub(known.seen) < KNOWN_GRACE);
+            state.frame = frame.wrapping_add(1);
+            worst
         }
     };
-    let frame = state.frame;
-    state
-        .known
-        .retain(|_, known| frame.wrapping_sub(known.seen) < KNOWN_GRACE);
-    state.frame = frame.wrapping_add(1);
-    state.pool.apply(&state.wanted, &mut state.residency);
-    // After the pool changes, so the meshes see this frame's leaves; the next selection's
-    // hysteresis reads the same set, as nothing moves the pool in between.
-    fill_split(&mut state.split, &state.pool, &state.planets);
+    {
+        profiling::scope!("planet: pool");
+        // Applying the same `wanted` again is a no-op: nothing leaves, and what did not fit still
+        // does not, so the pool and its split set only change after a choice.
+        match due {
+            true => {
+                state.pool.apply(&state.wanted, &mut state.residency);
+                // After the pool changes, so the meshes see this frame's leaves; the next choice's
+                // hysteresis reads the same set, as nothing moves the pool in between.
+                fill_split(&mut state.split, &state.pool, &state.planets);
+            }
+            false => state.residency.clear(),
+        }
+    }
     let mut meshed = std::mem::take(&mut state.meshed);
     if let Some(terrain) = &mut state.terrain {
+        profiling::scope!("planet: generate and count");
         let leaves = Leaves {
             pool: &state.pool,
             split: &state.split,
@@ -292,7 +338,13 @@ pub fn sync_planets(resources: &mut Resources) {
             seen: state.frame,
             surface: false,
         };
-        state.known.insert(block.key, known);
+        if state
+            .known
+            .insert(block.key, known)
+            .is_none_or(|old| old.surface)
+        {
+            state.rerun.force();
+        }
     }
     let mut blocks = std::mem::take(&mut state.blocks);
     if !state.residency.added.is_empty() || !state.residency.removed.is_empty() {
@@ -300,12 +352,15 @@ pub fn sync_planets(resources: &mut Resources) {
     }
     let counting = meshed.iter().map(|b| b.epoch);
     let frontier = state.terrain.as_ref().map_or(u64::MAX, Terrain::frontier);
-    blocks.swap(
-        resources,
-        &state.pool,
-        &state.planets,
-        counting.fold(frontier, u64::min),
-    );
+    {
+        profiling::scope!("planet: swap");
+        blocks.swap(
+            resources,
+            &state.pool,
+            &state.planets,
+            counting.fold(frontier, u64::min),
+        );
+    }
     match &mut state.terrain {
         Some(terrain) => {
             let frame = Frame {
@@ -315,11 +370,15 @@ pub fn sync_planets(resources: &mut Resources) {
                 placed: &placed,
                 found: &found,
             };
+            profiling::scope!("planet: write");
             blocks.draw(resources, &frame, terrain, &mut meshed);
         }
         None => meshed.clear(),
     }
-    blocks.submit(resources, &placed, &found);
+    {
+        profiling::scope!("planet: submit");
+        blocks.submit(resources, &placed, &found);
+    }
     let stats = PlanetStats {
         resident: state.pool.resident(),
         capacity: state.pool.capacity(),

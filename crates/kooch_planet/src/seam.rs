@@ -8,7 +8,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::IVec3;
 
 use super::generate::Backlog;
-use super::select::root_level;
+use super::lod::root_level;
 use super::{BlockKey, BlockPool, Planets};
 
 #[cfg(test)]

@@ -15,6 +15,15 @@ pub struct Residency {
     pub gone: Vec<BlockKey>,
 }
 
+impl Residency {
+    /// No block came or went this frame.
+    pub fn clear(&mut self) {
+        self.added.clear();
+        self.removed.clear();
+        self.gone.clear();
+    }
+}
+
 /// A fixed number of block slots shared by every planet. The key → slot map is CPU-side
 /// streaming bookkeeping; the GPU only ever sees slot indices.
 pub struct BlockPool {
@@ -81,9 +90,7 @@ impl BlockPool {
     /// Makes `wanted` resident and frees every other slot. Frees before it allocates, so a full
     /// pool can swap its blocks; a key beyond the capacity is left out.
     pub fn apply(&mut self, wanted: &[BlockKey], out: &mut Residency) {
-        out.added.clear();
-        out.removed.clear();
-        out.gone.clear();
+        out.clear();
         self.frame = self.frame.wrapping_add(1);
         let frame = self.frame;
         for key in wanted {

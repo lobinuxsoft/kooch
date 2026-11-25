@@ -2,7 +2,7 @@ use glam::{DVec3, IVec3};
 
 use super::{
     BLOCK_BYTES, BlockKey, BlockPool, DEFAULT_CAPACITY, Limits, Planets, Residency, Shape, View,
-    select,
+    choose_lods,
 };
 
 /// Radius and distance from Earth at closest approach, in km.
@@ -66,7 +66,7 @@ fn the_solar_system_fits() {
     let mut wanted = Vec::new();
     for height in [1.8, 400_000.0, 192_000_000.0] {
         let planets = solar_system(height);
-        let worst = select(
+        let worst = choose_lods(
             &planets,
             &view,
             DEFAULT_CAPACITY,
@@ -97,7 +97,7 @@ fn touching_leaves_are_balanced() {
     let view = View::new(800.0, 60f64.to_radians());
     let planets = solar_system(1.8);
     let mut wanted = Vec::new();
-    select(
+    choose_lods(
         &planets,
         &view,
         DEFAULT_CAPACITY,

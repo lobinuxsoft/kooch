@@ -11,7 +11,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::IVec3;
 
 use super::atlas::BlockAtlas;
-use super::select::voxel_size;
+use super::lod::voxel_size;
 use super::{BLOCK_SAMPLES, TILE_SAMPLES};
 use super::{BlockKey, BlockPool, Planets, Residency, Shape};
 use kooch_world::voxel::POOL_TEXTURE_FORMAT;
@@ -109,7 +109,7 @@ fn anchors(index: IVec3) -> [IVec3; 8] {
     let base = index & IVec3::splat(-ANCHOR);
     std::array::from_fn(|k| {
         let k = k as i32;
-        base + IVec3::new(k & 1, (k >> 1) & 1, k >> 2) * ANCHOR
+        base + crate::octant(k) * ANCHOR
     })
 }
 

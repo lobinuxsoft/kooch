@@ -12,7 +12,7 @@ Planets need the `planet` feature. A scene that uses one turns it on for the gam
 | `relief` | The highest the generator may raise the ground above `radius` |
 | `depth` | The deepest a cave may reach below it; under it the core is solid |
 | `voxel` | The finest detail the ground can have, next to the camera |
-| `lod_distance` | How far from the camera the finest voxels reach; each coarser level reaches twice as far |
+| `lod_distance` | How far from the camera the finest voxels reach; each coarser level reaches twice as far. The levels are chosen again only when the camera crosses into another finest block (16 voxels across), or something else they depend on changes |
 | `generator` | A `planet` shader — usually a graph — that shapes the ground. Empty is the bare sphere |
 | `material` | What the ground is drawn with |
 

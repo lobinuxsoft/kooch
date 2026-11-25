@@ -7,7 +7,8 @@ use std::collections::{BinaryHeap, HashSet};
 
 use glam::{DVec3, IVec3};
 
-use super::{BLOCK_SAMPLES, BlockKey};
+use super::{BLOCK_SAMPLES, BlockKey, octant};
+use crate::seam::direction;
 use crate::sight::Cone;
 
 /// How much a block split last frame overstates its error: it merges back only once it is well under
@@ -15,7 +16,7 @@ use crate::sight::Cone;
 const KEEP_SPLIT: f64 = 1.5;
 
 /// What a planet is made of, in metres.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Shape {
     /// Sea-level radius.
     pub radius: f64,
@@ -30,7 +31,7 @@ pub struct Shape {
 }
 
 /// Blocks a planet gets before the others compete, and the most it may hold.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Limits {
     pub floor: u32,
     pub ceiling: u32,
@@ -143,7 +144,7 @@ impl View {
 /// for a block it proves uniform (all rock or all air), which then takes no slot. Zylann answers it
 /// with interval range analysis of the graph. `split(key)` says whether the block was split last
 /// frame, for the hysteresis.
-pub fn select(
+pub fn choose_lods(
     planets: &Planets,
     view: &View,
     capacity: u32,
@@ -152,6 +153,11 @@ pub fn select(
     out: &mut Vec<BlockKey>,
 ) -> f64 {
     out.clear();
+    let snapped = Planets {
+        viewer: snapped_viewers(planets),
+        ..planets.clone()
+    };
+    let planets = &snapped;
     let mut refine = Refine {
         planets,
         view,
@@ -180,6 +186,25 @@ pub fn select(
         .fold(0.0, |worst: f64, node| worst.max(node.error));
     out.extend(refine.leaves.drain());
     worst
+}
+
+/// Every viewer moved to the centre of the finest block it stands in, so the levels change only
+/// when a viewer crosses into another block (#2013), as godot_voxel's clipbox does.
+pub(crate) fn snapped_viewers(planets: &Planets) -> Vec<DVec3> {
+    let views = planets.views.max(1);
+    let snap = |at: usize, viewer: DVec3| match planets.shape.get(at / views) {
+        Some(shape) => {
+            let side = block_side(shape, 0);
+            ((viewer / side).floor() + DVec3::splat(0.5)) * side
+        }
+        None => viewer,
+    };
+    planets
+        .viewer
+        .iter()
+        .enumerate()
+        .map(|(at, &viewer)| snap(at, viewer))
+        .collect()
 }
 
 /// A leaf that may still split, ordered by its error.
@@ -239,7 +264,7 @@ impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'
             && 2.0 * outer / distance * self.view.proj_scale < self.view.impostor_px;
         let level = root_level(&shape);
         for i in 0..8 {
-            let cell = IVec3::new(i & 1, (i >> 1) & 1, (i >> 2) & 1) - IVec3::ONE;
+            let cell = octant(i) - IVec3::ONE;
             let key = BlockKey {
                 planet: planet as u32,
                 level,
@@ -283,13 +308,12 @@ impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'
         // Balanced already: a leaf touching `key` is at most one level up, a child of a parent's
         // neighbour. The parent itself is never a leaf.
         let parent = key.parent();
-        for d in 0..27 {
-            let offset = IVec3::new(d % 3, (d / 3) % 3, d / 9) - IVec3::ONE;
+        for d in 0..26 {
             let across = BlockKey {
-                cell: parent.cell + offset,
+                cell: parent.cell + direction(d),
                 ..parent
             };
-            if offset == IVec3::ZERO || !self.touching(key, across) {
+            if !self.touching(key, across) {
                 continue;
             }
             // Recursion climbs a level each step, so it is bounded by the root's.
@@ -338,12 +362,7 @@ impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'
         let mut out = [key; 8];
         let mut count = 0;
         for i in 0..8 {
-            let offset = IVec3::new(i & 1, (i >> 1) & 1, (i >> 2) & 1);
-            let child = BlockKey {
-                planet: key.planet,
-                level: key.level - 1,
-                cell: key.cell * 2 + offset,
-            };
+            let child = key.child(i);
             if self.touches(shape, child) {
                 out[count] = child;
                 count += 1;
@@ -394,12 +413,7 @@ impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'
         let planet = key.planet as usize;
         let shape = self.planets.shape[planet];
         let (min, max) = bounds(&shape, key);
-        let distance = self
-            .planets
-            .viewers(planet)
-            .iter()
-            .map(|viewer| (viewer.clamp(min, max) - *viewer).length())
-            .fold(f64::INFINITY, f64::min);
+        let distance = nearest(self.planets.viewers(planet), min, max);
         // Over 1 while the block sits inside its level's ring: level L reaches lod_distance · 2^L,
         // so a level-L block belongs past the reach of level L − 1.
         shape.lod_distance * (1u64 << key.level) as f64 * 0.5 / distance
@@ -431,9 +445,22 @@ pub(crate) fn root_level(shape: &Shape) -> u8 {
 /// Whether a block holds any of the band between the deepest cave and the highest relief; a block
 /// wholly in the core or wholly in the sky is uniform and needs no slot.
 fn touches_shell(shape: &Shape, min: DVec3, max: DVec3) -> bool {
-    let nearest = DVec3::ZERO.clamp(min, max).length();
-    let farthest = min.abs().max(max.abs()).length();
-    nearest <= shape.radius + shape.relief && farthest >= shape.radius - shape.depth
+    let (near, far) = radial(min, max);
+    near <= shape.radius + shape.relief && far >= shape.radius - shape.depth
+}
+
+/// The nearest and farthest a box gets from the planet's centre.
+pub(crate) fn radial(min: DVec3, max: DVec3) -> (f64, f64) {
+    let near = DVec3::ZERO.clamp(min, max).length();
+    (near, min.abs().max(max.abs()).length())
+}
+
+/// The distance from the box to the nearest of `viewers`; infinite with none.
+pub(crate) fn nearest(viewers: &[DVec3], min: DVec3, max: DVec3) -> f64 {
+    viewers
+        .iter()
+        .map(|viewer| (viewer.clamp(min, max) - *viewer).length())
+        .fold(f64::INFINITY, f64::min)
 }
 
 pub(super) fn bounds(shape: &Shape, key: BlockKey) -> (DVec3, DVec3) {

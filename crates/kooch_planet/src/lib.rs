@@ -13,13 +13,14 @@ mod component;
 mod draw;
 mod eval;
 mod generate;
+mod lod;
 mod mesh;
 mod plugin;
 mod pool;
 mod recent;
+mod rerun;
 mod roster;
 mod seam;
-mod select;
 mod sight;
 mod sync;
 mod terrain;
@@ -36,12 +37,12 @@ pub use eval::Generator;
 pub use generate::{
     BARE_SPHERE, Backlog, GeneratePass, Job, PLANET_INPUT_WGSL, validate_generator,
 };
+pub use lod::{Limits, Planets, Shape, View, choose_lods};
 pub use mesh::{CountJob, Cuts, MeshPass, Part, WriteJob};
 pub use plugin::PlanetPlugin;
 pub use pool::{BlockPool, Residency};
 pub use recent::{BatchMean, RECENT};
 pub use seam::{Leaves, Near};
-pub use select::{Limits, Planets, Shape, View, select};
 pub use sight::Cone;
 pub use sync::{GroundHit, PlanetStats, PlanetTerrain, PlanetViewers, ground_hits, sync_planets};
 pub use terrain::{CountedBlock, GpuTimes, MESH_BATCH, Terrain};
@@ -70,6 +71,11 @@ pub struct BlockKey {
     pub cell: IVec3,
 }
 
+/// Corner `i` in `0..8` of a unit cube, x fastest.
+pub(crate) fn octant(i: i32) -> IVec3 {
+    IVec3::new(i & 1, (i >> 1) & 1, (i >> 2) & 1)
+}
+
 impl BlockKey {
     /// The block one level coarser that holds this one.
     pub fn parent(self) -> Self {
@@ -77,6 +83,15 @@ impl BlockKey {
             planet: self.planet,
             level: self.level.saturating_add(1),
             cell: self.cell.div_euclid(IVec3::splat(2)),
+        }
+    }
+
+    /// Child `i` in `0..8`, x fastest.
+    pub fn child(self, i: i32) -> Self {
+        Self {
+            planet: self.planet,
+            level: self.level.saturating_sub(1),
+            cell: self.cell * 2 + octant(i),
         }
     }
 

@@ -147,6 +147,18 @@ impl MeshletPipeline {
         for guid in referenced.iter().chain(&cuts) {
             self.asked.insert(*guid, self.frame);
         }
+        // The age is coarse, so the registry is scanned a quarter of it apart, not every frame:
+        // with thousands of planet blocks registered the scan was 0.24 ms a frame (#2013).
+        if self.frame % (max_age / 4).max(1) != 0 {
+            return Vec::new();
+        }
+        // A GUID asked for but never registered (a file that never loaded) has no slot to age out
+        // of, and stayed in `asked` for good.
+        let frame = self.frame;
+        let registry = &self.registry;
+        self.asked.retain(|guid, last| {
+            registry.contains_key(guid) || frame.saturating_sub(*last) <= max_age
+        });
         let stale: Vec<Guid> = self
             .registry
             .keys()

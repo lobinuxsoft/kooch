@@ -1,6 +1,6 @@
 //! The generator on the CPU (#313 step 3b): naga's IR of a `planet` shader, walked over intervals.
 //!
-//! [`Generator::range`] bounds the SDF over a box, so `select` can give no slot to a block the
+//! [`Generator::range`] bounds the SDF over a box, so `choose_lods` can give no slot to a block the
 //! generator proves all rock or all air (Zylann's range analysis). [`Generator::sample`] is the
 //! same walk at one point, rounded as the GPU rounds, for the collision of step 6. Any construct
 //! it cannot bound makes the answer unknown, never wrong.
@@ -17,7 +17,7 @@ use glam::DVec3;
 use naga::{Expression as E, Function, Handle, Module};
 
 use crate::PLANET_INPUT_WGSL;
-use crate::select::Shape;
+use crate::lod::Shape;
 use num::{Mode, Num, to_f32};
 use run::Machine;
 use value::{Kind, Lanes, Value, zero};
@@ -152,8 +152,7 @@ fn range_input(
     max: DVec3,
     planet: u32,
 ) -> Result<Value, Fault> {
-    let near = DVec3::ZERO.clamp(min, max).length();
-    let far = min.abs().max(max.abs()).length();
+    let (near, far) = crate::lod::radial(min, max);
     // The GPU's altitude is exact to a few f32 steps of the excess it starts from.
     let slack = 1e-5 * (near - shape.radius).abs().max((far - shape.radius).abs()) + 1e-3;
     let altitude = Num::new(near - shape.radius, far - shape.radius).pad(slack);
