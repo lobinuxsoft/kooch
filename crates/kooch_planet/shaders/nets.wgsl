@@ -19,7 +19,7 @@ override TILES_X: u32 = 32u;
 override TILES_Y: u32 = 1u;
 
 // The tile is 18 samples: the block's 16, and one either side. Cells sit between samples; cell 17
-// is past the tile, and only a coarser leaf there gives it a vertex.
+// is past the tile, and only a coarser leaf there, or the overlap, gives it a vertex.
 const TILE: u32 = 18u;
 const CELLS: u32 = 18u;
 const CELL_COUNT: u32 = 5832u;
@@ -49,7 +49,7 @@ const SAME: u32 = 0x40000000u;
 
 // Which of the block's meshes a job makes (#1999). The interior reads only the block's own samples,
 // so it is made once per tile; the seam is the rest, made again when a neighbour changes. The
-// overlap is the strip across the − planes from the block's own samples, sent with every side
+// overlap is the strip across all six planes from the block's own samples, sent with every side
 // `OWN`: sunk under the seam, it covers the crack while a neighbour shows another level.
 const INTERIOR: u32 = 0u;
 const SEAM: u32 = 1u;
@@ -181,12 +181,39 @@ fn cell_index(c: vec3<u32>) -> u32 {
     return c.x + c.y * CELLS + c.z * CELLS * CELLS;
 }
 
+// A sample one past the tile from the block's own: linear along each axis that leaves it. The
+// overlap reads no neighbour, so this is how it reaches across its + planes.
+fn extended(s: vec3<u32>) -> f32 {
+    let out = s == vec3<u32>(TILE);
+    var sum = 0.0;
+    for (var m = 0u; m < 8u; m++) {
+        var t = s;
+        var w = 1.0;
+        var skip = false;
+        for (var a = 0u; a < 3u; a++) {
+            let far = ((m >> a) & 1u) != 0u;
+            if (!out[a]) {
+                skip = skip || far;
+                continue;
+            }
+            t[a] = select(TILE - 1u, TILE - 2u, far);
+            w *= select(2.0, -1.0, far);
+        }
+        if (!skip) {
+            sum += w * own(t);
+        }
+    }
+    return sum;
+}
+
 fn corners(c: vec3<u32>) -> array<f32, 8> {
     let d = outside(c);
     var v: array<f32, 8>;
     for (var k = 0u; k < 8u; k++) {
         let s = c + vec3<u32>(k & 1u, (k >> 1u) & 1u, k >> 2u);
-        if (any(s == vec3<u32>(TILE))) {
+        if (any(s == vec3<u32>(TILE)) && part == OVERLAP) {
+            v[k] = extended(s);
+        } else if (any(s == vec3<u32>(TILE))) {
             v[k] = past(s, d);
         } else {
             v[k] = at(s);
@@ -395,10 +422,10 @@ fn inner_edge(s: vec3<u32>, axis: u32) -> bool {
 
 // Whether cell `c` can hold a vertex of the job's part: the interior's cells are 2..15, the seam's
 // every cell with a coordinate outside 3..14. Cells 2 and 15 are in both, placed alike by each. The
-// overlap's are the two either side of a − plane.
+// overlap's are the two either side of each plane.
 fn in_part(c: vec3<u32>) -> bool {
     if (part == OVERLAP) {
-        return any(c < vec3<u32>(2u));
+        return any(c < vec3<u32>(2u)) || any(c > vec3<u32>(15u));
     }
     if (part == INTERIOR) {
         return all(c >= vec3<u32>(2u)) && all(c <= vec3<u32>(15u));
@@ -406,14 +433,16 @@ fn in_part(c: vec3<u32>) -> bool {
     return any(c < vec3<u32>(3u)) || any(c > vec3<u32>(14u));
 }
 
-// Whether the edge's quad straddles a − plane: its cells reach cell 0 across one.
-fn across_low(s: vec3<u32>, axis: u32) -> bool {
-    return s[(axis + 1u) % 3u] == 1u || s[(axis + 2u) % 3u] == 1u;
+// Whether the edge's quad straddles one of the block's planes: its cells reach cell 0 or 17.
+fn across_plane(s: vec3<u32>, axis: u32) -> bool {
+    let u = s[(axis + 1u) % 3u];
+    let v = s[(axis + 2u) % 3u];
+    return u == 1u || v == 1u || u == TILE - 1u || v == TILE - 1u;
 }
 
 // `edge` over the edges the block emits, of the job's part.
 fn emits(s: vec3<u32>, axis: u32) -> vec2<u32> {
-    let mine = select(inner_edge(s, axis) == (part == INTERIOR), across_low(s, axis), part == OVERLAP);
+    let mine = select(inner_edge(s, axis) == (part == INTERIOR), across_plane(s, axis), part == OVERLAP);
     if (!mine || !owns(s, axis)) {
         return vec2<u32>(0u);
     }
@@ -429,7 +458,7 @@ fn has_vertex(c: vec3<u32>) -> bool {
     if (all(c < vec3<u32>(CELLS - 1u))) {
         return crosses(corners(c));
     }
-    if (borrows == 0u) {
+    if (borrows == 0u && part != OVERLAP) {
         return false;
     }
     for (var axis = 0u; axis < 3u; axis++) {
@@ -576,8 +605,8 @@ fn plan(q: u32, cuts: ptr<function, vec2<u32>>) -> Plan {
         }
         return out;
     }
-    // Only a coarser leaf past it gives a +plane edge to the block.
-    if (borrows == 0u) {
+    // Only a coarser leaf past it, or the overlap, gives a +plane edge to the block.
+    if (borrows == 0u && part != OVERLAP) {
         return out;
     }
     var mask: array<u32, 4>;
