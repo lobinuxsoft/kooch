@@ -1,7 +1,9 @@
-//! #1999 debug: whether a seam on screen was counted against the neighbours on screen. A seam that
-//! fits others opens a hole, and whether its fix is staged tells a held change from a lost one.
+//! #1999 debug: whether a seam on screen was counted against the neighbours on screen. Only around
+//! what changed this frame, and only against neighbours with geometry: an empty one opens no hole.
 
 use std::collections::HashSet;
+
+use glam::IVec3;
 
 use super::{Blocks, PARTS};
 use crate::BlockKey;
@@ -12,68 +14,98 @@ use crate::seam::{FINER, OWN, SAME, direction, levels};
 enum Side {
     Same,
     Finer,
-    Coarser(u32),
+    Coarser,
     None,
 }
 
 impl Blocks {
-    pub(super) fn audit(&mut self, roots: &[u8]) {
-        let shown: HashSet<BlockKey> = (0..self.key.len())
-            .filter(|&s| self.shown[s])
-            .filter_map(|s| self.key[s])
-            .collect();
-        let mut holding = HashSet::new();
-        for &key in &shown {
-            let root = roots.get(key.planet as usize).copied().unwrap_or(0);
-            holding.extend(key.ancestors(root));
-        }
-        for s in (0..self.key.len()).filter(|&s| self.shown[s]) {
-            let Some(key) = self.key[s] else { continue };
-            let d = s * PARTS + Part::Seam as usize;
-            if self.mesh[d].is_none() {
-                continue;
-            }
-            let root = roots.get(key.planet as usize).copied().unwrap_or(0);
-            let near = self.near[d];
-            for (dir, &side) in near.sides.iter().enumerate() {
+    pub(super) fn audit(&mut self) {
+        let changed = std::mem::take(&mut self.changed);
+        let mut around = HashSet::new();
+        for &key in &changed {
+            around.insert(key);
+            for dir in 0..26 {
                 let across = BlockKey {
                     cell: key.cell + direction(dir),
                     ..key
                 };
-                let seen = if shown.contains(&across) {
-                    Side::Same
-                } else if holding.contains(&across) {
-                    Side::Finer
-                } else {
-                    across
-                        .ancestors(root)
-                        .find(|up| shown.contains(up))
-                        .map_or(Side::None, |up| {
-                            Side::Coarser(u32::from(up.level - key.level))
-                        })
-                };
-                let fits = match side {
+                around.insert(across);
+                around.insert(across.parent());
+                around.extend(children(across));
+            }
+        }
+        for key in around {
+            self.check(key);
+        }
+        self.changed = changed;
+        self.changed.clear();
+    }
+
+    /// On screen with geometry: the only kind a seam can tear against.
+    fn solid(&self, key: BlockKey) -> bool {
+        self.of_key.get(&key).is_some_and(|&i| {
+            let s = i as usize;
+            self.shown[s] && (s * PARTS..(s + 1) * PARTS).any(|d| self.mesh[d].is_some())
+        })
+    }
+
+    fn check(&mut self, key: BlockKey) {
+        let Some(&i) = self.of_key.get(&key) else {
+            return;
+        };
+        let s = i as usize;
+        let d = s * PARTS + Part::Seam as usize;
+        if !self.shown[s] || self.mesh[d].is_none() {
+            return;
+        }
+        let near = self.near[d];
+        for (dir, &side) in near.sides.iter().enumerate() {
+            let across = BlockKey {
+                cell: key.cell + direction(dir),
+                ..key
+            };
+            let seen = if self.solid(across) {
+                Side::Same
+            } else if children(across).into_iter().any(|c| self.solid(c)) {
+                Side::Finer
+            } else if self.solid(across.parent()) {
+                Side::Coarser
+            } else {
+                Side::None
+            };
+            let fits = seen == Side::None
+                || match side {
                     FINER => seen == Side::Finer,
-                    OWN => matches!(seen, Side::Same | Side::None),
-                    _ if levels(side) > 0 => seen == Side::Coarser(levels(side)),
+                    OWN => seen == Side::Same,
+                    _ if levels(side) > 0 => seen == Side::Coarser,
                     _ if side & SAME != 0 => seen == Side::Same,
                     _ => true,
                 };
-                if fits {
-                    continue;
-                }
-                self.torn += 1;
-                if self.torn_example.is_none() {
-                    self.torn_example = Some(format!(
-                        "{key:?} dir {:?} counted {side:#x} sees {seen:?} staged={} pending={} asked={}",
-                        direction(dir),
-                        self.staged[d].is_some(),
-                        self.pending[d],
-                        self.asked[d].is_some(),
-                    ));
-                }
-                break;
+            if fits {
+                continue;
             }
+            self.torn += 1;
+            if self.torn_example.is_none() {
+                self.torn_example = Some(format!(
+                    "{key:?} dir {:?} counted {side:#x} sees {seen:?} staged={} pending={} asked={}",
+                    direction(dir),
+                    self.staged[d].is_some(),
+                    self.pending[d],
+                    self.asked[d].is_some(),
+                ));
+            }
+            return;
         }
     }
+}
+
+fn children(key: BlockKey) -> [BlockKey; 8] {
+    std::array::from_fn(|i| {
+        let i = i as i32;
+        BlockKey {
+            planet: key.planet,
+            level: key.level.wrapping_sub(1),
+            cell: key.cell * 2 + IVec3::new(i & 1, (i >> 1) & 1, (i >> 2) & 1),
+        }
+    })
 }

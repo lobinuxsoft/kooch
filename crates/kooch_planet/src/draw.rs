@@ -92,6 +92,8 @@ pub(crate) struct Blocks {
     /// #1999 debug: frames with a seam on screen fitting neighbours other than the shown ones.
     pub(crate) torn: u32,
     pub(crate) torn_example: Option<String>,
+    /// #1999 debug: blocks whose screen state changed this frame, audited next to their neighbours.
+    changed: Vec<BlockKey>,
 }
 
 /// What [`Blocks::draw`] reads of the frame.

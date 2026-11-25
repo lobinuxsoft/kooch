@@ -72,6 +72,7 @@ impl Blocks {
             }
         }
         for i in gone {
+            self.changed.extend(self.key[i as usize]);
             self.retire(i, &mut meshes);
         }
         // Every block holding a lingering one: a new block over or under it waits for it to go.
@@ -125,7 +126,7 @@ impl Blocks {
             }
         }
         resources.insert(meshes);
-        self.audit(&roots);
+        self.audit();
         self.settled = awaited.is_empty() && lingering.is_empty() && waiting == 0 && held_back == 0;
     }
 
@@ -138,6 +139,7 @@ impl Blocks {
             }
         }
         self.shown[s] = true;
+        self.changed.extend(self.key[s]);
     }
 
     /// Mesh `d`'s waiting change, on screen: the staged mesh, or none.
@@ -148,6 +150,7 @@ impl Blocks {
             false => self.forced += 1,
         }
         self.near[d] = self.staged_near[d];
+        self.changed.extend(self.key[d / PARTS]);
         let staged = self.staged[d].take();
         if let Some(old) = std::mem::replace(&mut self.mesh[d], staged) {
             meshes.release(old);
