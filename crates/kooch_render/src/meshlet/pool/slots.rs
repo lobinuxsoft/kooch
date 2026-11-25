@@ -83,16 +83,28 @@ impl Holes {
         if span.len == 0 {
             return;
         }
-        self.free.push(span);
-        self.free.sort_unstable_by_key(|hole| hole.start);
-        let mut merged: Vec<Span> = Vec::with_capacity(self.free.len());
-        for hole in self.free.drain(..) {
-            match merged.last_mut() {
-                Some(last) if last.end() == hole.start => last.len += hole.len,
-                _ => merged.push(hole),
+        // `free` stays sorted and coalesced, so only the two neighbours can merge: re-sorting the
+        // whole list on every release was 52 µs each, 2.8 ms a frame while zooming (#2013).
+        let at = self.free.partition_point(|hole| hole.start < span.start);
+        let prev = at
+            .checked_sub(1)
+            .filter(|&i| self.free[i].end() == span.start);
+        let next = self
+            .free
+            .get(at)
+            .is_some_and(|hole| hole.start == span.end());
+        match (prev, next) {
+            (Some(i), true) => {
+                let next = self.free.remove(at);
+                self.free[i].len += span.len + next.len;
             }
+            (Some(i), false) => self.free[i].len += span.len,
+            (None, true) => {
+                self.free[at].start = span.start;
+                self.free[at].len += span.len;
+            }
+            (None, false) => self.free.insert(at, span),
         }
-        self.free = merged;
     }
 
     /// Drops the hole that reaches the end of an array `len` long, and returns the length the
