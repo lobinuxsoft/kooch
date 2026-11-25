@@ -37,8 +37,45 @@ impl Blocks {
         for key in around {
             self.check(key);
         }
+        for key in std::mem::take(&mut self.left_solid) {
+            if self.covered(key) {
+                continue;
+            }
+            self.bare += 1;
+            if self.bare_example.is_none() {
+                let shown_children = children(key).into_iter().filter(|&c| self.shown(c)).count();
+                self.bare_example = Some(format!(
+                    "{key:?} children shown {shown_children} child known {}",
+                    children(key)
+                        .into_iter()
+                        .filter(|c| self.of_key.contains_key(c))
+                        .count(),
+                ));
+            }
+        }
         self.changed = changed;
         self.changed.clear();
+    }
+
+    fn shown(&self, key: BlockKey) -> bool {
+        self.of_key
+            .get(&key)
+            .is_some_and(|&i| self.shown[i as usize])
+    }
+
+    /// Whether something on screen holds `key`'s space: itself, an ancestor, or a descendant within
+    /// two levels, which the 2:1 balance makes every level that can replace it.
+    fn covered(&self, key: BlockKey) -> bool {
+        let mut up = key;
+        for _ in 0..32 {
+            if self.shown(up) {
+                return true;
+            }
+            up = up.parent();
+        }
+        children(key)
+            .into_iter()
+            .any(|c| self.shown(c) || children(c).into_iter().any(|g| self.shown(g)))
     }
 
     /// On screen with geometry: the only kind a seam can tear against.

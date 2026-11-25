@@ -89,8 +89,15 @@ pub(crate) struct Blocks {
     /// #1999 debug: frames with a seam on screen fitting neighbours other than the shown ones.
     pub(crate) torn: u32,
     pub(crate) torn_example: Option<String>,
+    /// #1999 debug: blocks with geometry retired with nothing on screen in their place.
+    pub(crate) bare: u32,
+    pub(crate) bare_example: Option<String>,
+    /// #1999 debug: meshes on screen replaced by none.
+    pub(crate) emptied: u32,
     /// #1999 debug: blocks whose screen state changed this frame, audited next to their neighbours.
     changed: Vec<BlockKey>,
+    /// #1999 debug: blocks with geometry retired this frame.
+    left_solid: Vec<BlockKey>,
 }
 
 /// What [`Blocks::draw`] reads of the frame.

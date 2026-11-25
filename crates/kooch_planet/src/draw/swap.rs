@@ -72,6 +72,10 @@ impl Blocks {
             }
         }
         for i in gone {
+            let s = i as usize;
+            if (s * PARTS..(s + 1) * PARTS).any(|d| self.mesh[d].is_some()) {
+                self.left_solid.extend(self.key[s]);
+            }
             self.changed.extend(self.key[i as usize]);
             self.retire(i, &mut meshes);
         }
@@ -152,6 +156,7 @@ impl Blocks {
         self.near[d] = self.staged_near[d];
         self.changed.extend(self.key[d / PARTS]);
         let staged = self.staged[d].take();
+        self.emptied += u32::from(staged.is_none() && self.mesh[d].is_some());
         if let Some(old) = std::mem::replace(&mut self.mesh[d], staged) {
             meshes.release(old);
         }
