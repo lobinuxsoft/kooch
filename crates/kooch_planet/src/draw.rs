@@ -10,7 +10,6 @@
 //! `d / PARTS`'s [`Part`] `d % PARTS`. A neighbour's change re-meshes the seam alone, and a new
 //! block is shown once all are in hand.
 
-mod audit;
 mod swap;
 
 use std::collections::HashMap;
@@ -56,9 +55,6 @@ pub(crate) struct Blocks {
     staged: Vec<Option<Guid>>,
     staged_epoch: Vec<u64>,
     staged_at: Vec<u32>,
-    /// #1999 debug: per mesh, the neighbours the staged and the shown one were counted with.
-    staged_near: Vec<Near>,
-    near: Vec<Near>,
     /// Per mesh, whether a change waits: `staged`, or with none, taking the mesh away.
     pending: Vec<bool>,
     asked: Vec<Option<Asked>>,
@@ -79,32 +75,6 @@ pub(crate) struct Blocks {
     settled: bool,
     /// The earliest epoch still being counted or written, this frame; see [`Terrain::frontier`].
     frontier: u64,
-    /// Changes put on screen with their epoch whole, and by [`HOLD`] running out. #1999 debug.
-    pub(crate) on_time: u32,
-    pub(crate) forced: u32,
-    /// #1999 debug: lingering blocks dropped by the linger limit while still waited for.
-    pub(crate) expired: u32,
-    /// #1999 debug: due seam changes held for a new neighbour that waits hidden.
-    pub(crate) early: u32,
-    /// #1999 debug: frames with a seam on screen fitting neighbours other than the shown ones.
-    pub(crate) torn: u32,
-    pub(crate) torn_example: Option<String>,
-    /// #1999 debug: blocks with geometry retired with nothing on screen in their place.
-    pub(crate) bare: u32,
-    pub(crate) bare_example: Option<String>,
-    /// #1999 debug: the first such block that had an interior of its own.
-    pub(crate) bare_key: Option<BlockKey>,
-    /// #1999 debug: the most wanted blocks the pool had no slot for in one frame.
-    pub(crate) turned_away: u32,
-    /// #1999 debug: meshes on screen replaced by none.
-    pub(crate) emptied: u32,
-    /// #1999 debug: seams counted again because a tile they read changed hands before the write.
-    pub(crate) moved: u32,
-    /// #1999 debug: blocks whose screen state changed this frame, audited next to their neighbours.
-    changed: Vec<BlockKey>,
-    /// #1999 debug: blocks with geometry retired this frame.
-    /// #1999 debug: blocks retired this frame with a mesh, and whether one was the interior.
-    left_solid: Vec<(BlockKey, bool)>,
 }
 
 /// What [`Blocks::draw`] reads of the frame.
@@ -160,7 +130,6 @@ impl Blocks {
             self.triangles[d] = 0;
             self.meshlets[d] = 0;
             self.stage(d, None, block.epoch, meshes);
-            self.staged_near[d] = block.near;
             return;
         }
         self.asks = self.asks.wrapping_add(1);
@@ -205,7 +174,6 @@ impl Blocks {
             }
             // A tile it borrowed changed hands since the count: the write would mesh otherwise.
             if block.part == Part::Seam && !block.near.holds(frame.pool, block.key) {
-                self.moved += 1;
                 meshes.release(mesh);
                 terrain.remesh(block.slot, Part::Seam, block.epoch);
                 continue;
@@ -253,7 +221,6 @@ impl Blocks {
         self.meshlets[d] = block.sizes.meshlets;
         // Staged even on screen: a seam counted for its neighbours' change waits for them (#1999).
         self.stage(d, Some(mesh), block.epoch, meshes);
-        self.staged_near[d] = block.near;
     }
 
     fn stage(&mut self, d: usize, mesh: Option<Guid>, epoch: u64, meshes: &mut GpuMeshes) {
@@ -379,8 +346,6 @@ impl Blocks {
                 self.staged.push(None);
                 self.staged_epoch.push(0);
                 self.staged_at.push(0);
-                self.staged_near.push(Near::default());
-                self.near.push(Near::default());
                 self.pending.push(false);
                 self.asked.push(None);
                 self.held.push(false);

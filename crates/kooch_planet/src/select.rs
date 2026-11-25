@@ -430,7 +430,7 @@ pub(crate) fn root_level(shape: &Shape) -> u8 {
 
 /// Whether a block holds any of the band between the deepest cave and the highest relief; a block
 /// wholly in the core or wholly in the sky is uniform and needs no slot.
-pub(super) fn touches_shell(shape: &Shape, min: DVec3, max: DVec3) -> bool {
+fn touches_shell(shape: &Shape, min: DVec3, max: DVec3) -> bool {
     let nearest = DVec3::ZERO.clamp(min, max).length();
     let farthest = min.abs().max(max.abs()).length();
     nearest <= shape.radius + shape.relief && farthest >= shape.radius - shape.depth

@@ -8,12 +8,8 @@ use kooch_render::meshlet::{GpuMeshSizes, MeshDescriptor, PoolBuffers};
 use super::atlas::BlockAtlas;
 use super::{Near, TILE_SAMPLES};
 
-mod skips;
 #[cfg(test)]
 mod tests;
-
-pub use skips::SkipCounts;
-use skips::Skips;
 
 const NETS_WGSL: &str = concat!(
     include_str!("../shaders/nets.wgsl"),
@@ -144,7 +140,6 @@ pub struct MeshPass {
     /// Grown to the largest frame of writes seen.
     jobs: Option<wgpu::Buffer>,
     pub(super) batch: u32,
-    skips: Skips,
 }
 
 impl MeshPass {
@@ -156,7 +151,7 @@ impl MeshPass {
             ("TILES_Y", f64::from(tiles.y)),
         ];
         let (count, count_layout) = pipeline(device, COUNT_WGSL, "count_main", constants, 1);
-        let (write, write_layout) = pipeline(device, WRITE_WGSL, "write_main", constants, 5);
+        let (write, write_layout) = pipeline(device, WRITE_WGSL, "write_main", constants, 4);
         let batch = batch.max(1);
         let buffer = |label, size: u64, usage| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -183,7 +178,6 @@ impl MeshPass {
             ),
             jobs: None,
             batch,
-            skips: Skips::new(device),
         }
     }
 
@@ -257,7 +251,6 @@ impl MeshPass {
                 entry(3, &pool.meshlet_vertices),
                 entry(4, &pool.meshlet_triangles),
                 entry(5, &pool.meshlets),
-                entry(6, &self.skips.total),
             ],
         });
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -272,16 +265,7 @@ impl MeshPass {
             pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups(jobs.len() as u32, 1, 1);
         }
-        let reading = self.skips.record(&mut encoder);
         queue.submit([encoder.finish()]);
-        if reading {
-            self.skips.mapped();
-        }
-    }
-
-    /// #1999 debug: write jobs the GPU skipped since the start, as of the last read.
-    pub fn skips(&mut self) -> SkipCounts {
-        self.skips.totals()
     }
 }
 

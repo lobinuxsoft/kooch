@@ -118,8 +118,6 @@ pub struct PlanetTerrain {
     broken: bool,
     meshed: Vec<CountedBlock>,
     pub(crate) blocks: Blocks,
-    /// #1999 debug: the GPU's skipped writes at the last log.
-    skipped: crate::mesh::SkipCounts,
 }
 
 impl Default for PlanetTerrain {
@@ -138,7 +136,6 @@ impl Default for PlanetTerrain {
             broken: false,
             meshed: Vec::new(),
             blocks: Blocks::default(),
-            skipped: Default::default(),
         }
     }
 }
@@ -258,12 +255,6 @@ pub fn sync_planets(resources: &mut Resources) {
         .retain(|_, known| frame.wrapping_sub(known.seen) < KNOWN_GRACE);
     state.frame = frame.wrapping_add(1);
     state.pool.apply(&state.wanted, &mut state.residency);
-    let away = state
-        .wanted
-        .iter()
-        .filter(|k| state.pool.slot(**k).is_none())
-        .count();
-    state.blocks.turned_away = state.blocks.turned_away.max(away as u32);
     // After the pool changes, so the meshes see this frame's leaves; the next selection's
     // hysteresis reads the same set, as nothing moves the pool in between.
     fill_split(&mut state.split, &state.pool, &state.planets);
@@ -329,79 +320,6 @@ pub fn sync_planets(resources: &mut Resources) {
         None => meshed.clear(),
     }
     blocks.submit(resources, &placed, &found);
-    // #1999 debug: whether a level change goes on screen whole or is forced out by the hold.
-    if state.frame % 120 == 0
-        && let Some(terrain) = &mut state.terrain
-        && blocks.on_time + blocks.forced + blocks.expired > 0
-    {
-        let (seams, epoch) = terrain.seams_and_epoch();
-        let totals = terrain.skips();
-        // Why the selection let it go: the band and the generator's range, for it and its children.
-        let why = blocks.bare_key.map(|key| {
-            let test = |k: BlockKey| {
-                let Some(shape) = state.planets.shape.get(k.planet as usize) else {
-                    return "?".to_string();
-                };
-                let (min, max) = crate::select::bounds(shape, k);
-                let shell = crate::select::touches_shell(shape, min, max);
-                let range = crosses(&state.generators, &state.planets, k, min, max);
-                format!("{}{}", u8::from(shell), u8::from(range))
-            };
-            let children: Vec<String> = (0..8)
-                .map(|i| {
-                    let offset = glam::IVec3::new(i & 1, (i >> 1) & 1, (i >> 2) & 1);
-                    test(BlockKey {
-                        level: key.level.wrapping_sub(1),
-                        cell: key.cell * 2 + offset,
-                        ..key
-                    })
-                })
-                .collect();
-            format!(
-                "{key:?} shell+range {} children {}",
-                test(key),
-                children.join(" ")
-            )
-        });
-        blocks.bare_key = None;
-        let skipped: Vec<u32> = totals
-            .iter()
-            .zip(state.skipped)
-            .map(|(now, then)| now.wrapping_sub(then))
-            .collect();
-        state.skipped = totals;
-        tracing::info!(
-            target: "kooch_planet",
-            on_time = blocks.on_time,
-            forced = blocks.forced,
-            expired = blocks.expired,
-            early = blocks.early,
-            torn = blocks.torn,
-            example = blocks.torn_example.as_deref().unwrap_or("-"),
-            bare = blocks.bare,
-            bare_example = blocks.bare_example.as_deref().unwrap_or("-"),
-            bare_why = why.as_deref().unwrap_or("-"),
-            emptied = blocks.emptied,
-            moved = blocks.moved,
-            turned_away = blocks.turned_away,
-            skipped = ?skipped,
-            behind = epoch.saturating_sub(terrain.frontier().min(epoch)),
-            backlog = terrain.waiting(),
-            seams,
-            "planet swaps over 120 frames"
-        );
-        blocks.on_time = 0;
-        blocks.forced = 0;
-        blocks.expired = 0;
-        blocks.early = 0;
-        blocks.torn = 0;
-        blocks.torn_example = None;
-        blocks.bare = 0;
-        blocks.bare_example = None;
-        blocks.emptied = 0;
-        blocks.moved = 0;
-        blocks.turned_away = 0;
-    }
     let stats = PlanetStats {
         resident: state.pool.resident(),
         capacity: state.pool.capacity(),
