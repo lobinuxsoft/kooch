@@ -245,9 +245,8 @@ pub struct PageRasterizer {
     /// The readers' PCF footprint width in texels, carried in
     /// `world.w`. 1 = bilinear. See `inti_page_filter` (#941).
     softness: u32,
-    /// The readers' shadow bias, carried in `bias`: the normal step as a multiple of the texel, the
-    /// step towards the light in metres, a ceiling on the first in metres (0 = none), and a ceiling
-    /// on the receiver's own depth gradient (0 = the term is off).
+    /// The readers' shadow bias, carried in `bias`: `x` the normal step in metres per metre of
+    /// camera distance, the rest unused (#2008).
     bias: [f32; 4],
     /// Whether the shading marches the atlas instead of sampling one
     /// texel through a PCF box (#1017). Carried to the shader in the
@@ -438,13 +437,9 @@ impl PageRasterizer {
         self.march = on;
     }
 
-    pub fn set_bias(&mut self, normal: f32, depth: f32, max_world: f32, slope: f32) {
-        self.bias = [
-            normal.max(0.0),
-            depth.max(0.0),
-            max_world.max(0.0),
-            slope.max(0.0),
-        ];
+    /// Unreal's `NormalBias`: `offset` thousandths of the distance times `tan(fov/2)`.
+    pub fn set_bias(&mut self, offset: f32, lens: f32) {
+        self.bias = [offset.max(0.0) * 0.001 * lens.max(0.0), 0.0, 0.0, 0.0];
     }
 
     pub fn triangles_per_meshlet(&self) -> u32 {

@@ -326,33 +326,12 @@ fn the_lod_range_reaches_the_inspector() {
 
 #[test]
 fn the_shadow_bias_reaches_the_settings() {
-    // Two WGSL constants, unreachable from any project, deciding
-    // whether a shadow exists at all — the same class as the LOD target
-    // above and as `virtual_shadows` before it.
     let settings = RenderSettings {
-        shadow_normal_bias: 0.5,
-        shadow_depth_bias: 0.05,
-        shadow_bias_max: 0.04,
-        shadow_bias_slope: 2.5,
+        shadow_normal_offset: 1.5,
         ..Default::default()
     };
-    let shadows = settings.shadows();
-    assert_eq!(shadows.page_normal_bias, 0.5);
-    assert_eq!(shadows.page_depth_bias, 0.05);
-    assert_eq!(shadows.page_bias_max, 0.04);
-    assert_eq!(shadows.page_bias_slope, 2.5);
-
-    let default = RenderSettings::default();
-    assert_eq!(default.shadow_normal_bias, 4.0);
-    assert_eq!(default.shadow_depth_bias, 0.2);
-    assert_eq!(
-        default.shadow_bias_max, 0.5,
-        "the cap is on by default now; the shadow track measured this pair",
-    );
-    // ⚠️ OFF, and this one is worth reading twice. The slope term is the receiver's own depth
-    // GRADIENT (#1017) — the thing a scalar bias provably cannot do — so 0 ships that fix disabled
-    // behind a setting no project knows to turn on.
-    assert_eq!(default.shadow_bias_slope, 0.0);
+    assert_eq!(settings.shadows().page_normal_offset, 1.5);
+    assert_eq!(RenderSettings::default().shadow_normal_offset, 0.5);
 }
 
 #[test]

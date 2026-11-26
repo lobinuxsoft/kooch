@@ -42,17 +42,9 @@ pub struct ShadowSettings {
     /// 1 = bilinear; wider = Castano-style box with bilinear edges,
     /// `(width + 1)²` loads per light per pixel (#941).
     pub page_softness: u32,
-    /// How far a shadow lookup steps along the receiver's NORMAL before comparing, as a multiple of
-    /// the clipmap texel it landed on.
-    pub page_normal_bias: f32,
-    /// How far the same lookup steps TOWARDS the light, in metres.
-    /// Constant across the chain, unlike the normal step.
-    pub page_depth_bias: f32,
-    /// A ceiling on the world-space normal step, in metres. 0 = none, which is what shipped.
-    pub page_bias_max: f32,
-    /// A ceiling on the receiver's own depth GRADIENT, as a slope (`tan` of the incidence, per
-    /// axis) — #1017.
-    pub page_bias_slope: f32,
+    /// The normal step, in Unreal's `NormalBias` units: thousandths of the camera distance times
+    /// `tan(fov/2)` (#2008).
+    pub page_normal_offset: f32,
     /// Whether the shading MARCHES the atlas rather than sampling one texel through a PCF box
     /// (#1017).
     pub page_march: bool,
@@ -95,11 +87,7 @@ impl Default for ShadowSettings {
             page_density: 100,
             pool_pages: crate::shadow::pages::pool::DEFAULT_PAGES,
             page_softness: 1,
-            page_normal_bias: 1.8,
-            page_depth_bias: 0.02,
-            page_bias_max: 0.0,
-            // 🔴 ON, unlike the cap above it.
-            page_bias_slope: 4.0,
+            page_normal_offset: 0.5,
             // 🔴 OFF. It replaces the reader every shipped frame goes through and it costs rays
             // times steps of lookups against the box's taps.
             page_march: false,

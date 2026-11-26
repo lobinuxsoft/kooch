@@ -201,6 +201,16 @@ fn inti_page_read(p: vec3<f32>, basis: mat3x3<f32>) -> vec3<f32> {
 const PAGE_RAYS: u32 = 4u;
 const PAGE_STEPS: u32 = 8u;
 
+/// The receiver's step along its normal, as Unreal's `VirtualShadowMapGetNormalBiasLength`: a
+/// share of the pixel footprint, so it grows with the texel without a cap or a jump between levels.
+fn page_normal_offset(world_position: vec3<f32>) -> f32 {
+    return max(0.02, inti_pages.bias.x * distance(world_position, inti_pages.eye.xyz));
+}
+
+/// Unreal clamps the receiver-plane bias so a surface turning edge-on cannot extrapolate a tap to any
+/// depth. `tan 76°`, what #1017 shipped with.
+const RECEIVER_SLOPE_LIMIT: f32 = 4.0;
+
 /// Occlusion by marching rays across the sun's disc: one tap misses occluders outside its texel.
 /// Tolerance is the ray's own depth change per step — no bias constant, as Unreal.
 fn inti_page_march(
@@ -212,7 +222,6 @@ fn inti_page_march(
     let basis = sun_frame(inti_pages.sun.xyz, inti_pages.anchor, inti_pages.whole);
     let base = inti_pages.world.x;
     let side = inti_pages.space.z;
-    let page_texels = inti_pages.pool.w;
     // Along the sun's axis, towards it. `basis[2]` points the way the
     // light travels, so the ray runs against it.
     let to_light = -basis[2];
@@ -223,17 +232,14 @@ fn inti_page_march(
     let level = sun_level(max(abs(raw.x), abs(raw.y)) * 2.0, base, side);
     let extent = base * exp2(f32(level));
     let reach = extent;
-    // One texel of that level — the unit every other bias here is in.
-    let texel_world = extent / f32(side * page_texels);
 
     // The sun's angular radius, as the tangent of the half-angle. Zero makes every ray identical
     // and the march degenerate, so it has a floor: a disc that small is a hard shadow either way.
     let spread = max(inti.sun_softness, 1e-3);
 
-    // Off the surface by the same texel multiple the box reader uses,
-    // so the first samples do not read the receiver itself.
-    let start = world_position + normal * (texel_world * inti_pages.bias.x)
-        + to_light * inti_pages.bias.y;
+    // Off the surface by the same step the box reader uses, so the first samples do not read the
+    // receiver itself.
+    let start = world_position + normal * page_normal_offset(world_position);
 
     var lit = 0.0;
     for (var r = 0u; r < PAGE_RAYS; r = r + 1u) {
@@ -280,8 +286,8 @@ fn inti_page_march(
 
 
 /// Sun shadow from the page pool: walks out from the coarsest containing level, since any resident
-/// page holds valid depth. Bias moves the position by texels of the level read — metres would
-/// vanish far, explode near.
+/// page holds valid depth. No constant depth bias, as Unreal: the normal step and the receiver plane
+/// cover it (#2008).
 fn inti_page_shadow(
     world_position: vec3<f32>,
     normal: vec3<f32>,
@@ -299,8 +305,8 @@ fn inti_page_shadow(
     let side = inti_pages.space.z;
     let page_texels = inti_pages.pool.w;
 
-    // Containment is the level floor, measured before the offset: a one-texel step cannot cross a
-    // page boundary. Mirrors `mark_sun`'s `contain`.
+    // Containment is the level floor, measured before the offset, which the page key then follows.
+    // Mirrors `mark_sun`'s `contain`.
     let raw = sun_plane(world_position, basis) - sun_plane(inti_pages.eye.xyz, basis);
     let reach = max(abs(raw.x), abs(raw.y)) * 2.0;
     var level = sun_level(reach, base, side);
@@ -320,19 +326,10 @@ fn inti_page_shadow(
         }
     }
 
+    let sampled = world_position + normal * page_normal_offset(world_position);
     for (; level < inti_pages.chain.x; level = level + 1u) {
         let extent = base * exp2(f32(level));
-        // Metres per texel at this level — why the offset is computed inside the walk.
         let texel_world = extent / f32(side * page_texels);
-        // 🔴 Capped: the step is texels, 0.1 mm at level 0 and 5.12 m at 16, so uncapped it reaches
-        // 9.2 m and walks receivers out of their shadow. ⚠️ `bias.z` 0 means no cap.
-        var offset = texel_world * inti_pages.bias.x;
-        if inti_pages.bias.z > 0.0 {
-            offset = min(offset, inti_pages.bias.z);
-        }
-        let sampled = world_position
-            + normal * offset
-            + to_light * inti_pages.bias.y;
 
         // The plane is ABSOLUTE and the grid is snapped, so a texel's
         // footprint does not slide with the camera. See `sun_centre`.
@@ -340,8 +337,6 @@ fn inti_page_shadow(
         let along = dot(sampled - inti_pages.eye.xyz, basis[2])
             + sun_drift(inti_pages.eye.xyz, basis, base, side, level);
         // Reversed-Z along the sun's axis, matching `page_depth.wgsl`.
-        // Nothing is added to it: the offset above already moved the
-        // point towards the light, which is the depth half of the bias.
         let span = sun_span(inti_pages.world.y, base, level);
         let receiver = 1.0 - (along + span) / (2.0 * span);
 
@@ -366,9 +361,9 @@ fn inti_page_shadow(
         let layer = i32(place.z);
         let texel = within * f32(page_texels);
 
-        // 🔴 The receiver-plane gradient, in the texels of THIS level. `bias.w` clamps it, and 0
-        // disables the term entirely — which is the A/B that says whether it is doing anything.
-        let slope = receiver_slope(normal, basis, texel_world, span, inti_pages.bias.w);
+        // 🔴 The receiver-plane gradient, in the texels of THIS level. Always on, as Unreal's
+        // `ComputeVirtualShadowMapOptimalSlopeBias`.
+        let slope = receiver_slope(normal, basis, texel_world, span, RECEIVER_SLOPE_LIMIT);
 
         // Bilinear PCF, clamped inside the page — see
         // `inti_page_filter` for both halves of that sentence.

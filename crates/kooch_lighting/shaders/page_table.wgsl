@@ -396,8 +396,7 @@ struct PageRaster {
     eye: vec4<f32>,
     // xyz the sun's direction, w 1 when there is one.
     sun: vec4<f32>,
-    // x normal step in texels, y step toward the light in metres, z cap in metres (0 = none). 🔴
-    // Texels span five orders of magnitude across the chain; without `z` the step reaches 9.2 m.
+    // x the normal step in metres per metre of camera distance (Unreal's `NormalBias`), yzw unused.
     bias: vec4<f32>,
     // x the attached layer, y its view. 🔴 A page whose slot is in another layer must not draw —
     // that is corruption, not a miss (#1016).

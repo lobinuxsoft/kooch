@@ -185,11 +185,16 @@ impl MeshletRenderStage {
         // splits the raster into the things that actually scale apart:
         // levels, resident pages, pairs, covered texels.
         let inner = query.as_ref().zip(scopes).map(|(q, s)| (s, q));
+        // `tan(fov/2)`: the view is a rotation, so row 1 of `clip_from_world` is the projection's
+        // y scale. Not finite for a degenerate camera, which falls back to 90°.
+        let lens = 1.0 / clip_from_world.row(1).truncate().length();
+        let lens = if lens.is_finite() { lens } else { 1.0 };
         self.record_page_raster(
             device,
             queue,
             encoder,
             settings,
+            lens,
             slice,
             sun,
             sun_shadow_layers,
@@ -219,6 +224,8 @@ impl MeshletRenderStage {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         settings: PageSettings,
+        // `tan(fov/2)` of the camera, which scales the normal step (#2008).
+        lens: f32,
         slice: u32,
         sun: Option<Vec3>,
         // What casts into that sun (#1220).
@@ -254,12 +261,7 @@ impl MeshletRenderStage {
         raster.set_softness(settings.softness);
         raster.set_march(settings.march);
         raster.set_geometry(settings.geometry);
-        raster.set_bias(
-            settings.bias.0,
-            settings.bias.1,
-            settings.bias.2,
-            settings.bias.3,
-        );
+        raster.set_bias(settings.normal_offset, lens);
         // Before anything reads a stamp this frame: a world that was
         // replaced must not be sampled through the previous one's
         // pages (#971).

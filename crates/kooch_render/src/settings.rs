@@ -84,41 +84,16 @@ pub struct RenderSettings {
         shown_when = PAGES_ON
     )]
     pub shadow_min_pixels: u32,
-    /// How far a shadow lookup steps along the receiver's NORMAL before comparing, as a MULTIPLE OF
-    /// THE CLIPMAP TEXEL it landed on.
-    #[serde(default = "default_shadow_normal_bias")]
+    /// How far a shadow lookup steps along the receiver's normal, as Unreal's
+    /// `r.Shadow.Virtual.NormalBias`: thousandths of the camera distance times `tan(fov/2)`. It
+    /// follows the pixel footprint the clipmap is sized to, smooth across levels and uncapped.
+    #[serde(default = "default_shadow_normal_offset")]
     #[reflect(
         group = "Shadows: virtual pages",
-        range = SHADOW_NORMAL_BIAS_RANGE,
+        range = SHADOW_NORMAL_OFFSET_RANGE,
         shown_when = PAGES_ON
     )]
-    pub shadow_normal_bias: f32,
-    /// How far the same lookup steps TOWARDS the light, in metres.
-    /// Constant across the chain, unlike the normal step above.
-    #[serde(default = "default_shadow_depth_bias")]
-    #[reflect(
-        group = "Shadows: virtual pages",
-        range = SHADOW_DEPTH_BIAS_RANGE,
-        shown_when = PAGES_ON
-    )]
-    pub shadow_depth_bias: f32,
-    /// A ceiling on the world-space normal step, in METRES. 0 disables it, which is what shipped.
-    #[serde(default = "default_shadow_bias_max")]
-    #[reflect(
-        group = "Shadows: virtual pages",
-        range = SHADOW_BIAS_MAX_RANGE,
-        shown_when = PAGES_ON
-    )]
-    pub shadow_bias_max: f32,
-    /// A ceiling on the receiver's own depth GRADIENT, as a slope — `tan` of the incidence, per
-    /// axis.
-    #[serde(default = "default_shadow_bias_slope")]
-    #[reflect(
-        group = "Shadows: virtual pages",
-        range = SHADOW_BIAS_SLOPE_RANGE,
-        shown_when = PAGES_ON
-    )]
-    pub shadow_bias_slope: f32,
+    pub shadow_normal_offset: f32,
     /// March the shadow atlas instead of sampling one texel through a PCF box.
     #[serde(default)]
     #[reflect(group = "Shadows: virtual pages", shown_when = PAGES_ON)]
@@ -265,10 +240,7 @@ impl Default for RenderSettings {
     /// What a NEW settings asset holds, and what the engine uses with no asset at all.
     fn default() -> Self {
         Self {
-            shadow_normal_bias: default_shadow_normal_bias(),
-            shadow_depth_bias: default_shadow_depth_bias(),
-            shadow_bias_max: default_shadow_bias_max(),
-            shadow_bias_slope: default_shadow_bias_slope(),
+            shadow_normal_offset: default_shadow_normal_offset(),
             shadow_page_march: false,
             shadow_page_geometry: default_shadow_page_geometry(),
             shadow_page_halo: default_shadow_page_halo(),
@@ -342,10 +314,7 @@ impl RenderSettings {
 
     pub fn shadows(&self) -> ShadowSettings {
         ShadowSettings {
-            page_normal_bias: self.shadow_normal_bias,
-            page_depth_bias: self.shadow_depth_bias,
-            page_bias_max: self.shadow_bias_max,
-            page_bias_slope: self.shadow_bias_slope,
+            page_normal_offset: self.shadow_normal_offset,
             page_march: self.shadow_page_march,
             page_geometry: self.shadow_page_geometry,
             page_halo: self.shadow_page_halo,
