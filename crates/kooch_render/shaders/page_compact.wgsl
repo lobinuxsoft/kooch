@@ -106,11 +106,13 @@ fn cs_compact(
     // position and wraps into the table, so when the window scrolls the ring that enters lands on
     // the very slots the ring that left was using: same key, different piece of world.
     if id.is_sun {
-        let basis = sun_basis(raster.sun.xyz);
+        let basis = sun_frame(raster.sun.xyz, raster.anchor, raster.whole);
         let idx = sun_page_index(
             id.level, id.cell, raster.eye.xyz, basis, raster.world.x, raster.space.z);
-        gen = page_mix(gen, bitcast<u32>(i32(idx.x)));
-        gen = page_mix(gen, bitcast<u32>(i32(idx.y)));
+        // Plus the anchor's index, so the identity is absolute and a rebase keeps it (#2009).
+        let key = bitcast<vec2<u32>>(vec2<i32>(idx)) + sun_offset(id.level);
+        gen = page_mix(gen, key.x);
+        gen = page_mix(gen, key.y);
         // 0 means "no content" and must never match a generation.
         gen = gen | 1u;
     }
@@ -204,7 +206,7 @@ fn cs_invalidate(
         let sphere = moved[1u + i];
         var hit = false;
         if id.is_sun {
-            let basis = sun_basis(raster.sun.xyz);
+            let basis = sun_frame(raster.sun.xyz, raster.anchor, raster.whole);
             let centre =
                 sun_centre(raster.eye.xyz, basis, raster.world.x, raster.space.z, id.level);
             let rect = sun_page_rect(id.level, id.cell, raster.eye.xyz, basis, raster.world.x, raster.space.z);
@@ -338,7 +340,7 @@ fn cs_lod_offsets(@builtin(global_invocation_id) gid: vec3<u32>) {
     let base = raster.views.x * raster.views.y + raster.space.w * raster.space.x;
     let entry = base + level * per_level + cell.y * side + cell.x;
 
-    let basis = sun_basis(raster.sun.xyz);
+    let basis = sun_frame(raster.sun.xyz, raster.anchor, raster.whole);
     let eye = raster.eye.xyz;
     // This page's ABSOLUTE index on the level's world grid — the one
     // identity that survives the wrap.
@@ -350,7 +352,7 @@ fn cs_lod_offsets(@builtin(global_invocation_id) gid: vec3<u32>) {
         // `>> step` on the absolute index, then wrapped into the coarser
         // level's window the way `sun_cell` keys it.
         let scaled = floor(absolute / exp2(f32(step)));
-        let coarse = vec2<u32>(wrap_to(scaled, f32(side)));
+        let coarse = vec2<u32>(wrap_to(scaled + sun_residue(up, side), f32(side)));
         let at = base + up * per_level + coarse.y * side + coarse.x;
         // Readable, not merely resident: a page with no content stamp
         // holds a clear, and a clear reads as "nothing occludes".

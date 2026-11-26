@@ -345,6 +345,7 @@ impl PageRasterizer {
             page_clear,
             clear_bgl,
             frame: 0,
+            origin: glam::DVec3::ZERO,
             softness: 1,
             // What `inti_pbr.wgsl` held as constants before the
             // settings could reach it, so a project with no settings

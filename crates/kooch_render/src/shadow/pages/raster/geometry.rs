@@ -2,26 +2,28 @@
 
 use super::*;
 
-/// The sun's frame: right, up, and the direction it shines along.
-pub(super) fn sun_frame(sun: Vec3) -> (Vec3, Vec3, Vec3) {
-    let f = sun.normalize_or(Vec3::NEG_Y);
-    let up = if f.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
-    let right = f.cross(up).normalize();
-    (right, right.cross(f), f)
-}
+pub(super) use crate::shadow::pages::anchor::{SunAnchor, sun_frame};
 
 /// The world point a level's cull box is centred on.
-pub(super) fn level_origin(base: f32, side: u32, level: u32, eye: Vec3, sun: Vec3) -> Vec3 {
+pub(super) fn level_origin(
+    base: f32,
+    side: u32,
+    level: u32,
+    eye: Vec3,
+    sun: Vec3,
+    anchor: Vec3,
+) -> Vec3 {
     let (right, up, f) = sun_frame(sun);
     let s = side.max(1) as f32;
     let width = base * (level as f32).exp2() / s;
+    let eye = eye - anchor;
     let plane = glam::Vec2::new(eye.dot(right), eye.dot(up));
     let low = (plane / width).floor() - glam::Vec2::splat((s * 0.5).floor());
     let centre = (low + glam::Vec2::splat(s * 0.5)) * width;
     // ⚠️ `floor(x + 0.5)` and never `round`, mirroring `sun_drift`:
     // WGSL rounds halves to even and Rust rounds them away from zero.
     let along = (eye.dot(f) / width + 0.5).floor() * width;
-    right * centre.x + up * centre.y + f * along
+    anchor + right * centre.x + up * centre.y + f * along
 }
 
 /// The clipmap level's orthographic clip-from-world.
@@ -31,6 +33,7 @@ pub(super) fn level_clip(
     level: u32,
     eye: Vec3,
     sun: Vec3,
+    anchor: Vec3,
 ) -> Mat4 {
     let (right, up, f) = sun_frame(sun);
     let rotation = Mat4::from_cols(
@@ -50,7 +53,7 @@ pub(super) fn level_clip(
     );
     projection
         * rotation
-        * Mat4::from_translation(-level_origin(clipmap.base, side, level, eye, sun))
+        * Mat4::from_translation(-level_origin(clipmap.base, side, level, eye, sun, anchor))
 }
 
 /// The atlas: one square layer per camera.
@@ -88,12 +91,13 @@ pub(super) fn sun_gens(
     scene_gen: u32,
     eye: Vec3,
     sun: Vec3,
+    anchor: &SunAnchor,
 ) -> Vec<u32> {
     // Mirrors `sun_basis` in `page_table.wgsl`, term for term.
     let f = sun.normalize_or(Vec3::NEG_Y);
     // Only the sun's own axis is left: the basis' two in-plane vectors
     // went with the snapped centre this no longer hashes.
-    let along = eye.dot(f);
+    let along = (eye - anchor.local).dot(f);
     (0..clipmap.levels as usize)
         .map(|level| {
             let width = clipmap.base * (level as f32).exp2() / side;
@@ -102,7 +106,9 @@ pub(super) fn sun_gens(
                 // 🔴 The snapped CENTRE is deliberately absent, and used to be two of these words.
                 // It turned a whole level's content over every time the camera crossed one of its
                 // pages — for pages whose world footprint had not moved at all.
-                (along / width + 0.5).floor().to_bits(),
+                // Absolute, so a rebase keeps it (#2009).
+                ((along / width + 0.5).floor() as i32).wrapping_add(anchor.along(level as u32))
+                    as u32,
                 f.x.to_bits(),
                 f.y.to_bits(),
                 f.z.to_bits(),

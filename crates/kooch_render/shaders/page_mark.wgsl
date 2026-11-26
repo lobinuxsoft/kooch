@@ -29,6 +29,9 @@ struct PageView {
     density: vec4<f32>,
     // x how far, in PAGES, a receiver dilates its request; 0 = off.
     halo: vec4<f32>,
+    // The sun anchor, as `PageRaster` carries it. See `sun_frame`.
+    anchor: vec4<f32>,
+    whole: vec4<i32>,
 }
 
 @group(0) @binding(0) var<uniform> view: ClusterView;
@@ -313,7 +316,7 @@ fn mark_local(light: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
 
 // One page of the sun's clipmap.
 fn sun_page_for(slot: u32, world: vec3<f32>, wanted: f32) -> vec2<u32> {
-    let basis = sun_basis(pages.sun.xyz);
+    let basis = sun_frame(pages.sun.xyz, pages.anchor, pages.whole);
     let eye = pages.eye_and_base.xyz;
     let base = pages.eye_and_base.w;
     let side = pages.strides.x;
@@ -358,7 +361,7 @@ fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32, dither: vec2<f32>) -> vec2
     // lamp's radius. `mark_local` records how FAR a receiver is; a lamp is a point, so distance
     // alone bounds it and any direction may occlude.
     if page.x < pages.pool.x {
-        let basis = sun_basis(pages.sun.xyz);
+        let basis = sun_frame(pages.sun.xyz, pages.anchor, pages.whole);
         let eye = pages.eye_and_base.xyz;
         // The SAME origin the expansion measures a caster from: the level's snapped depth grid, not
         // the raw camera. Measuring the two ends of one comparison from different origins is what
@@ -373,7 +376,7 @@ fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32, dither: vec2<f32>) -> vec2
     // The halo, in the sun's own plane.
     let halo = pages.halo.x;
     if halo > 0.0 {
-        let basis = sun_basis(pages.sun.xyz);
+        let basis = sun_frame(pages.sun.xyz, pages.anchor, pages.whole);
         let width = pages.eye_and_base.w * exp2(f32(page.y)) / f32(max(pages.strides.x, 1u));
         // 🔴 `dither` is why this covers a ring and not a line.
         let step = (basis[0] * dither.x + basis[1] * dither.y) * (halo * width);

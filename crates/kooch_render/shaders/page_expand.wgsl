@@ -200,7 +200,7 @@ fn expand_geometry(
 ) {
     let side = raster.space.z;
     let s = f32(side);
-    let basis = sun_basis(raster.sun.xyz);
+    let basis = sun_frame(raster.sun.xyz, raster.anchor, raster.whole);
     let width = raster.world.x * exp2(f32(level)) / s;
     let plane = sun_plane(bounds, basis);
     let low = sun_window(raster.eye.xyz, basis, raster.world.x, side, level);
@@ -213,7 +213,7 @@ fn expand_geometry(
     }
     let lo = max(first, low);
     let hi = min(last, high);
-    let start = vec2<u32>(wrap_to(lo, s));
+    let start = vec2<u32>(wrap_to(lo + sun_residue(level, side), s));
     let span = vec2<u32>(hi - lo);
 
     var xs: array<vec2<u32>, 2>;
@@ -355,14 +355,14 @@ fn cs_expand(@builtin(global_invocation_id) gid: vec3<u32>) {
         packed,
         bounds,
         radius,
-        sun_basis(raster.sun.xyz),
+        sun_frame(raster.sun.xyz, raster.anchor, raster.whole),
     );
 }
 
 /// What the OTHER shape of this pass would have cost, counted without running it.
 fn count_scatter(level: u32, buckets: u32, bounds: vec3<f32>, radius: f32) {
     let side = raster.space.z;
-    let basis = sun_basis(raster.sun.xyz);
+    let basis = sun_frame(raster.sun.xyz, raster.anchor, raster.whole);
     let centre = sun_centre(raster.eye.xyz, basis, raster.world.x, side, level);
     let extent = raster.world.x * exp2(f32(level));
     let plane = sun_plane(bounds, basis);

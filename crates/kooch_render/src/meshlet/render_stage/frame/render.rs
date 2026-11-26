@@ -224,8 +224,14 @@ impl MeshletRenderStage {
                     .and_then(|m| m.slot_surface(row.material_id))
                     .is_some_and(|(_, s)| s.source.contains("input.time"))
             };
-            self.casters
-                .update(self.slots.rows(), self.slots.moved(), sphere, animated);
+            let origin = kooch_ecs::hierarchy::WorldOrigin::get(resources).offset();
+            self.casters.update(
+                self.slots.rows(),
+                self.slots.moved(),
+                origin,
+                sphere,
+                animated,
+            );
             self.forward_list.rebuild(
                 self.slots.rows(),
                 self.slots.opaque(),

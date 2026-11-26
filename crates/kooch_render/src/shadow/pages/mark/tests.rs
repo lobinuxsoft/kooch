@@ -39,6 +39,8 @@ fn the_view_fields_line_up() {
         ("life", std::mem::offset_of!(PageMarkView, life)),
         ("density", std::mem::offset_of!(PageMarkView, density)),
         ("halo", std::mem::offset_of!(PageMarkView, halo)),
+        ("anchor", std::mem::offset_of!(PageMarkView, anchor)),
+        ("whole", std::mem::offset_of!(PageMarkView, whole)),
     ];
     let source = format!("{CLUSTER_COMMON}\n{PAGE_TABLE}\n{SOURCE}");
     let module = naga::front::wgsl::parse_str(&source).expect("the shader parses");

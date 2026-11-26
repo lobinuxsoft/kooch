@@ -74,6 +74,13 @@ impl PageMarker {
         } else {
             rate.clamp(RATE_RANGE.0, RATE_RANGE.1)
         };
+        let (anchor, whole) = sun
+            .map(|d| {
+                let side = self.config.side(0);
+                super::super::anchor::SunAnchor::near(self.origin, eye, d, self.clipmap, side)
+            })
+            .unwrap_or_default()
+            .words();
         queue.write_buffer(
             &self.view,
             0,
@@ -139,6 +146,8 @@ impl PageMarker {
                     self.reach as f32,
                 ],
                 halo: [self.halo, 0.0, 0.0, 0.0],
+                anchor,
+                whole,
             }),
         );
 

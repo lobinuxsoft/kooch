@@ -209,7 +209,7 @@ fn inti_page_march(
     n_dot_l: f32,
     jitter: f32,
 ) -> f32 {
-    let basis = sun_basis(inti_pages.sun.xyz);
+    let basis = sun_frame(inti_pages.sun.xyz, inti_pages.anchor, inti_pages.whole);
     let base = inti_pages.world.x;
     let side = inti_pages.space.z;
     let page_texels = inti_pages.pool.w;
@@ -293,7 +293,7 @@ fn inti_page_shadow(
     if inti_pages.layer.z != 0u {
         return inti_page_march(world_position, normal, n_dot_l, 0.0);
     }
-    let basis = sun_basis(inti_pages.sun.xyz);
+    let basis = sun_frame(inti_pages.sun.xyz, inti_pages.anchor, inti_pages.whole);
 
     let base = inti_pages.world.x;
     let span = inti_pages.world.y;

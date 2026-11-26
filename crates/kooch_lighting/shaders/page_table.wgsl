@@ -161,6 +161,37 @@ fn sun_basis(direction: vec3<f32>) -> mat3x3<f32> {
     return mat3x3<f32>(s, u, f);
 }
 
+// The sun clipmap's anchor (#2009): a point fixed in absolute space on the coarsest page grid, in
+// local metres. Page keys and depth origins are measured from it, so a floating-origin rebase moves
+// nothing. Private because every helper below needs it; `sun_frame` sets it first.
+var<private> sun_anchor: vec3<f32>;
+var<private> sun_whole: vec4<i32>;
+
+/// The sun's basis, with the anchor every page helper measures from. 🔴 Call this, not
+/// `sun_basis`, before any `sun_*` helper in an invocation.
+fn sun_frame(direction: vec3<f32>, anchor: vec4<f32>, whole: vec4<i32>) -> mat3x3<f32> {
+    sun_anchor = anchor.xyz;
+    sun_whole = whole;
+    return sun_basis(direction);
+}
+
+/// The anchor's absolute page index at `level`: wrapping, so only an identity, never a position.
+fn sun_offset(level: u32) -> vec2<u32> {
+    let shift = u32(max(sun_whole.w, 0)) - min(level, u32(max(sun_whole.w, 0)));
+    return bitcast<vec2<u32>>(sun_whole.xy) << vec2<u32>(shift);
+}
+
+/// The anchor's page index at `level`, modulo `side`: what the toroidal wrap adds.
+fn sun_residue(level: u32, side: u32) -> vec2<f32> {
+    let s = max(side, 1u);
+    let shift = u32(max(sun_whole.w, 0)) - min(level, u32(max(sun_whole.w, 0)));
+    var r = vec2<u32>(wrap_to(vec2<f32>(sun_whole.xy % vec2<i32>(i32(s))), f32(s)));
+    for (var k = 0u; k < shift; k = k + 1u) {
+        r = (r * 2u) % s;
+    }
+    return vec2<f32>(r);
+}
+
 /// Receiver depth gradient per texel per axis: a tilt crosses depth along one axis only, so a
 /// scalar bias detaches the other. `-n.xy / n.z` in the sun frame; ⚠️ `limit` is required, it
 /// diverges edge-on.
@@ -191,22 +222,22 @@ fn receiver_slope(
 /// to the world only jump when the camera crosses a page, and page keys stay stable.
 fn sun_centre(eye: vec3<f32>, basis: mat3x3<f32>, base: f32, side: u32, level: u32) -> vec2<f32> {
     let width = base * exp2(f32(level)) / f32(max(side, 1u));
-    let plane = vec2<f32>(dot(eye, basis[0]), dot(eye, basis[1]));
-    return floor(plane / width) * width;
+    return floor(sun_plane(eye, basis) / width) * width;
 }
 
 /// Camera offset from the level's snapped depth origin: raw-camera depth invalidated every page per
 /// move, 29.7 vs 0.064 ms (#948). ⚠️ `floor(x + 0.5)`: WGSL and Rust round halves differently.
 fn sun_drift(eye: vec3<f32>, basis: mat3x3<f32>, base: f32, side: u32, level: u32) -> f32 {
     let width = base * exp2(f32(level)) / f32(max(side, 1u));
-    let along = dot(eye, basis[2]);
+    let along = dot(eye - sun_anchor, basis[2]);
     return along - floor(along / width + 0.5) * width;
 }
 
-/// A world position in the sun's plane, which is what every page lookup
-/// is really indexing.
+/// A world position in the sun's plane, from the anchor, which is what every page lookup is
+/// really indexing.
 fn sun_plane(world: vec3<f32>, basis: mat3x3<f32>) -> vec2<f32> {
-    return vec2<f32>(dot(world, basis[0]), dot(world, basis[1]));
+    let at = world - sun_anchor;
+    return vec2<f32>(dot(at, basis[0]), dot(at, basis[1]));
 }
 
 /// Finest level containing `reach`, with two pages of slack for [`sun_centre`]'s snap.
@@ -259,10 +290,10 @@ fn sun_cell(
         low,
         low + vec2<f32>(s - 1.0),
     );
-    return vec2<u32>(wrap_to(idx, s));
+    return vec2<u32>(wrap_to(idx + sun_residue(level, side), s));
 }
 
-/// The absolute world index a wrapped cell stands for — a page's real identity.
+/// The index a wrapped cell stands for, from the anchor. Its identity adds [`sun_offset`].
 fn sun_page_index(
     level: u32,
     cell: vec2<u32>,
@@ -273,7 +304,7 @@ fn sun_page_index(
 ) -> vec2<f32> {
     let s = f32(max(side, 1u));
     let low = sun_window(eye, basis, base, side, level);
-    return low + wrap_to(vec2<f32>(cell) - low, s);
+    return low + wrap_to(vec2<f32>(cell) - sun_residue(level, side) - low, s);
 }
 
 /// One clipmap page in the sun's plane: `xy` centre, `z` width, in absolute metres, since the grid
@@ -362,6 +393,10 @@ struct PageRaster {
     // x the attached layer, y its view. 🔴 A page whose slot is in another layer must not draw —
     // that is corruption, not a miss (#1016).
     layer: vec4<u32>,
+    // xyz the sun anchor, local metres; w unused. See `sun_frame`.
+    anchor: vec4<f32>,
+    // xyz the anchor in coarsest-page units along the sun's basis, w the coarsest level.
+    whole: vec4<i32>,
 }
 
 // The cube face a direction lands on and its position across it, as `face_view_proj` without the

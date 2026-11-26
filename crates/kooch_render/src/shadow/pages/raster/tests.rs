@@ -1,4 +1,5 @@
 use super::*;
+use crate::shadow::pages::anchor::SunAnchor;
 
 /// What the shader says a struct measures, per WGSL's own layout rules. The compaction as the
 /// device sees it: the cluster records, the page table, then the pass. Parsing the pass alone
@@ -79,6 +80,8 @@ fn the_uniform_fields_line_up() {
         ("sun", std::mem::offset_of!(RasterUniform, sun)),
         ("bias", std::mem::offset_of!(RasterUniform, bias)),
         ("layer", std::mem::offset_of!(RasterUniform, layer)),
+        ("anchor", std::mem::offset_of!(RasterUniform, anchor)),
+        ("whole", std::mem::offset_of!(RasterUniform, whole)),
     ];
     let theirs = shader_offsets(&compact_source(), "PageRaster");
     assert_eq!(theirs.len(), mine.len(), "field count");
@@ -249,8 +252,8 @@ fn a_millimetre_along_the_sun_keeps_the_cache() {
     let eye = Vec3::new(12.0, 3.0, -7.0);
     let step = sun.normalize() * 0.001;
 
-    let before = sun_gens(clipmap, side, 7, eye, sun);
-    let after = sun_gens(clipmap, side, 7, eye + step, sun);
+    let before = sun_gens(clipmap, side, 7, eye, sun, &SunAnchor::default());
+    let after = sun_gens(clipmap, side, 7, eye + step, sun, &SunAnchor::default());
 
     assert_eq!(
         before,
@@ -270,8 +273,15 @@ fn a_metre_voids_the_fine_levels_only() {
     let sun = Vec3::NEG_Y;
     let eye = Vec3::new(0.0, 40.0, 0.0);
 
-    let before = sun_gens(clipmap, side, 7, eye, sun);
-    let after = sun_gens(clipmap, side, 7, eye + Vec3::new(0.0, -1.0, 0.0), sun);
+    let before = sun_gens(clipmap, side, 7, eye, sun, &SunAnchor::default());
+    let after = sun_gens(
+        clipmap,
+        side,
+        7,
+        eye + Vec3::new(0.0, -1.0, 0.0),
+        sun,
+        &SunAnchor::default(),
+    );
 
     assert_ne!(
         before[0], after[0],
@@ -301,7 +311,7 @@ fn the_cull_box_covers_the_window() {
         for step in 0..8 {
             let frac = step as f32 / 8.0;
             let eye = Vec3::new(frac * width, 3.0, frac * width * 0.5);
-            let clip = level_clip(clipmap, side, level, eye, sun);
+            let clip = level_clip(clipmap, side, level, eye, sun, Vec3::ZERO);
 
             let plane = glam::Vec2::new(eye.dot(right), eye.dot(up));
             let low = (plane / width).floor() - glam::Vec2::splat((s * 0.5).floor());
@@ -324,4 +334,24 @@ fn the_cull_box_covers_the_window() {
             }
         }
     }
+}
+
+/// The same absolute eye seen from two origin cells keeps every level's content (#2009).
+#[test]
+fn a_rebase_keeps_the_cache() {
+    let clipmap = ClipmapConfig::default();
+    let config = PageConfig::default();
+    let side = config.side(0);
+    let sun = Vec3::new(0.3, -1.0, 0.2);
+    let eye = glam::DVec3::new(6_371_012.0, 3.0, -7.0);
+    let gens = |origin: glam::DVec3| {
+        let local = (eye - origin).as_vec3();
+        let anchor = SunAnchor::near(origin, local, sun, clipmap, side);
+        sun_gens(clipmap, side as f32, 7, local, sun, &anchor)
+    };
+    let cell = kooch_ecs::hierarchy::CELL;
+    assert_eq!(
+        gens(glam::DVec3::new(3110.0 * cell, 0.0, 0.0)),
+        gens(glam::DVec3::new(3111.0 * cell, 0.0, -cell)),
+    );
 }

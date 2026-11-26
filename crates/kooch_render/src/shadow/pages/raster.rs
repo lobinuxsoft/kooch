@@ -155,6 +155,8 @@ struct RasterUniform {
     bias: [f32; 4],
     /// `x` the atlas layer this pass is attached to, `y` its view.
     layer: [u32; 4],
+    anchor: [f32; 4],
+    whole: [i32; 4],
 }
 
 #[repr(C)]
@@ -238,6 +240,8 @@ pub struct PageRasterizer {
 
     /// This frame's index, for the age debug view. See `views.w`.
     frame: u32,
+    /// The floating origin in metres, which the sun anchor is worked from (#2009).
+    origin: glam::DVec3,
     /// The readers' PCF footprint width in texels, carried in
     /// `world.w`. 1 = bilinear. See `inti_page_filter` (#941).
     softness: u32,

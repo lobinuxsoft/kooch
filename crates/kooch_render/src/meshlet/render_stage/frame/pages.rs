@@ -39,6 +39,8 @@ struct PageSettings {
     reach: u32,
     /// How many times the set of loaded scenes has changed.
     scene_epoch: u32,
+    /// The floating origin in metres, which the sun's page anchor is worked from (#2009).
+    origin: glam::DVec3,
     /// Whether the clipmap culls enter per instance (#1002).
     two_level: bool,
 }
@@ -115,13 +117,8 @@ fn read_epoch(resources: &Resources) -> u32 {
             "the page machine read the scene epoch",
         );
     }
-    // Cached pages hold origin-relative depth: a rebase moves every caster under them (#1973).
-    let cell = kooch_ecs::hierarchy::WorldOrigin::get(resources).cell;
-    let fold = |v: i64| (v ^ (v >> 32)) as u32;
-    let moved = fold(cell.x).wrapping_mul(0x9E37_79B1)
-        ^ fold(cell.y).wrapping_mul(0x85EB_CA77)
-        ^ fold(cell.z).wrapping_mul(0xC2B2_AE3D);
-    epoch ^ moved
+    // A rebase does not void the cache: the sun's pages are keyed from an absolute anchor (#2009).
+    epoch
 }
 
 fn page_settings(resources: &Resources) -> PageSettings {
@@ -163,6 +160,7 @@ fn page_settings(resources: &Resources) -> PageSettings {
         // where zero is right: nothing ever changes, so nothing ever
         // needs voiding.
         scene_epoch: read_epoch(resources),
+        origin: kooch_ecs::hierarchy::WorldOrigin::get(resources).offset(),
         pool: PoolConfig {
             pages: shadows.pool_pages.clamp(PAGES_RANGE.0, PAGES_RANGE.1),
             // Filled in by the caller, which is the only place that

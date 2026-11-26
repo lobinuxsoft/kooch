@@ -150,7 +150,7 @@ fn page_geometry(vertex_index: u32, instance_index: u32) -> PageGeom {
     var depth = 0.0;
 
     if id.is_sun {
-        let basis = sun_basis(raster.sun.xyz);
+        let basis = sun_frame(raster.sun.xyz, raster.anchor, raster.whole);
         // 🔴 The plane is ABSOLUTE and the rect carries the snapped centre. Measuring from the
         // camera instead would put the geometry on a grid that slides with it, which is the shadow
         // crawl `sun_centre` exists to remove.
