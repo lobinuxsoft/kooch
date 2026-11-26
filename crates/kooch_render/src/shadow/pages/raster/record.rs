@@ -205,7 +205,7 @@ impl PageRasterizer {
                 let clip = self.level_clip(level, eye, sun);
                 let params = CullParams::shadow(
                     clip,
-                    eye - sun.normalize_or(Vec3::NEG_Y) * SUN_SPAN,
+                    eye - sun.normalize_or(Vec3::NEG_Y) * sun_span(self.clipmap, level),
                     scene_params.meshlets_per_mesh,
                 )
                 .with_orthographic_lod(

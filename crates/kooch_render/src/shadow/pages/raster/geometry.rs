@@ -26,6 +26,16 @@ pub(super) fn level_origin(
     anchor + right * centre.x + up * centre.y + f * along
 }
 
+/// How much more depth a level reaches along the sun than its extent across it (#2022).
+/// Mirrors `SUN_DEPTH_SCALE` in `page_table.wgsl`.
+const SUN_DEPTH_SCALE: f32 = 100.0;
+
+/// A level's depth reach along the sun, in metres: never under [`SUN_SPAN`], and growing with the
+/// level so a coarse one holds ground kilometres below the camera. Mirrors `sun_span`.
+pub(super) fn sun_span(clipmap: ClipmapConfig, level: u32) -> f32 {
+    SUN_SPAN.max(clipmap.extent(level) * SUN_DEPTH_SCALE)
+}
+
 /// The clipmap level's orthographic clip-from-world.
 pub(super) fn level_clip(
     clipmap: ClipmapConfig,
@@ -48,7 +58,7 @@ pub(super) fn level_clip(
     let projection = Mat4::from_cols(
         glam::Vec4::new(1.0 / half, 0.0, 0.0, 0.0),
         glam::Vec4::new(0.0, 1.0 / half, 0.0, 0.0),
-        glam::Vec4::new(0.0, 0.0, -1.0 / (2.0 * SUN_SPAN), 0.0),
+        glam::Vec4::new(0.0, 0.0, -1.0 / (2.0 * sun_span(clipmap, level)), 0.0),
         glam::Vec4::new(0.0, 0.0, 0.5, 1.0),
     );
     projection

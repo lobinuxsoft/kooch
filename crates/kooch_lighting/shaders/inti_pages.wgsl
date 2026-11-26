@@ -158,7 +158,6 @@ fn inti_tent_cdf(u: f32, half: f32) -> f32 {
 /// `z` 1 when a page was found. Shared by the walk and the march.
 fn inti_page_read(p: vec3<f32>, basis: mat3x3<f32>) -> vec3<f32> {
     let base = inti_pages.world.x;
-    let span = inti_pages.world.y;
     let side = inti_pages.space.z;
     let page_texels = inti_pages.pool.w;
 
@@ -169,6 +168,7 @@ fn inti_page_read(p: vec3<f32>, basis: mat3x3<f32>) -> vec3<f32> {
     for (; level < inti_pages.chain.x; level = level + 1u) {
         let along = dot(p - inti_pages.eye.xyz, basis[2])
             + sun_drift(inti_pages.eye.xyz, basis, base, side, level);
+        let span = sun_span(inti_pages.world.y, base, level);
         let mine = 1.0 - (along + span) / (2.0 * span);
 
         let cell = sun_cell(p, inti_pages.eye.xyz, basis, base, side, level);
@@ -296,7 +296,6 @@ fn inti_page_shadow(
     let basis = sun_frame(inti_pages.sun.xyz, inti_pages.anchor, inti_pages.whole);
 
     let base = inti_pages.world.x;
-    let span = inti_pages.world.y;
     let side = inti_pages.space.z;
     let page_texels = inti_pages.pool.w;
 
@@ -343,6 +342,7 @@ fn inti_page_shadow(
         // Reversed-Z along the sun's axis, matching `page_depth.wgsl`.
         // Nothing is added to it: the offset above already moved the
         // point towards the light, which is the depth half of the bias.
+        let span = sun_span(inti_pages.world.y, base, level);
         let receiver = 1.0 - (along + span) / (2.0 * span);
 
         // The same absolute-world key the marking wrote. See `sun_cell`.

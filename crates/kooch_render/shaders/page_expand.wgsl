@@ -103,7 +103,7 @@ fn sun_pair(
     if abs(plane.x - rect.x) > half || abs(plane.y - rect.y) > half {
         return;
     }
-    if abs(along) > raster.world.y + radius {
+    if abs(along) > sun_span(raster.world.y, raster.world.x, level) + radius {
         return;
     }
     // 🔴 Olsson §4's receiver bound used to reject a caster here, and it is gone.

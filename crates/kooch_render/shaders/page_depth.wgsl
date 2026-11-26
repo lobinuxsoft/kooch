@@ -167,7 +167,7 @@ fn page_geometry(vertex_index: u32, instance_index: u32) -> PageGeom {
         // 🔴 Reversed-Z (ADR 0002): 1 is the near plane and 0 is far, so
         // an empty page reads as "nothing between here and the light"
         // rather than as "everything is shadowed". The clear matches.
-        let span = raster.world.y;
+        let span = sun_span(raster.world.y, raster.world.x, id.level);
         depth = 1.0 - (along + span) / (2.0 * span);
     } else {
         // A lamp's page: a perspective frustum from the light, narrowed to the one cell of the one
