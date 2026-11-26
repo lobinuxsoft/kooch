@@ -327,42 +327,6 @@ fn a_clipmap_texel_is_not_one_size() {
     );
 }
 
-/// The page reader offsets its SAMPLE by the texel, the way the cascade does — it does not add a
-/// constant to the depth it compares.
-#[test]
-fn the_page_reader_biases_in_texels() {
-    let source = kooch_lighting::inti_pbr_shader(1);
-    let start = source
-        .find("fn inti_page_shadow(")
-        .expect("the reader is in the shader");
-    let end = source[start..]
-        .find("\nfn inti_shadow(")
-        .expect("the reader ends")
-        + start;
-    let body = &source[start..end];
-
-    // 🔴 Matched without the whitespace, because the expression grew a third factor and wrapped
-    // across lines. A grep test that pins the FORMATTING fails on a change that never touched the
-    // behaviour, which is how this one first fired.
-    let dense: String = body.chars().filter(|c| !c.is_whitespace()).collect();
-    assert!(
-        dense.contains("texel_world*inti_pages.bias.x"),
-        "the offset has to scale with the level's texel"
-    );
-    assert!(
-        body.contains("to_light * inti_pages.bias.y"),
-        "and carry the cascade's depth term too"
-    );
-    assert!(
-        body.contains("min(offset, inti_pages.bias.z)"),
-        "and the offset has to be capped, or the coarse levels lose their shadows"
-    );
-    assert!(
-        !body.contains("receiver + bias"),
-        "a constant added to the compared depth is what detaches a shadow"
-    );
-}
-
 /// Every pass that reads the page table reads it the SAME way.
 #[test]
 fn every_table_reader_agrees_on_the_layout() {

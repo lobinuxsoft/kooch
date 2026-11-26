@@ -23,10 +23,9 @@ struct PageSettings {
     /// The readers' PCF footprint width, carried to the raster uniform
     /// the shading binds. See `ShadowSettings::page_softness`.
     softness: u32,
-    /// The readers' bias: normal step per texel, depth step in metres, the metre ceiling on the
-    /// first, and the ceiling on the receiver's own depth GRADIENT (#1017) — the term that gives
-    /// each filter tap the depth its own part of the receiving plane has.
-    bias: (f32, f32, f32, f32),
+    /// The readers' normal step, in Unreal's `NormalBias` units. See
+    /// `ShadowSettings::page_normal_offset`.
+    normal_offset: f32,
     /// The coverage gate (#944). See `ShadowSettings::page_min_pixels`.
     /// Whether the shading marches the atlas (#1017).
     march: bool,
@@ -145,12 +144,7 @@ fn page_settings(resources: &Resources) -> PageSettings {
         paint: false,
         density: shadows.page_density,
         softness: shadows.page_softness,
-        bias: (
-            shadows.page_normal_bias,
-            shadows.page_depth_bias,
-            shadows.page_bias_max,
-            shadows.page_bias_slope,
-        ),
+        normal_offset: shadows.page_normal_offset,
         march: shadows.page_march,
         geometry: shadows.page_geometry,
         halo: shadows.page_halo,

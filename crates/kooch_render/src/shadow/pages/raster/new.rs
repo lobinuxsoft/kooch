@@ -350,7 +350,7 @@ impl PageRasterizer {
             // What `inti_pbr.wgsl` held as constants before the
             // settings could reach it, so a project with no settings
             // file renders exactly as it did.
-            bias: [1.8, 0.02, 0.0, 4.0],
+            bias: [0.0005, 0.0, 0.0, 0.0],
             march: false,
             geometry: false,
             pyramid: PagePyramid::new(device, config, clipmap),

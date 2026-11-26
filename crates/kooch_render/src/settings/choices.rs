@@ -146,28 +146,9 @@ pub(super) fn default_shadow_min_pixels() -> u32 {
     8
 }
 
-/// One pixel, which is what `MeshletLodSettings::default` has always been. Changing the default
-/// would change every existing project's geometry on the frame this landed. What `inti_pbr.wgsl`
-/// held as a constant before the settings could reach it.
-pub(super) fn default_shadow_normal_bias() -> f32 {
-    4.0
-}
-
-/// Likewise.
-pub(super) fn default_shadow_depth_bias() -> f32 {
-    0.2
-}
-
-/// 🔴 Zero — OFF — because turning it on is a behaviour change and the value that is right has not
-/// been measured yet. The same reasoning as `shadow_light_reach`: a cap chosen from arithmetic
-/// rather than from a picture is a number nobody validated.
-pub(super) fn default_shadow_bias_max() -> f32 {
+/// Unreal's default (#2008).
+pub(super) fn default_shadow_normal_offset() -> f32 {
     0.5
-}
-
-/// 🔴 NOT zero, unlike `default_shadow_bias_max`.
-pub(super) fn default_shadow_bias_slope() -> f32 {
-    0.0
 }
 
 /// Half a page each way, so a receiver in the outer half of its page already asks for the
@@ -300,36 +281,11 @@ pub(super) const MESHLET_MIN_PIXELS_RANGE: kooch_ecs::reflect::FieldRange =
         step: 0.5,
     };
 
-pub(super) const SHADOW_NORMAL_BIAS_RANGE: kooch_ecs::reflect::FieldRange =
+pub(super) const SHADOW_NORMAL_OFFSET_RANGE: kooch_ecs::reflect::FieldRange =
     kooch_ecs::reflect::FieldRange {
         min: 0.0,
-        max: 8.0,
+        max: 4.0,
         step: 0.05,
-    };
-
-pub(super) const SHADOW_DEPTH_BIAS_RANGE: kooch_ecs::reflect::FieldRange =
-    kooch_ecs::reflect::FieldRange {
-        min: 0.0,
-        max: 0.5,
-        step: 0.001,
-    };
-
-/// Up to a metre. Past that it is not a cap on anything the chain
-/// produces below level 14.
-pub(super) const SHADOW_BIAS_MAX_RANGE: kooch_ecs::reflect::FieldRange =
-    kooch_ecs::reflect::FieldRange {
-        min: 0.0,
-        max: 1.0,
-        step: 0.005,
-    };
-
-/// 0 is one depth for every tap — what shipped. 8 is `tan 83°`, past
-/// which the clamp is not clamping anything the geometry reaches.
-pub(super) const SHADOW_BIAS_SLOPE_RANGE: kooch_ecs::reflect::FieldRange =
-    kooch_ecs::reflect::FieldRange {
-        min: 0.0,
-        max: 8.0,
-        step: 0.1,
     };
 
 pub(super) const MESHLET_LOD_ERROR_RANGE: kooch_ecs::reflect::FieldRange =

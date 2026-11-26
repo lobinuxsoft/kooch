@@ -1594,10 +1594,7 @@ which is never in doubt.
 | `shadow_pool_pages` | the memory budget: 1024, 2048 (default), 4096 or 6144 pages, 64 KiB each |
 | `shadow_softness` | the page filter's box width in texels (3 by default); see *The page filter is a configurable box* |
 | `shadow_min_pixels` | the distant tier's threshold, in screen pixels (8 by default) |
-| `shadow_normal_bias` | the lookup's step along the normal, in clipmap texels (4.0) |
-| `shadow_depth_bias` | the lookup's step towards the light, in metres (0.2) |
-| `shadow_bias_max` | a ceiling on the normal step, in metres (0.5; 0 disables it) |
-| `shadow_bias_slope` | a ceiling on the receiver's depth gradient (0 = off) |
+| `shadow_normal_offset` | the lookup's step along the normal, as Unreal's `NormalBias`: thousandths of the camera distance × `tan(fov/2)` (0.5). No depth bias: the receiver-plane gradient is always on |
 | `shadow_page_march` | march the atlas instead of one PCF lookup (off) |
 | `shadow_page_geometry` | expand from the geometry, one thread per surviving meshlet, instead of pages × survivors (on, #1022) |
 | `shadow_page_halo` | how far, in pages, a receiver dilates its request — Epic's `PageDilationOffset` (0 = off) |
