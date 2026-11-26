@@ -1630,6 +1630,8 @@ va en el tipo — no en un valor que ya significaba otra cosa.
 - `docs/decisions/0002_infinite_reverse_z.md` — la cámara no tiene plano far. Léelo antes de
   tocar cualquier cosa que lea el depth buffer: `ndc.z == near / distancia` es exacto, y media
   docena de técnicas futuras dependen de eso.
+- `docs/decisions/0004_shadow_range_bands.md` — sombras a escala planetaria: el clipmap VSM
+  extendido hasta el planeta más grande más oclusión analítica de cuerpos. Horizon maps descartados.
 - `docs/research/stack_decisions_2026-05-02.md` — stack choices + rationale.
 - `docs/research/implementation_checklist_2026-05-02.md` — phased roadmap con exit gates.
 - `docs/research/editor-three-system-architecture.md`, `sdf-csg-composition.md`, `wgpu-capabilities.md`.
