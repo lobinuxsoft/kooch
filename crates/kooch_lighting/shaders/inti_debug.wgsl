@@ -292,7 +292,7 @@ fn inti_page_age_debug(world_position: vec3<f32>) -> vec3<f32> {
     if (inti.shadows_enabled == 0u || inti_pages.sun.w <= 0.5) {
         return vec3<f32>(1.0, 0.0, 1.0);
     }
-    let basis = sun_basis(inti_pages.sun.xyz);
+    let basis = sun_frame(inti_pages.sun.xyz, inti_pages.anchor, inti_pages.whole);
     let base = inti_pages.world.x;
     let side = inti_pages.space.z;
     let raw = sun_plane(world_position, basis) - sun_plane(inti_pages.eye.xyz, basis);
@@ -357,7 +357,7 @@ fn inti_page_debug(world_position: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     if (inti.shadows_enabled == 0u || inti_pages.sun.w <= 0.5) {
         return vec3<f32>(1.0, 0.0, 1.0);
     }
-    let basis = sun_basis(inti_pages.sun.xyz);
+    let basis = sun_frame(inti_pages.sun.xyz, inti_pages.anchor, inti_pages.whole);
     let base = inti_pages.world.x;
     let side = inti_pages.space.z;
     let page_texels = inti_pages.pool.w;

@@ -95,6 +95,7 @@ impl PageConfig {
     }
 }
 
+pub(crate) mod anchor;
 pub mod lamp_cull;
 pub mod mark;
 pub mod pace;

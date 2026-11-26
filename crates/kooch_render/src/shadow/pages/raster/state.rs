@@ -58,7 +58,15 @@ impl PageRasterizer {
         let buckets = self.buckets() as usize;
         let mut gens = vec![0u32; buckets];
         let side = self.config.side(0) as f32;
-        gens[..levels].copy_from_slice(&sun_gens(self.clipmap, side, self.scene_gen, eye, sun));
+        let anchor = self.anchor(eye, sun);
+        gens[..levels].copy_from_slice(&sun_gens(
+            self.clipmap,
+            side,
+            self.scene_gen,
+            eye,
+            sun,
+            &anchor,
+        ));
         for slot in 0..LAMP_CULLS as usize {
             let mut h = FNV_SEED;
             if let Some(lamp) = lamps.get(slot) {
@@ -180,6 +188,7 @@ impl PageRasterizer {
         let stride = super::mark::stride(self.config, self.clipmap);
         let view_span = super::mark::span(self.config, self.clipmap, sun_slot + 1);
         let layer = self.layer_of(view, local);
+        let (anchor, whole) = self.anchor(eye, sun).words();
         queue.write_buffer(
             &self.uniform,
             self.layer_span(layer).0,
@@ -231,6 +240,8 @@ impl PageRasterizer {
                 // this exact buffer, so one write serves both.
                 bias: self.bias,
                 layer: [layer, view, u32::from(self.march), u32::from(self.geometry)],
+                anchor,
+                whole,
             }),
         );
     }
@@ -476,7 +487,23 @@ impl PageRasterizer {
 
     /// The clipmap level's orthographic clip-from-world.
     pub(super) fn level_clip(&self, level: u32, eye: Vec3, sun: Vec3) -> Mat4 {
-        level_clip(self.clipmap, self.config.side(0), level, eye, sun)
+        let anchor = self.anchor(eye, sun).local;
+        level_clip(self.clipmap, self.config.side(0), level, eye, sun, anchor)
+    }
+
+    /// Where the floating origin is, in metres, for this frame's sun anchor.
+    pub fn set_origin(&mut self, origin: glam::DVec3) {
+        self.origin = origin;
+    }
+
+    fn anchor(&self, eye: Vec3, sun: Vec3) -> super::super::anchor::SunAnchor {
+        super::super::anchor::SunAnchor::near(
+            self.origin,
+            eye,
+            sun,
+            self.clipmap,
+            self.config.side(0),
+        )
     }
 }
 

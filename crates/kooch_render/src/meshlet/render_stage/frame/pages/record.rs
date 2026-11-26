@@ -48,7 +48,11 @@ impl MeshletRenderStage {
         // 🔴 Stamped BEFORE the pool is touched, and once per frame rather than once per camera.
         // `set_pool` sets the rebuild flag and `set_frame` is what clears it, so the other order
         // would clear a rebuild the same frame it was asked for.
+        if let Some(raster) = self.page_raster.as_mut() {
+            raster.set_origin(settings.origin);
+        }
         if let Some(marker) = self.page_marker.as_mut() {
+            marker.set_origin(settings.origin);
             marker.set_frame(page_frame(resources));
             marker.set_max_age(page_age_frames(resources));
         }
@@ -65,6 +69,7 @@ impl MeshletRenderStage {
         if let Some(casters) = casters {
             self.page_casters = Some(casters);
         }
+        self.casters.report(scene_changed || caster_lost);
         if (scene_changed || caster_lost)
             && let Some(marker) = self.page_marker.as_mut()
         {
@@ -107,6 +112,7 @@ impl MeshletRenderStage {
             marker.set_pool(device, settings.pool);
             marker
         });
+        marker.set_origin(settings.origin);
         marker.set_coverage(settings.min_pixels);
         marker.set_halo(settings.halo);
         marker.set_reach(settings.reach);
@@ -244,6 +250,7 @@ impl MeshletRenderStage {
         // threading the exact figure through a second call path would. Already stamped by
         // `bind_page_shadows`, which runs first.
         raster.set_frame(marker.life().frame);
+        raster.set_origin(settings.origin);
         raster.set_softness(settings.softness);
         raster.set_march(settings.march);
         raster.set_geometry(settings.geometry);

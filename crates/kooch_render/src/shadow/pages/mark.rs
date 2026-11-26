@@ -127,6 +127,8 @@ struct PageMarkView {
     /// x how far, in PAGES, a receiver dilates its request. Mirrors
     /// `halo` in `page_mark.wgsl`.
     halo: [f32; 4],
+    anchor: [f32; 4],
+    whole: [i32; 4],
 }
 
 /// The pass, its buffers, and the ring that brings the count home.
@@ -174,6 +176,8 @@ pub struct PageMarker {
     pending: Option<usize>,
     config: PageConfig,
     clipmap: ClipmapConfig,
+    /// The floating origin in metres, for the sun anchor (#2009).
+    origin: glam::DVec3,
     /// What the device-fit cap last said, so a capped scene is reported once (#1579).
     shadowed_cap: CapNotice,
     /// Slots and views the mark buffer is sized for.
@@ -267,6 +271,7 @@ impl PageMarker {
             pending: None,
             config,
             clipmap,
+            origin: glam::DVec3::ZERO,
             capacity: (1, 1),
             coverage: 0,
             halo: 0.0,
@@ -312,6 +317,11 @@ impl PageMarker {
         let changed = self.pool.resize(device, config);
         self.life.rebuilt |= changed;
         changed
+    }
+
+    /// Where the floating origin is, in metres, for this frame's sun anchor.
+    pub fn set_origin(&mut self, origin: glam::DVec3) {
+        self.origin = origin;
     }
 
     /// Stamps the frame every page requested from here on belongs to.
