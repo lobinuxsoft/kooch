@@ -216,7 +216,7 @@ fn cs_invalidate(
             let half = rect.z * 0.5 + sphere.w;
             hit = abs(plane.x - rect.x) <= half
                 && abs(plane.y - rect.y) <= half
-                && abs(along) <= raster.world.y + sphere.w;
+                && abs(along) <= sun_span(raster.world.y, raster.world.x, id.level) + sphere.w;
         } else if id.light < arrayLength(&inv_lights) {
             let light = inv_lights[id.light];
             hit = distance(sphere.xyz, light.position) <= sphere.w + light.range;

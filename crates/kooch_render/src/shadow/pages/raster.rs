@@ -80,8 +80,8 @@ pub const PAGE_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32F
 /// Which winding the page transform calls a front face.
 pub const PAGE_FRONT_FACE: wgpu::FrontFace = wgpu::FrontFace::Cw;
 
-/// How far a caster may be from a page along the sun's own axis, in metres, before it stops writing
-/// into it.
+/// How far a caster may be from a page along the sun's own axis, in metres, at the finest levels.
+/// Coarser levels reach further: see `sun_span` (#2022).
 pub const SUN_SPAN: f32 = 2000.0;
 
 /// Pages one level may list.
@@ -575,7 +575,7 @@ mod alpha;
 use super::{lamp_cull, mark, pyramid};
 #[cfg(test)]
 use geometry::sun_frame;
-use geometry::{atlas_texture, level_clip, sun_gens};
+use geometry::{atlas_texture, level_clip, sun_gens, sun_span};
 pub(super) use layouts::{buffer_entry, entry, uniform_entry};
 use layouts::{
     clear_layout, compact_layout, depth_layout, expand_layout, invalidate_layout, storage_layout,

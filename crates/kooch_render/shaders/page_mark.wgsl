@@ -368,7 +368,7 @@ fn mark_sun(slot: u32, world: vec3<f32>, wanted: f32, dither: vec2<f32>) -> vec2
         // #948 cost a day over.
         let along = dot(world - eye, basis[2])
             + sun_drift(eye, basis, pages.eye_and_base.w, pages.strides.x, page.y);
-        let span = bitcast<f32>(pages.life.w);
+        let span = sun_span(bitcast<f32>(pages.life.w), pages.eye_and_base.w, page.y);
     }
     if mark_bit(page.x, true) {
         atomicAdd(&rank_state[rank_base() + rank_sun(page.y)], 1u);

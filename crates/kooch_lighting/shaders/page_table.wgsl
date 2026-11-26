@@ -192,6 +192,15 @@ fn sun_residue(level: u32, side: u32) -> vec2<f32> {
     return vec2<f32>(r);
 }
 
+/// Each level's depth reach along the sun, in metres, from its extent: 2 km at every level put
+/// ground more than 2 km below the camera behind the far plane, which reads shadowed (#2022).
+/// Mirrors `sun_span` in `raster/geometry.rs`.
+const SUN_DEPTH_SCALE: f32 = 100.0;
+
+fn sun_span(floor: f32, base: f32, level: u32) -> f32 {
+    return max(floor, base * exp2(f32(level)) * SUN_DEPTH_SCALE);
+}
+
 /// Receiver depth gradient per texel per axis: a tilt crosses depth along one axis only, so a
 /// scalar bias detaches the other. `-n.xy / n.z` in the sun frame; ⚠️ `limit` is required, it
 /// diverges edge-on.
