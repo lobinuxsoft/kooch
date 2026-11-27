@@ -1,4 +1,4 @@
-//! Planets on sparse voxel blocks (#313). Put a [`Planet`] on an entity and [`PlanetPlugin`] draws
+//! Planets on sparse voxel blocks (#313). Put a [`Terrain`] on an entity and [`PlanetPlugin`] draws
 //! it: which blocks of which planets hold a slot of the shared pool is decided on the CPU, as
 //! Zylann's octree streaming does; the GPU generates and meshes them into one [`BlockAtlas`].
 //!
@@ -35,7 +35,7 @@ mod tests;
 use glam::IVec3;
 
 pub use atlas::BlockAtlas;
-pub use component::Planet;
+pub use component::Terrain;
 pub use eval::Generator;
 pub use generate::{
     BARE_SPHERE, Backlog, GeneratePass, Job, PLANET_INPUT_WGSL, validate_generator,
@@ -53,7 +53,7 @@ pub use recent::{BatchMean, RECENT};
 pub use seam::{Leaves, Near};
 pub use sight::Cone;
 pub use sync::{GroundHit, PlanetStats, PlanetTerrain, PlanetViewers, ground_hits, sync_planets};
-pub use terrain::{CountedBlock, GpuTimes, MESH_BATCH, Terrain};
+pub use terrain::{CountedBlock, GpuTimes, MESH_BATCH, Pipeline};
 
 use kooch_world::voxel::SUBGRID_DIM;
 

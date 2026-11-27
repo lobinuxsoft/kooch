@@ -1,18 +1,19 @@
-//! What an author puts on an entity to make it a planet.
+//! What an author puts on an entity to give it voxel ground.
 
 use kooch_core::Guid;
 use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 use kooch_ecs::reflect::FieldRange;
 
-/// A planet: a sphere of `radius` that its generator moves by up to `relief` above and `depth`
-/// below, drawn from voxel blocks of the pool every planet shares.
+/// Voxel ground: a base sphere of `radius` that its generator moves by up to `relief` above and
+/// `depth` below, drawn from voxel blocks of the pool every terrain shares (#2035).
 ///
 /// Its centre is the entity's position; it turns with the entity, and its blocks never regenerate
 /// for that. Lengths are in the entity's local units, so a scale of 1 keeps them in metres.
 #[derive(Debug, Clone, PartialEq, Reflect)]
-#[reflect(category = "World")]
-pub struct Planet {
+// Was `Planet` until #2037; saved scenes still name it so.
+#[reflect(category = "World", alias = "kooch_planet::component::Planet")]
+pub struct Terrain {
     /// Sea level: where an unwired generator puts the ground.
     #[reflect(range = LENGTH_RANGE)]
     pub radius: f32,
@@ -50,7 +51,7 @@ const VOXEL_RANGE: FieldRange = FieldRange {
     step: 0.05,
 };
 
-impl Default for Planet {
+impl Default for Terrain {
     fn default() -> Self {
         Self {
             radius: 50.0,
@@ -64,4 +65,4 @@ impl Default for Planet {
     }
 }
 
-impl Component for Planet {}
+impl Component for Terrain {}

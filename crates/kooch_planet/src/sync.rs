@@ -21,7 +21,7 @@ use kooch_ecs::perspective_camera::{PerspectiveCamera, ViewSize};
 use kooch_ecs::query::Query;
 use kooch_render::meshlet::GpuMeshes;
 
-use crate::component::Planet;
+use crate::component::Terrain;
 use crate::draw::{Blocks, Frame};
 use crate::eval::{Generator, may_cross};
 use crate::lod::{root_level, voxel_size};
@@ -33,7 +33,7 @@ use twin::{load, set_generator, source};
 
 use crate::{
     BARE_SPHERE, BlockKey, BlockPool, CountedBlock, DEFAULT_CAPACITY, Leaves, Limits, Part,
-    Planets, Residency, Shape, Terrain, View, choose_lods,
+    Pipeline, Planets, Residency, Shape, View, choose_lods,
 };
 
 /// Blocks every planet in view gets before the others compete for the rest of the pool.
@@ -118,7 +118,7 @@ pub struct PlanetTerrain {
     frame: u32,
     planets: Planets,
     pub(crate) roster: Roster,
-    terrain: Option<Terrain>,
+    terrain: Option<Pipeline>,
     /// Set when the GPU side could not be built, so it is not tried every frame.
     broken: bool,
     meshed: Vec<CountedBlock>,
@@ -152,7 +152,7 @@ impl Default for PlanetTerrain {
 /// One planet as this frame found it.
 pub(crate) struct Found {
     pub entity: Entity,
-    pub planet: Planet,
+    pub planet: Terrain,
     pub world: Mat4,
     /// The centre in f64 metres from `cell`'s corner: `world` is relative to the origin, narrowed.
     pub at: DVec3,
@@ -178,7 +178,7 @@ pub fn sync_planets(resources: &mut Resources) {
         && state.terrain.is_none()
         && !state.broken
     {
-        match Terrain::new(device, queue, DEFAULT_CAPACITY) {
+        match Pipeline::new(device, queue, DEFAULT_CAPACITY) {
             Ok(terrain) => state.terrain = Some(terrain),
             Err(why) => {
                 tracing::error!(target: "kooch_planet", "planet terrain unavailable: {why}");
@@ -365,7 +365,7 @@ pub fn sync_planets(resources: &mut Resources) {
         blocks.unsettle();
     }
     let counting = meshed.iter().map(|b| b.epoch);
-    let frontier = state.terrain.as_ref().map_or(u64::MAX, Terrain::frontier);
+    let frontier = state.terrain.as_ref().map_or(u64::MAX, Pipeline::frontier);
     {
         profiling::scope!("planet: swap");
         blocks.swap(
@@ -400,10 +400,10 @@ pub fn sync_planets(resources: &mut Resources) {
         worst: worst as f32,
         waiting: state.terrain.as_ref().map_or(0, |t| t.waiting() as u32),
         in_flight: state.terrain.as_ref().map_or(0, |t| t.in_flight() as u32),
-        meshed: state.terrain.as_ref().map_or(0, Terrain::meshed),
+        meshed: state.terrain.as_ref().map_or(0, Pipeline::meshed),
         triangles: blocks.triangles(),
         meshlets: blocks.meshlets(),
-        gpu: state.terrain.as_ref().and_then(Terrain::times),
+        gpu: state.terrain.as_ref().and_then(Pipeline::times),
     };
     // An idle editor sleeps between frames, and a level change spread over sleeping frames shows
     // its seams half done (#1999). Wakes only while meshing; a game has no request and spins anyway.
@@ -466,7 +466,7 @@ pub(crate) fn gather(resources: &Resources) -> Vec<Found> {
         }
     };
     let mut found = Vec::new();
-    Query::<(Entity, &Planet, &GlobalTransform)>::new(resources).for_each(
+    Query::<(Entity, &Terrain, &GlobalTransform)>::new(resources).for_each(
         |(entity, planet, transform)| {
             let (at, cell) = at(entity, &transform.matrix);
             found.push(Found {
@@ -543,7 +543,7 @@ fn fill_planets(
             ceiling: DEFAULT_CAPACITY,
         };
         let Some(planet) = at.and_then(|at| found.get(at)) else {
-            planets.push(Shape::from(&Planet::default()), &nowhere, limits);
+            planets.push(Shape::from(&Terrain::default()), &nowhere, limits);
             continue;
         };
         let to_local = planet.world.as_dmat4().inverse();
@@ -562,9 +562,9 @@ fn fill_planets(
     }
 }
 
-impl From<&Planet> for Shape {
+impl From<&Terrain> for Shape {
     /// Clamped where a zero would stall the octree: a zero voxel never stops splitting.
-    fn from(planet: &Planet) -> Self {
+    fn from(planet: &Terrain) -> Self {
         Self {
             radius: f64::from(planet.radius.max(0.0)),
             relief: f64::from(planet.relief.max(0.0)),

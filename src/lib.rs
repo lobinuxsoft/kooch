@@ -163,7 +163,7 @@ pub mod prelude {
     pub use kooch_blockmesh::{Block, BlockMesh, BlockPlugin, BuiltBlocks, SplineSweep};
     // Voxel planets (#313); `PlanetStats` is what they cost this frame.
     #[cfg(feature = "planet")]
-    pub use kooch_planet::{Planet, PlanetPlugin, PlanetStats};
+    pub use kooch_planet::{PlanetPlugin, PlanetStats, Terrain};
 
     // A UI is one entity; the game reaches its nodes through `UiTrees` (#96).
     #[cfg(feature = "ui")]

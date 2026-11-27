@@ -49,14 +49,14 @@ pub struct CountedBlock {
     pub origin: DVec3,
     /// Metres per voxel at the block's level.
     pub voxel: f32,
-    /// Its planet's revision when it was generated; see [`Terrain::revision`].
+    /// Its planet's revision when it was generated; see [`Pipeline::revision`].
     pub revision: u32,
     pub sizes: GpuMeshSizes,
     /// The neighbours it was counted with, which its write must use too.
     pub near: Near,
     pub cuts: Cuts,
     pub part: Part,
-    /// The pool change it answers; see [`Terrain::frontier`].
+    /// The pool change it answers; see [`Pipeline::frontier`].
     pub epoch: u64,
 }
 
@@ -92,7 +92,7 @@ struct Flight {
 }
 
 /// Generation and meshing for every planet sharing one pool.
-pub struct Terrain {
+pub struct Pipeline {
     atlas: BlockAtlas,
     /// One pipeline per distinct generator; the first is [`BARE_SPHERE`] and always stays.
     sources: Vec<String>,
@@ -123,7 +123,7 @@ pub struct Terrain {
     meshed: u64,
 }
 
-impl Terrain {
+impl Pipeline {
     /// An atlas of `capacity` blocks. Every planet starts as its bare sphere; see
     /// [`set_generator`](Self::set_generator).
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, capacity: u32) -> Result<Self, String> {

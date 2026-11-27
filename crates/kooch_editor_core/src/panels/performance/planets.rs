@@ -32,7 +32,7 @@ pub(super) fn planet_readout(ui: &mut egui::Ui, stats: PlanetStats) {
             &format!("{:.2}×", stats.worst),
             "How many times closer than its level's ring the block the pool stopped at sits. \
              Up to 1 every block has the level its distance asks for; over 1 the pool ran out \
-             first and the ground near the camera is coarser than the Planet's LOD distance.",
+             first and the ground near the camera is coarser than the Terrain's LOD distance.",
         );
         metric(
             ui,
