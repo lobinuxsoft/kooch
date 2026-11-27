@@ -108,6 +108,10 @@ impl Node {
                 }
             }
             Self::Output => Self::surface_output(),
+            // The kind was `planet` until #2038.
+            Self::ShaderOutput { kind } if kind == "planet" => Self::ShaderOutput {
+                kind: "terrain".to_owned(),
+            },
             Self::Voronoi => Self::VoronoiNoise {
                 metric: "euclidean".to_owned(),
             },

@@ -214,7 +214,7 @@ fn every_node_compiles() {
                 continue;
             }
             // A planet is a compute generator, with no frame to preview in (#313).
-            if kind == "planet" {
+            if kind == "terrain" {
                 kooch_terrain::validate_generator(&shader.source)
                     .unwrap_or_else(|why| panic!("{name} does not compile: {why}"));
                 continue;
@@ -392,6 +392,21 @@ fn every_pin_is_documented() {
 #[test]
 fn a_legacy_output_is_a_surface() {
     assert_eq!(Node::Output.migrated(), Node::surface_output());
+}
+
+/// A generator saved before #2038 says `planet` and `PlanetAltitude`; it opens as a terrain.
+#[test]
+fn an_old_planet_graph_opens() {
+    let output: Node = ron::from_str(r#"ShaderOutput(kind:"planet")"#).unwrap();
+    let base: Node = ron::from_str("PlanetAltitude").unwrap();
+
+    assert_eq!(
+        output.migrated(),
+        Node::ShaderOutput {
+            kind: "terrain".to_owned()
+        }
+    );
+    assert_eq!(base, Node::SphereBase);
 }
 
 /// 🔴 The Scene Color node is what a post-process is for, and it must not break a surface graph

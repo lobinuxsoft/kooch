@@ -120,7 +120,7 @@ impl Node {
             Self::Blackbody => "Blackbody".to_owned(),
             Self::SceneColor => "Scene Color".to_owned(),
             Self::WorldPosition => "World Position".to_owned(),
-            Self::PlanetAltitude => "Altitude".to_owned(),
+            Self::SphereBase => "Sphere Base".to_owned(),
             Self::PlanetDirection => "Planet Direction".to_owned(),
             Self::PlanetPosition => "Planet Position".to_owned(),
             Self::WorldNormal => "World Normal".to_owned(),
@@ -230,7 +230,7 @@ impl Node {
             | Self::UiColor
             | Self::UiBorderColor
             | Self::UiSize
-            | Self::PlanetAltitude
+            | Self::SphereBase
             | Self::PlanetDirection
             | Self::PlanetPosition
             | Self::WorldPosition
@@ -322,7 +322,7 @@ impl Node {
             Self::Polygon => &["uv", "sides", "radius"],
             Self::Checker => &["uv", "tiles"],
             Self::ShaderOutput { kind } if kind == "sky" => &["color"],
-            Self::ShaderOutput { kind } if kind == "planet" => &["distance"],
+            Self::ShaderOutput { kind } if kind == "terrain" => &["distance"],
             Self::ShaderOutput { kind } if kind == "post_process" || kind == "ui" => {
                 &["color", "alpha"]
             }
@@ -471,7 +471,7 @@ impl Node {
             | Self::WorldPosition
             | Self::WorldNormal
             | Self::ViewDirection
-            | Self::PlanetAltitude
+            | Self::SphereBase
             | Self::PlanetDirection
             | Self::PlanetPosition
             | Self::Time
