@@ -25,7 +25,7 @@ use kooch_render::meshlet::{DrawKey, GpuMeshes, MeshBounds, Submitted};
 use crate::mesh::{PARTS, Part};
 use crate::seam::levels;
 use crate::sync::Found;
-use crate::{BLOCK_SAMPLES, BlockKey, BlockPool, CountedBlock, Near, Terrain, WriteJob};
+use crate::{BLOCK_SAMPLES, BlockKey, BlockPool, CountedBlock, Near, Pipeline, WriteJob};
 
 /// Frames a change may wait for the rest of its epoch before it goes on screen anyway.
 const HOLD: u32 = 30;
@@ -74,7 +74,7 @@ pub(crate) struct Blocks {
     frame: u32,
     /// Nothing waits and nothing lingers, so [`Blocks::swap`] has nothing to do.
     settled: bool,
-    /// The earliest epoch still being counted or written, this frame; see [`Terrain::frontier`].
+    /// The earliest epoch still being counted or written, this frame; see [`Pipeline::frontier`].
     frontier: u64,
     /// Per mesh, the row the renderer holds for it (#2014).
     sent: Vec<Option<(DrawKey, Guid)>>,
@@ -109,7 +109,7 @@ impl Blocks {
         &mut self,
         resources: &mut Resources,
         frame: &Frame,
-        terrain: &mut Terrain,
+        terrain: &mut Pipeline,
         counted: &mut Vec<CountedBlock>,
     ) {
         let Some(mut meshes) = resources.remove::<GpuMeshes>() else {
@@ -143,7 +143,7 @@ impl Blocks {
         meshes.reserve(mesh, block.sizes, bounds_of(block.voxel, &block.near));
     }
 
-    fn write(&mut self, frame: &Frame, terrain: &mut Terrain, meshes: &mut GpuMeshes) {
+    fn write(&mut self, frame: &Frame, terrain: &mut Pipeline, meshes: &mut GpuMeshes) {
         // A refused ask would cross a binding: its block is counted again once the budget has
         // made room, instead of waiting for a grant that never comes (#1968).
         for mesh in meshes.take_refused() {

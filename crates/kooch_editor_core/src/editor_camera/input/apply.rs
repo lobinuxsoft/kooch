@@ -158,7 +158,7 @@ fn eye(controller: &EditorCameraController, rotation: Quat) -> DVec3 {
 fn reach(resources: &Resources, origin: DVec3, focus: DVec3) -> f32 {
     const FLOOR: f64 = 10_000.0;
     let mut far = FLOOR;
-    kooch_ecs::query::Query::<(&kooch_planet::Planet, &GlobalTransform)>::new(resources).for_each(
+    kooch_ecs::query::Query::<(&kooch_planet::Terrain, &GlobalTransform)>::new(resources).for_each(
         |(planet, global)| {
             let centre = origin + global.matrix.w_axis.truncate().as_dvec3();
             let outer = f64::from(planet.radius + planet.relief);

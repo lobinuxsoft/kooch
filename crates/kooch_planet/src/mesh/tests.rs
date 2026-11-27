@@ -6,7 +6,7 @@ use kooch_render::meshlet::{GlobalMeshPool, MeshBounds, PoolBuffers};
 use super::{COUNT_WGSL, NETS_WGSL, PARTS, WRITE_WGSL};
 use crate::test_device::try_acquire;
 use crate::{
-    BlockKey, BlockPool, CountedBlock, Leaves, Limits, Part, Planets, Residency, Shape, Terrain,
+    BlockKey, BlockPool, CountedBlock, Leaves, Limits, Part, Pipeline, Planets, Residency, Shape,
     WriteJob,
 };
 
@@ -67,11 +67,11 @@ fn count_all(
     planets: &Planets,
     keys: &[BlockKey],
     split: &HashSet<BlockKey>,
-) -> (Terrain, Vec<CountedBlock>) {
+) -> (Pipeline, Vec<CountedBlock>) {
     let mut pool = BlockPool::new(64);
     let mut residency = Residency::default();
     pool.apply(keys, &mut residency);
-    let mut terrain = Terrain::new(device, queue, 64).unwrap();
+    let mut terrain = Pipeline::new(device, queue, 64).unwrap();
     let mut out = Vec::new();
     let mut all = Vec::new();
     for _ in 0..64 {

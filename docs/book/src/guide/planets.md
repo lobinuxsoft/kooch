@@ -1,10 +1,12 @@
 # Planets
 
-A planet is one component: put a `Planet` on an entity and the engine draws a ground you can walk
+A planet is one component: put a `Terrain` on an entity and the engine draws a ground you can walk
 around, generated on the GPU from the planet's shape. Its centre is the entity's position, and it
 turns and moves with the entity without regenerating anything.
 
 Planets need the `planet` feature. A scene that uses one turns it on for the game build by itself.
+Scenes saved when the component was called `Planet` still load; saving them writes `Terrain`. Today
+the base shape is a sphere; a flat terrain is #1950.
 
 | Field | What it does |
 |---|---|
@@ -71,7 +73,7 @@ Every planet in the scene shares one pool of 6144 voxel blocks, 68 MiB of GPU me
 never grows: each frame the blocks go where they do the most good on screen, so the planet you stand
 on takes what the distant ones do not need. A planet too small on screen to matter gets none.
 
-Detail falls with distance from the camera. The finest voxels reach the Planet's **LOD
+Detail falls with distance from the camera. The finest voxels reach the Terrain's **LOD
 distance** (32 m by default), and each coarser level reaches twice as far, with voxels twice as
 big. Raise it for more detail further out, at the cost of blocks. To see the blocks, set the Debug
 view to **Instance Ids**: each colour is one block, kept while the block lives, and they grow with distance.

@@ -4,7 +4,7 @@
 use kooch_core::Guid;
 use kooch_ecs::Entity;
 
-use crate::component::Planet;
+use crate::component::Terrain;
 
 /// What a planet's blocks are generated from. Two planets with the same one have the same blocks.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -18,7 +18,7 @@ pub(crate) struct Signature {
 }
 
 impl Signature {
-    pub(crate) fn new(planet: &Planet, revision: u64, loaded: bool) -> Self {
+    pub(crate) fn new(planet: &Terrain, revision: u64, loaded: bool) -> Self {
         Self {
             shape: [planet.radius, planet.relief, planet.depth, planet.voxel].map(f32::to_bits),
             generator: planet.generator,
