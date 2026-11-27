@@ -30,6 +30,8 @@ const NONE: u32 = 0xffffffffu;
 @group(0) @binding(3) var<storage, read_write> pool_meshlet_vertices: array<u32>;
 @group(0) @binding(4) var<storage, read_write> pool_triangles: array<u32>;
 @group(0) @binding(5) var<storage, read_write> pool_meshlets: array<u32>;
+// Each sample's two layers and blend, packed by the generate pass (#1951).
+@group(0) @binding(6) var materials: texture_3d<u32>;
 
 // Cell → its vertex + 1, two 16-bit entries per word; 0 is no vertex.
 var<workgroup> map: array<atomic<u32>, MAP_WORDS>;
@@ -71,6 +73,15 @@ fn build_pack(t: u32, slot: u32) -> vec2<u32> {
 
 fn pack_info(q: u32, first: u32, next: u32, quads: u32, cells: u32) -> u32 {
     return q | (first << 6u) | (next << 12u) | (quads << 19u) | (cells << 25u);
+}
+
+// The material of the sample nearest a vertex, as its uv: `a + 32·b`, then the blend. A terrain's
+// uv is free for it: the ground is projected, never unwrapped. Ids are whole numbers, exact in f32.
+fn material_near(at: vec3<f32>) -> vec2<f32> {
+    let s = clamp(vec3<i32>(round(at)), vec3<i32>(0), vec3<i32>(i32(TILE) - 1));
+    let packed = textureLoad(materials, corner + s, 0).x;
+    let ids = f32(packed & 31u) + 32.0 * f32((packed >> 5u) & 31u);
+    return vec2<f32>(ids, f32(packed >> 10u) / 63.0);
 }
 
 fn vertex_of(i: u32) -> u32 {
@@ -358,8 +369,9 @@ fn write_main(
         pool_vertices[o + 3u] = placed[1].x;
         pool_vertices[o + 4u] = placed[1].y;
         pool_vertices[o + 5u] = placed[1].z;
-        pool_vertices[o + 6u] = 0.0;
-        pool_vertices[o + 7u] = 0.0;
+        let layers = material_near(placed[0]);
+        pool_vertices[o + 6u] = layers.x;
+        pool_vertices[o + 7u] = layers.y;
     }
     storageBarrier();
     workgroupBarrier();

@@ -17,9 +17,13 @@ impl Node {
         }
         match self {
             Self::Argument { .. } | Self::Result { .. } => false,
-            Self::SphereBase | Self::PlaneBase | Self::PlanetDirection | Self::PlanetPosition => {
-                false
-            }
+            Self::SphereBase
+            | Self::PlaneBase
+            | Self::PlanetDirection
+            | Self::PlanetPosition
+            | Self::Slope => false,
+            // What the mesher put in a terrain's vertices, so a lit surface only.
+            Self::TerrainLayer => !matches!(kind, "ui" | "sky" | "post_process"),
             Self::Subgraph { reads, .. }
             | Self::Loop { reads, .. }
             | Self::Function { reads, .. } => reads
@@ -66,6 +70,7 @@ impl Node {
             | Self::Fresnel
             | Self::UnpackNormal
             | Self::Texture { .. }
+            | Self::TerrainLayer
             | Self::UiImage
             | Self::UiColor
             | Self::UiBorderColor

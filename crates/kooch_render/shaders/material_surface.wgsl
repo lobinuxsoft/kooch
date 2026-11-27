@@ -29,6 +29,9 @@ struct SurfaceInput {
     // Analytical, in mesh uv units: quad derivatives are wrong on a visibility buffer.
     ddx_uv: vec2<f32>,
     ddy_uv: vec2<f32>,
+    // The uv of the triangle's nearest corner, uninterpolated: on a terrain it carries the material
+    // ids, which must not blend between vertices (#1951).
+    nearest_uv: vec2<f32>,
     // `exp2(mip_bias)`; multiply the derivatives by it before sampling (#881).
     mip_bias_scale: f32,
     frag_coord: vec2<f32>,
@@ -81,6 +84,7 @@ fn surface_input(surf: VertexOutput, frag_coord: vec2<f32>) -> SurfaceInput {
     input.uv = surf.uv;
     input.ddx_uv = surf.ddx_uv;
     input.ddy_uv = surf.ddy_uv;
+    input.nearest_uv = surf.nearest_uv;
     input.mip_bias_scale = screen.mip_bias_scale;
     input.frag_coord = frag_coord;
     input.camera_position = inti.camera_position;

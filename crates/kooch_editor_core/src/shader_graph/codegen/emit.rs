@@ -211,6 +211,11 @@ impl Body<'_> {
             Node::SphereBase | Node::PlaneBase => "vec4<f32>(input.altitude)".to_owned(),
             Node::PlanetDirection => "vec4<f32>(input.direction, 0.0)".to_owned(),
             Node::PlanetPosition => "vec4<f32>(input.position, 1.0)".to_owned(),
+            Node::Slope => "vec4<f32>(input.slope)".to_owned(),
+            // The mesher packs `a + 32·b` and the blend into a terrain's uv (#1951).
+            Node::TerrainLayer => "vec4<f32>(input.nearest_uv.x % 32.0, \
+                floor(input.nearest_uv.x / 32.0), input.uv.y, 0.0)"
+                .to_owned(),
             Node::WorldNormal => "vec4<f32>(normalize(input.world_normal), 0.0)".to_owned(),
             Node::ViewDirection => {
                 "vec4<f32>(normalize(input.camera_position - input.world_position), 0.0)".to_owned()

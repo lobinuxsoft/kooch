@@ -38,6 +38,7 @@ struct VertexOutput {
     uv: vec2<f32>,
     ddx_uv: vec2<f32>,
     ddy_uv: vec2<f32>,
+    nearest_uv: vec2<f32>,
     world_tangent: vec4<f32>,
     material_id: u32,
     flags: u32,

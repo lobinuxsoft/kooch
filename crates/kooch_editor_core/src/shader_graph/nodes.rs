@@ -306,6 +306,11 @@ pub(crate) enum Node {
     PlanetDirection,
     /// The sample from the planet's centre, in metres. f32, so coarse on a planet of real size.
     PlanetPosition,
+    /// How steep the ground is: 0 flat, 1 a wall, 2 a ceiling. Material pins only, since it comes
+    /// from the distance (#1951).
+    Slope,
+    /// A terrain surface's two layers and their blend, as its generator painted them (#1951).
+    TerrainLayer,
 
     // -- Output ---------------------------------------------------------
     /// A surface output from before the node had a kind; `migrated` turns it into a
@@ -401,6 +406,8 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::PlaneBase,
         Node::PlanetDirection,
         Node::PlanetPosition,
+        Node::Slope,
+        Node::TerrainLayer,
         Node::Float {
             name: "amount".to_owned(),
             default: 0.5,

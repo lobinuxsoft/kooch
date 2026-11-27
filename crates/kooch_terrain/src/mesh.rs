@@ -150,8 +150,8 @@ impl MeshPass {
             ("TILES_X", f64::from(tiles.x)),
             ("TILES_Y", f64::from(tiles.y)),
         ];
-        let (count, count_layout) = pipeline(device, COUNT_WGSL, "count_main", constants, 1);
-        let (write, write_layout) = pipeline(device, WRITE_WGSL, "write_main", constants, 4);
+        let (count, count_layout) = pipeline(device, COUNT_WGSL, "count_main", constants, 1, false);
+        let (write, write_layout) = pipeline(device, WRITE_WGSL, "write_main", constants, 4, true);
         let batch = batch.max(1);
         let buffer = |label, size: u64, usage| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -251,6 +251,10 @@ impl MeshPass {
                 entry(3, &pool.meshlet_vertices),
                 entry(4, &pool.meshlet_triangles),
                 entry(5, &pool.meshlets),
+                wgpu::BindGroupEntry {
+                    binding: MATERIALS,
+                    resource: wgpu::BindingResource::TextureView(atlas.material_view()),
+                },
             ],
         });
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -269,14 +273,18 @@ impl MeshPass {
     }
 }
 
+/// Where the write pass reads each sample's material (#1951). Mirrors `materials` in `write.wgsl`.
+const MATERIALS: u32 = 6;
+
 /// A pipeline over `nets.wgsl` + `source`: the atlas, one read-only job buffer, then `outputs`
-/// read-write buffers.
+/// read-write buffers, and the material atlas when it `paints`.
 fn pipeline(
     device: &wgpu::Device,
     source: &str,
     entry_point: &str,
     constants: &[(&str, f64)],
     outputs: u32,
+    paints: bool,
 ) -> (wgpu::ComputePipeline, wgpu::BindGroupLayout) {
     let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
         binding,
@@ -302,6 +310,18 @@ fn pipeline(
         storage(1, true),
     ];
     entries.extend((0..outputs).map(|k| storage(2 + k, false)));
+    if paints {
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: MATERIALS,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Uint,
+                view_dimension: wgpu::TextureViewDimension::D3,
+                multisampled: false,
+            },
+            count: None,
+        });
+    }
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some(entry_point),
         entries: &entries,

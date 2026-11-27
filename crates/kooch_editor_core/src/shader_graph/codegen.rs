@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
-use egui_snarl::{InPinId, OutPinId};
+use egui_snarl::{InPinId, NodeId, OutPinId};
 
 use super::{Graph, Node, OUTPUT_KINDS, embed};
 
@@ -145,7 +145,14 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     }
     source.push_str(&body.lines);
     if planet {
+        // The material pass derives the slope from the distance, so the distance cannot read it.
+        if source.contains("input.slope") || outputs[0].contains("input.slope") {
+            return Err(
+                "Slope feeds only the material pins: it is measured on the distance".into(),
+            );
+        }
         let _ = writeln!(source, "    return {}.x;\n}}", outputs[0]);
+        source.push_str(&material(graph, output, body.wires)?);
         kooch_terrain::validate_generator(&source)?;
         return finish(source);
     }
@@ -181,6 +188,34 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     }
     let _ = writeln!(source, "    return out;\n}}");
     finish(source)
+}
+
+/// `fn planet_material`: the Output's material pins, in a body of their own (#1951).
+fn material(
+    graph: &Graph,
+    output: NodeId,
+    wires: HashMap<InPinId, OutPinId>,
+) -> Result<String, String> {
+    let mut body = Body {
+        graph,
+        wires,
+        names: HashMap::new(),
+        visiting: HashSet::new(),
+        lines: String::new(),
+        next: 0,
+        locals: 0,
+        post: false,
+        planet: true,
+    };
+    let [a, b, blend] = [1, 2, 3].map(|input| body.input_or(output, input, "vec4<f32>(0.0)"));
+    let mut out = String::from("\nfn planet_material(input: PlanetInput) -> vec3<f32> {\n");
+    out.push_str(&body.lines);
+    let _ = writeln!(
+        out,
+        "    return vec3<f32>({}.x, {}.x, {}.x);\n}}",
+        a?, b?, blend?
+    );
+    Ok(out)
 }
 
 /// 🔴 The graph never writes a file the engine cannot read. A shader that fails to parse is written

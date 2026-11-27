@@ -1,5 +1,6 @@
 // Planet generation (#313 step 3): one workgroup per block, each sample evaluated by the
 // generator's `fn planet(input: PlanetInput) -> f32` and stored in voxels of the block's level.
+// Then `material_main` gives each sample its layers from `fn planet_material` (#1951).
 //
 // Concatenation order (built by `GeneratePass::new`):
 //   PLANET_INPUT_WGSL (the struct the generator reads)
@@ -32,6 +33,49 @@ struct Job {
 
 @group(0) @binding(0) var<storage, read> jobs: array<Job>;
 @group(0) @binding(1) var atlas: texture_storage_3d<r16float, write>;
+// The material pass reads what the distance pass wrote, and writes each sample's layers (#1951).
+@group(0) @binding(2) var samples: texture_3d<f32>;
+@group(0) @binding(3) var materials: texture_storage_3d<r16uint, write>;
+
+// Job `w`'s sample `v` as the generator reads it.
+fn input_at(w: u32, v: vec3<u32>) -> PlanetInput {
+    let job = jobs[w];
+    let base = job.index & vec3<i32>(-ANCHOR);
+    // From the grid index, and the altitude from an anchor fixed on the grid, not from the
+    // tile: a neighbour reaches a shared sample through the same integers, so both store the
+    // same bits and their meshes meet (#1933, #393).
+    let grid = job.index + vec3<i32>(v);
+    let position = vec3<f32>(grid) * job.voxel;
+    let distance = length(position);
+    let anchor = grid & vec3<i32>(-ANCHOR);
+    let k = vec3<u32>((anchor - base) / ANCHOR);
+    let origin = vec3<f32>(anchor) * job.voxel;
+    let local = vec3<f32>(grid - anchor) * job.voxel;
+    // |o + l| − R = (|o|² − R² + 2o·l + l²) / (|o + l| + R): no f32 radius is subtracted.
+    let excess = jobs[w].excess[k.x + 2u * k.y + 4u * k.z];
+    var input: PlanetInput;
+    input.position = position;
+    input.altitude = (excess + 2.0 * dot(origin, local) + dot(local, local))
+        / (distance + job.radius);
+    input.direction = position / max(distance, 1e-6);
+    // `y` is an integer times the voxel, exact without anchors.
+    if (job.plane == 1u) {
+        input.altitude = position.y;
+        input.direction = vec3<f32>(0.0, 1.0, 0.0);
+    }
+    input.radius = job.radius;
+    input.planet = job.planet;
+    return input;
+}
+
+fn tile_corner(slot: u32) -> vec3<i32> {
+    let tile = vec3<u32>(slot % TILES_X, (slot / TILES_X) % TILES_Y, slot / (TILES_X * TILES_Y));
+    return vec3<i32>(tile * TILE_DIM);
+}
+
+fn voxel_of(i: u32) -> vec3<u32> {
+    return vec3<u32>(i % TILE_DIM, (i / TILE_DIM) % TILE_DIM, i / (TILE_DIM * TILE_DIM));
+}
 
 @compute @workgroup_size(256)
 fn generate_main(
@@ -42,47 +86,46 @@ fn generate_main(
         return;
     }
     let job = jobs[wid.x];
-    let base = job.index & vec3<i32>(-ANCHOR);
-    let tile = vec3<u32>(
-        job.slot % TILES_X,
-        (job.slot / TILES_X) % TILES_Y,
-        job.slot / (TILES_X * TILES_Y),
-    );
-    let corner = vec3<i32>(tile * TILE_DIM);
-    let voxels = TILE_DIM * TILE_DIM * TILE_DIM;
-    var i: u32 = lid.x;
-    loop {
-        if (i >= voxels) {
-            break;
-        }
-        let v = vec3<u32>(i % TILE_DIM, (i / TILE_DIM) % TILE_DIM, i / (TILE_DIM * TILE_DIM));
-        // From the grid index, and the altitude from an anchor fixed on the grid, not from the
-        // tile: a neighbour reaches a shared sample through the same integers, so both store the
-        // same bits and their meshes meet (#1933, #393).
-        let grid = job.index + vec3<i32>(v);
-        let position = vec3<f32>(grid) * job.voxel;
-        let distance = length(position);
-        let anchor = grid & vec3<i32>(-ANCHOR);
-        let k = vec3<u32>((anchor - base) / ANCHOR);
-        let origin = vec3<f32>(anchor) * job.voxel;
-        let local = vec3<f32>(grid - anchor) * job.voxel;
-        // |o + l| − R = (|o|² − R² + 2o·l + l²) / (|o + l| + R): no f32 radius is subtracted.
-        let excess = jobs[wid.x].excess[k.x + 2u * k.y + 4u * k.z];
-        let altitude = (excess + 2.0 * dot(origin, local) + dot(local, local))
-            / (distance + job.radius);
-        var input: PlanetInput;
-        input.position = position;
-        input.altitude = altitude;
-        input.direction = position / max(distance, 1e-6);
-        // `y` is an integer times the voxel, exact without anchors.
-        if (job.plane == 1u) {
-            input.altitude = position.y;
-            input.direction = vec3<f32>(0.0, 1.0, 0.0);
-        }
-        input.radius = job.radius;
-        input.planet = job.planet;
-        let sdf = clamp(planet(input) / job.voxel, -BAND, BAND);
+    let corner = tile_corner(job.slot);
+    for (var i = lid.x; i < TILE_DIM * TILE_DIM * TILE_DIM; i += WORKGROUP) {
+        let v = voxel_of(i);
+        let sdf = clamp(planet(input_at(wid.x, v)) / job.voxel, -BAND, BAND);
         textureStore(atlas, corner + vec3<i32>(v), vec4<f32>(sdf, 0.0, 0.0, 0.0));
-        i = i + WORKGROUP;
+    }
+}
+
+// The SDF's slope along `axis` from the tile's own samples: central inside, one-sided at its edge.
+fn along(corner: vec3<i32>, v: vec3<u32>, axis: u32) -> f32 {
+    var lo = vec3<i32>(v);
+    var hi = vec3<i32>(v);
+    lo[axis] = max(lo[axis] - 1, 0);
+    hi[axis] = min(hi[axis] + 1, i32(TILE_DIM) - 1);
+    let rise = textureLoad(samples, corner + hi, 0).x - textureLoad(samples, corner + lo, 0).x;
+    return rise / f32(hi[axis] - lo[axis]);
+}
+
+@compute @workgroup_size(256)
+fn material_main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    if (wid.x >= arrayLength(&jobs)) {
+        return;
+    }
+    let corner = tile_corner(jobs[wid.x].slot);
+    for (var i = lid.x; i < TILE_DIM * TILE_DIM * TILE_DIM; i += WORKGROUP) {
+        let v = voxel_of(i);
+        var input = input_at(wid.x, v);
+        let gradient = vec3<f32>(along(corner, v, 0u), along(corner, v, 1u), along(corner, v, 2u));
+        let size = length(gradient);
+        // Far from the surface the band clamps the samples flat: no slope to speak of.
+        if (size > 1e-6) {
+            input.slope = 1.0 - dot(gradient / size, input.direction);
+        }
+        let layers = planet_material(input);
+        let a = u32(clamp(round(layers.x), 0.0, 31.0));
+        let b = u32(clamp(round(layers.y), 0.0, 31.0));
+        let blend = u32(round(clamp(layers.z, 0.0, 1.0) * 63.0));
+        textureStore(materials, corner + vec3<i32>(v), vec4<u32>(a | (b << 5u) | (blend << 10u)));
     }
 }

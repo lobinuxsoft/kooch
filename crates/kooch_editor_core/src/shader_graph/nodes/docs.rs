@@ -102,6 +102,14 @@ impl Node {
                 "The point from the planet's centre, in metres. Terrain shaders only; coarse on a \
                  planet of real size, where Direction times the radius keeps more detail."
             }
+            Self::Slope => {
+                "How steep the ground is: 0 flat, 1 a wall, 2 a ceiling. Terrain shaders, material \
+                 pins only."
+            }
+            Self::TerrainLayer => {
+                "The two layers a terrain's generator painted here, and how much of b shows. \
+                 Surfaces of a Terrain only."
+            }
             Self::WorldNormal => "The surface's normal, in world space.",
             Self::ViewDirection => "From the surface towards the camera, normalised.",
             Self::Time => "The clock, in seconds, and waves made from it.",
@@ -415,10 +423,15 @@ impl Node {
             Self::Exp => &[(Any, "The power.")],
             Self::Rainbow => &[(One, "Where on the wheel.")],
             Self::Blackbody => &[(One, "Kelvin, 1667 to 25000: a candle ~1900, the Sun ~5800.")],
-            Self::ShaderOutput { kind } if kind == "terrain" => &[(
-                One,
-                "Signed distance in metres, negative inside the ground. Unwired: Sphere Base, the bare sphere.",
-            )],
+            Self::ShaderOutput { kind } if kind == "terrain" => &[
+                (
+                    One,
+                    "Signed distance in metres, negative inside the ground. Unwired: Sphere Base, the bare sphere.",
+                ),
+                (One, "The ground's first layer, 0..31. Unwired: 0."),
+                (One, "Its second layer, 0..31. Unwired: 0."),
+                (One, "How much of the second layer shows, 0..1. Unwired: 0."),
+            ],
             Self::ShaderOutput { kind } if kind == "ui" => &[
                 (Three, "The colour. Unwired: the node's background-color."),
                 (One, "Opacity. Unwired: 1."),
@@ -473,6 +486,9 @@ impl Node {
             (Self::Time, Pick::Channel(1)) => (One, "The sine of the time: -1..1, once per 2π s."),
             (Self::Time, Pick::Channel(2)) => (One, "The cosine of the time."),
             (Self::Time, _) => (One, "A tenth of the time: slow motion."),
+            (Self::TerrainLayer, Pick::Channel(0)) => (One, "The first layer, 0..31."),
+            (Self::TerrainLayer, Pick::Channel(1)) => (One, "The second layer, 0..31."),
+            (Self::TerrainLayer, _) => (One, "How much of the second layer shows, 0..1."),
             (Self::BlinnPhong, Pick::Channel(0)) => (One, "How much light the surface takes."),
             (Self::BlinnPhong, _) => (One, "The highlight."),
             (Self::UiPoint, Pick::FieldXy("point")) => (Two, "The point, from the node's centre."),
@@ -510,7 +526,7 @@ impl Node {
             Self::Sway => (Two, "The two waves."),
             Self::WorldPosition | Self::WorldNormal | Self::ViewDirection => (Three, self.about()),
             Self::PlanetDirection | Self::PlanetPosition => (Three, self.about()),
-            Self::SphereBase | Self::PlaneBase => (One, self.about()),
+            Self::SphereBase | Self::PlaneBase | Self::Slope => (One, self.about()),
             Self::Float { .. } | Self::Int { .. } | Self::ConstFloat(_) | Self::ConstInt(_) => {
                 (One, "The number.")
             }

@@ -35,6 +35,8 @@ pub(crate) enum Fault {
 pub struct Generator {
     module: Module,
     planet: Handle<Function>,
+    /// `fn planet_material`, when the generator paints (#1951).
+    paint: Option<Handle<Function>>,
     constants: Vec<Option<Value>>,
 }
 
@@ -50,16 +52,20 @@ impl Generator {
         )
         .validate(&module)
         .map_err(|e| e.emit_to_string(&source))?;
-        let planet = module
-            .functions
-            .iter()
-            .find(|(_, f)| f.name.as_deref() == Some("planet"))
-            .map(|(h, _)| h)
-            .ok_or("the generator has no `fn planet`")?;
+        let named = |name: &str| {
+            module
+                .functions
+                .iter()
+                .find(|(_, f)| f.name.as_deref() == Some(name))
+                .map(|(h, _)| h)
+        };
+        let planet = named("planet").ok_or("the generator has no `fn planet`")?;
+        let paint = named("planet_material");
         let constants = constants(&module);
         Ok(Self {
             module,
             planet,
+            paint,
             constants,
         })
     }
@@ -74,26 +80,64 @@ impl Generator {
 
     /// The SDF at `point`, as the GPU computes it to f32 rounding.
     pub fn sample(&self, shape: &Shape, point: DVec3, planet: u32) -> Option<f32> {
-        let distance = point.length();
-        let (altitude, up) = match shape.base {
-            Base::Sphere => (distance - shape.radius, point / distance.max(1e-6)),
-            Base::Plane => (point.y, DVec3::Y),
-        };
-        let input = PlanetValue {
-            position: point.to_array().map(Num::point),
-            altitude: Num::point(altitude),
-            direction: up.to_array().map(Num::point),
-            radius: shape.radius,
-            planet,
-        };
-        let value = input.value(&self.module, Mode::Point).ok()?;
-        let out = self.run(value, Mode::Point).ok()?;
+        let value = point_input(shape, point, planet, 0.0).value(&self.module, Mode::Point);
+        let out = self.run(value.ok()?, Mode::Point).ok()?;
         out.is_point().then_some(out.lo as f32)
+    }
+
+    /// What the ground at `point` is made of (#1951): layers `a` and `b`, and how much of `b` shows
+    /// in 0..63, as the material pass packs them. The slope comes from samples a `voxel` apart.
+    pub fn material(
+        &self,
+        shape: &Shape,
+        point: DVec3,
+        voxel: f64,
+        planet: u32,
+    ) -> Option<[u8; 3]> {
+        let Some(paint) = self.paint else {
+            return Some([0; 3]);
+        };
+        let rise = |axis: DVec3| -> Option<f64> {
+            let up = self.sample(shape, point + axis * voxel, planet)?;
+            let down = self.sample(shape, point - axis * voxel, planet)?;
+            Some(f64::from(up - down))
+        };
+        let gradient = DVec3::new(rise(DVec3::X)?, rise(DVec3::Y)?, rise(DVec3::Z)?);
+        let input = point_input(shape, point, planet, 0.0);
+        let up = DVec3::from_array(input.direction.map(|n| n.lo));
+        let slope = gradient
+            .try_normalize()
+            .map_or(0.0, |normal| 1.0 - normal.dot(up));
+        let value = PlanetValue { slope, ..input }
+            .value(&self.module, Mode::Point)
+            .ok()?;
+        let mut machine = Machine::new(&self.module, &self.constants, Mode::Point);
+        let lanes = machine.call(paint, vec![value]).ok()?.lanes().ok()?;
+        let id = |n: Num| n.lo.round().clamp(0.0, 31.0) as u8;
+        let blend = (lanes.lane(2).lo.clamp(0.0, 1.0) * 63.0).round() as u8;
+        Some([id(lanes.lane(0)), id(lanes.lane(1)), blend])
     }
 
     fn run(&self, input: Value, mode: Mode) -> Result<Num, Fault> {
         let mut machine = Machine::new(&self.module, &self.constants, mode);
         machine.call(self.planet, vec![input])?.num()
+    }
+}
+
+/// `PlanetInput` at one point, as the generate pass builds it.
+fn point_input(shape: &Shape, point: DVec3, planet: u32, slope: f64) -> PlanetValue {
+    let distance = point.length();
+    let (altitude, up) = match shape.base {
+        Base::Sphere => (distance - shape.radius, point / distance.max(1e-6)),
+        Base::Plane => (point.y, DVec3::Y),
+    };
+    PlanetValue {
+        position: point.to_array().map(Num::point),
+        altitude: Num::point(altitude),
+        direction: up.to_array().map(Num::point),
+        radius: shape.radius,
+        planet,
+        slope,
     }
 }
 
@@ -111,6 +155,8 @@ struct PlanetValue {
     direction: [Num; 3],
     radius: f64,
     planet: u32,
+    /// Only `planet_material` reads it; `planet` sees 0, as on the GPU.
+    slope: f64,
 }
 
 impl PlanetValue {
@@ -141,6 +187,7 @@ impl PlanetValue {
                 Some("altitude") => Ok(scalar(Kind::F32, to_f32(self.altitude, 0, mode))),
                 Some("radius") => Ok(scalar(Kind::F32, to_f32(Num::point(self.radius), 0, mode))),
                 Some("planet") => Ok(scalar(Kind::U32, Num::point(f64::from(self.planet)))),
+                Some("slope") => Ok(scalar(Kind::F32, to_f32(Num::point(self.slope), 0, mode))),
                 _ => zero(module, member.ty),
             })
             .collect::<Result<_, _>>()?;
@@ -164,6 +211,7 @@ fn range_input(
             direction: [0.0, 1.0, 0.0].map(Num::point),
             radius: shape.radius,
             planet,
+            slope: 0.0,
         }
         .value(module, Mode::Range);
     }
@@ -182,6 +230,7 @@ fn range_input(
         direction,
         radius: shape.radius,
         planet,
+        slope: 0.0,
     }
     .value(module, Mode::Range)
 }
