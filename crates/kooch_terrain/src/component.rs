@@ -11,8 +11,12 @@ use kooch_ecs::reflect::FieldRange;
 /// Its centre is the entity's position; it turns with the entity, and its blocks never regenerate
 /// for that. Lengths are in the entity's local units, so a scale of 1 keeps them in metres.
 #[derive(Debug, Clone, PartialEq, Reflect)]
-// Was `Planet` until #2037; saved scenes still name it so.
-#[reflect(category = "World", alias = "kooch_planet::component::Planet")]
+// Was `kooch_planet::component::Planet` until #2037 and in `kooch_planet` until #2040; saved
+// scenes still name it so.
+#[reflect(
+    category = "World",
+    alias = "kooch_planet::component::Planet, kooch_planet::component::Terrain"
+)]
 pub struct Terrain {
     /// Sea level: where an unwired generator puts the ground.
     #[reflect(range = LENGTH_RANGE)]

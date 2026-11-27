@@ -161,11 +161,11 @@ fn weld(planet: u32, epoch: u32, anchor: Anchor, members: Vec<Member>) -> Merged
         .then(|| RapierBackend::prepare(&CollisionShape::TriMesh { vertices, indices }))
         .and_then(|built| {
             built
-                .map_err(|error| tracing::debug!(target: "kooch_planet", "ground patch: {error}"))
+                .map_err(|error| tracing::debug!(target: "kooch_terrain", "ground patch: {error}"))
                 .ok()
         });
     tracing::trace!(
-        target: "kooch_planet",
+        target: "kooch_terrain",
         planet,
         blocks = members.len(),
         triangles,

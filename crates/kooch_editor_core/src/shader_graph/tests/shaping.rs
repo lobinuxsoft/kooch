@@ -4,8 +4,8 @@
 use bevy_lookup_curve::{Knot, KnotInterpolation, LookupCurve};
 use egui::Pos2;
 use egui_snarl::{InPinId, OutPinId};
-use kooch_planet::{Generator, Shape};
 use kooch_render::material::Shader;
+use kooch_terrain::{Generator, Shape};
 
 use crate::shader_graph::*;
 
@@ -48,7 +48,7 @@ fn planet(node: Node, pins: &[(usize, f32)]) -> (Graph, Generator) {
     }
     let source = generate(&graph).unwrap();
     let shader = Shader::parse(&source).unwrap();
-    kooch_planet::validate_generator(&shader.source).unwrap();
+    kooch_terrain::validate_generator(&shader.source).unwrap();
     (graph, Generator::parse(&shader.source).unwrap())
 }
 

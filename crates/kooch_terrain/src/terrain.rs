@@ -142,7 +142,7 @@ impl Pipeline {
         let flights = (0..RING)
             .map(|_| Flight {
                 staging: device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("kooch_planet::terrain::staging"),
+                    label: Some("kooch_terrain::terrain::staging"),
                     size,
                     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                     mapped_at_creation: false,
@@ -157,12 +157,12 @@ impl Pipeline {
             .contains(wgpu::Features::TIMESTAMP_QUERY)
             .then(|| {
                 let set = device.create_query_set(&wgpu::QuerySetDescriptor {
-                    label: Some("kooch_planet::terrain::timer"),
+                    label: Some("kooch_terrain::terrain::timer"),
                     ty: wgpu::QueryType::Timestamp,
                     count: QUERIES,
                 });
                 let resolve = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("kooch_planet::terrain::timer"),
+                    label: Some("kooch_terrain::terrain::timer"),
                     size: u64::from(QUERIES) * 8,
                     usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
                     mapped_at_creation: false,
@@ -441,7 +441,7 @@ impl Pipeline {
         self.jobs.sort_by_key(pass_of);
         self.planet_pass = passes;
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("kooch_planet::terrain"),
+            label: Some("kooch_terrain::terrain"),
         });
         // A middle group times nothing, and wgpu rejects writes with neither index.
         let writes = |first: u32, begins: bool, ends: bool| {

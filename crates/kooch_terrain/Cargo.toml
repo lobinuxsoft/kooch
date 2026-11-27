@@ -1,5 +1,5 @@
 [package]
-name = "kooch_planet"
+name = "kooch_terrain"
 description = "Planets on sparse voxel blocks for kooch: one shared pool, generated and meshed on the GPU (#313)."
 version.workspace = true
 edition.workspace = true

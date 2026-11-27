@@ -154,7 +154,7 @@ fn cast(
     }
     // A planet's blocks are GPU meshes with no CPU triangles: its ground answers through the
     // generator instead (#2002).
-    for ground in kooch_planet::ground_hits(resources, ray.origin, ray.direction) {
+    for ground in kooch_terrain::ground_hits(resources, ray.origin, ray.direction) {
         if exclude.contains(&ground.entity) {
             continue;
         }

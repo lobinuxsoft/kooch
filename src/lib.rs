@@ -51,8 +51,8 @@ pub use kooch_input;
 pub use kooch_lighting;
 #[cfg(feature = "physics")]
 pub use kooch_physics;
-#[cfg(feature = "planet")]
-pub use kooch_planet;
+#[cfg(feature = "terrain")]
+pub use kooch_terrain;
 #[cfg(feature = "remote")]
 pub use kooch_remote;
 #[cfg(feature = "render")]
@@ -162,8 +162,8 @@ pub mod prelude {
     #[cfg(feature = "blockmesh")]
     pub use kooch_blockmesh::{Block, BlockMesh, BlockPlugin, BuiltBlocks, SplineSweep};
     // Voxel planets (#313); `PlanetStats` is what they cost this frame.
-    #[cfg(feature = "planet")]
-    pub use kooch_planet::{PlanetPlugin, PlanetStats, Terrain};
+    #[cfg(feature = "terrain")]
+    pub use kooch_terrain::{PlanetPlugin, PlanetStats, Terrain};
 
     // A UI is one entity; the game reaches its nodes through `UiTrees` (#96).
     #[cfg(feature = "ui")]
@@ -343,8 +343,8 @@ impl kooch_core::plugin::PluginGroup for RemoteHostPlugins {
 
         // Planets (#313). On the host it only registers `Planet`: there is no GPU there, and the
         // editor draws the playing game's planets itself.
-        #[cfg(feature = "planet")]
-        let builder = builder.add(kooch_planet::PlanetPlugin);
+        #[cfg(feature = "terrain")]
+        let builder = builder.add(kooch_terrain::PlanetPlugin);
 
         // Beside blocks and for the same reason: a scene's `UiDocument` has to resolve on the host.
         #[cfg(feature = "ui")]
@@ -424,8 +424,8 @@ impl kooch_core::plugin::PluginGroup for DefaultPlugins {
 
         // Planets (#313). On the host it only registers `Planet`: there is no GPU there, and the
         // editor draws the playing game's planets itself.
-        #[cfg(feature = "planet")]
-        let builder = builder.add(kooch_planet::PlanetPlugin);
+        #[cfg(feature = "terrain")]
+        let builder = builder.add(kooch_terrain::PlanetPlugin);
 
         // Beside blocks and for the same reason: a scene's `UiDocument` has to resolve on the host.
         #[cfg(feature = "ui")]
@@ -502,8 +502,8 @@ impl kooch_core::plugin::Plugin for PhysicsRemotePlugin {
                         }))
                     }),
                 );
-                #[cfg(feature = "planet")]
-                extensions.register("planet.ground_debug", Box::new(ground_debug));
+                #[cfg(feature = "terrain")]
+                extensions.register("terrain.ground_debug", Box::new(ground_debug));
             },
         );
     }
@@ -515,15 +515,15 @@ impl kooch_core::plugin::Plugin for PhysicsRemotePlugin {
 
 /// Serves the ground overlay (#1949): every block each call, and a block's triangles only when its
 /// id is past the caller's `since`, so a mesh crosses the wire once.
-#[cfg(all(feature = "physics", feature = "remote", feature = "planet"))]
+#[cfg(all(feature = "physics", feature = "remote", feature = "terrain"))]
 fn ground_debug(
     resources: &mut kooch_core::resource::Resources,
     payload: &kooch_remote::serde_json::Value,
 ) -> Result<kooch_remote::serde_json::Value, String> {
-    use kooch_planet::BlockState;
+    use kooch_terrain::BlockState;
     use kooch_remote::serde_json::json;
     let since = payload.get("since").and_then(|v| v.as_u64()).unwrap_or(0);
-    let Some(ground) = resources.get::<kooch_planet::GroundColliders>() else {
+    let Some(ground) = resources.get::<kooch_terrain::GroundColliders>() else {
         return Ok(json!({ "blocks": [], "meshes": [] }));
     };
     let view = ground.view(resources, since);

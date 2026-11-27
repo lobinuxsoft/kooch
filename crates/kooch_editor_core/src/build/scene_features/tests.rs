@@ -40,6 +40,17 @@ fn a_block_scene_needs_blockmesh() {
     assert_eq!(missing[0].component, "kooch_blockmesh::block::Block");
 }
 
+/// A scene saved before #2040 names the crate `kooch_planet`, which the manifest no longer has.
+#[test]
+fn an_old_planet_needs_terrain() {
+    let scenes = scene(&["kooch_planet::component::Planet"]);
+
+    let missing = missing_in(PROJECT, ENGINE_MANIFEST, &[], &scenes);
+
+    assert_eq!(missing.len(), 1, "{missing:?}");
+    assert_eq!(missing[0].feature, "terrain");
+}
+
 /// `character` turns on `gravity`, which turns on `physics`: a scene of bodies is not short of
 /// anything, and the editor-only feature does not count for a game build.
 #[test]

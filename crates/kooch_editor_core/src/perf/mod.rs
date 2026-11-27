@@ -63,7 +63,7 @@ pub struct EditorPerfStats {
     /// process that is actually simulating, and until now nothing on screen came from it.
     pub host: Option<kooch_remote::protocol::HostMetrics>,
     /// What the planets' terrain costs, or `None` with no planet in the scene (#313).
-    pub planets: Option<kooch_planet::PlanetStats>,
+    pub planets: Option<kooch_terrain::PlanetStats>,
     /// Where `cpu_frame_ms` went, stage by stage (#691). Zeroed until
     /// the render system has completed a frame.
     pub breakdown: FrameBreakdown,

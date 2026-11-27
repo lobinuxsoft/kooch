@@ -1,12 +1,12 @@
 //! What the planets' voxel terrain costs (#313): the shared pool, the GPU batches and their time.
 
-use kooch_planet::PlanetStats;
+use kooch_terrain::PlanetStats;
 
 use super::widgets::{grid, metric, metric_with_tooltip};
 
 pub(super) fn planet_readout(ui: &mut egui::Ui, stats: PlanetStats) {
     grid(ui, "perf_grid_planets", |ui| {
-        let mib = f64::from(stats.resident) * kooch_planet::BLOCK_BYTES as f64 / 1_048_576.0;
+        let mib = f64::from(stats.resident) * kooch_terrain::BLOCK_BYTES as f64 / 1_048_576.0;
         metric_with_tooltip(
             ui,
             "Blocks",

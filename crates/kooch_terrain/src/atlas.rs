@@ -21,7 +21,7 @@ impl BlockAtlas {
         let tiles = tiles_for(capacity);
         let size = tiles * TILE_SAMPLES;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("kooch_planet::atlas"),
+            label: Some("kooch_terrain::atlas"),
             size: wgpu::Extent3d {
                 width: size.x,
                 height: size.y,

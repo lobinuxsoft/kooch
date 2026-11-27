@@ -181,7 +181,7 @@ pub fn sync_planets(resources: &mut Resources) {
         match Pipeline::new(device, queue, DEFAULT_CAPACITY) {
             Ok(terrain) => state.terrain = Some(terrain),
             Err(why) => {
-                tracing::error!(target: "kooch_planet", "planet terrain unavailable: {why}");
+                tracing::error!(target: "kooch_terrain", "planet terrain unavailable: {why}");
                 state.broken = true;
             }
         }
@@ -199,7 +199,7 @@ pub fn sync_planets(resources: &mut Resources) {
             let source = shader.and_then(|handle| source(resources, handle));
             if generator.is_some() && shader.is_some() && source.is_none() {
                 tracing::warn!(
-                    target: "kooch_planet",
+                    target: "kooch_terrain",
                     planet = %planet.entity,
                     "its generator is not a `planet` shader; drawing the bare sphere",
                 );
@@ -209,7 +209,7 @@ pub fn sync_planets(resources: &mut Resources) {
                 && let Err(why) = terrain.set_generator(device, &state.pool, index, source)
             {
                 tracing::error!(
-                    target: "kooch_planet",
+                    target: "kooch_terrain",
                     planet = %planet.entity,
                     "its generator does not compile; drawing the bare sphere:\n{why}",
                 );

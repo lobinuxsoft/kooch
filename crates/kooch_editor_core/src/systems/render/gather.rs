@@ -63,7 +63,7 @@ pub(super) fn publish_gpu_stats(
         .get::<kooch_core::frame_pacing::FrameCap>()
         .and_then(kooch_core::frame_pacing::FrameCap::hz);
     let planets = resources
-        .get::<kooch_planet::PlanetStats>()
+        .get::<kooch_terrain::PlanetStats>()
         .copied()
         .filter(|planets| planets.resident > 0 || planets.meshed > 0);
     if let Some(stats) = resources.get_mut::<crate::perf::EditorPerfStats>() {
