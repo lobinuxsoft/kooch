@@ -1,6 +1,7 @@
 //! GPU mesh cache upkeep + ECS asset sync for [`MeshletRenderStage`].
 
 use kooch_core::Guid;
+use kooch_core::asset_database::AssetDatabase;
 use kooch_core::asset_loader::AssetServer;
 use kooch_core::assets::Assets;
 use kooch_core::resource::Resources;
@@ -225,20 +226,9 @@ impl MeshletRenderStage {
             return;
         }
 
-        // 🔴 Every mesh in the scene failing is not N warnings, it is one broken run — and the
-        // actionable line was buried under a thousand correct ones. Said once, when the whole set
-        // is unresolved and none of it has been reported yet.
-        let all_broken = pending.len() == referenced.len() && self.unresolved.is_empty();
-        if all_broken && self.pipeline.registered_count() == 0 {
-            tracing::error!(
-                target: "kooch_render::meshlet::sync",
-                meshes = referenced.len(),
-                "not one mesh in this scene resolves, so nothing will draw. \
-                 The asset database is empty — a game started outside the \
-                 editor needs KOOCH_ENGINE_ROOT to find the engine's own assets",
-            );
-        }
-
+        // Failures new this frame, said after the loop: whether they are N warnings or one broken
+        // run is only known once every load has been tried (#2043).
+        let mut failed: Vec<(Guid, String)> = Vec::new();
         for guid in pending {
             // Take the AssetServer out so we can pass `resources` (which holds
             // `Assets<MeshletMesh>`) by &mut into the load call. Re-insert before any
@@ -260,13 +250,7 @@ impl MeshletRenderStage {
                     // every frame, because an asset can arrive late; only
                     // the saying stops.
                     if self.unresolved.insert(guid) {
-                        tracing::warn!(
-                            target: "kooch_render::meshlet::sync",
-                            guid = %guid,
-                            error = %e,
-                            "failed to load meshlet asset by GUID; \
-                             said once until it resolves",
-                        );
+                        failed.push((guid, e.to_string()));
                     }
                     continue;
                 }
@@ -295,13 +279,56 @@ impl MeshletRenderStage {
                 "uploaded meshlet asset to GPU",
             );
         }
+        report(resources, &failed, referenced.len());
+    }
+}
+
+/// Every mesh the scene draws failed, all of it new this frame: one broken run, not N warnings.
+pub(super) fn whole_scene(failed: usize, referenced: usize) -> bool {
+    referenced > 0 && failed == referenced
+}
+
+/// The failures new this frame: one actionable line for a broken run, else one warning each.
+fn report(resources: &Resources, failed: &[(Guid, String)], referenced: usize) {
+    let Some((_, first)) = failed.first() else {
+        return;
+    };
+    if !whole_scene(failed.len(), referenced) {
+        for (guid, error) in failed {
+            tracing::warn!(
+                target: "kooch_render::meshlet::sync",
+                guid = %guid,
+                error = %error,
+                "failed to load meshlet asset by GUID; said once until it resolves",
+            );
+        }
+        return;
+    }
+    if resources
+        .get::<AssetDatabase>()
+        .is_none_or(AssetDatabase::is_empty)
+    {
+        tracing::error!(
+            target: "kooch_render::meshlet::sync",
+            meshes = referenced,
+            "not one mesh in this scene loads, so nothing will draw. The asset database is \
+             empty: a game started outside the editor needs KOOCH_ENGINE_ROOT to find the \
+             engine's own assets",
+        );
+    } else {
+        tracing::error!(
+            target: "kooch_render::meshlet::sync",
+            meshes = referenced,
+            first = %first,
+            "not one mesh in this scene loads, so nothing will draw",
+        );
     }
 }
 
 /// Whether this GUID names a file a mesh loader can read.
 fn reads_as_mesh(resources: &Resources, guid: Guid) -> bool {
     let Some(type_name) = resources
-        .get::<kooch_core::asset_database::AssetDatabase>()
+        .get::<AssetDatabase>()
         .and_then(|db| db.entry(guid).and_then(|entry| entry.type_name.clone()))
     else {
         return true;

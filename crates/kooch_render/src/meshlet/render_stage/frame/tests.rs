@@ -84,27 +84,20 @@ fn an_unresolved_mesh_is_said_once() {
     );
 }
 
-/// The actionable line, and the condition that keeps it to one.
+/// The actionable line, and the condition that keeps it to one. The first frame of a scene, before
+/// any load is tried, fails nothing, so it says nothing (#2043).
 #[test]
 fn a_scene_that_resolves_nothing_says_so_once() {
-    let fired = |pending: usize, referenced: usize, reported: usize, cached: usize| {
-        pending == referenced && reported == 0 && cached == 0
-    };
+    use super::assets::whole_scene;
 
+    assert!(whole_scene(2, 2), "every mesh failed, all new this frame");
     assert!(
-        fired(2, 2, 0, 0),
-        "nothing resolved and nothing was said yet"
+        !whole_scene(0, 2),
+        "nothing failed: the first frame, or a second frame already reported",
     );
     assert!(
-        !fired(2, 2, 1, 0),
-        "already reported — this is the second frame, and it must stay quiet",
+        !whole_scene(1, 2),
+        "one mesh of two is a missing asset, not a broken run"
     );
-    assert!(
-        !fired(1, 2, 0, 0),
-        "one mesh of two is a missing asset, not a broken run",
-    );
-    assert!(
-        !fired(2, 2, 0, 5),
-        "the database has meshes, so the engine root is not the problem",
-    );
+    assert!(!whole_scene(0, 0), "a scene without meshes is not broken");
 }
