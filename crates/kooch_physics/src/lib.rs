@@ -10,8 +10,10 @@ pub mod rapier_backend;
 pub use backend::{
     BodyDesc, BodyHandle, BodyKind, BrokenJoint, ColliderHandle, ColliderMesh, ColliderMeshCache,
     CollisionShape, ConvexPart, JointDesc, JointHandle, JointKind, JointMotor, MotorModel,
-    PhysicsBackend, PointHit, QueryFilter, RayHit, ShapeAt, ShapeHit,
+    PhysicsBackend, PointHit, PreparedShape, QueryFilter, RayHit, ShapeAt, ShapeHit,
 };
 pub use components::{Collider, Joint, PhysicsBody, ShapeSpec};
-pub use plugin::{JointRegistry, PhysicsComponentsPlugin, PhysicsPlugin, PhysicsWorld, SolverBody};
+pub use plugin::{
+    JointRegistry, PhysicsComponentsPlugin, PhysicsHolds, PhysicsPlugin, PhysicsWorld, SolverBody,
+};
 pub use rapier_backend::{RapierBackend, decompose, hull_of};

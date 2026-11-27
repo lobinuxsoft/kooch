@@ -84,7 +84,18 @@ pub(super) fn shape_builder(shape: &CollisionShape) -> Result<ColliderBuilder, S
         CollisionShape::Compound { parts } => compound(parts),
         CollisionShape::TriMesh { vertices, indices } => {
             non_empty(vertices)?;
-            ColliderBuilder::trimesh(vertices.clone(), indices.clone())
+            // Without it a body rolling over the mesh bumps on edges between its triangles (ghost
+            // collisions). It needs a manifold topology, so a mesh without one keeps the plain build.
+            let fixed = rapier3d::parry::shape::TriMeshFlags::FIX_INTERNAL_EDGES;
+            ColliderBuilder::trimesh_with_flags(vertices.clone(), indices.clone(), fixed)
+                .or_else(|why| {
+                    tracing::debug!(
+                        target: "kooch_physics::shape",
+                        triangles = indices.len(),
+                        "trimesh built without fixed internal edges: {why:?}",
+                    );
+                    ColliderBuilder::trimesh(vertices.clone(), indices.clone())
+                })
                 .map_err(|_| ShapeError::BrokenTriMesh)
         }
         CollisionShape::Polyline { vertices } => {
@@ -223,6 +234,15 @@ pub(super) fn warn_refused(shape: &CollisionShape, error: &ShapeError) {
         shape = shape.name(),
         "collider not built: {error}",
     );
+}
+
+impl super::RapierBackend {
+    /// Builds `shape` for [`PhysicsBackend::add_prepared`](crate::PhysicsBackend::add_prepared) on
+    /// any thread, so the frame that adds it pays nothing.
+    pub fn prepare(shape: &CollisionShape) -> Result<crate::PreparedShape, String> {
+        let built = shape_builder(shape).map_err(|error| error.to_string())?;
+        Ok(crate::PreparedShape(std::sync::Arc::new(built.shape)))
+    }
 }
 
 #[cfg(test)]

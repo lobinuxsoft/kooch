@@ -9,6 +9,7 @@ mod joint;
 mod material;
 mod mesh_cache;
 mod mesh_key;
+mod prepared;
 mod query;
 mod shape;
 
@@ -20,6 +21,7 @@ pub use joint::{BrokenJoint, JointDesc, JointHandle, JointKind, JointMotor, Moto
 pub use material::{CombineRule, Damping, SurfaceMaterial};
 pub use mesh_cache::{ColliderMesh, ColliderMeshCache};
 pub use mesh_key::MeshKey;
+pub use prepared::PreparedShape;
 pub use query::{PointHit, QueryFilter, ShapeAt, ShapeHit};
 pub use shape::{CollisionShape, ConvexPart, MIN_EXTENT};
 
@@ -41,6 +43,19 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// Inserts a body, returns its handle. Handles are stable across
     /// simulation steps until [`remove_body`](Self::remove_body) is called.
     fn add_body(&mut self, desc: BodyDesc) -> BodyHandle;
+
+    /// Inserts a static body of a shape this backend prepared off the frame. `None` when the shape
+    /// came from another backend.
+    fn add_prepared(
+        &mut self,
+        shape: &PreparedShape,
+        position: Vec3,
+        rotation: Quat,
+    ) -> Option<BodyHandle>;
+
+    /// Replaces the shape of a body made by [`add_prepared`](Self::add_prepared) in place, so a body
+    /// resting on it keeps its contact instead of landing anew. `false` when it could not.
+    fn set_prepared(&mut self, body: BodyHandle, shape: &PreparedShape) -> bool;
 
     /// Removes a body and its colliders. Subsequent calls with `handle`
     /// return `None` from getters and silently no-op for setters.
@@ -88,6 +103,10 @@ pub trait PhysicsBackend: Send + Sync + 'static {
     /// What the body actually weighs in kg, `None` if stale — the descriptor is the request, this
     /// is what was built (#618).
     fn mass(&self, handle: BodyHandle) -> Option<f32>;
+
+    /// Takes a body out of the simulation without removing it, or puts it back. A disabled body
+    /// keeps its pose and velocity and touches nothing.
+    fn set_enabled(&mut self, handle: BodyHandle, enabled: bool);
 
     /// Whether the body sleeps, `None` if stale. Ask before applying per-step forces: waking
     /// resting bodies keeps the scene simulating forever.

@@ -2862,14 +2862,17 @@ version = "0.98.232"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
+ "half",
  "kooch_core",
  "kooch_ecs",
  "kooch_ecs_macros",
+ "kooch_physics",
  "kooch_render",
  "kooch_world",
  "naga",
  "pollster 1.0.1",
  "profiling",
+ "rayon",
  "tracing",
  "wgpu",
 ]

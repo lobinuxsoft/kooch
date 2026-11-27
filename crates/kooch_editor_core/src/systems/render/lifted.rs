@@ -2,7 +2,6 @@
 //! immutably, and the panels edit these in place.
 
 use kooch_core::resource::Resources;
-use kooch_physics::backend::DebugCategories;
 use kooch_render::meshlet::{MeshletDebugMode, MeshletLodSettings};
 
 pub(super) struct Lifted {
@@ -14,7 +13,7 @@ pub(super) struct Lifted {
     pub(super) specular_floor: kooch_lighting::SpecularFloor,
     pub(super) gizmo_visibility: crate::gizmos::GizmoVisibility,
     /// Only the switches travel; the overlay resource keeps its reusable line buffer.
-    pub(super) physics_debug: DebugCategories,
+    pub(super) physics_debug: crate::gizmos::PhysicsSwitches,
     /// What the panel drew; the metric systems read it next frame to decide whether to pay (#703).
     pub(super) hud_visibility: crate::perf::HudVisibility,
     pub(super) console: crate::panels::console::ConsoleState,
@@ -40,7 +39,7 @@ impl Lifted {
                 .unwrap_or_else(crate::gizmos::GizmoVisibility::new),
             physics_debug: resources
                 .get::<crate::gizmos::PhysicsDebugOverlay>()
-                .map(|overlay| overlay.categories)
+                .map(|overlay| overlay.switches)
                 .unwrap_or_default(),
             hud_visibility: resources
                 .get::<crate::perf::HudVisibility>()
@@ -75,7 +74,7 @@ impl Lifted {
         resources.insert(self.hud_visibility);
         // Created on first use: a host with no physics never grows one.
         match resources.get_mut::<crate::gizmos::PhysicsDebugOverlay>() {
-            Some(overlay) => overlay.categories = self.physics_debug,
+            Some(overlay) => overlay.switches = self.physics_debug,
             None => {
                 if self.physics_debug.any() {
                     resources.insert(crate::gizmos::PhysicsDebugOverlay::new(self.physics_debug));

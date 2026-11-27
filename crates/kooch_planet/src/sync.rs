@@ -5,14 +5,13 @@
 //! GPU, so the editor draws a playing game's planets itself, as it does a block's mesh.
 
 mod ray;
+mod twin;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use glam::{DVec3, Mat4};
-use kooch_core::Guid;
-use kooch_core::asset_loader::{AssetServer, ReloadedAssets};
-use kooch_core::assets::{Assets, Handle};
 use kooch_core::frame_pacing::{FramePace, FrameRequest};
 use kooch_core::gpu::GpuContext;
 use kooch_core::resource::Resources;
@@ -20,7 +19,6 @@ use kooch_ecs::Entity;
 use kooch_ecs::hierarchy::GlobalTransform;
 use kooch_ecs::perspective_camera::{PerspectiveCamera, ViewSize};
 use kooch_ecs::query::Query;
-use kooch_render::material::shader::{Shader, ShaderKind};
 use kooch_render::meshlet::GpuMeshes;
 
 use crate::component::Planet;
@@ -31,6 +29,7 @@ use crate::rerun::{Inputs, Rerun};
 use crate::roster::{Roster, Signature};
 use crate::sight::Cone;
 pub use ray::{GroundHit, ground_hits};
+use twin::{load, set_generator, source};
 
 use crate::{
     BARE_SPHERE, BlockKey, BlockPool, CountedBlock, DEFAULT_CAPACITY, Leaves, Limits, Part,
@@ -110,10 +109,15 @@ pub struct PlanetTerrain {
     /// roaming leaves behind is dropped after [`KNOWN_GRACE`].
     known: HashMap<BlockKey, Known>,
     /// Per planet index, its generator on the CPU; `None` keeps every block a candidate.
-    generators: Vec<Option<Generator>>,
+    /// Shared, so the ground's workers mesh from it off the main thread.
+    pub(crate) generators: Vec<Option<Arc<Generator>>>,
+    /// Per planet index, its generator's WGSL, which the ground's GPU pass compiles.
+    pub(crate) sources: Vec<Option<Arc<str>>>,
+    /// Per planet index, bumped whenever its generator is replaced.
+    pub(crate) twins: Vec<u32>,
     frame: u32,
     planets: Planets,
-    roster: Roster,
+    pub(crate) roster: Roster,
     terrain: Option<Terrain>,
     /// Set when the GPU side could not be built, so it is not tried every frame.
     broken: bool,
@@ -131,6 +135,8 @@ impl Default for PlanetTerrain {
             split: HashSet::new(),
             known: HashMap::new(),
             generators: Vec::new(),
+            sources: Vec::new(),
+            twins: Vec::new(),
             frame: 0,
             planets: Planets::default(),
             roster: Roster::default(),
@@ -156,12 +162,11 @@ pub(crate) struct Found {
 
 /// Chooses, generates and draws every planet's blocks. Does nothing where nothing draws.
 pub fn sync_planets(resources: &mut Resources) {
-    let Some((device, queue)) = resources
+    // The generators are read without a GPU too: the remote host simulates, and its ground
+    // colliders are meshed from them (#1949).
+    let gpu = resources
         .get::<GpuContext>()
-        .map(|gpu| (gpu.device().clone(), gpu.queue().clone()))
-    else {
-        return;
-    };
+        .map(|gpu| (gpu.device().clone(), gpu.queue().clone()));
     let found = {
         profiling::scope!("planet: gather");
         gather(resources)
@@ -169,8 +174,11 @@ pub fn sync_planets(resources: &mut Resources) {
     let Some(mut state) = resources.remove::<PlanetTerrain>() else {
         return;
     };
-    if state.terrain.is_none() && !state.broken {
-        match Terrain::new(&device, &queue, DEFAULT_CAPACITY) {
+    if let Some((device, queue)) = &gpu
+        && state.terrain.is_none()
+        && !state.broken
+    {
+        match Terrain::new(device, queue, DEFAULT_CAPACITY) {
             Ok(terrain) => state.terrain = Some(terrain),
             Err(why) => {
                 tracing::error!(target: "kooch_planet", "planet terrain unavailable: {why}");
@@ -187,7 +195,7 @@ pub fn sync_planets(resources: &mut Resources) {
         let signature = Signature::new(&planet.planet, revision, shader.is_some());
         let (index, changed) = state.roster.place(planet.entity, signature);
         placed[index as usize] = Some(at);
-        if changed && let Some(terrain) = &mut state.terrain {
+        if changed {
             let source = shader.and_then(|handle| source(resources, handle));
             if generator.is_some() && shader.is_some() && source.is_none() {
                 tracing::warn!(
@@ -197,7 +205,9 @@ pub fn sync_planets(resources: &mut Resources) {
                 );
             }
             let mut source = source.as_deref().unwrap_or(BARE_SPHERE);
-            if let Err(why) = terrain.set_generator(&device, &state.pool, index, source) {
+            if let (Some(terrain), Some((device, _))) = (&mut state.terrain, &gpu)
+                && let Err(why) = terrain.set_generator(device, &state.pool, index, source)
+            {
                 tracing::error!(
                     target: "kooch_planet",
                     planet = %planet.entity,
@@ -205,10 +215,14 @@ pub fn sync_planets(resources: &mut Resources) {
                 );
                 source = BARE_SPHERE;
             }
-            set_generator(&mut state.generators, index, source);
+            set_generator(&mut state, index, source);
         }
     }
     placed.truncate(state.roster.len());
+    let Some((device, queue)) = gpu else {
+        resources.insert(state);
+        return;
+    };
     let (viewers, cones, view) = viewers(resources);
     // The pool's bytes, not its block count, are what runs out first on dense relief (#1968).
     let budget = resources
@@ -406,21 +420,10 @@ pub fn sync_planets(resources: &mut Resources) {
     resources.insert(stats);
 }
 
-/// The CPU twin of what the GPU now generates for planet `index`.
-fn set_generator(generators: &mut Vec<Option<Generator>>, index: u32, source: &str) {
-    let index = index as usize;
-    if generators.len() <= index {
-        generators.resize_with(index + 1, || None);
-    }
-    generators[index] = Generator::parse(source)
-        .inspect_err(|why| tracing::debug!(target: "kooch_planet", "no CPU generator: {why}"))
-        .ok();
-}
-
 /// Whether the generator leaves `key`'s tile a chance of holding surface. The tile reaches one
 /// sample past the block on every side, so its border is bounded too.
-fn crosses(
-    generators: &[Option<Generator>],
+pub(crate) fn crosses(
+    generators: &[Option<Arc<Generator>>],
     planets: &Planets,
     key: BlockKey,
     min: DVec3,
@@ -439,7 +442,7 @@ fn crosses(
     )
 }
 
-fn gather(resources: &Resources) -> Vec<Found> {
+pub(crate) fn gather(resources: &Resources) -> Vec<Found> {
     use kooch_ecs::hierarchy::GridCell;
     let origin = kooch_ecs::hierarchy::WorldOrigin::get(resources);
     let registry = resources.get::<kooch_ecs::component::ComponentRegistry>();
@@ -476,33 +479,6 @@ fn gather(resources: &Resources) -> Vec<Found> {
         },
     );
     found
-}
-
-/// The generator's reload count, and its shader once loaded.
-fn load(resources: &mut Resources, guid: Option<Guid>) -> (u64, Option<Handle<Shader>>) {
-    let Some(guid) = guid else {
-        return (0, None);
-    };
-    let revision = resources
-        .get::<ReloadedAssets>()
-        .map_or(0, |reloaded| reloaded.revision(guid));
-    let Some(mut server) = resources.remove::<AssetServer>() else {
-        return (revision, None);
-    };
-    let handle = server.load_by_guid::<Shader>(guid, resources).ok();
-    resources.insert(server);
-    let loaded = handle.filter(|handle| {
-        resources
-            .get::<Assets<Shader>>()
-            .is_some_and(|shaders| shaders.get(*handle).is_some())
-    });
-    (revision, loaded)
-}
-
-/// The generator's source, when it is a `planet` shader.
-fn source(resources: &Resources, handle: Handle<Shader>) -> Option<String> {
-    let shader = resources.get::<Assets<Shader>>()?.get(handle)?;
-    (shader.kind == ShaderKind::Planet).then(|| shader.source.clone())
 }
 
 /// Every admitted active camera's eye, and the most demanding lens among them.

@@ -220,6 +220,18 @@ pub fn frame_metrics_system(resources: &mut Resources) {
     };
     metrics.record(wall, work);
 
+    // A hitch lasts one frame, so the once-a-second line never shows it.
+    let usual = 1000.0 / metrics.fps_average.max(1.0);
+    if metrics.report.logs() && metrics.frame_ms > (2.0 * usual).max(20.0) {
+        tracing::info!(
+            target: "kooch::frame",
+            frame_ms = metrics.frame_ms,
+            cpu_ms = metrics.cpu_frame_ms,
+            usual_ms = usual,
+            pid = std::process::id(),
+            "slow frame",
+        );
+    }
     if metrics.report.logs() && metrics.should_log(Instant::now(), LOG_EVERY) {
         tracing::info!(target: "kooch::frame", "{}", metrics.summary());
     }

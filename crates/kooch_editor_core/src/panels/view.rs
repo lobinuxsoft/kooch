@@ -28,7 +28,7 @@ pub(crate) fn draw_view_content(
     selection_has_transform: bool,
     gizmo_visibility: &mut crate::gizmos::GizmoVisibility,
     gizmo_groups: &[crate::gizmos::GizmoGroup],
-    physics_debug: &mut kooch_physics::backend::DebugCategories,
+    physics_debug: &mut crate::gizmos::PhysicsSwitches,
     actions: &mut Vec<crate::actions::EditorAction>,
     camera_rotation: Option<glam::Quat>,
     element_mode: &mut crate::block_edit::ElementMode,
@@ -439,10 +439,8 @@ fn mode_button(ui: &mut egui::Ui, icon: &str, tooltip: &str, active: bool, offer
 }
 
 /// The physics overlay's per-category switches.
-fn draw_physics_debug_menu(
-    ui: &mut egui::Ui,
-    categories: &mut kooch_physics::backend::DebugCategories,
-) {
+fn draw_physics_debug_menu(ui: &mut egui::Ui, switches: &mut crate::gizmos::PhysicsSwitches) {
+    let categories = &mut switches.solver;
     ui.checkbox(&mut categories.contacts, "Contacts")
         .on_hover_text("Where bodies are actually touching. Start here.");
     ui.checkbox(&mut categories.body_axes, "Centre of mass and axes")
@@ -466,7 +464,15 @@ fn draw_physics_debug_menu(
         );
 
     ui.separator();
+    ui.checkbox(&mut switches.ground, "Planet ground colliders")
+        .on_hover_text(
+            "The blocks of ground the solver holds around moving bodies, in Play: green \
+             triangles are built, yellow boxes are being generated, grey boxes are empty. \
+             Triangles stay on the GPU, so this one is cheap.",
+        );
+
+    ui.separator();
     if ui.button("Turn everything off").clicked() {
-        *categories = Default::default();
+        *switches = Default::default();
     }
 }

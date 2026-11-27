@@ -7,10 +7,10 @@ use super::RapierBackend;
 use crate::backend::{
     BodyDesc, BodyHandle, BodyKind, BrokenJoint, ColliderHandle, ColliderInteraction,
     CollisionEvent, CollisionShape, ContactForceEvent, JointDesc, JointHandle, PhysicsBackend,
-    PointHit, QueryFilter, RayHit, ShapeAt, ShapeHit, SurfaceMaterial,
+    PointHit, PreparedShape, QueryFilter, RayHit, ShapeAt, ShapeHit, SurfaceMaterial,
 };
 
-use super::super::conv::{collider_for, collider_for_pose, mass_properties_for};
+use super::super::conv::{collider_for, collider_for_pose, mass_properties_for, prepared_collider};
 use super::super::joints::{JointEntry, JointRef, generic_joint_for, linear_impulse};
 use super::super::shapes::warn_refused;
 
@@ -89,6 +89,50 @@ impl PhysicsBackend for RapierBackend {
         let handle = self.handles.insert(rb_handle);
         self.body_lookup.insert(rb_handle, handle);
         handle
+    }
+
+    fn add_prepared(
+        &mut self,
+        shape: &PreparedShape,
+        position: Vec3,
+        rotation: Quat,
+    ) -> Option<BodyHandle> {
+        let shape = shape.0.downcast_ref::<SharedShape>()?.clone();
+        let rb = RigidBodyBuilder::fixed()
+            .pose(Pose::from_parts(position, rotation))
+            .build();
+        let rb_handle = self.bodies.insert(rb);
+        let collider = self.colliders.insert_with_parent(
+            prepared_collider(shape),
+            rb_handle,
+            &mut self.bodies,
+        );
+        self.publish_aabb(collider);
+        let handle = self.handles.insert(rb_handle);
+        self.body_lookup.insert(rb_handle, handle);
+        Some(handle)
+    }
+
+    fn set_prepared(&mut self, body: BodyHandle, shape: &PreparedShape) -> bool {
+        let Some(shape) = shape.0.downcast_ref::<SharedShape>() else {
+            return false;
+        };
+        let Some(&rb_handle) = self.handles.get(body) else {
+            return false;
+        };
+        let first = self
+            .bodies
+            .get(rb_handle)
+            .and_then(|rb| rb.colliders().first());
+        let Some(&collider) = first else {
+            return false;
+        };
+        let Some(built) = self.colliders.get_mut(collider) else {
+            return false;
+        };
+        built.set_shape(shape.clone());
+        self.publish_aabb(collider);
+        true
     }
 
     fn attach_collider(
@@ -388,6 +432,15 @@ impl PhysicsBackend for RapierBackend {
             return;
         };
         body.apply_torque_impulse(torque, wake);
+    }
+
+    fn set_enabled(&mut self, handle: BodyHandle, enabled: bool) {
+        let Some(&rb_handle) = self.handles.get(handle) else {
+            return;
+        };
+        if let Some(body) = self.bodies.get_mut(rb_handle) {
+            body.set_enabled(enabled);
+        }
     }
 
     fn is_sleeping(&self, handle: BodyHandle) -> Option<bool> {

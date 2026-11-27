@@ -97,7 +97,7 @@ pub(crate) struct EditorTabViewer<'a> {
     /// Which gizmo groups draw. Threaded through so the Gizmos dropdown
     /// can mutate it from the viewport toolbar.
     pub(crate) gizmo_visibility: &'a mut crate::gizmos::GizmoVisibility,
-    pub(crate) physics_debug: &'a mut kooch_physics::backend::DebugCategories,
+    pub(crate) physics_debug: &'a mut crate::gizmos::PhysicsSwitches,
     /// Whether anyone is looking at the metrics that cost to take (#703).
     pub(crate) hud_visibility: &'a mut crate::perf::HudVisibility,
     pub(crate) log_buffer: Option<&'a kooch_core::LogBuffer>,

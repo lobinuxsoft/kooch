@@ -2,6 +2,7 @@
 
 mod compound;
 pub(super) mod events;
+mod holds;
 pub mod interpolation;
 mod joints;
 mod pose;
@@ -12,6 +13,7 @@ mod tests;
 mod world;
 
 pub use events::{CollisionStarted, CollisionStopped, ContactForce, JointBroke};
+pub use holds::PhysicsHolds;
 pub use joints::JointRegistry;
 pub use systems::{physics_step_system, physics_sync_system, physics_writeback_system};
 pub use world::{BodySpec, PhysicsWorld, SolverBody};
@@ -129,6 +131,7 @@ impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugin(PhysicsComponentsPlugin);
         app.insert_resource(PhysicsWorld::new(Box::new(self.backend())));
+        app.insert_resource(PhysicsHolds::default());
 
         // Lifecycle before sync, ungated: a play-gated system cannot see play end. Sync runs always
         // (bodies mirror the ECS while authoring); step and writeback are gameplay.

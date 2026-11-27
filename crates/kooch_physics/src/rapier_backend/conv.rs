@@ -38,6 +38,16 @@ pub(super) fn collider_for_pose(
     )
 }
 
+/// A static collider of default surface and interaction around a shape built elsewhere.
+pub(super) fn prepared_collider(shape: SharedShape) -> Collider {
+    let builder = ColliderBuilder::new(shape).density(0.0);
+    with_interaction(
+        with_material(builder, SurfaceMaterial::default()),
+        ColliderInteraction::default(),
+    )
+    .build()
+}
+
 /// Applies filtering, sensor and event opt-ins; `ActiveEvents` starts empty in rapier (#561).
 fn with_interaction(builder: ColliderBuilder, interaction: ColliderInteraction) -> ColliderBuilder {
     let mut events = ActiveEvents::empty();
