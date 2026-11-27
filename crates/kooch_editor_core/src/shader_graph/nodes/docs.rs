@@ -87,14 +87,15 @@ impl Node {
             Self::Blackbody => "The colour of a glow at a temperature: red, orange, white, blue.",
             Self::SceneColor => "The frame the camera produced. Post-process shaders only.",
             Self::WorldPosition => "The shaded point, in world space.",
-            Self::PlanetAltitude => {
-                "Metres above the planet's base sphere, exact at any radius. Planet shaders only."
+            Self::SphereBase => {
+                "Signed metres above the terrain's base sphere of `radius`, exact at any radius. \
+                 Terrain shaders only."
             }
             Self::PlanetDirection => {
-                "From the planet's centre towards the point, unit length. Planet shaders only."
+                "From the planet's centre towards the point, unit length. Terrain shaders only."
             }
             Self::PlanetPosition => {
-                "The point from the planet's centre, in metres. Planet shaders only; coarse on a \
+                "The point from the planet's centre, in metres. Terrain shaders only; coarse on a \
                  planet of real size, where Direction times the radius keeps more detail."
             }
             Self::WorldNormal => "The surface's normal, in world space.",
@@ -410,9 +411,9 @@ impl Node {
             Self::Exp => &[(Any, "The power.")],
             Self::Rainbow => &[(One, "Where on the wheel.")],
             Self::Blackbody => &[(One, "Kelvin, 1667 to 25000: a candle ~1900, the Sun ~5800.")],
-            Self::ShaderOutput { kind } if kind == "planet" => &[(
+            Self::ShaderOutput { kind } if kind == "terrain" => &[(
                 One,
-                "Signed distance in metres, negative inside the ground. Unwired: the bare sphere.",
+                "Signed distance in metres, negative inside the ground. Unwired: Sphere Base, the bare sphere.",
             )],
             Self::ShaderOutput { kind } if kind == "ui" => &[
                 (Three, "The colour. Unwired: the node's background-color."),
@@ -505,7 +506,7 @@ impl Node {
             Self::Sway => (Two, "The two waves."),
             Self::WorldPosition | Self::WorldNormal | Self::ViewDirection => (Three, self.about()),
             Self::PlanetDirection | Self::PlanetPosition => (Three, self.about()),
-            Self::PlanetAltitude => (One, self.about()),
+            Self::SphereBase => (One, self.about()),
             Self::Float { .. } | Self::Int { .. } | Self::ConstFloat(_) | Self::ConstInt(_) => {
                 (One, "The number.")
             }

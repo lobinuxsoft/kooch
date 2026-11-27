@@ -52,5 +52,5 @@ pub(super) fn load(resources: &mut Resources, guid: Option<Guid>) -> (u64, Optio
 /// The generator's source, when it is a `planet` shader.
 pub(super) fn source(resources: &Resources, handle: Handle<Shader>) -> Option<String> {
     let shader = resources.get::<Assets<Shader>>()?.get(handle)?;
-    (shader.kind == ShaderKind::Planet).then(|| shader.source.clone())
+    (shader.kind == ShaderKind::Terrain).then(|| shader.source.clone())
 }

@@ -16,7 +16,7 @@ the base shape is a sphere; a flat terrain is #1950.
 | `depth` | The deepest a cave may reach below it; under it the core is solid |
 | `voxel` | The finest detail the ground can have, next to the camera |
 | `lod_distance` | How far from the camera the finest voxels reach; each coarser level reaches twice as far. The levels are chosen again only when the camera crosses into another finest block (16 voxels across), or something else they depend on changes |
-| `generator` | A `planet` shader — usually a graph — that shapes the ground. Empty is the bare sphere |
+| `generator` | A `terrain` shader — usually a graph — that shapes the ground. Empty is the bare sphere |
 | `material` | What the ground is drawn with |
 
 Lengths are in the entity's local units: keep its scale at 1 and they are metres.
@@ -24,8 +24,8 @@ Lengths are in the entity's local units: keep its scale at 1 and they are metres
 ## The shape is a shader
 
 The ground is wherever the generator's signed distance crosses zero: negative is rock, positive is
-air. Write it as a [planet shader](shaders.md#planet), or set a shader graph's Output kind to
-`planet` and wire **Altitude** and **Planet Direction** through noise. Save the graph and the planet
+air. Write it as a [terrain shader](shaders.md#terrain), or set a shader graph's Output kind to
+`terrain` and wire **Sphere Base** and **Planet Direction** through noise. Save the graph and the planet
 regenerates; a generator that does not compile draws the bare sphere and says why in the Console.
 
 **`relief` and `depth` are a promise.** The engine looks for ground only between `radius − depth`
@@ -40,7 +40,7 @@ whose length depends on the position or a texture read make every block in the b
 ## Shaping the relief
 
 One noise gives hills everywhere. A planet with somewhere to go is a few height layers in metres,
-combined, and subtracted from **Altitude** at the end:
+combined, and subtracted from **Sphere Base** at the end:
 
 | Feature | Graph |
 |---|---|

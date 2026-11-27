@@ -20,12 +20,12 @@ const SHAPE: Shape = Shape {
 /// Altitude into `node`'s first input, `pins` typed on the rest, into a planet's output.
 fn planet(node: Node, pins: &[(usize, f32)]) -> (Graph, Generator) {
     let mut graph = Graph::new();
-    let altitude = graph.insert_node(Pos2::ZERO, Node::PlanetAltitude.into());
+    let altitude = graph.insert_node(Pos2::ZERO, Node::SphereBase.into());
     let added = graph.insert_node(Pos2::ZERO, node.into());
     let output = graph.insert_node(
         Pos2::ZERO,
         Node::ShaderOutput {
-            kind: "planet".to_owned(),
+            kind: "terrain".to_owned(),
         }
         .into(),
     );

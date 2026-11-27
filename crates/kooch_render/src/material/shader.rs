@@ -66,9 +66,9 @@ pub enum ShaderKind {
     /// The backdrop behind everything: defines `fn sky(SurfaceInput) -> vec4<f32>`, with the view
     /// direction in `world_normal` and its longitude and latitude in `uv` (#1900).
     Sky,
-    /// A planet's shape: defines `fn planet(PlanetInput) -> f32`, the signed distance in metres,
-    /// which `kooch_terrain` generates its voxel blocks from (#313).
-    Planet,
+    /// A terrain's shape: defines `fn planet(PlanetInput) -> f32`, the signed distance in metres,
+    /// which `kooch_terrain` generates its voxel blocks from (#313). Was `planet` until #2038.
+    Terrain,
 }
 
 impl ShaderKind {
@@ -81,7 +81,7 @@ impl ShaderKind {
         "transparent_unlit",
         "ui",
         "sky",
-        "planet",
+        "terrain",
     ];
 
     fn parse(name: &str) -> Option<Self> {
@@ -93,7 +93,7 @@ impl ShaderKind {
             "transparent_unlit" => Some(Self::TransparentUnlit),
             "ui" => Some(Self::Ui),
             "sky" => Some(Self::Sky),
-            "planet" => Some(Self::Planet),
+            "terrain" | "planet" => Some(Self::Terrain),
             _ => None,
         }
     }
@@ -114,8 +114,8 @@ impl ShaderKind {
     /// `surface` they call.
     fn glue(self) -> &'static str {
         match self {
-            // Neither the UI's frame nor the planet's generation reads any of this.
-            Self::Ui | Self::Planet => "",
+            // Neither the UI's frame nor the terrain's generation reads any of this.
+            Self::Ui | Self::Terrain => "",
             // A post-process has a frame of its own, so it needs no glue at all.
             Self::Surface | Self::PostProcess | Self::Sky => {
                 "const SURFACE_UNLIT: bool = false;\nconst SURFACE_TRANSPARENT: bool = false;\n"

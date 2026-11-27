@@ -295,9 +295,11 @@ pub(crate) enum Node {
     /// A uv as a point from the node's centre, in units of its height so a circle stays round.
     UiPoint,
 
-    // -- Planet ---------------------------------------------------------
-    /// Height above the planet's base sphere, in metres; exact at any radius (#313).
-    PlanetAltitude,
+    // -- Terrain --------------------------------------------------------
+    /// Signed height above the terrain's base sphere, in metres. The pass computes it in f64, so
+    /// it stays exact at any radius (#313, #2038).
+    #[serde(alias = "PlanetAltitude")]
+    SphereBase,
     /// From the planet's centre towards the sample, unit length.
     PlanetDirection,
     /// The sample from the planet's centre, in metres. f32, so coarse on a planet of real size.
@@ -375,7 +377,7 @@ pub(crate) const OUTPUT_KINDS: [&str; 8] = [
     "transparent_unlit",
     "ui",
     "sky",
-    "planet",
+    "terrain",
 ];
 
 /// Every node the menu offers, one per kind, in menu order.
@@ -393,7 +395,7 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::ViewDirection,
         Node::Time,
         Node::SceneColor,
-        Node::PlanetAltitude,
+        Node::SphereBase,
         Node::PlanetDirection,
         Node::PlanetPosition,
         Node::Float {

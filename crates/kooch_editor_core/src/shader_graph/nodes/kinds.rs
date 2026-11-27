@@ -12,12 +12,12 @@ impl Node {
                 && self.declared().is_none()
                 && !matches!(self, Self::SceneColor);
         }
-        if kind == "planet" {
+        if kind == "terrain" {
             return self.fits_planet();
         }
         match self {
             Self::Argument { .. } | Self::Result { .. } => false,
-            Self::PlanetAltitude | Self::PlanetDirection | Self::PlanetPosition => false,
+            Self::SphereBase | Self::PlanetDirection | Self::PlanetPosition => false,
             Self::Subgraph { reads, .. }
             | Self::Loop { reads, .. }
             | Self::Function { reads, .. } => reads

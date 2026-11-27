@@ -64,7 +64,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     let post = kind == "post_process";
     let sky = kind == "sky";
     let ui = kind == "ui";
-    let planet = kind == "planet";
+    let planet = kind == "terrain";
     let transparent = kind == "transparent" || kind == "transparent_unlit";
 
     let wires: HashMap<InPinId, OutPinId> = graph.wires().map(|(from, to)| (to, from)).collect();
