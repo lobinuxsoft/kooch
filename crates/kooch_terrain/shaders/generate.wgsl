@@ -23,7 +23,8 @@ struct Job {
     radius: f32,
     slot: u32,
     planet: u32,
-    _pad: u32,
+    // 1 for a plane: altitude is `y`, up is +Y (#1950).
+    plane: u32,
     // |anchor|² − radius² for the eight anchors the tile meets, x fastest, taken in f64 on the CPU:
     // what keeps the altitude exact far out.
     excess: array<f32, 8>,
@@ -73,6 +74,11 @@ fn generate_main(
         input.position = position;
         input.altitude = altitude;
         input.direction = position / max(distance, 1e-6);
+        // `y` is an integer times the voxel, exact without anchors.
+        if (job.plane == 1u) {
+            input.altitude = position.y;
+            input.direction = vec3<f32>(0.0, 1.0, 0.0);
+        }
         input.radius = job.radius;
         input.planet = job.planet;
         let sdf = clamp(planet(input) / job.voxel, -BAND, BAND);

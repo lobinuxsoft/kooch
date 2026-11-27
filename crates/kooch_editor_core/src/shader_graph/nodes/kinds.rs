@@ -17,7 +17,9 @@ impl Node {
         }
         match self {
             Self::Argument { .. } | Self::Result { .. } => false,
-            Self::SphereBase | Self::PlanetDirection | Self::PlanetPosition => false,
+            Self::SphereBase | Self::PlaneBase | Self::PlanetDirection | Self::PlanetPosition => {
+                false
+            }
             Self::Subgraph { reads, .. }
             | Self::Loop { reads, .. }
             | Self::Function { reads, .. } => reads

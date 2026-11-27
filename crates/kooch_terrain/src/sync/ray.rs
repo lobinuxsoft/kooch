@@ -131,7 +131,7 @@ impl PlanetRay<'_> {
 
     /// The part of the ray inside the planet's highest relief, from no earlier than its start.
     fn span(&self, ray: Ray) -> Option<(f64, f64)> {
-        let reach = self.shape.radius + self.shape.relief + voxel_size(self.shape, 0);
+        let reach = crate::lod::bounding(self.shape) + voxel_size(self.shape, 0);
         let a = ray.along.length_squared();
         let b = ray.from.dot(ray.along);
         let c = ray.from.length_squared() - reach * reach;

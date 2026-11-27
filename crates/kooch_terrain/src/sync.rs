@@ -24,7 +24,7 @@ use kooch_render::meshlet::GpuMeshes;
 use crate::component::Terrain;
 use crate::draw::{Blocks, Frame};
 use crate::eval::{Generator, may_cross};
-use crate::lod::{root_level, voxel_size};
+use crate::lod::{Base, root_level, voxel_size};
 use crate::rerun::{Inputs, Rerun};
 use crate::roster::{Roster, Signature};
 use crate::sight::Cone;
@@ -231,7 +231,14 @@ pub fn sync_planets(resources: &mut Resources) {
         .map_or(DEFAULT_CAPACITY, |usage| {
             crate::budget::blocks_within(state.pool.resident(), usage, DEFAULT_CAPACITY)
         });
-    fill_planets(&mut state.planets, &placed, &found, &viewers, &cones);
+    fill_planets(
+        &mut state.planets,
+        &placed,
+        &found,
+        &state.sources,
+        &viewers,
+        &cones,
+    );
     let revisions: Vec<u32> = (0..state.planets.len() as u32)
         .map(|p| state.terrain.as_ref().map_or(0, |t| t.revision(p)))
         .collect();
@@ -530,6 +537,7 @@ fn fill_planets(
     planets: &mut Planets,
     placed: &[Option<usize>],
     found: &[Found],
+    sources: &[Option<Arc<str>>],
     eyes: &[DVec3],
     cones: &[Cone],
 ) {
@@ -537,13 +545,17 @@ fn fill_planets(
     let nowhere = vec![DVec3::splat(f64::INFINITY); eyes.len()];
     let mut local = Vec::with_capacity(eyes.len());
     let mut turned = Vec::with_capacity(cones.len());
-    for at in placed {
+    for (index, at) in placed.iter().enumerate() {
         let limits = Limits {
             floor: FLOOR,
             ceiling: DEFAULT_CAPACITY,
         };
         let Some(planet) = at.and_then(|at| found.get(at)) else {
-            planets.push(Shape::from(&Terrain::default()), &nowhere, limits);
+            planets.push(
+                Shape::new(&Terrain::default(), Base::Sphere),
+                &nowhere,
+                limits,
+            );
             continue;
         };
         let to_local = planet.world.as_dmat4().inverse();
@@ -558,15 +570,22 @@ fn fill_planets(
             true => &local[..],
             false => &nowhere[..],
         };
-        planets.push_seen(Shape::from(&planet.planet), local, &turned, limits);
+        let base = sources
+            .get(index)
+            .and_then(Option::as_deref)
+            .map_or(Base::Sphere, Base::of);
+        planets.push_seen(Shape::new(&planet.planet, base), local, &turned, limits);
     }
 }
 
-impl From<&Terrain> for Shape {
-    /// Clamped where a zero would stall the octree: a zero voxel never stops splitting.
-    fn from(planet: &Terrain) -> Self {
+impl Shape {
+    /// `planet` measured from `base`, its generator's. Clamped where a zero would stall the
+    /// octree: a zero voxel never stops splitting.
+    pub fn new(planet: &Terrain, base: Base) -> Self {
         Self {
+            base,
             radius: f64::from(planet.radius.max(0.0)),
+            extent: f64::from(planet.extent.max(0.0)),
             relief: f64::from(planet.relief.max(0.0)),
             depth: f64::from(planet.depth.max(0.0)),
             voxel: f64::from(planet.voxel.max(0.01)),

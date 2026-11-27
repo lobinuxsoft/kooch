@@ -24,7 +24,7 @@ use kooch_physics::{PhysicsBody, PhysicsHolds, PhysicsWorld};
 use super::gpu::{GroundGpu, Order};
 use super::mesh_block;
 use super::patch::{self, Merged, Patch};
-use crate::lod::{bounds, voxel_size};
+use crate::lod::{Base, bounds, voxel_size};
 use crate::sync::{PlanetTerrain, gather};
 use crate::{BLOCK_SAMPLES, BlockKey, Shape};
 
@@ -217,7 +217,7 @@ fn reach(resources: &Resources, ground: &GroundColliders) -> Reached {
             continue;
         };
         let twin = state.twins.get(index as usize).copied().unwrap_or(0);
-        let shape = Shape::from(&planet.planet);
+        let shape = Shape::new(&planet.planet, Base::of(source));
         let basis = Mat3::from_mat4(planet.world).as_dmat3();
         if !(basis.determinant().abs() > 1e-12) {
             continue;
@@ -230,8 +230,12 @@ fn reach(resources: &Resources, ground: &GroundColliders) -> Reached {
         for body in &bodies {
             let local = to_local * (body.at - centre);
             let ring = (body.reach / side).ceil().max(1.0) as i32;
-            let altitude = local.length() - shape.radius;
             let extent = f64::from(ring + 1) * side;
+            let altitude = match shape.base {
+                Base::Sphere => local.length() - shape.radius,
+                Base::Plane if local.x.abs().max(local.z.abs()) > shape.extent + extent => continue,
+                Base::Plane => local.y,
+            };
             if altitude > shape.relief + extent || altitude < -shape.depth - extent {
                 continue;
             }

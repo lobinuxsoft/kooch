@@ -252,10 +252,11 @@ pub(super) fn focus_target(
     }
 
     let point = entity_world_position(resources, entity)?;
-    // A planet has no mesh of its own, only blocks: its sphere is what F frames (#1970).
+    // A terrain has no mesh of its own, only blocks: its sphere or plane is what F frames (#1970);
+    // the generator picks which, so the larger of the two.
     let planet = kooch_ecs::query::Query::<&kooch_terrain::Terrain>::new(resources)
         .get(entity)
-        .map(|planet| planet.radius + planet.relief);
+        .map(|planet| (planet.radius + planet.relief).max(planet.extent));
     let radius = planet.or_else(|| {
         crate::picking::entity_bounds(resources, entity)
             .map(|(min, max)| radius_around(point, min, max))

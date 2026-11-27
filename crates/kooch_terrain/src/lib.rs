@@ -45,7 +45,7 @@ pub use ground::{
     BlockState, BlockView, GroundColliders, GroundInvoker, GroundView, GroundWire, release_ground,
     sync_ground,
 };
-pub use lod::{Limits, Planets, Shape, View, choose_lods};
+pub use lod::{Base, Limits, Planets, Shape, View, choose_lods};
 pub use mesh::{CountJob, Cuts, MeshPass, Part, WriteJob};
 pub use plugin::PlanetPlugin;
 pub use pool::{BlockPool, Residency};
