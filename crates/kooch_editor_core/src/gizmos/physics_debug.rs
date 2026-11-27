@@ -5,10 +5,24 @@ use kooch_gizmos::GizmoBatch;
 use kooch_physics::backend::{DebugCategories, DebugLine};
 use kooch_physics::plugin::PhysicsWorld;
 
+/// The physics menu's switches: the solver's own, and the planet ground's.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct PhysicsSwitches {
+    pub(crate) solver: DebugCategories,
+    /// A planet's ground colliders, on the GPU (#1949).
+    pub(crate) ground: bool,
+}
+
+impl PhysicsSwitches {
+    pub(crate) fn any(&self) -> bool {
+        self.solver.any() || self.ground
+    }
+}
+
 /// Which parts of the solver the viewport is currently drawing.
 #[derive(Debug, Default)]
 pub(crate) struct PhysicsDebugOverlay {
-    pub(crate) categories: DebugCategories,
+    pub(crate) switches: PhysicsSwitches,
     /// Reused between frames so a live overlay is not sixty allocations a
     /// second. The batch copies what it needs.
     scratch: Vec<DebugLine>,
@@ -16,16 +30,16 @@ pub(crate) struct PhysicsDebugOverlay {
 
 impl PhysicsDebugOverlay {
     /// An overlay drawing the given categories.
-    pub(crate) fn new(categories: DebugCategories) -> Self {
+    pub(crate) fn new(switches: PhysicsSwitches) -> Self {
         Self {
-            categories,
+            switches,
             scratch: Vec::new(),
         }
     }
 
     /// Whether the overlay draws anything at all right now.
     pub(crate) fn is_active(&self) -> bool {
-        self.categories.any()
+        self.switches.solver.any()
     }
 }
 
@@ -38,7 +52,7 @@ pub(super) fn draw(resources: &mut Resources, batch: &mut GizmoBatch) {
     // switch down, nothing is walked and nothing crosses the wire.
     if overlay.is_active() {
         overlay.scratch.clear();
-        let categories = overlay.categories;
+        let categories = overlay.switches.solver;
         if !collect_remote(resources, categories, &mut overlay.scratch)
             && let Some(world) = resources.get::<PhysicsWorld>()
         {
@@ -50,6 +64,7 @@ pub(super) fn draw(resources: &mut Resources, batch: &mut GizmoBatch) {
             batch.line(line.start, line.end, line.color);
         }
     }
+    super::ground_debug::update(resources, overlay.switches.ground, batch);
     resources.insert(overlay);
 }
 

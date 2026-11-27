@@ -13,6 +13,9 @@ mod component;
 mod draw;
 mod eval;
 mod generate;
+// Only physics consumes the CPU mesh; the tests pin it either way.
+#[cfg(any(feature = "physics", test))]
+mod ground;
 mod lod;
 mod mesh;
 mod plugin;
@@ -36,6 +39,11 @@ pub use component::Planet;
 pub use eval::Generator;
 pub use generate::{
     BARE_SPHERE, Backlog, GeneratePass, Job, PLANET_INPUT_WGSL, validate_generator,
+};
+#[cfg(feature = "physics")]
+pub use ground::{
+    BlockState, BlockView, GroundColliders, GroundInvoker, GroundView, GroundWire, release_ground,
+    sync_ground,
 };
 pub use lod::{Limits, Planets, Shape, View, choose_lods};
 pub use mesh::{CountJob, Cuts, MeshPass, Part, WriteJob};

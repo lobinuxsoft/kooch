@@ -490,8 +490,14 @@ fn sync_archetypes(resources: &mut Resources, gained: &[Entity], orphans: &[Enti
 /// accumulated in [`Time`], independent of frame rate.
 pub fn physics_step_system(resources: &mut Resources) {
     let dt = Time::of(resources).fixed_delta_secs();
+    super::holds::apply(resources);
     if let Some(world) = resources.get_mut::<PhysicsWorld>() {
+        let started = std::time::Instant::now();
         world.backend_mut().step(dt);
+        let took = started.elapsed();
+        if took.as_micros() > 4000 {
+            tracing::trace!(target: "kooch_physics", step_us = took.as_micros() as u64, "slow step");
+        }
         // Immediately after the step that produced them, so a joint that
         // broke is already gone from the registry before anything reads it.
         super::joints::collect_broken_joints(world);

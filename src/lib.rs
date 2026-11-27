@@ -502,6 +502,8 @@ impl kooch_core::plugin::Plugin for PhysicsRemotePlugin {
                         }))
                     }),
                 );
+                #[cfg(feature = "planet")]
+                extensions.register("planet.ground_debug", Box::new(ground_debug));
             },
         );
     }
@@ -509,6 +511,50 @@ impl kooch_core::plugin::Plugin for PhysicsRemotePlugin {
     fn name(&self) -> &str {
         "PhysicsRemotePlugin"
     }
+}
+
+/// Serves the ground overlay (#1949): every block each call, and a block's triangles only when its
+/// id is past the caller's `since`, so a mesh crosses the wire once.
+#[cfg(all(feature = "physics", feature = "remote", feature = "planet"))]
+fn ground_debug(
+    resources: &mut kooch_core::resource::Resources,
+    payload: &kooch_remote::serde_json::Value,
+) -> Result<kooch_remote::serde_json::Value, String> {
+    use kooch_planet::BlockState;
+    use kooch_remote::serde_json::json;
+    let since = payload.get("since").and_then(|v| v.as_u64()).unwrap_or(0);
+    let Some(ground) = resources.get::<kooch_planet::GroundColliders>() else {
+        return Ok(json!({ "blocks": [], "meshes": [] }));
+    };
+    let view = ground.view(resources, since);
+    let blocks: Vec<_> = view
+        .blocks
+        .iter()
+        .map(|block| {
+            let state = match block.state {
+                BlockState::Built => "built",
+                BlockState::Empty => "empty",
+                BlockState::Pending => "pending",
+            };
+            json!({
+                "id": block.id,
+                "state": state,
+                "position": block.position.to_array(),
+                "rotation": block.rotation.to_array(),
+                "size": block.size.to_array(),
+            })
+        })
+        .collect();
+    let meshes: Vec<_> = view
+        .meshes
+        .iter()
+        .map(|(id, wire)| {
+            let vertices: Vec<f32> = wire.vertices.iter().flat_map(|v| v.to_array()).collect();
+            let indices: Vec<u32> = wire.indices.iter().flatten().copied().collect();
+            json!({ "id": id, "vertices": vertices, "indices": indices })
+        })
+        .collect();
+    Ok(json!({ "blocks": blocks, "meshes": meshes }))
 }
 
 /// Reads the five switches; a missing one is off, so clients name only what they want and newer

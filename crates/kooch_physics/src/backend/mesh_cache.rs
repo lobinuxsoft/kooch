@@ -72,6 +72,11 @@ impl ColliderMeshCache {
             .insert(guid, (self.next_epoch, Entry::Ready(mesh)));
     }
 
+    /// Forgets a mesh, so an owner that despawns does not leave its triangles behind.
+    pub fn remove(&mut self, key: impl Into<MeshKey>) {
+        self.entries.remove(&key.into());
+    }
+
     /// Publishes a reduced hull, bumping the epoch so bodies built from the full cloud rebuild.
     pub fn insert_hull(&mut self, key: impl Into<MeshKey>, hull: ConvexPart) {
         let guid = key.into();

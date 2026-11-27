@@ -28,10 +28,23 @@ impl Plugin for PlanetPlugin {
             }
             resources.insert(PlanetTerrain::default());
             resources.insert(PlanetStats::default());
+            #[cfg(feature = "physics")]
+            crate::ground::register(resources);
         });
         // After `PostUpdate`'s transform propagation, so a planet's blocks follow where it is
         // this frame, and before `PreRender` gathers what to draw.
         app.add_system(Stage::Gpu, sync_planets);
+        // `Update` runs before `PrePhysics` in a frame, so a block added here collides this step;
+        // the generators it reads are the ones `sync_planets` loaded last frame. Only while playing:
+        // nothing simulates in edit mode, so stopping takes every block back out.
+        #[cfg(feature = "physics")]
+        {
+            app.add_system(
+                Stage::Update,
+                kooch_core::run_state::run_if_playing(crate::ground::sync_ground),
+            );
+            app.add_system(Stage::Update, crate::ground::release_ground);
+        }
     }
 
     fn name(&self) -> &str {

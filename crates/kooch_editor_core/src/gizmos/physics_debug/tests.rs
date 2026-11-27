@@ -48,9 +48,12 @@ fn the_overlay_is_off_by_default() {
 fn switching_a_category_on_draws_geometry() {
     let mut resources = world_with_a_body();
     resources.insert(PhysicsDebugOverlay {
-        categories: DebugCategories {
-            collider_shapes: true,
-            ..Default::default()
+        switches: PhysicsSwitches {
+            solver: DebugCategories {
+                collider_shapes: true,
+                ..Default::default()
+            },
+            ground: false,
         },
         ..Default::default()
     });
@@ -67,7 +70,10 @@ fn switching_a_category_on_draws_geometry() {
 fn the_overlay_survives_a_frame() {
     let mut resources = world_with_a_body();
     resources.insert(PhysicsDebugOverlay {
-        categories: DebugCategories::all(),
+        switches: PhysicsSwitches {
+            solver: DebugCategories::all(),
+            ground: false,
+        },
         ..Default::default()
     });
     let mut batch = GizmoBatch::default();
@@ -87,7 +93,10 @@ fn the_overlay_survives_a_frame() {
 fn the_scratch_buffer_does_not_accumulate() {
     let mut resources = world_with_a_body();
     resources.insert(PhysicsDebugOverlay {
-        categories: DebugCategories::all(),
+        switches: PhysicsSwitches {
+            solver: DebugCategories::all(),
+            ground: false,
+        },
         ..Default::default()
     });
     let mut batch = GizmoBatch::default();
@@ -115,7 +124,10 @@ fn an_empty_world_draws_nothing() {
     let mut resources = Resources::new();
     resources.insert(PhysicsWorld::new(Box::new(RapierBackend::new())));
     resources.insert(PhysicsDebugOverlay {
-        categories: DebugCategories::all(),
+        switches: PhysicsSwitches {
+            solver: DebugCategories::all(),
+            ground: false,
+        },
         ..Default::default()
     });
     let mut batch = GizmoBatch::default();

@@ -157,6 +157,14 @@ pub(crate) fn render_game_view(
     // The same post-process the View panel runs: a game view without it would be the wrong preview
     // of the game (#1201).
     super::post::apply(gpu, &mut encoder, &game.target, resources);
+    crate::gizmos::render_ground_game(
+        gpu,
+        &mut encoder,
+        game.target.view(),
+        game.target.depth_view(),
+        camera.view_proj(aspect),
+        resources,
+    );
     crate::ui_preview::draw(
         gpu,
         &mut encoder,

@@ -7,6 +7,7 @@ pub mod grid;
 pub mod mesh;
 mod renderer;
 mod visualizer;
+mod wire_mesh;
 mod wireframe;
 
 pub use gizmos::Gizmos;
@@ -15,6 +16,7 @@ pub use renderer::{
     DEFAULT_LINE_THICKNESS, GizmoBatch, GizmoRenderer, GridPass, GridPlane, LineSegment,
 };
 pub use visualizer::{Visualizer, VisualizerRegistry};
+pub use wire_mesh::{WireMeshRenderer, WireMeshes};
 pub use wireframe::{MAX_CIRCLE_SEGMENTS, MIN_CIRCLE_SEGMENTS, segments_for};
 
 pub(crate) const GRID_SHADER: &str = include_str!("../shaders/grid.wgsl");

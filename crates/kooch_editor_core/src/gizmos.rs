@@ -9,6 +9,7 @@ mod collider;
 mod facing;
 mod gravity;
 mod grid;
+mod ground_debug;
 mod grounded;
 #[cfg(test)]
 pub(crate) mod harness;
@@ -19,7 +20,8 @@ pub(crate) mod shape_handles;
 mod spline;
 pub(crate) mod spline_handles;
 
-pub(crate) use physics_debug::PhysicsDebugOverlay;
+pub(crate) use ground_debug::{render as render_ground_debug, render_game as render_ground_game};
+pub(crate) use physics_debug::{PhysicsDebugOverlay, PhysicsSwitches};
 mod lights;
 mod parent_space;
 mod touching;

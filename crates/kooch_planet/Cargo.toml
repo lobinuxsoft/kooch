@@ -22,6 +22,17 @@ naga = { version = "30", features = ["wgsl-in"] }
 glam.workspace = true
 bytemuck.workspace = true
 tracing.workspace = true
+# The atlas's f16, so the CPU mesher reads the samples the GPU does.
+half = "2"
+# Ground colliders near bodies (#1949).
+kooch_physics = { workspace = true, optional = true }
+# The ground's colliders are meshed off the main thread.
+rayon = { workspace = true, optional = true }
+# A compute-only device where the frame has none: the editor's remote host.
+pollster = { workspace = true, optional = true }
+
+[features]
+physics = ["dep:kooch_physics", "dep:rayon", "dep:pollster"]
 
 [dev-dependencies]
 kooch_core = { workspace = true, features = ["test-adapter"] }

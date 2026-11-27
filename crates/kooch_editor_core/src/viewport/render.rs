@@ -146,6 +146,14 @@ pub(crate) fn render_viewport(
             mesh_gizmo_batch,
             target.size(),
         );
+        crate::gizmos::render_ground_debug(
+            gpu,
+            &mut encoder,
+            target.view(),
+            target.depth_view(),
+            target.size(),
+            resources,
+        );
     }
 
     gpu.queue().submit(Some(encoder.finish()));
