@@ -101,7 +101,7 @@ fn ask(resources: &Resources, since: u64) -> Option<Value> {
     let session = state.session.as_ref().filter(|_| state.is_connected())?;
     let payload = kooch_remote::serde_json::json!({ "since": since });
     match session.client().call(Method::Extension {
-        name: "planet.ground_debug".to_owned(),
+        name: "terrain.ground_debug".to_owned(),
         payload,
     }) {
         Ok(ResponseData::Extension { result, .. }) => Some(result),

@@ -191,7 +191,7 @@ pub fn sync_ground(resources: &mut Resources) {
     }
     resources.insert(ground);
     if !reached.waiting.is_empty() {
-        tracing::trace!(target: "kooch_planet", bodies = reached.waiting.len(), "waiting for ground");
+        tracing::trace!(target: "kooch_terrain", bodies = reached.waiting.len(), "waiting for ground");
     }
     if let Some(holds) = resources.get_mut::<PhysicsHolds>() {
         holds.set(reached.waiting);
@@ -404,7 +404,7 @@ fn mesh(ticket: Ticket, samples: &[f32]) -> Done {
     let meshed = mesh_block(samples, ticket.voxel);
     let mesh = meshed;
     tracing::trace!(
-        target: "kooch_planet",
+        target: "kooch_terrain",
         key = ?ticket.key,
         triangles = mesh.indices.len(),
         mesh_us = started.elapsed().as_micros() as u64,

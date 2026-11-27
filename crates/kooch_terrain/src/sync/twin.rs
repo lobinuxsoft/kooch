@@ -21,7 +21,7 @@ pub(super) fn set_generator(state: &mut PlanetTerrain, index: u32, source: &str)
         state.twins.resize(at + 1, 0);
     }
     state.generators[at] = Generator::parse(source)
-        .inspect_err(|why| tracing::debug!(target: "kooch_planet", "no CPU generator: {why}"))
+        .inspect_err(|why| tracing::debug!(target: "kooch_terrain", "no CPU generator: {why}"))
         .ok()
         .map(Arc::new);
     state.sources[at] = Some(Arc::from(source));

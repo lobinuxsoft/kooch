@@ -2578,10 +2578,10 @@ dependencies = [
  "kooch_input",
  "kooch_lighting",
  "kooch_physics",
- "kooch_planet",
  "kooch_plugin_api",
  "kooch_remote",
  "kooch_render",
+ "kooch_terrain",
  "kooch_ui",
  "kooch_window",
  "kooch_world",
@@ -2741,9 +2741,9 @@ dependencies = [
  "kooch_lighting",
  "kooch_pack",
  "kooch_physics",
- "kooch_planet",
  "kooch_remote",
  "kooch_render",
+ "kooch_terrain",
  "kooch_ui",
  "kooch_window",
  "kooch_world",
@@ -2857,27 +2857,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kooch_planet"
-version = "0.98.233"
-dependencies = [
- "bytemuck",
- "glam 0.33.12",
- "half",
- "kooch_core",
- "kooch_ecs",
- "kooch_ecs_macros",
- "kooch_physics",
- "kooch_render",
- "kooch_world",
- "naga",
- "pollster 1.0.1",
- "profiling",
- "rayon",
- "tracing",
- "wgpu",
-]
-
-[[package]]
 name = "kooch_plugin_api"
 version = "0.98.233"
 
@@ -2932,6 +2911,27 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "vello_svg",
+ "wgpu",
+]
+
+[[package]]
+name = "kooch_terrain"
+version = "0.98.233"
+dependencies = [
+ "bytemuck",
+ "glam 0.33.12",
+ "half",
+ "kooch_core",
+ "kooch_ecs",
+ "kooch_ecs_macros",
+ "kooch_physics",
+ "kooch_render",
+ "kooch_world",
+ "naga",
+ "pollster 1.0.1",
+ "profiling",
+ "rayon",
+ "tracing",
  "wgpu",
 ]
 

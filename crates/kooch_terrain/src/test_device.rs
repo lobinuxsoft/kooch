@@ -11,7 +11,7 @@ pub fn try_acquire() -> Option<(wgpu::Device, wgpu::Queue)> {
         return None;
     }
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("kooch_planet::test_device"),
+        label: Some("kooch_terrain::test_device"),
         required_features: required,
         required_limits: kooch_core::gpu::elevated_compute_limits(&adapter),
         memory_hints: wgpu::MemoryHints::Performance,

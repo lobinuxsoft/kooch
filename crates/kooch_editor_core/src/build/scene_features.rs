@@ -48,7 +48,7 @@ pub(crate) fn missing_in(
     let mut found: Vec<Missing> = Vec::new();
     for (scene, text) in scenes {
         for component in components(text) {
-            let krate = component.split("::").next().unwrap_or_default();
+            let krate = current_crate(component.split("::").next().unwrap_or_default());
             if !optional.contains(krate) || enabled.contains(krate) {
                 continue;
             }
@@ -216,6 +216,17 @@ fn feature_for(engine: &toml::Table, krate: &str) -> Option<String> {
     // The narrowest: `blockmesh`, not a feature that happens to pull it in among others.
     candidates.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
     candidates.into_iter().next().map(|(name, _)| name)
+}
+
+/// Engine crates renamed since a scene could have been saved, old name first.
+const RENAMED: &[(&str, &str)] = &[("kooch_planet", "kooch_terrain")];
+
+/// The crate a saved type name's prefix means today.
+fn current_crate(krate: &str) -> &str {
+    RENAMED
+        .iter()
+        .find(|(old, _)| *old == krate)
+        .map_or(krate, |(_, new)| new)
 }
 
 /// The engine component types a scene names, `kooch_blockmesh::block::Block`.

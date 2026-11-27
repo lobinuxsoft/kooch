@@ -61,7 +61,7 @@ impl<T> GroundGpu<T> {
         let flights = (0..SLOTS)
             .map(|_| Flight {
                 staging: device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("kooch_planet::ground::staging"),
+                    label: Some("kooch_terrain::ground::staging"),
                     size,
                     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                     mapped_at_creation: false,
@@ -96,7 +96,7 @@ impl<T> GroundGpu<T> {
             if !self.passes.contains_key(&pass) {
                 let compiled = GeneratePass::new(&self.device, &order.source, &self.atlas, SLOTS)
                     .inspect_err(|why| {
-                        tracing::warn!(target: "kooch_planet", "ground pass does not compile: {why}");
+                        tracing::warn!(target: "kooch_terrain", "ground pass does not compile: {why}");
                     })
                     .ok();
                 self.passes
@@ -123,7 +123,7 @@ impl<T> GroundGpu<T> {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("kooch_planet::ground"),
+                label: Some("kooch_terrain::ground"),
             });
         for (pass, jobs) in &jobs {
             if let Some(Some(pass)) = self.passes.get(pass) {
@@ -198,15 +198,15 @@ fn headless() -> Option<(wgpu::Device, wgpu::Queue)> {
         force_fallback_adapter: false,
         apply_limit_buckets: false,
     }))
-    .inspect_err(|why| tracing::warn!(target: "kooch_planet", "no GPU for the ground: {why}"))
+    .inspect_err(|why| tracing::warn!(target: "kooch_terrain", "no GPU for the ground: {why}"))
     .ok()?;
     let required = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
     if !adapter.features().contains(required) {
-        tracing::warn!(target: "kooch_planet", "the GPU cannot store the ground's r16float tiles");
+        tracing::warn!(target: "kooch_terrain", "the GPU cannot store the ground's r16float tiles");
         return None;
     }
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("kooch_planet::ground"),
+        label: Some("kooch_terrain::ground"),
         required_features: required,
         required_limits: kooch_core::gpu::elevated_compute_limits(&adapter),
         memory_hints: wgpu::MemoryHints::Performance,
@@ -214,7 +214,7 @@ fn headless() -> Option<(wgpu::Device, wgpu::Queue)> {
         experimental_features: wgpu::ExperimentalFeatures::default(),
     }))
     .inspect_err(
-        |why| tracing::warn!(target: "kooch_planet", "no GPU device for the ground: {why}"),
+        |why| tracing::warn!(target: "kooch_terrain", "no GPU device for the ground: {why}"),
     )
     .ok()
 }

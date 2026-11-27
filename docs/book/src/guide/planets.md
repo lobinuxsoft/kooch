@@ -4,8 +4,9 @@ A planet is one component: put a `Terrain` on an entity and the engine draws a g
 around, generated on the GPU from the planet's shape. Its centre is the entity's position, and it
 turns and moves with the entity without regenerating anything.
 
-Planets need the `planet` feature. A scene that uses one turns it on for the game build by itself.
-Scenes saved when the component was called `Planet` still load; saving them writes `Terrain`. Today
+Terrains need the `terrain` feature (crate `kooch_terrain`). A scene that uses one turns it on for
+the game build by itself. The older names still work: a manifest that asks for `planet`, and scenes
+saved when the component was `kooch_planet::component::Planet`. Saving writes the new name. Today
 the base shape is a sphere; a flat terrain is #1950.
 
 | Field | What it does |

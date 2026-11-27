@@ -120,11 +120,11 @@ pub(crate) fn find_editor_camera_entity(resources: &Resources) -> Option<kooch_e
 /// only the game's while playing.
 pub fn planet_viewers_system(resources: &mut Resources) {
     let viewers = match find_editor_camera_entity(resources) {
-        None => kooch_planet::PlanetViewers::Every,
+        None => kooch_terrain::PlanetViewers::Every,
         Some(camera) if crate::ui_preview::remote_playing(resources) => {
-            kooch_planet::PlanetViewers::Except(camera)
+            kooch_terrain::PlanetViewers::Except(camera)
         }
-        Some(camera) => kooch_planet::PlanetViewers::Only(camera),
+        Some(camera) => kooch_terrain::PlanetViewers::Only(camera),
     };
     resources.insert(viewers);
 }

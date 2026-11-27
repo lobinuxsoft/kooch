@@ -167,12 +167,12 @@ impl MeshPass {
             write,
             write_layout,
             counting: buffer(
-                "kooch_planet::mesh::counting",
+                "kooch_terrain::mesh::counting",
                 u64::from(batch) * size_of::<CountJob>() as u64,
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             ),
             counts: buffer(
-                "kooch_planet::mesh::counts",
+                "kooch_terrain::mesh::counts",
                 counts_bytes(batch),
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             ),
@@ -197,7 +197,7 @@ impl MeshPass {
         }
         queue.write_buffer(&self.counting, 0, bytemuck::cast_slice(jobs));
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("kooch_planet::mesh::count"),
+            label: Some("kooch_terrain::mesh::count"),
             layout: &self.count_layout,
             entries: &[
                 atlas_entry(atlas),
@@ -206,7 +206,7 @@ impl MeshPass {
             ],
         });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("kooch_planet::mesh::count"),
+            label: Some("kooch_terrain::mesh::count"),
             timestamp_writes: timestamps,
         });
         pass.set_pipeline(&self.count);
@@ -231,7 +231,7 @@ impl MeshPass {
         let bytes = std::mem::size_of_val(jobs) as u64;
         if self.jobs.as_ref().is_none_or(|held| held.size() < bytes) {
             self.jobs = Some(device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("kooch_planet::mesh::jobs"),
+                label: Some("kooch_terrain::mesh::jobs"),
                 size: bytes.next_power_of_two(),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
@@ -242,7 +242,7 @@ impl MeshPass {
         };
         queue.write_buffer(held, 0, bytemuck::cast_slice(jobs));
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("kooch_planet::mesh::write"),
+            label: Some("kooch_terrain::mesh::write"),
             layout: &self.write_layout,
             entries: &[
                 atlas_entry(atlas),
@@ -254,11 +254,11 @@ impl MeshPass {
             ],
         });
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("kooch_planet::mesh::write"),
+            label: Some("kooch_terrain::mesh::write"),
         });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("kooch_planet::mesh::write"),
+                label: Some("kooch_terrain::mesh::write"),
                 timestamp_writes: timestamps,
             });
             pass.set_pipeline(&self.write);
