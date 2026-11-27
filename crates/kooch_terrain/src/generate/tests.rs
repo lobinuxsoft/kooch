@@ -9,6 +9,8 @@ const EARTH: f64 = 6_371_000.0;
 
 fn earth() -> Shape {
     Shape {
+        base: crate::lod::Base::Sphere,
+        extent: 0.0,
         radius: EARTH,
         relief: 9_000.0,
         depth: 2_000.0,

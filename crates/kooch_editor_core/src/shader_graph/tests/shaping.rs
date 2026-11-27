@@ -5,11 +5,13 @@ use bevy_lookup_curve::{Knot, KnotInterpolation, LookupCurve};
 use egui::Pos2;
 use egui_snarl::{InPinId, OutPinId};
 use kooch_render::material::Shader;
-use kooch_terrain::{Generator, Shape};
+use kooch_terrain::{Base, Generator, Shape};
 
 use crate::shader_graph::*;
 
 const SHAPE: Shape = Shape {
+    base: Base::Sphere,
+    extent: 0.0,
     radius: 10.0,
     relief: 10.0,
     depth: 10.0,
@@ -164,4 +166,40 @@ fn shaping_nodes_compile_in_a_surface() {
         kooch_render::meshlet::validate_surface(&shader.params_wgsl(), &shader.source)
             .unwrap_or_else(|why| panic!("{name} does not compile: {why}"));
     }
+}
+
+/// 🔴 The base line is all that tells the engine a generator is flat: without it, a plane terrain
+/// is built as a sphere and draws nothing where its ground is (#1950).
+#[test]
+fn a_plane_base_names_itself() {
+    let mut graph = Graph::new();
+    let base = graph.insert_node(Pos2::ZERO, Node::PlaneBase.into());
+    let output = graph.insert_node(
+        Pos2::ZERO,
+        Node::ShaderOutput {
+            kind: "terrain".to_owned(),
+        }
+        .into(),
+    );
+    graph.connect(
+        OutPinId {
+            node: base,
+            output: 0,
+        },
+        InPinId {
+            node: output,
+            input: 0,
+        },
+    );
+    let source = generate(&graph).unwrap();
+    assert_eq!(
+        Base::of(&Shader::parse(&source).unwrap().source),
+        Base::Plane
+    );
+
+    graph.insert_node(Pos2::ZERO, Node::SphereBase.into());
+    assert!(
+        generate(&graph).is_err(),
+        "two base nodes name no one shape"
+    );
 }

@@ -6,12 +6,13 @@ turns and moves with the entity without regenerating anything.
 
 Terrains need the `terrain` feature (crate `kooch_terrain`). A scene that uses one turns it on for
 the game build by itself. The older names still work: a manifest that asks for `planet`, and scenes
-saved when the component was `kooch_planet::component::Planet`. Saving writes the new name. Today
-the base shape is a sphere; a flat terrain is #1950.
+saved when the component was `kooch_planet::component::Planet`. Saving writes the new name. The base
+shape is a sphere or a plane, and the generator picks it: see [Flat terrain](#flat-terrain).
 
 | Field | What it does |
 |---|---|
-| `radius` | Sea level: where the ground is with no generator |
+| `radius` | Sea level of a sphere: where the ground is with no generator |
+| `extent` | Half the side of a plane: the ground spans this far either side of the centre on X and Z. A sphere ignores it |
 | `relief` | The highest the generator may raise the ground above `radius` |
 | `depth` | The deepest a cave may reach below it; under it the core is solid |
 | `voxel` | The finest detail the ground can have, next to the camera |
@@ -36,6 +37,19 @@ blocks, so keep them as small as the shape allows.
 generator on the CPU over the whole block at once and skips it when the result cannot cross zero.
 `clamp`, `min`, `max`, `smoothstep` and noise that stays in a known range all help; a `tan`, a loop
 whose length depends on the position or a texture read make every block in the band a candidate.
+
+## Flat terrain
+
+A level that is not a planet is the same component over a plane. In the generator's graph, use
+**Plane Base** where a planet uses **Sphere Base**: it is the height above the terrain's local XZ
+plane, and **Planet Direction** reads `+Y` there. Every relief recipe below works unchanged. The
+ground spans `extent` either side of the entity on X and Z, and `relief` and `depth` bound it in Y;
+streaming, caves and the ground colliders work as on a planet.
+
+A graph holds one base node: with both, it does not save. The node is how the engine knows the
+shape, through a `// base: plane` line the graph writes; a hand-written generator adds that line
+itself. A plane has no core, so nothing under it is hidden from the camera the way a planet's far
+side is. Gravity is the project's, not the terrain's.
 
 ## Shaping the relief
 

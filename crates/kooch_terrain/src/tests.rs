@@ -25,6 +25,8 @@ fn solar_system(height: f64) -> Planets {
     for (_, radius, distance) in SOLAR_SYSTEM {
         let radius = radius * 1000.0;
         let shape = Shape {
+            base: crate::lod::Base::Sphere,
+            extent: 0.0,
             radius,
             relief: radius * 0.0015,
             depth: 2000.0,

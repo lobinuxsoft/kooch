@@ -30,6 +30,8 @@ fn both_passes_validate() {
 fn sphere(voxel: f64, level: u8) -> (Planets, Vec<BlockKey>) {
     let mut planets = Planets::default();
     let shape = Shape {
+        base: crate::lod::Base::Sphere,
+        extent: 0.0,
         radius: RADIUS,
         relief: 1.0,
         depth: 1.0,

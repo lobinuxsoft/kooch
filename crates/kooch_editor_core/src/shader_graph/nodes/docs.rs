@@ -91,8 +91,12 @@ impl Node {
                 "Signed metres above the terrain's base sphere of `radius`, exact at any radius. \
                  Terrain shaders only."
             }
+            Self::PlaneBase => {
+                "Signed metres above the terrain's base plane, its local y, inside the Terrain's \
+                 extent. Terrain shaders only."
+            }
             Self::PlanetDirection => {
-                "From the planet's centre towards the point, unit length. Terrain shaders only."
+                "From the centre towards the point, unit length; +Y on a plane. Terrain shaders only."
             }
             Self::PlanetPosition => {
                 "The point from the planet's centre, in metres. Terrain shaders only; coarse on a \
@@ -506,7 +510,7 @@ impl Node {
             Self::Sway => (Two, "The two waves."),
             Self::WorldPosition | Self::WorldNormal | Self::ViewDirection => (Three, self.about()),
             Self::PlanetDirection | Self::PlanetPosition => (Three, self.about()),
-            Self::SphereBase => (One, self.about()),
+            Self::SphereBase | Self::PlaneBase => (One, self.about()),
             Self::Float { .. } | Self::Int { .. } | Self::ConstFloat(_) | Self::ConstInt(_) => {
                 (One, "The number.")
             }

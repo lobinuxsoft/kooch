@@ -303,6 +303,9 @@ fn planet(input: PlanetInput) -> f32 {
 }
 ```
 
+A generator over a plane adds `// base: plane` under its kind line: then `altitude` is the local `y`
+and `direction` is `+Y`. Without it the base is a sphere.
+
 `PlanetInput` carries `altitude` (metres above the base sphere), `direction` (from the centre, unit
 length), `position` (from the centre, in metres), `radius` and `planet`. **Use `altitude` and
 `direction`**: they stay exact on a planet of any size. `position` is f32, so on a planet the size
@@ -312,8 +315,8 @@ The kind was called `planet` until #2038; files that still say so load, and the 
 the name `planet`.
 
 A graph writes this kind too: set the Output's kind to `terrain`. Its one input is `distance`;
-unwired, it is the bare sphere. **Sphere Base** (`altitude`: one node per base shape, its measures
-on the `Terrain` component), **Planet Direction** and **Planet Position** are under
+unwired, it is the bare sphere. **Sphere Base** and **Plane Base** (`altitude`: one node per base
+shape, its measures on the `Terrain` component), **Planet Direction** and **Planet Position** are under
 **Input**, and every fractal noise samples in 3D, its third axis read from the coordinate's `z`.
 What has nothing to read in compute — uv, normals, the camera, time, textures, material parameters —
 stops the graph with a message that names it. The preview says it has nothing to draw.

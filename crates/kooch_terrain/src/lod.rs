@@ -15,11 +15,35 @@ use crate::sight::Cone;
 /// the target, so a block at the threshold does not split and merge on alternate frames.
 const KEEP_SPLIT: f64 = 1.5;
 
+/// The shape a generator's distance is measured from: its `// base:` line (#1950).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Base {
+    /// A sphere of `radius` around the centre; altitude is the distance to it.
+    #[default]
+    Sphere,
+    /// The local XZ plane, `extent` either side of the centre; altitude is `y`, up is `+Y`.
+    Plane,
+}
+
+impl Base {
+    /// What a generator's source names, `// base: plane`; a sphere when it says nothing.
+    pub fn of(source: &str) -> Self {
+        let plane = source
+            .lines()
+            .take_while(|line| line.starts_with("//") || line.starts_with("/*"))
+            .any(|line| line.trim() == "// base: plane");
+        if plane { Self::Plane } else { Self::Sphere }
+    }
+}
+
 /// What a planet is made of, in metres.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Shape {
-    /// Sea-level radius.
+    pub base: Base,
+    /// Sea-level radius, for a sphere.
     pub radius: f64,
+    /// Half the side of a plane.
+    pub extent: f64,
     /// Highest relief above the radius.
     pub relief: f64,
     /// Deepest cave below the radius; the core under it is solid and needs no blocks.
@@ -250,7 +274,7 @@ impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'
     /// The root blocks of a planet in view: eight around its centre, those that touch the shell.
     fn seed(&mut self, planet: usize, heap: &mut BinaryHeap<Node>) {
         let shape = self.planets.shape[planet];
-        let outer = shape.radius + shape.relief;
+        let outer = outer(&shape);
         let distance = self
             .planets
             .viewers(planet)
@@ -397,6 +421,10 @@ impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'
     fn hidden(&self, key: BlockKey, kept: bool) -> bool {
         let planet = key.planet as usize;
         let shape = self.planets.shape[planet];
+        // A plane has no core to hide behind.
+        if shape.base == Base::Plane {
+            return false;
+        }
         let (min, max) = bounds(&shape, key);
         let center = (min + max) * 0.5;
         let grow = if kept { KEEP_SPLIT } else { 1.0 };
@@ -432,9 +460,27 @@ fn behind_core(viewer: DVec3, point: DVec3, reach: f64) -> bool {
     t > 0.0 && t < 1.0 && (viewer + along * t).length() < reach
 }
 
-/// The coarsest level: the first whose block reaches past the relief from the centre.
+/// How far from the centre the ground can reach, on any axis.
+pub(crate) fn outer(shape: &Shape) -> f64 {
+    match shape.base {
+        Base::Sphere => shape.radius + shape.relief,
+        Base::Plane => shape.extent.max(shape.relief).max(shape.depth),
+    }
+}
+
+/// The radius of a sphere around the centre that holds all the ground.
+pub(crate) fn bounding(shape: &Shape) -> f64 {
+    match shape.base {
+        Base::Sphere => shape.radius + shape.relief,
+        Base::Plane => {
+            DVec3::new(shape.extent, shape.relief.max(shape.depth), shape.extent).length()
+        }
+    }
+}
+
+/// The coarsest level: the first whose block reaches past the ground from the centre.
 pub(crate) fn root_level(shape: &Shape) -> u8 {
-    let outer = shape.radius + shape.relief;
+    let outer = outer(shape);
     let mut level = 0;
     while level < 62 && block_side(shape, level) < outer {
         level += 1;
@@ -445,8 +491,19 @@ pub(crate) fn root_level(shape: &Shape) -> u8 {
 /// Whether a block holds any of the band between the deepest cave and the highest relief; a block
 /// wholly in the core or wholly in the sky is uniform and needs no slot.
 fn touches_shell(shape: &Shape, min: DVec3, max: DVec3) -> bool {
-    let (near, far) = radial(min, max);
-    near <= shape.radius + shape.relief && far >= shape.radius - shape.depth
+    match shape.base {
+        Base::Sphere => {
+            let (near, far) = radial(min, max);
+            near <= shape.radius + shape.relief && far >= shape.radius - shape.depth
+        }
+        Base::Plane => {
+            let inside = |lo: f64, hi: f64| lo <= shape.extent && hi >= -shape.extent;
+            min.y <= shape.relief
+                && max.y >= -shape.depth
+                && inside(min.x, max.x)
+                && inside(min.z, max.z)
+        }
+    }
 }
 
 /// The nearest and farthest a box gets from the planet's centre.

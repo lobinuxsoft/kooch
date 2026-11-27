@@ -115,6 +115,9 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
 
     let mut source = String::new();
     let _ = writeln!(source, "// kind: {kind}");
+    if planet && plane_base(graph)? {
+        let _ = writeln!(source, "// base: plane");
+    }
     source.push_str(&use_lines(graph));
     let _ = writeln!(source, "{}", embed(graph)?);
     let _ = writeln!(
@@ -276,5 +279,17 @@ fn literal(width: u32, value: [f32; 4]) -> String {
     match width {
         1 => numbers[0].clone(),
         _ => format!("{}({})", wgsl_type(width), numbers.join(", ")),
+    }
+}
+
+/// Whether a terrain graph measures from a plane: one base node per graph, since the engine builds
+/// the octree, the colliders and "up" around the one it names (#1950).
+fn plane_base(graph: &Graph) -> Result<bool, String> {
+    let has = |wanted: &Node| graph.node_ids().any(|(_, cell)| cell.node == *wanted);
+    match (has(&Node::SphereBase), has(&Node::PlaneBase)) {
+        (true, true) => {
+            Err("a terrain graph holds one base node: Sphere Base or Plane Base".into())
+        }
+        (_, plane) => Ok(plane),
     }
 }

@@ -121,6 +121,7 @@ impl Node {
             Self::SceneColor => "Scene Color".to_owned(),
             Self::WorldPosition => "World Position".to_owned(),
             Self::SphereBase => "Sphere Base".to_owned(),
+            Self::PlaneBase => "Plane Base".to_owned(),
             Self::PlanetDirection => "Planet Direction".to_owned(),
             Self::PlanetPosition => "Planet Position".to_owned(),
             Self::WorldNormal => "World Normal".to_owned(),
@@ -231,6 +232,7 @@ impl Node {
             | Self::UiBorderColor
             | Self::UiSize
             | Self::SphereBase
+            | Self::PlaneBase
             | Self::PlanetDirection
             | Self::PlanetPosition
             | Self::WorldPosition
@@ -472,6 +474,7 @@ impl Node {
             | Self::WorldNormal
             | Self::ViewDirection
             | Self::SphereBase
+            | Self::PlaneBase
             | Self::PlanetDirection
             | Self::PlanetPosition
             | Self::Time

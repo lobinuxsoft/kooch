@@ -39,6 +39,8 @@ fn planet(input: PlanetInput) -> f32 {
 
 fn small() -> Shape {
     Shape {
+        base: crate::lod::Base::Sphere,
+        extent: 0.0,
         radius: 200.0,
         relief: 12.0,
         depth: 4.0,

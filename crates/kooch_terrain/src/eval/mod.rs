@@ -17,7 +17,7 @@ use glam::DVec3;
 use naga::{Expression as E, Function, Handle, Module};
 
 use crate::PLANET_INPUT_WGSL;
-use crate::lod::Shape;
+use crate::lod::{Base, Shape};
 use num::{Mode, Num, to_f32};
 use run::Machine;
 use value::{Kind, Lanes, Value, zero};
@@ -75,10 +75,14 @@ impl Generator {
     /// The SDF at `point`, as the GPU computes it to f32 rounding.
     pub fn sample(&self, shape: &Shape, point: DVec3, planet: u32) -> Option<f32> {
         let distance = point.length();
+        let (altitude, up) = match shape.base {
+            Base::Sphere => (distance - shape.radius, point / distance.max(1e-6)),
+            Base::Plane => (point.y, DVec3::Y),
+        };
         let input = PlanetValue {
             position: point.to_array().map(Num::point),
-            altitude: Num::point(distance - shape.radius),
-            direction: (point / distance.max(1e-6)).to_array().map(Num::point),
+            altitude: Num::point(altitude),
+            direction: up.to_array().map(Num::point),
             radius: shape.radius,
             planet,
         };
@@ -152,12 +156,22 @@ fn range_input(
     max: DVec3,
     planet: u32,
 ) -> Result<Value, Fault> {
+    let position = [0, 1, 2].map(|i| Num::new(min[i], max[i]));
+    if shape.base == Base::Plane {
+        return PlanetValue {
+            position,
+            altitude: Num::new(min.y, max.y),
+            direction: [0.0, 1.0, 0.0].map(Num::point),
+            radius: shape.radius,
+            planet,
+        }
+        .value(module, Mode::Range);
+    }
     let (near, far) = crate::lod::radial(min, max);
     // The GPU's altitude is exact to a few f32 steps of the excess it starts from.
     let slack = 1e-5 * (near - shape.radius).abs().max((far - shape.radius).abs()) + 1e-3;
     let altitude = Num::new(near - shape.radius, far - shape.radius).pad(slack);
     let distance = Num::new(near.max(1e-6), far.max(1e-6));
-    let position = [0, 1, 2].map(|i| Num::new(min[i], max[i]));
     let direction = position.map(|p| {
         let n = p.div(distance);
         n.max(Num::point(-1.0)).min(Num::point(1.0))

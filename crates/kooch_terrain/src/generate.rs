@@ -73,7 +73,8 @@ pub struct Job {
     pub radius: f32,
     pub slot: u32,
     pub planet: u32,
-    pub _pad: u32,
+    /// 1 for a plane, whose altitude is `y`: see [`crate::lod::Base`].
+    pub plane: u32,
     /// Per [`anchors`] of the tile, `|anchor|² − radius²`.
     pub excess: [f32; 8],
 }
@@ -94,7 +95,7 @@ impl Job {
             radius: shape.radius as f32,
             slot,
             planet: key.planet,
-            _pad: 0,
+            plane: u32::from(shape.base == crate::lod::Base::Plane),
             excess,
         }
     }

@@ -161,7 +161,8 @@ fn reach(resources: &Resources, origin: DVec3, focus: DVec3) -> f32 {
     kooch_ecs::query::Query::<(&kooch_terrain::Terrain, &GlobalTransform)>::new(resources)
         .for_each(|(planet, global)| {
             let centre = origin + global.matrix.w_axis.truncate().as_dvec3();
-            let outer = f64::from(planet.radius + planet.relief);
+            // The generator picks sphere or plane; the larger of the two holds either.
+            let outer = f64::from((planet.radius + planet.relief).max(planet.extent));
             far = far.max((centre - focus).length() + outer * 4.0);
         });
     far.min(f64::from(f32::MAX)) as f32

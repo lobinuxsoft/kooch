@@ -300,6 +300,8 @@ pub(crate) enum Node {
     /// it stays exact at any radius (#313, #2038).
     #[serde(alias = "PlanetAltitude")]
     SphereBase,
+    /// Signed height above the terrain's base plane, its local `y`, in metres (#1950).
+    PlaneBase,
     /// From the planet's centre towards the sample, unit length.
     PlanetDirection,
     /// The sample from the planet's centre, in metres. f32, so coarse on a planet of real size.
@@ -396,6 +398,7 @@ pub(crate) fn palette() -> Vec<Node> {
         Node::Time,
         Node::SceneColor,
         Node::SphereBase,
+        Node::PlaneBase,
         Node::PlanetDirection,
         Node::PlanetPosition,
         Node::Float {
