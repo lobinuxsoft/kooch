@@ -576,6 +576,7 @@ fn fill_planets(
             .and_then(Option::as_deref)
             .map_or(Base::Sphere, Base::of);
         planets.push_seen(Shape::new(&planet.planet, base), local, &turned, limits);
+        planets.hold(crate::stamp::reaches(&planet.planet.stamps, base));
     }
 }
 
@@ -591,6 +592,7 @@ impl Shape {
             depth: f64::from(planet.depth.max(0.0)),
             voxel: f64::from(planet.voxel.max(0.01)),
             lod_distance: f64::from(planet.lod_distance.max(0.0)),
+            reach: 0.0,
         }
         .hold(&planet.stamps)
     }

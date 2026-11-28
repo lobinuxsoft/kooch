@@ -361,27 +361,20 @@ fn reach(stamp: &Stamp, base: Base) -> (DVec3, DVec3) {
     (placed.centre - r, placed.centre + r)
 }
 
+/// The boxes every enabled stamp's shape and blend stay inside, in the terrain's space.
+pub(crate) fn reaches(stamps: &[Stamp], base: Base) -> impl Iterator<Item = (DVec3, DVec3)> + '_ {
+    stamps
+        .iter()
+        .filter(|stamp| stamp.enabled)
+        .map(move |stamp| reach(stamp, base))
+}
+
 impl Shape {
-    /// Grown so every stamp fits: the octree has no blocks past relief and depth, and a plane
-    /// none past its extent.
+    /// With `reach` covering every stamp. Relief and depth stay as authored: grown, they would
+    /// put a wide stamp's height around the whole planet (#2055).
     pub(crate) fn hold(mut self, stamps: &[Stamp]) -> Self {
-        for stamp in stamps.iter().filter(|stamp| stamp.enabled) {
-            let (min, max) = reach(stamp, self.base);
-            match self.base {
-                Base::Sphere => {
-                    let centre = (min + max) * 0.5;
-                    let r = (max.x - min.x) * 0.5;
-                    let at = centre.length();
-                    self.relief = self.relief.max(at + r - self.radius);
-                    self.depth = self.depth.max(self.radius - (at - r));
-                }
-                Base::Plane => {
-                    self.relief = self.relief.max(max.y);
-                    self.depth = self.depth.max(-min.y);
-                    let side = max.x.max(max.z).max(-min.x).max(-min.z);
-                    self.extent = self.extent.max(side);
-                }
-            }
+        for (min, max) in reaches(stamps, self.base) {
+            self.reach = self.reach.max(min.abs().max(max.abs()).length());
         }
         self
     }

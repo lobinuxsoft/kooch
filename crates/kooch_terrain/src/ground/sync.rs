@@ -241,12 +241,20 @@ fn reach(resources: &Resources, ground: &GroundColliders) -> Reached {
             let local = to_local * (body.at - centre);
             let ring = (body.reach / side).ceil().max(1.0) as i32;
             let extent = f64::from(ring + 1) * side;
-            let altitude = match shape.base {
-                Base::Sphere => local.length() - shape.radius,
-                Base::Plane if local.x.abs().max(local.z.abs()) > shape.extent + extent => continue,
-                Base::Plane => local.y,
+            let (altitude, wide) = match shape.base {
+                Base::Sphere => (local.length() - shape.radius, false),
+                Base::Plane => (
+                    local.y,
+                    local.x.abs().max(local.z.abs()) > shape.extent + extent,
+                ),
             };
-            if altitude > shape.relief + extent || altitude < -shape.depth - extent {
+            let off = wide || altitude > shape.relief + extent || altitude < -shape.depth - extent;
+            // The shell no longer grows to fit stamps (#2055): a body on one is near ground.
+            let (lo, hi) = (local - DVec3::splat(extent), local + DVec3::splat(extent));
+            if off
+                && !crate::stamp::reaches(&planet.planet.stamps, shape.base)
+                    .any(|(min, max)| crate::stamp::overlaps(lo, hi, min, max))
+            {
                 continue;
             }
             let home = (local / side).floor().as_ivec3();

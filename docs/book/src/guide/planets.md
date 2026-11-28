@@ -148,8 +148,10 @@ not compile, or defines a helper differently from the generator, leaves its stam
 the log.
 
 A stamp is data the generate pass reads, not code: moving one recompiles nothing, and only the
-blocks inside its old and new reach generate again, the rest of the planet as it was. The ground's
-`relief` and `depth` grow on their own to hold a stamp that reaches past them. The CPU twin applies
+blocks inside its old and new reach generate again, the rest of the planet as it was. A stamp
+that reaches past `relief` or `depth` adds blocks only inside its own box: the planet's band stays
+as authored, so a wide stamp on a large planet costs its own area, not a shell around the world
+(#2055). The CPU twin applies
 the same stack, so collision and the ground raycast follow every stamp; a volume is bounded by the
 range of its own graph there, as a graph's distance need not be a true one. More shapes, and shapes
 authored as graphs, come with #1957; shapes from a 3D texture or a heightmap with #709.
