@@ -37,7 +37,7 @@ struct Job {
 @group(0) @binding(1) var atlas: texture_storage_3d<r16float, write>;
 // The material pass reads what the distance pass wrote, and writes each sample's layers (#1951).
 @group(0) @binding(2) var samples: texture_3d<f32>;
-@group(0) @binding(3) var materials: texture_storage_3d<r16uint, write>;
+@group(0) @binding(3) var materials: texture_storage_3d<r32uint, write>;
 
 // Job `w`'s sample `v` as the generator reads it.
 fn input_at(w: u32, v: vec3<u32>) -> PlanetInput {
