@@ -10,6 +10,7 @@ use kooch_ecs::hierarchy::WorldOrigin;
 use super::{PlanetTerrain, gather};
 use crate::eval::Generator;
 use crate::lod::{Shape, voxel_size};
+use crate::stamp::Stack;
 
 /// Generator evaluations one planet may spend on a ray: a click or a drag, never a stall.
 const EVALUATIONS: u32 = 2048;
@@ -56,8 +57,12 @@ pub fn ground_hits(resources: &Resources, start: Vec3, direction: Vec3) -> Vec<G
             from: to_local * (start.as_dvec3() - centre),
             along: to_local * direction.as_dvec3(),
         };
+        let Some(stack) = state.stacks.get(i) else {
+            continue;
+        };
         let planet_ray = PlanetRay {
             generator,
+            stack,
             shape,
             index,
         };
@@ -90,11 +95,18 @@ impl Ray {
 
 struct PlanetRay<'a> {
     generator: &'a Generator,
+    stack: &'a Stack,
     shape: &'a Shape,
     index: u32,
 }
 
 impl PlanetRay<'_> {
+    /// The ground's SDF at `point`: the generator's, the stamps applied.
+    fn sample(&self, point: DVec3) -> Option<f64> {
+        let d = self.generator.sample(self.shape, point, self.index)?;
+        Some(self.stack.apply(point, f64::from(d)))
+    }
+
     /// The nearest `t` where the ray enters the ground. Segments the generator bounds above zero
     /// are skipped whole; the rest split, nearest half first, down to a voxel.
     fn first(&self, ray: Ray) -> Option<f64> {
@@ -109,9 +121,11 @@ impl PlanetRay<'_> {
             }
             spent += 1;
             let (p, q) = (ray.at(a), ray.at(b));
+            let (min, max) = (p.min(q), p.max(q));
             let range = self
                 .generator
-                .range(self.shape, p.min(q), p.max(q), self.index);
+                .range(self.shape, min, max, self.index)
+                .map(|range| self.stack.bound(min, max, range));
             if range.is_some_and(|(lo, _)| lo > 0.0) {
                 continue;
             }
@@ -147,7 +161,7 @@ impl PlanetRay<'_> {
     /// Where the SDF changes sign from outside to inside between `a` and `b`, bisected; `a` itself
     /// when the ray starts underground.
     fn cross(&self, ray: Ray, a: f64, b: f64) -> Option<f64> {
-        let sdf = |t: f64| self.generator.sample(self.shape, ray.at(t), self.index);
+        let sdf = |t: f64| self.sample(ray.at(t));
         let (mut lo, mut hi) = (a, b);
         if !(sdf(lo)? > 0.0) {
             return Some(lo);
@@ -168,11 +182,7 @@ impl PlanetRay<'_> {
     /// The SDF's gradient at `point`, by central differences a voxel wide.
     fn gradient(&self, point: DVec3) -> DVec3 {
         let h = voxel_size(self.shape, 0);
-        let sdf = |p: DVec3| {
-            self.generator
-                .sample(self.shape, p, self.index)
-                .map_or(0.0, f64::from)
-        };
+        let sdf = |p: DVec3| self.sample(p).unwrap_or(0.0);
         DVec3::from_array(
             [DVec3::X, DVec3::Y, DVec3::Z].map(|e| sdf(point + e * h) - sdf(point - e * h)),
         )

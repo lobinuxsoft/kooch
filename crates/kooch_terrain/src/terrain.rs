@@ -19,6 +19,7 @@ use super::seam::{OWN, Stale, near, touching};
 use readback::Readback;
 
 mod readback;
+mod stamps;
 use super::lod::{bounds, root_level, voxel_size};
 use super::{BlockKey, BlockPool, Leaves, Near, Planets, Residency};
 
@@ -121,6 +122,7 @@ pub struct Pipeline {
     times: Option<GpuTimes>,
     recent: Recent,
     meshed: u64,
+    stamps: crate::StampBuffer,
 }
 
 impl Pipeline {
@@ -192,6 +194,7 @@ impl Pipeline {
             times: None,
             recent: Recent::default(),
             meshed: 0,
+            stamps: crate::StampBuffer::new(device),
         })
     }
 
@@ -435,6 +438,10 @@ impl Pipeline {
         if self.jobs.is_empty() && self.again.is_empty() {
             return;
         }
+        self.stamps.upload(device, queue);
+        for job in &mut self.jobs {
+            job.stamps = self.stamps.range(job.planet);
+        }
         // Grouped by generator: one dispatch per pipeline, in the order the mesh pass reads them.
         let passes = std::mem::take(&mut self.planet_pass);
         let pass_of = |job: &Job| passes.get(job.planet as usize).copied().unwrap_or(0);
@@ -478,6 +485,7 @@ impl Pipeline {
                 &mut encoder,
                 &self.atlas,
                 jobs,
+                self.stamps.buffer(),
                 writes(0, g == 0, g == last),
             );
         }

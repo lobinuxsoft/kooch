@@ -9,7 +9,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use kooch_core::gpu::GpuContext;
 use kooch_core::resource::Resources;
 
-use crate::{BlockAtlas, BlockKey, GeneratePass, Job, Shape, TILE_SAMPLES};
+use crate::stamp::Stack;
+use crate::{BlockAtlas, BlockKey, GeneratePass, Job, Shape, StampBuffer, TILE_SAMPLES};
 
 /// Tiles in flight at once; each is a slot of the atlas and a staging buffer.
 pub(super) const SLOTS: u32 = 16;
@@ -29,6 +30,7 @@ pub(super) struct Order<T> {
     /// The planet's generator revision, which names its compiled pass.
     pub twin: u32,
     pub source: Arc<str>,
+    pub stack: Arc<Stack>,
     pub ticket: T,
 }
 
@@ -46,6 +48,7 @@ pub(super) struct GroundGpu<T> {
     /// By planet and revision; `None` when the generator does not compile.
     passes: HashMap<(u32, u32), Option<GeneratePass>>,
     flights: Vec<Flight<T>>,
+    stamps: StampBuffer,
 }
 
 impl<T> GroundGpu<T> {
@@ -70,12 +73,14 @@ impl<T> GroundGpu<T> {
                 ticket: None,
             })
             .collect();
+        let stamps = StampBuffer::new(&device);
         Some(Self {
             device,
             queue,
             atlas,
             passes: HashMap::new(),
             flights,
+            stamps,
         })
     }
 
@@ -109,6 +114,7 @@ impl<T> GroundGpu<T> {
                 continue;
             };
             let slot = slot as u32;
+            self.stamps.set(order.key.planet, &order.stack.gpu);
             jobs.entry(pass)
                 .or_default()
                 .push(Job::new(order.key, slot, &order.shape));
@@ -119,6 +125,10 @@ impl<T> GroundGpu<T> {
         }
         if slots.is_empty() {
             return refused;
+        }
+        self.stamps.upload(&self.device, &self.queue);
+        for job in jobs.values_mut().flatten() {
+            job.stamps = self.stamps.range(job.planet);
         }
         let mut encoder = self
             .device
@@ -133,6 +143,7 @@ impl<T> GroundGpu<T> {
                     &mut encoder,
                     &self.atlas,
                     jobs,
+                    self.stamps.buffer(),
                     None,
                 );
             }

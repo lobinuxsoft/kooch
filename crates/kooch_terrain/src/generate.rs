@@ -105,8 +105,11 @@ pub struct Job {
     pub excess: [f32; 8],
     /// The finest level's voxel, which the material pass measures slope over at every level.
     pub fine: f32,
-    /// WGSL rounds the struct to 16 bytes because of `index`.
-    pub _pad: [u32; 3],
+    /// Its terrain's range of the stamp buffer (#1954); see [`crate::StampBuffer::range`].
+    pub stamps: [u32; 2],
+    /// The block's level: a sample's index times `2^level` is its finest voxel, which stamps are
+    /// placed in.
+    pub level: u32,
 }
 
 impl Job {
@@ -128,7 +131,8 @@ impl Job {
             plane: u32::from(shape.base == crate::lod::Base::Plane),
             excess,
             fine: shape.voxel as f32,
-            _pad: [0; 3],
+            stamps: [0, 0],
+            level: u32::from(key.level),
         }
     }
 }
@@ -281,6 +285,10 @@ impl GeneratePass {
             },
             count: None,
         };
+        let stamps_entry = wgpu::BindGroupLayoutEntry {
+            binding: 4,
+            ..jobs_entry
+        };
         let written = |binding, format| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -293,7 +301,7 @@ impl GeneratePass {
         };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("kooch_terrain::generate"),
-            entries: &[jobs_entry, written(1, POOL_TEXTURE_FORMAT)],
+            entries: &[jobs_entry, written(1, POOL_TEXTURE_FORMAT), stamps_entry],
         });
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("kooch_terrain::generate::material"),
@@ -310,6 +318,7 @@ impl GeneratePass {
                     count: None,
                 },
                 written(3, MATERIAL_FORMAT),
+                stamps_entry,
             ],
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -348,6 +357,7 @@ impl GeneratePass {
         queue: &wgpu::Queue,
         atlas: &BlockAtlas,
         jobs: &[Job],
+        stamps: &wgpu::Buffer,
     ) {
         if jobs.is_empty() {
             return;
@@ -355,12 +365,14 @@ impl GeneratePass {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("kooch_terrain::generate"),
         });
-        self.record(device, queue, &mut encoder, atlas, jobs, None);
+        self.record(device, queue, &mut encoder, atlas, jobs, stamps, None);
         queue.submit([encoder.finish()]);
     }
 
-    /// Generates `jobs` into `atlas`; anything past [`batch`](Self::batch) is left out.
-    /// `timestamps` times the pass when the device can.
+    /// Generates `jobs` into `atlas`, each with its range of `stamps` (a [`crate::StampBuffer`]);
+    /// anything past [`batch`](Self::batch) is left out. `timestamps` times the pass when the
+    /// device can.
+    #[allow(clippy::too_many_arguments)]
     pub fn record(
         &self,
         device: &wgpu::Device,
@@ -368,6 +380,7 @@ impl GeneratePass {
         encoder: &mut wgpu::CommandEncoder,
         atlas: &BlockAtlas,
         jobs: &[Job],
+        stamps: &wgpu::Buffer,
         timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) {
         let jobs = &jobs[..jobs.len().min(self.batch as usize)];
@@ -387,6 +400,10 @@ impl GeneratePass {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(atlas.view()),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: stamps.as_entire_binding(),
+                },
             ],
         });
         let painted = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -404,6 +421,10 @@ impl GeneratePass {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(atlas.material_view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: stamps.as_entire_binding(),
                 },
             ],
         });

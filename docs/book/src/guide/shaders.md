@@ -320,6 +320,9 @@ A generator may also define `fn planet_material(input: PlanetInput) -> array<f32
 each layer's weight (#1951), with `input.slope` set — 0 flat, 1 a wall. The four heaviest are kept.
 Without it the ground is layer 0. See [what the ground is made of](planets.md#what-the-ground-is-made-of).
 
+The `Terrain`'s [stamps](planets.md#stamps) apply after `planet` returns, so a generator never sees
+them and one shader serves terrains stamped differently.
+
 A graph writes this kind too: set the Output's kind to `terrain`. Its one input is `distance`,
 unwired the bare sphere; a **Layer** node (under **Output**) weighs each layer. **Sphere Base** and **Plane Base** (`altitude`: one node per base
 shape, its measures on the `Terrain` component), **Planet Direction**, **Planet Position** and **Slope** are under

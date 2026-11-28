@@ -97,6 +97,34 @@ calls per sample near the surface, and none for the rest. Each sample stores its
 twice its distance: the material atlas is 137 MiB at the default 6144 blocks. On the CPU,
 `Generator::material` answers the same question at any point, for footsteps or friction.
 
+## Stamps
+
+A stamp drops a shape on the ground without touching the generator: a hill, a crater, a mesa. They
+live in the `Terrain`'s **stamps** list and apply in list order, first to last, over what the
+generator made. Nothing is baked: move one, reorder the list or switch one off, and the ground
+follows.
+
+Each stamp has a **shape** (sphere or box), an **operation** and a placement:
+
+- **Add** raises rock, **Subtract** digs, **Intersect** keeps only what is inside the shape (it
+  reaches the whole terrain, so changing one regenerates all of it).
+- **position** is the centre in the terrain's space, in metres. Its up is the ground's: away from a
+  sphere's centre, or +Y on a plane. **turn** spins it about that up, in degrees.
+- **radius** for a sphere; **size** for a box, half its side on each axis, y up.
+- **smooth** melts the edge into the ground over that many metres; 0 is sharp.
+- **opacity** fades the stamp: 0 is the ground without it.
+- **layer** and **paint** lay a material layer (see above) over the surface the stamp made, so a
+  crater can be rock in a grass field.
+
+A Terra-sized hill: `Add`, sphere, position `(0, 58, 0)`, radius `8`, smooth `3`. A pit next to it:
+`Subtract`, box, position `(12, 60, 0)`, size `(3, 4, 3)`, smooth `1`.
+
+A stamp is data the generate pass reads, not code: moving one recompiles nothing, and only the
+blocks inside its old and new reach generate again, the rest of the planet as it was. The ground's
+`relief` and `depth` grow on their own to hold a stamp that reaches past them. The CPU twin applies
+the same stack, so collision and the ground raycast follow every stamp. More shapes, and shapes
+authored as graphs, come with #1957; shapes from a 3D texture or a heightmap with #709.
+
 ## What it costs
 
 A planet is one entity however many blocks it shows: the blocks are drawn as instances of it, so

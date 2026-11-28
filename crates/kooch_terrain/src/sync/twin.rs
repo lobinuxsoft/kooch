@@ -8,8 +8,13 @@ use kooch_render::material::shader::{Shader, ShaderKind};
 
 use std::sync::Arc;
 
+use glam::DVec3;
+
 use super::PlanetTerrain;
-use crate::eval::Generator;
+use crate::eval::{Generator, may_cross};
+use crate::lod::voxel_size;
+use crate::stamp::Stack;
+use crate::{BlockKey, Planets};
 
 /// The generator planet `index` now has: its WGSL for the ground's GPU pass, its CPU twin, and
 /// a new revision so every block made from the old one is rebuilt.
@@ -53,4 +58,28 @@ pub(super) fn load(resources: &mut Resources, guid: Option<Guid>) -> (u64, Optio
 pub(super) fn source(resources: &Resources, handle: Handle<Shader>) -> Option<String> {
     let shader = resources.get::<Assets<Shader>>()?.get(handle)?;
     (shader.kind == ShaderKind::Terrain).then(|| shader.source.clone())
+}
+
+/// Whether the generator leaves `key`'s tile a chance of holding surface. The tile reaches one
+/// sample past the block on every side, so its border is bounded too.
+pub(crate) fn crosses(
+    (generators, stacks): (&[Option<Arc<Generator>>], &[Arc<Stack>]),
+    planets: &Planets,
+    key: BlockKey,
+    min: DVec3,
+    max: DVec3,
+) -> bool {
+    let planet = key.planet as usize;
+    let (Some(Some(generator)), Some(shape)) = (generators.get(planet), planets.shape.get(planet))
+    else {
+        return true;
+    };
+    let voxel = voxel_size(shape, key.level);
+    let (min, max) = (min - DVec3::splat(voxel), max + DVec3::splat(voxel));
+    let range = generator.range(shape, min, max, key.planet);
+    let range = match stacks.get(planet) {
+        Some(stack) if !stack.is_empty() => range.map(|range| stack.bound(min, max, range)),
+        _ => range,
+    };
+    may_cross(range, voxel)
 }
