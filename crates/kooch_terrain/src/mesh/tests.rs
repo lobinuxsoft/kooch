@@ -37,6 +37,7 @@ fn sphere(voxel: f64, level: u8) -> (Planets, Vec<BlockKey>) {
         depth: 1.0,
         voxel,
         lod_distance: 32.0,
+        reach: 0.0,
     };
     planets.push(
         shape,

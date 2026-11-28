@@ -46,6 +46,7 @@ fn small() -> Shape {
         depth: 4.0,
         voxel: 0.5,
         lod_distance: 32.0,
+        reach: 0.0,
     }
 }
 

@@ -16,6 +16,7 @@ fn earth() -> Shape {
         depth: 2_000.0,
         voxel: 0.5,
         lod_distance: 32.0,
+        reach: 0.0,
     }
 }
 
