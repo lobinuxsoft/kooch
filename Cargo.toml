@@ -371,6 +371,11 @@ path = "examples/make_playground.rs"
 required-features = ["editor", "physics"]
 
 [[example]]
+name = "make_atlas_stamps"
+path = "examples/make_atlas_stamps.rs"
+required-features = ["editor", "terrain"]
+
+[[example]]
 name = "make_dense_scene"
 path = "examples/make_dense_scene.rs"
 required-features = ["editor", "physics"]

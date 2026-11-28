@@ -143,3 +143,12 @@ change made to it.
 
 > Copyright (c) 2023 Zakarum
 
+
+---
+
+## Atlas Terrain Editor — stamps and terrain layers
+
+`assets/terrain/stamps/*.png` (54 stamp heightmaps) and `assets/terrain/layers/*/` (8 terrain
+layers: albedo, mask, normal) come from the Atlas Terrain Editor pack, owned by the project's
+author and shipped with the engine by the author's decision. The heightmaps were extracted from the
+pack's stamp assets to 16-bit PNG; the layers were converted from TIFF to PNG, losslessly.

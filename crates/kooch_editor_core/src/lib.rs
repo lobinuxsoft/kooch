@@ -92,6 +92,7 @@ use kooch_core::app::App;
 use kooch_core::plugin::Plugin;
 use kooch_core::stage::Stage;
 
+pub use actions::handlers::field::height_field;
 pub use bootstrap::{run_editor, run_editor_with};
 pub use editor_camera::{EditorCamera, EditorCameraController, EditorOnly};
 pub use perf::EditorPerfStats;
