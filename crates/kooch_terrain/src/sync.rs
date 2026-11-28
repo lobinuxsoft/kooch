@@ -48,8 +48,8 @@ const FLOOR: u32 = 64;
 /// while the viewer moves would otherwise bound, generate and count its children again.
 const KNOWN_GRACE: u32 = 600;
 
-/// CPU time a frame spends bounding blocks the selection has not met; the rest wait, holding a
-/// slot meanwhile, so entering a new region never stalls a frame.
+/// CPU time a frame spends bounding blocks the selection has not met, the walk itself not counted;
+/// the rest wait for the next frame, and until none wait the selection is not applied (#2061).
 const RANGE_BUDGET: Duration = Duration::from_millis(1);
 
 /// Whether a block can hold surface, as the generator's range or its count answered.
@@ -286,7 +286,7 @@ pub fn sync_planets(resources: &mut Resources) {
                     0.0
                 }
                 false => {
-                    let started = Instant::now();
+                    let mut spent = Duration::ZERO;
                     choose_lods(
                         &state.planets,
                         &view,
@@ -301,13 +301,15 @@ pub fn sync_planets(resources: &mut Resources) {
                                 known.seen = frame;
                                 return known.surface;
                             }
-                            if started.elapsed() > RANGE_BUDGET {
+                            if spent > RANGE_BUDGET {
                                 deferred = true;
                                 return true;
                             }
                             profiling::scope!("planet: bound");
                             let twin = (&state.generators[..], &state.stacks[..]);
+                            let started = Instant::now();
                             let surface = crosses(twin, &state.planets, key, min, max);
+                            spent += started.elapsed();
                             let known = Known {
                                 revision,
                                 seen: frame,
@@ -339,13 +341,11 @@ pub fn sync_planets(resources: &mut Resources) {
     };
     {
         profiling::scope!("planet: pool");
-        // Applying the same `wanted` again is a no-op: nothing leaves, and what did not fit still
-        // does not, so the pool and its split set only change after a choice.
-        match due {
+        // Re-applying `wanted` is a no-op, so the pool and split set only change after a choice.
+        match due && (state.rerun.settled() || state.pool.resident() == 0) {
             true => {
                 state.pool.apply(&state.wanted, &mut state.residency);
-                // After the pool changes, so the meshes see this frame's leaves; the next choice's
-                // hysteresis reads the same set, as nothing moves the pool in between.
+                // After the pool, so meshes see this frame's leaves and the next choice this set.
                 fill_split(&mut state.split, &state.pool, &state.planets);
             }
             false => state.residency.clear(),
