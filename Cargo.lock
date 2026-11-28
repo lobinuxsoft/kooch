@@ -2729,6 +2729,7 @@ dependencies = [
  "exmex",
  "glam 0.33.12",
  "gltf",
+ "image",
  "kooch_blockmesh",
  "kooch_camera",
  "kooch_character",

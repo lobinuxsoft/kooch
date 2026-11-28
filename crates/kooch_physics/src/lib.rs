@@ -16,4 +16,4 @@ pub use components::{Collider, Joint, PhysicsBody, ShapeSpec};
 pub use plugin::{
     JointRegistry, PhysicsComponentsPlugin, PhysicsHolds, PhysicsPlugin, PhysicsWorld, SolverBody,
 };
-pub use rapier_backend::{RapierBackend, decompose, hull_of};
+pub use rapier_backend::{RapierBackend, decompose, hull_of, signed_distances};

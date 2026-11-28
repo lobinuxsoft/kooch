@@ -27,20 +27,28 @@ pub(super) fn sync_stacks(state: &mut PlanetTerrain, placed: &[Option<usize>], f
             .map_or(Base::Sphere, Base::of);
         let old = Arc::clone(&state.stacks[index]);
         let volumes = state.volumes.get(index).cloned().unwrap_or_default();
-        if old.stamps != *stamps || old.volumes != volumes {
+        let fields = state.fields.get(index).cloned().unwrap_or_default();
+        let same_fields = old.fields.len() == fields.len()
+            && old
+                .fields
+                .iter()
+                .zip(&fields)
+                .all(|(a, b)| a.0 == b.0 && a.1.same(&b.1));
+        if old.stamps != *stamps || old.volumes != volumes || !same_fields {
             let shape = Shape::new(&planet.planet, base);
             let revision = old.revision.wrapping_add(1);
-            let stack = Stack::new(stamps, &volumes, base, shape.voxel, revision);
+            let stack = Stack::new(stamps, (&volumes, &fields), base, shape.voxel, revision);
             state.stacks[index] = Arc::new(stack);
-            forget(
-                state,
-                index as u32,
-                &shape,
-                changed(&old.stamps, stamps, base),
-            );
+            // A field that loads or reloads changes every stamp that samples it.
+            let boxes = match same_fields {
+                true => changed(&old.stamps, stamps, base),
+                false => None,
+            };
+            forget(state, index as u32, &shape, boxes);
         }
         if let Some(terrain) = &mut state.terrain {
-            terrain.set_stamps(index as u32, &state.stacks[index].gpu);
+            let stack = &state.stacks[index];
+            terrain.set_stamps(index as u32, &stack.gpu, &stack.fields);
         }
     }
 }

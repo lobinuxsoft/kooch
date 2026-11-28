@@ -104,7 +104,7 @@ live in the `Terrain`'s **stamps** list and apply in list order, first to last, 
 generator made. Nothing is baked: move one, reorder the list or switch one off, and the ground
 follows.
 
-Each stamp has a **shape** (sphere, box, capsule, torus, cone or volume), an **operation** and a
+Each stamp has a **shape** (sphere, box, capsule, torus, cone, volume or field), an **operation** and a
 placement:
 
 - **Add** raises rock, **Subtract** digs, **Intersect** keeps only what is inside the shape (it
@@ -146,6 +146,30 @@ A volume joins the generator of every terrain that stamps it, once: naming a new
 that generator, while moving, copying or reordering its stamps does not. A volume shader that does
 not compile, or defines a helper differently from the generator, leaves its stamps off and says so in
 the log.
+
+### Fields
+
+A **Field** stamp takes its shape from data (#709): a `.kfield` the editor bakes, stretched over the
+stamp's box **size** (x and z along the ground, y up).
+
+- **From a mesh:** select the mesh in the Asset Browser and press **Create SDF field** under its
+  import settings. The mesh's signed distances, `resolution` texels along its longest side (64 by
+  default), land in `assets/terrain/<mesh>_sdf.kfield`. An open mesh works: the inside is told
+  apart by how many times the surface wraps a point, not by a ray. Stamped with `Add`, the mesh
+  stands in the ground, overhangs and all; with `Subtract`, it carves its mould.
+- **From an image:** select it and press **Create height field**. Its brightness is the height,
+  black at the box's floor and white at its top; a 16-bit PNG keeps all of its precision. It lands
+  in `assets/terrain/<image>_height.kfield`. Sink the box's floor below the ground, or the stamp
+  shows its walls.
+
+Suzanne as a rock: bake `suzanne.glb`, then a Field stamp on Terra with `size (4, 4, 4)`, `Add`,
+smooth `1`. A dune field: bake a dune heightmap, `size (20, 3, 20)`, its centre a metre under the
+ground.
+
+The texels stay on the CPU as well and both sides filter them by hand, with the same weights, so the
+ball collides with what is drawn. A field keeps its steepest slope from the bake, and the stamp scales
+its value by it, so a squashed map stays a true distance for the range analysis. A field is 2 bytes a
+texel: a 2048² map is 8 MiB, a 64³ volume 512 KiB.
 
 A stamp is data the generate pass reads, not code: moving one recompiles nothing, and only the
 blocks inside its old and new reach generate again, the rest of the planet as it was. The ground's

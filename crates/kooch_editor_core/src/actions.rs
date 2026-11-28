@@ -316,6 +316,16 @@ pub(crate) enum EditorAction {
         /// refused for [`BakeKind::Mesh`], which has nothing else to do.
         max_faces: u32,
     },
+    /// Bakes a mesh's signed distances into a `.kfield` a terrain stamp can use (#709).
+    BakeSdfField {
+        source: kooch_core::Guid,
+        /// Texels along the mesh's longest side.
+        resolution: u32,
+    },
+    /// Turns an image's brightness into a heightmap `.kfield` (#709).
+    BakeHeightField {
+        source: kooch_core::Guid,
+    },
     /// Rewrites a texture's `[import]` table and re-imports it.
     SetImageImport {
         guid: kooch_core::Guid,

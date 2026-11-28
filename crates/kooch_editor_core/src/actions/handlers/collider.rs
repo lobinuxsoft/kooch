@@ -174,7 +174,7 @@ fn project_collision_dir(resources: &Resources) -> Option<PathBuf> {
     Some(root.join("assets").join(OUT_DIR))
 }
 
-fn read_source(resources: &mut Resources, source: Guid) -> Option<(PathBuf, Vec<u8>)> {
+pub(super) fn read_source(resources: &mut Resources, source: Guid) -> Option<(PathBuf, Vec<u8>)> {
     let path = resources
         .get::<AssetDatabase>()
         .and_then(|db| db.entry(source).map(|entry| entry.path.clone()))?;
@@ -211,7 +211,7 @@ fn write_sidecar(out: &Path, source: Guid, kind: &str, hash: u64) {
 }
 
 /// A cheap fingerprint of the source bytes.
-fn hash_of(bytes: &[u8]) -> u64 {
+pub(super) fn hash_of(bytes: &[u8]) -> u64 {
     use std::hash::{Hash, Hasher};
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();

@@ -85,15 +85,7 @@ fn generate(
         .collect();
     let mut encoder = device.create_command_encoder(&Default::default());
     let stamps = crate::StampBuffer::new(device);
-    pass.record(
-        device,
-        queue,
-        &mut encoder,
-        &atlas,
-        &jobs,
-        stamps.buffer(),
-        None,
-    );
+    pass.record(device, queue, &mut encoder, &atlas, &jobs, &stamps, None);
     queue.submit([encoder.finish()]);
     (atlas, keys, jobs)
 }

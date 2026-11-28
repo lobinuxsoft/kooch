@@ -12,6 +12,7 @@ mod budget;
 mod component;
 mod draw;
 mod eval;
+mod field;
 mod generate;
 // Only physics consumes the CPU mesh; the tests pin it either way.
 #[cfg(any(feature = "physics", test))]
@@ -39,6 +40,7 @@ use glam::IVec3;
 pub use atlas::BlockAtlas;
 pub use component::Terrain;
 pub use eval::Generator;
+pub use field::{FIELD_DISTANCE, FIELD_EXTENSION, FIELD_HEIGHT, Field, FieldLoader};
 pub use generate::{
     BARE_SPHERE, Backlog, GeneratePass, Job, LAYERS, PLANET_INPUT_WGSL, validate_generator,
 };
@@ -56,7 +58,7 @@ pub use seam::{Leaves, Near};
 pub use sight::Cone;
 pub use stamp::{
     GpuStamp, OPERATION_ADD, OPERATION_INTERSECT, OPERATION_SUBTRACT, SHAPE_BOX, SHAPE_CAPSULE,
-    SHAPE_CONE, SHAPE_SPHERE, SHAPE_TORUS, Stamp, StampBuffer, frame as stamp_frame,
+    SHAPE_CONE, SHAPE_FIELD, SHAPE_SPHERE, SHAPE_TORUS, Stamp, StampBuffer, frame as stamp_frame,
 };
 pub use sync::{
     GroundHit, PlanetStats, PlanetTerrain, PlanetViewers, ground_hit_without, ground_hits,

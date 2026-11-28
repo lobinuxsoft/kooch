@@ -2,6 +2,7 @@
 
 mod assets;
 mod collider;
+mod field;
 mod import_copy;
 pub(crate) mod import_materials;
 mod play;
@@ -153,6 +154,12 @@ pub(super) fn apply_non_ecs_action(
             max_faces,
         } => {
             collider::handle_bake_collider(resources, *source, *kind, *max_faces);
+        }
+        EditorAction::BakeSdfField { source, resolution } => {
+            field::handle_bake_sdf(resources, *source, *resolution);
+        }
+        EditorAction::BakeHeightField { source } => {
+            field::handle_bake_height(resources, *source);
         }
         EditorAction::SetImageImport { guid, import } => {
             handle_set_image_import(resources, *guid, *import);

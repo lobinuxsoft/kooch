@@ -485,7 +485,7 @@ impl Pipeline {
                 &mut encoder,
                 &self.atlas,
                 jobs,
-                self.stamps.buffer(),
+                &self.stamps,
                 writes(0, g == 0, g == last),
             );
         }

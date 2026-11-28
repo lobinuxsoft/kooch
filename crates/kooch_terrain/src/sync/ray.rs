@@ -91,7 +91,13 @@ fn hits(
             if at < stamps.len() {
                 stamps.remove(at);
             }
-            Stack::new(&stamps, &stack.volumes, shape.base, shape.voxel, 0)
+            Stack::new(
+                &stamps,
+                (&stack.volumes, &stack.fields),
+                shape.base,
+                shape.voxel,
+                0,
+            )
         });
         let stack = without.as_ref().unwrap_or(stack);
         let planet_ray = PlanetRay {

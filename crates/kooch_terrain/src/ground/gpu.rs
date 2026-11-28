@@ -114,7 +114,8 @@ impl<T> GroundGpu<T> {
                 continue;
             };
             let slot = slot as u32;
-            self.stamps.set(order.key.planet, &order.stack.gpu);
+            self.stamps
+                .set(order.key.planet, &order.stack.gpu, &order.stack.fields);
             jobs.entry(pass)
                 .or_default()
                 .push(Job::new(order.key, slot, &order.shape));
@@ -143,7 +144,7 @@ impl<T> GroundGpu<T> {
                     &mut encoder,
                     &self.atlas,
                     jobs,
-                    self.stamps.buffer(),
+                    &self.stamps,
                     None,
                 );
             }
