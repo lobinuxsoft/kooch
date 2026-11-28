@@ -105,6 +105,8 @@ impl EditorAction {
             | Self::SetLaunchEnv { .. }
             | Self::EditMaterial { .. }
             | Self::BakeCollider { .. }
+            | Self::BakeSdfField { .. }
+            | Self::BakeHeightField { .. }
             | Self::SetImageImport { .. }
             | Self::EditAssetField { .. }
             | Self::RenameLayer { .. }
@@ -212,6 +214,8 @@ impl EditorAction {
             | Self::SetLaunchEnv { .. }
             | Self::EditMaterial { .. }
             | Self::BakeCollider { .. }
+            | Self::BakeSdfField { .. }
+            | Self::BakeHeightField { .. }
             | Self::SetImageImport { .. }
             | Self::EditAssetField { .. }
             | Self::RenameLayer { .. }

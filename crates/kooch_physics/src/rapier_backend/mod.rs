@@ -6,6 +6,7 @@ mod backend;
 mod conv;
 #[cfg(feature = "debug-render")]
 mod debug;
+mod distance;
 mod events;
 mod joints;
 mod shapes;
@@ -16,4 +17,5 @@ mod query_tests;
 mod tests;
 
 pub use backend::RapierBackend;
+pub use distance::signed_distances;
 pub use shapes::{decompose, hull_of};

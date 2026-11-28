@@ -13,8 +13,13 @@ use crate::{BlockPool, Shape};
 impl Pipeline {
     /// Generates `planet` with `stamps` from now on. Nothing already generated changes until
     /// [`retry_within`](Self::retry_within) queues it.
-    pub(crate) fn set_stamps(&mut self, planet: u32, stamps: &Arc<[GpuStamp]>) {
-        self.stamps.set(planet, stamps);
+    pub(crate) fn set_stamps(
+        &mut self,
+        planet: u32,
+        stamps: &Arc<[GpuStamp]>,
+        fields: &[(kooch_core::Guid, Arc<crate::Field>)],
+    ) {
+        self.stamps.set(planet, stamps, fields);
     }
 
     /// Queues again every resident block of `planet` within two of its voxels of a box, as one

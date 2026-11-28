@@ -7,8 +7,8 @@ use kooch_ecs::GlobalTransform;
 use kooch_ecs::entity::Entity;
 use kooch_gizmos::{Gizmos, Visualizer};
 use kooch_terrain::{
-    OPERATION_INTERSECT, OPERATION_SUBTRACT, SHAPE_BOX, SHAPE_CAPSULE, SHAPE_CONE, SHAPE_TORUS,
-    Terrain,
+    OPERATION_INTERSECT, OPERATION_SUBTRACT, SHAPE_BOX, SHAPE_CAPSULE, SHAPE_CONE, SHAPE_FIELD,
+    SHAPE_TORUS, Terrain,
 };
 
 use super::stamp_handles::{base_of, hovered_index, selected_index, world_frame};
@@ -51,7 +51,7 @@ impl Visualizer<Terrain> for StampVisualizer {
                 _ => ADD,
             };
             match stamp.shape {
-                SHAPE_BOX => {
+                SHAPE_BOX | SHAPE_FIELD => {
                     let half = stamp.size * scale;
                     let corner = |i: u32| {
                         let sign = |bit: u32| if i & bit == 0 { -1.0 } else { 1.0 };

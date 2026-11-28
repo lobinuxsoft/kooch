@@ -14,7 +14,10 @@ use kooch_core::Guid;
 use kooch_ecs::Reflect;
 use kooch_ecs::reflect::{FieldChoice, FieldCondition, FieldRange};
 
+use std::sync::Arc;
+
 use crate::eval::Generator;
+use crate::field::Field;
 use crate::lod::{Base, Shape};
 
 pub use buffer::StampBuffer;
@@ -29,6 +32,8 @@ pub const SHAPE_TORUS: u32 = 3;
 pub const SHAPE_CONE: u32 = 4;
 /// A `volume` shader's shape (#1957), kept inside `radius`.
 pub const SHAPE_VOLUME: u32 = 5;
+/// A `.kfield` (#709) stretched over the box `size`: a heightmap, or a distance baked from a mesh.
+pub const SHAPE_FIELD: u32 = 6;
 
 pub const OPERATION_ADD: u32 = 0;
 pub const OPERATION_SUBTRACT: u32 = 1;
@@ -67,6 +72,9 @@ pub struct Stamp {
         shown_when = IS_VOLUME
     )]
     pub volume: Option<Guid>,
+    /// The `.kfield` whose shape it stamps over its `size`.
+    #[reflect(asset = "kooch_terrain::field::Field", shown_when = IS_FIELD)]
+    pub field: Option<Guid>,
     /// Metres over which the shape melts into the ground; 0 is a sharp edge.
     #[reflect(range = LENGTH_RANGE)]
     pub smooth: f32,
@@ -94,6 +102,7 @@ impl Default for Stamp {
             height: 10.0,
             tube: 1.5,
             volume: None,
+            field: None,
             smooth: 1.0,
             opacity: 1.0,
             layer: 1,
@@ -127,6 +136,10 @@ pub static SHAPE_CHOICES: &[FieldChoice] = &[
         label: "Volume",
         value: SHAPE_VOLUME as i64,
     },
+    FieldChoice {
+        label: "Field",
+        value: SHAPE_FIELD as i64,
+    },
 ];
 
 pub static OPERATION_CHOICES: &[FieldChoice] = &[
@@ -155,6 +168,11 @@ static IS_ROUND: FieldCondition = FieldCondition {
     ],
 };
 
+static IS_FIELD: FieldCondition = FieldCondition {
+    field: "shape",
+    values: &[SHAPE_FIELD as i64],
+};
+
 static IS_VOLUME: FieldCondition = FieldCondition {
     field: "shape",
     values: &[SHAPE_VOLUME as i64],
@@ -172,7 +190,7 @@ static IS_TORUS: FieldCondition = FieldCondition {
 
 static IS_BOX: FieldCondition = FieldCondition {
     field: "shape",
-    values: &[SHAPE_BOX as i64],
+    values: &[SHAPE_BOX as i64, SHAPE_FIELD as i64],
 };
 
 const TURN_RANGE: FieldRange = FieldRange {
@@ -199,7 +217,7 @@ const LAYER_RANGE: FieldRange = FieldRange {
     step: 1.0,
 };
 
-/// A stamp in the generate pass. Mirrors `Stamp` in `generate.wgsl`; 96 bytes.
+/// A stamp in the generate pass. Mirrors `Stamp` in `generate.wgsl`; 112 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug, PartialEq)]
 pub struct GpuStamp {
@@ -221,11 +239,17 @@ pub struct GpuStamp {
     /// the torus' tube, the cone's half height or the volume's index in `y`.
     pub size: [f32; 3],
     pub paint: f32,
+    /// The terrain's field a field stamp samples, and its gain from `Field::gain`.
+    pub field: u32,
+    pub gain: f32,
+    pub pad: [u32; 2],
 }
 
 /// One enabled stamp, measured for the CPU.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct Placed {
+    /// A field stamp's texels, its index among the terrain's fields, and its gain.
+    field: Option<(Arc<Field>, u32, f64)>,
     centre: DVec3,
     /// Rows: the terrain's space into the stamp's.
     turn: DMat3,
@@ -243,6 +267,8 @@ pub struct Stack {
     pub(crate) stamps: Vec<Stamp>,
     /// The volumes joined into the generator, in index order; a volume stamp naming none is off.
     pub(crate) volumes: Vec<Guid>,
+    /// The fields its stamps name, in index order; a field stamp naming none is off.
+    pub(crate) fields: Vec<(Guid, Arc<Field>)>,
     placed: Vec<Placed>,
     pub(crate) gpu: std::sync::Arc<[GpuStamp]>,
     /// Bumped on every change, so a collider built before it is rebuilt.
@@ -253,7 +279,7 @@ impl Stack {
     /// `stamps` on a ground of `base` whose finest voxel is `fine` metres, with `volumes` joined.
     pub(crate) fn new(
         stamps: &[Stamp],
-        volumes: &[Guid],
+        (volumes, fields): Named<'_>,
         base: Base,
         fine: f64,
         revision: u32,
@@ -267,6 +293,12 @@ impl Stack {
                     let index = volumes.iter().position(|v| Some(*v) == stamp.volume)?;
                     placed.size.y = index as f64;
                 }
+                if stamp.shape == SHAPE_FIELD {
+                    let index = fields.iter().position(|(g, _)| Some(*g) == stamp.field)?;
+                    let field = Arc::clone(&fields.get(index)?.1);
+                    let gain = field.gain(placed.size);
+                    placed.field = Some((field, index as u32, gain));
+                }
                 Some((stamp, placed))
             })
             .collect();
@@ -277,6 +309,7 @@ impl Stack {
         Self {
             stamps: stamps.to_vec(),
             volumes: volumes.to_vec(),
+            fields: fields.to_vec(),
             placed: live.into_iter().map(|(_, placed)| placed).collect(),
             gpu,
             revision,
@@ -412,13 +445,14 @@ fn place(stamp: &Stamp, base: Base) -> Placed {
     let radius = f64::from(stamp.radius.max(0.0));
     let half = f64::from(stamp.height.max(0.0)) * 0.5;
     let size = match stamp.shape {
-        SHAPE_BOX => stamp.size.as_dvec3().max(DVec3::ZERO),
+        SHAPE_BOX | SHAPE_FIELD => stamp.size.as_dvec3().max(DVec3::ZERO),
         SHAPE_CAPSULE => DVec3::new(radius, (half - radius).max(0.0), 0.0),
         SHAPE_TORUS => DVec3::new(radius, f64::from(stamp.tube.max(0.0)), 0.0),
         SHAPE_CONE => DVec3::new(radius, half, 0.0),
         _ => DVec3::new(radius, 0.0, 0.0),
     };
     Placed {
+        field: None,
         centre,
         turn: DMat3::from_cols(x, up, z).transpose(),
         shape: stamp.shape,
@@ -446,8 +480,17 @@ fn record(stamp: &Stamp, placed: &Placed, fine: f64) -> GpuStamp {
         layer: stamp.layer.min(crate::LAYERS as u32 - 1),
         size: placed.size.as_vec3().to_array(),
         paint: stamp.paint.clamp(0.0, 1.0),
+        field: placed.field.as_ref().map_or(0, |(_, index, _)| *index),
+        gain: placed
+            .field
+            .as_ref()
+            .map_or(0.0, |(_, _, gain)| *gain as f32),
+        pad: [0; 2],
     }
 }
+
+/// What a stack's stamps name by asset: the volumes joined into its generator, and its fields.
+pub(crate) type Named<'a> = (&'a [Guid], &'a [(Guid, Arc<Field>)]);
 
 /// The generator a stack's volumes were joined into, and the planet index its input reads.
 pub(crate) type Joined<'a> = Option<(&'a Generator, u32)>;
@@ -475,7 +518,7 @@ fn shape_range(stamp: &Placed, p: DVec3, reach: f64, joined: Joined<'_>) -> (f64
 fn bounding(stamp: &Placed) -> f64 {
     let s = stamp.size;
     match stamp.shape {
-        SHAPE_BOX => s.length(),
+        SHAPE_BOX | SHAPE_FIELD => s.length(),
         SHAPE_CAPSULE | SHAPE_TORUS => s.x + s.y,
         SHAPE_CONE => s.x.hypot(s.y),
         _ => s.x,
@@ -490,6 +533,10 @@ fn distance(stamp: &Placed, p: DVec3, joined: Joined<'_>) -> f64 {
             let q = p.abs() - s;
             q.max(DVec3::ZERO).length() + q.max_element().min(0.0)
         }
+        SHAPE_FIELD => match &stamp.field {
+            Some((field, _, gain)) => crate::field::distance(field, p, s, *gain),
+            None => f64::INFINITY,
+        },
         SHAPE_CAPSULE => (p - DVec3::Y * p.y.clamp(-s.y, s.y)).length() - s.x,
         SHAPE_TORUS => glam::DVec2::new(p.x.hypot(p.z) - s.x, p.y).length() - s.y,
         SHAPE_CONE => cone(p, s.x, s.y),

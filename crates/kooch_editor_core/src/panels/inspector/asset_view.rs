@@ -240,6 +240,8 @@ fn draw_mesh_import(
 
     ui.add_space(8.0);
     draw_collider_bake(ui, guid, actions);
+    ui.add_space(8.0);
+    field_bake::draw_sdf_bake(ui, guid, actions);
 }
 
 /// Where a baked collision mesh came from, and whether it is behind.
@@ -389,6 +391,8 @@ fn draw_image_import(
     if import != info.import {
         actions.push(EditorAction::SetImageImport { guid, import });
     }
+    ui.add_space(8.0);
+    field_bake::draw_height_bake(ui, guid, actions);
 }
 
 /// One `label: value` grid row.
@@ -686,6 +690,7 @@ pub(super) fn draw_collision_matrix(
 const ASSET_PSEUDO_GENERATION: u32 = u32::MAX - 1;
 
 mod callisto;
+mod field_bake;
 mod material;
 
 use material::*;

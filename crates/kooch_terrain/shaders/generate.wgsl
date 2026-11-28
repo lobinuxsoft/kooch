@@ -54,6 +54,9 @@ struct Stamp {
     layer: u32,
     size: vec3<f32>,
     paint: f32,
+    field: u32,
+    gain: f32,
+    pad: vec2<u32>,
 }
 
 @group(0) @binding(0) var<storage, read> jobs: array<Job>;
@@ -62,6 +65,8 @@ struct Stamp {
 @group(0) @binding(2) var samples: texture_3d<f32>;
 @group(0) @binding(3) var materials: texture_storage_3d<r32uint, write>;
 @group(0) @binding(4) var<storage, read> stamps: array<Stamp>;
+// Every terrain's fields (#709): eight-word descriptors, then the texels they point into.
+@group(0) @binding(5) var<storage, read> fields: array<u32>;
 
 // Job `w`'s sample `v` as the generator reads it.
 fn input_at(w: u32, v: vec3<u32>) -> PlanetInput {
@@ -136,10 +141,69 @@ fn stamp_distance(s: Stamp, p: vec3<f32>, planet: u32) -> f32 {
             input.slope = 0.0;
             return max(stamp_volume(u32(z.y), input), length(p) - z.x);
         }
+        case 6u: {
+            return stamp_field(s, p);
+        }
         default: {
             return length(p) - z.x;
         }
     }
+}
+
+// A `.kfield` over the stamp's box (#709), filtered by hand: `distance` in `field.rs` filters the
+// same texels with the same weights, which a hardware sampler's fixed-point ones would not be.
+fn stamp_field(s: Stamp, p: vec3<f32>) -> f32 {
+    let half = max(s.size, vec3<f32>(1e-6));
+    let q = clamp(p, -half, half);
+    let t = q / half * 0.5 + 0.5;
+    let d = s.field * 8u;
+    let n = max(vec3<u32>(fields[d + 2u], fields[d + 3u], fields[d + 4u]), vec3<u32>(1u));
+    let ax = field_along(t.x, n.x);
+    let az = field_along(t.z, n.z);
+    let x0 = u32(ax.x);
+    let x1 = u32(ax.y);
+    let z0 = u32(az.x);
+    let z1 = u32(az.y);
+    if (fields[d + 1u] == 0u) {
+        let r0 = field_lerp(field_at(d, n, x0, 0u, z0), field_at(d, n, x1, 0u, z0), ax.z);
+        let r1 = field_lerp(field_at(d, n, x0, 0u, z1), field_at(d, n, x1, 0u, z1), ax.z);
+        let h = field_lerp(r0, r1, az.z);
+        let surface = -half.y + 2.0 * half.y * h;
+        let b = abs(p) - half;
+        let boxed = length(max(b, vec3<f32>(0.0))) + min(max(b.x, max(b.y, b.z)), 0.0);
+        return max((p.y - surface) * s.gain, boxed);
+    }
+    let ay = field_along(t.y, n.y);
+    let y0 = u32(ay.x);
+    let y1 = u32(ay.y);
+    let a0 = field_lerp(field_at(d, n, x0, y0, z0), field_at(d, n, x1, y0, z0), ax.z);
+    let a1 = field_lerp(field_at(d, n, x0, y0, z1), field_at(d, n, x1, y0, z1), ax.z);
+    let b0 = field_lerp(field_at(d, n, x0, y1, z0), field_at(d, n, x1, y1, z0), ax.z);
+    let b1 = field_lerp(field_at(d, n, x0, y1, z1), field_at(d, n, x1, y1, z1), ax.z);
+    let v = field_lerp(field_lerp(a0, a1, az.z), field_lerp(b0, b1, az.z), ay.z);
+    return v * s.gain + length(p - q);
+}
+
+// The two texels around `t` (0..1 over `n` texels) and how far between them.
+fn field_along(t: f32, n: u32) -> vec3<f32> {
+    let x = t * f32(n - 1u);
+    let i = min(u32(max(floor(x), 0.0)), max(n, 2u) - 2u);
+    let j = min(i + 1u, n - 1u);
+    return vec3<f32>(f32(i), f32(j), clamp(x - f32(i), 0.0, 1.0));
+}
+
+fn field_lerp(a: f32, b: f32, f: f32) -> f32 {
+    return a + (b - a) * f;
+}
+
+// Texel (x, y, z) of the field whose descriptor starts at word `d`: two `u16` per word.
+fn field_at(d: u32, n: vec3<u32>, x: u32, y: u32, z: u32) -> f32 {
+    let i = x + n.x * (y + n.y * z);
+    let word = fields[fields[d] + i / 2u];
+    let texel = (word >> ((i & 1u) * 16u)) & 0xffffu;
+    let lo = bitcast<f32>(fields[d + 5u]);
+    let hi = bitcast<f32>(fields[d + 6u]);
+    return lo + (hi - lo) * (f32(texel) / 65535.0);
 }
 
 // Base radius `r` at `-h`, apex at `+h`.

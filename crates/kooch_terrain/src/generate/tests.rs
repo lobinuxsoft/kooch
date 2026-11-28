@@ -47,15 +47,7 @@ fn earth_altitude_stays_exact() {
     let job = Job::new(key, slot, &shape);
     let mut encoder = device.create_command_encoder(&Default::default());
     let stamps = crate::StampBuffer::new(&device);
-    pass.record(
-        &device,
-        &queue,
-        &mut encoder,
-        &atlas,
-        &[job],
-        stamps.buffer(),
-        None,
-    );
+    pass.record(&device, &queue, &mut encoder, &atlas, &[job], &stamps, None);
     queue.submit([encoder.finish()]);
 
     let tile = read_tile(&device, &queue, &atlas, slot);
@@ -159,15 +151,7 @@ fn shared_flips(device: &wgpu::Device, queue: &wgpu::Queue, shape: &Shape) -> (u
         .collect();
     let mut encoder = device.create_command_encoder(&Default::default());
     let stamps = crate::StampBuffer::new(device);
-    pass.record(
-        device,
-        queue,
-        &mut encoder,
-        &atlas,
-        &jobs,
-        stamps.buffer(),
-        None,
-    );
+    pass.record(device, queue, &mut encoder, &atlas, &jobs, &stamps, None);
     queue.submit([encoder.finish()]);
 
     let dim = TILE_SAMPLES as usize;
