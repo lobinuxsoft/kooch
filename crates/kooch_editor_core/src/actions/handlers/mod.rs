@@ -2,7 +2,7 @@
 
 mod assets;
 mod collider;
-mod field;
+pub(crate) mod field;
 mod import_copy;
 pub(crate) mod import_materials;
 mod play;

@@ -167,6 +167,16 @@ Suzanne as a rock: bake `suzanne.glb`, then a Field stamp on Terra with `size (4
 smooth `1`. A dune field: bake a dune heightmap, `size (20, 3, 20)`, its centre a metre under the
 ground.
 
+The engine ships 54 heightmaps to start from in `assets/terrain/stamps` — dunes, hills, mountains,
+volcanos, craters, cliffs, islands, lakes, ridges, rivers, roads — and 8 ground layers in
+`assets/terrain/layers`. To see them all at once:
+
+```text
+cargo run --example make_atlas_stamps --features editor,terrain -- <parent dir>
+```
+
+writes an `AtlasStamps` project whose flat terrain carries one Field stamp per heightmap, in a grid.
+
 The texels stay on the CPU as well and both sides filter them by hand, with the same weights, so the
 ball collides with what is drawn. A field keeps its steepest slope from the bake, and the stamp scales
 its value by it, so a squashed map stays a true distance for the range analysis. A field is 2 bytes a

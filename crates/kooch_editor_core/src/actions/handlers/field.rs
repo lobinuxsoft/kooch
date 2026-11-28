@@ -86,20 +86,26 @@ pub(super) fn handle_bake_height(resources: &mut Resources, source: Guid, resolu
     let Some((path, bytes)) = read_source(resources, source) else {
         return;
     };
-    let image = match image::load_from_memory(&bytes) {
-        Ok(image) => image.to_luma32f(),
+    let field = match height_field(&bytes, resolution) {
+        Ok(field) => field,
         Err(error) => {
-            tracing::warn!(guid = %source, %error, "Create height field: the image will not decode");
+            tracing::warn!(guid = %source, %error, "Create height field");
             return;
         }
     };
+    write(resources, &path, "height", source, hash_of(&bytes), &field);
+}
+
+/// An image's brightness as a height field, averaged down to `resolution` texels along its longer
+/// side. What **Create height field** bakes, for tools that bake without the editor.
+pub fn height_field(bytes: &[u8], resolution: u32) -> Result<Field, String> {
+    let image = image::load_from_memory(bytes)
+        .map_err(|error| format!("the image will not decode: {error}"))?
+        .to_luma32f();
     let (width, depth) = image.dimensions();
     let most = resolution.clamp(16, MOST_HEIGHTS);
-    let Some(field) = Field::from_heights_at(width, depth, image.as_raw(), most) else {
-        tracing::warn!(guid = %source, width, depth, "Create height field: too large, or not finite");
-        return;
-    };
-    write(resources, &path, "height", source, hash_of(&bytes), &field);
+    Field::from_heights_at(width, depth, image.as_raw(), most)
+        .ok_or_else(|| format!("a {width}×{depth} image is too large, or not finite"))
 }
 
 fn write(

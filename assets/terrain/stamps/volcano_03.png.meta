@@ -1,0 +1,5 @@
+guid = "40470d25-bcdb-4e98-a1b0-12760737efa8"
+asset_type = "kooch_render::texture::asset::Image"
+
+[import]
+mipmaps = false
