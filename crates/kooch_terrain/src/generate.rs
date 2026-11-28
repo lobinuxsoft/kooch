@@ -90,6 +90,10 @@ pub struct Job {
     pub plane: u32,
     /// Per [`anchors`] of the tile, `|anchor|² − radius²`.
     pub excess: [f32; 8],
+    /// The finest level's voxel, which the material pass measures slope over at every level.
+    pub fine: f32,
+    /// WGSL rounds the struct to 16 bytes because of `index`.
+    pub _pad: [u32; 3],
 }
 
 impl Job {
@@ -110,6 +114,8 @@ impl Job {
             planet: key.planet,
             plane: u32::from(shape.base == crate::lod::Base::Plane),
             excess,
+            fine: shape.voxel as f32,
+            _pad: [0; 3],
         }
     }
 }

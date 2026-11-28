@@ -86,31 +86,30 @@ impl Generator {
     }
 
     /// What the ground at `point` is made of (#1951): layers `a` and `b`, and how much of `b` shows
-    /// in 0..63, as the material pass packs them. The slope comes from samples a `voxel` apart.
-    pub fn material(
-        &self,
-        shape: &Shape,
-        point: DVec3,
-        voxel: f64,
-        planet: u32,
-    ) -> Option<[u8; 3]> {
+    /// in 0..63, as the material pass packs them. Like the GPU, it measures on the surface nearest
+    /// `point`, with the slope over the finest voxel.
+    pub fn material(&self, shape: &Shape, point: DVec3, planet: u32) -> Option<[u8; 3]> {
         let Some(paint) = self.paint else {
             return Some([0; 3]);
         };
         let rise = |axis: DVec3| -> Option<f64> {
-            let up = self.sample(shape, point + axis * voxel, planet)?;
-            let down = self.sample(shape, point - axis * voxel, planet)?;
+            let up = self.sample(shape, point + axis * shape.voxel, planet)?;
+            let down = self.sample(shape, point - axis * shape.voxel, planet)?;
             Some(f64::from(up - down))
         };
         let gradient = DVec3::new(rise(DVec3::X)?, rise(DVec3::Y)?, rise(DVec3::Z)?);
-        let input = point_input(shape, point, planet, 0.0);
-        let up = DVec3::from_array(input.direction.map(|n| n.lo));
-        let slope = gradient
-            .try_normalize()
-            .map_or(0.0, |normal| 1.0 - normal.dot(up));
-        let value = PlanetValue { slope, ..input }
-            .value(&self.module, Mode::Point)
-            .ok()?;
+        let mut input = point_input(shape, point, planet, 0.0);
+        if let Some(normal) = gradient.try_normalize() {
+            let up = DVec3::from_array(input.direction.map(|n| n.lo));
+            let distance = f64::from(self.sample(shape, point, planet)?);
+            input = point_input(
+                shape,
+                point - normal * distance,
+                planet,
+                1.0 - normal.dot(up),
+            );
+        }
+        let value = input.value(&self.module, Mode::Point).ok()?;
         let mut machine = Machine::new(&self.module, &self.constants, Mode::Point);
         let lanes = machine.call(paint, vec![value]).ok()?.lanes().ok()?;
         let id = |n: Num| n.lo.round().clamp(0.0, 31.0) as u8;

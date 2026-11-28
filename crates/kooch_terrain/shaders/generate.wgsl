@@ -29,6 +29,8 @@ struct Job {
     // |anchor|² − radius² for the eight anchors the tile meets, x fastest, taken in f64 on the CPU:
     // what keeps the altitude exact far out.
     excess: array<f32, 8>,
+    // The finest level's voxel: the step the material measures slope with, at every level (#1951).
+    fine: f32,
 }
 
 @group(0) @binding(0) var<storage, read> jobs: array<Job>;
@@ -39,18 +41,23 @@ struct Job {
 
 // Job `w`'s sample `v` as the generator reads it.
 fn input_at(w: u32, v: vec3<u32>) -> PlanetInput {
+    return input_near(w, v, vec3<f32>(0.0));
+}
+
+// The same, `delta` metres away: through the sample's anchor, so it stays exact far out.
+fn input_near(w: u32, v: vec3<u32>, delta: vec3<f32>) -> PlanetInput {
     let job = jobs[w];
     let base = job.index & vec3<i32>(-ANCHOR);
     // From the grid index, and the altitude from an anchor fixed on the grid, not from the
     // tile: a neighbour reaches a shared sample through the same integers, so both store the
     // same bits and their meshes meet (#1933, #393).
     let grid = job.index + vec3<i32>(v);
-    let position = vec3<f32>(grid) * job.voxel;
+    let position = vec3<f32>(grid) * job.voxel + delta;
     let distance = length(position);
     let anchor = grid & vec3<i32>(-ANCHOR);
     let k = vec3<u32>((anchor - base) / ANCHOR);
     let origin = vec3<f32>(anchor) * job.voxel;
-    let local = vec3<f32>(grid - anchor) * job.voxel;
+    let local = vec3<f32>(grid - anchor) * job.voxel + delta;
     // |o + l| − R = (|o|² − R² + 2o·l + l²) / (|o + l| + R): no f32 radius is subtracted.
     let excess = jobs[w].excess[k.x + 2u * k.y + 4u * k.z];
     var input: PlanetInput;
@@ -94,14 +101,20 @@ fn generate_main(
     }
 }
 
-// The SDF's slope along `axis` from the tile's own samples: central inside, one-sided at its edge.
-fn along(corner: vec3<i32>, v: vec3<u32>, axis: u32) -> f32 {
-    var lo = vec3<i32>(v);
-    var hi = vec3<i32>(v);
-    lo[axis] = max(lo[axis] - 1, 0);
-    hi[axis] = min(hi[axis] + 1, i32(TILE_DIM) - 1);
-    let rise = textureLoad(samples, corner + hi, 0).x - textureLoad(samples, corner + lo, 0).x;
-    return rise / f32(hi[axis] - lo[axis]);
+// Samples further from the surface than this, in voxels, give no vertex its material.
+const NEAR: f32 = 2.0;
+
+// The generator's gradient `delta` from sample `v`, over the finest voxel: the slope a level shows
+// would smooth with its voxel, and the ground would change rock for grass as the camera moves.
+fn gradient(w: u32, v: vec3<u32>, delta: vec3<f32>) -> vec3<f32> {
+    let h = jobs[w].fine;
+    var out = vec3<f32>(0.0);
+    for (var axis = 0u; axis < 3u; axis++) {
+        var e = vec3<f32>(0.0);
+        e[axis] = h;
+        out[axis] = planet(input_near(w, v, delta + e)) - planet(input_near(w, v, delta - e));
+    }
+    return out;
 }
 
 @compute @workgroup_size(256)
@@ -115,17 +128,25 @@ fn material_main(
     let corner = tile_corner(jobs[wid.x].slot);
     for (var i = lid.x; i < TILE_DIM * TILE_DIM * TILE_DIM; i += WORKGROUP) {
         let v = voxel_of(i);
-        var input = input_at(wid.x, v);
-        let gradient = vec3<f32>(along(corner, v, 0u), along(corner, v, 1u), along(corner, v, 2u));
-        let size = length(gradient);
-        // Far from the surface the band clamps the samples flat: no slope to speak of.
-        if (size > 1e-6) {
-            input.slope = 1.0 - dot(gradient / size, input.direction);
+        var packed = 0u;
+        if (abs(textureLoad(samples, corner + vec3<i32>(v), 0).x) < NEAR) {
+            // Measured on the surface the sample stands for, not at the sample: on a coarse level
+            // that is metres off, and a height rule would paint it as a peak.
+            let toward = gradient(wid.x, v, vec3<f32>(0.0));
+            let size = length(toward);
+            var input = input_at(wid.x, v);
+            if (size > 1e-6) {
+                let normal = toward / size;
+                let up = input.direction;
+                input = input_near(wid.x, v, -normal * planet(input));
+                input.slope = 1.0 - dot(normal, up);
+            }
+            let layers = planet_material(input);
+            let a = u32(clamp(round(layers.x), 0.0, 31.0));
+            let b = u32(clamp(round(layers.y), 0.0, 31.0));
+            let blend = u32(round(clamp(layers.z, 0.0, 1.0) * 63.0));
+            packed = a | (b << 5u) | (blend << 10u);
         }
-        let layers = planet_material(input);
-        let a = u32(clamp(round(layers.x), 0.0, 31.0));
-        let b = u32(clamp(round(layers.y), 0.0, 31.0));
-        let blend = u32(round(clamp(layers.z, 0.0, 1.0) * 63.0));
-        textureStore(materials, corner + vec3<i32>(v), vec4<u32>(a | (b << 5u) | (blend << 10u)));
+        textureStore(materials, corner + vec3<i32>(v), vec4<u32>(packed));
     }
 }

@@ -90,7 +90,9 @@ graph picks a colour per layer and mixes them. Where two areas meet, keep the la
 full weight on both sides — `(grass, rock)` at blend 1 next to `(rock, snow)` at blend 0 — and the
 seam does not show. A layer per texture array slot arrives with #2047.
 
-Each sample stores its layers in 2 bytes, as many as its distance: the material atlas is as large as
+The material is measured on the surface, with the slope over the finest `voxel`, so a block looks
+the same at every level of detail: only how fine the pattern is changes. That costs seven generator
+calls per sample near the surface, and none for the rest. Each sample stores its layers in 2 bytes, as many as its distance: the material atlas is as large as
 the distance one, 68 MiB at the default 6144 blocks. On the CPU, `Generator::material` answers the
 same question at any point, for footsteps or friction.
 
