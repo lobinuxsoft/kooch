@@ -38,7 +38,7 @@ pub use atlas::BlockAtlas;
 pub use component::Terrain;
 pub use eval::Generator;
 pub use generate::{
-    BARE_SPHERE, Backlog, GeneratePass, Job, PLANET_INPUT_WGSL, validate_generator,
+    BARE_SPHERE, Backlog, GeneratePass, Job, LAYERS, PLANET_INPUT_WGSL, validate_generator,
 };
 #[cfg(feature = "physics")]
 pub use ground::{

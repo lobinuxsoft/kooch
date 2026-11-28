@@ -102,6 +102,17 @@ impl Node {
                 "The point from the planet's centre, in metres. Terrain shaders only; coarse on a \
                  planet of real size, where Direction times the radius keeps more detail."
             }
+            Self::Slope => {
+                "How steep the ground is: 0 flat, 1 a wall, 2 a ceiling. Terrain shaders, material \
+                 pins only."
+            }
+            Self::Layer(_) => {
+                "How much of this layer the ground is made of here. One per layer; each sample keeps \
+                 its four heaviest. Terrain shaders only."
+            }
+            Self::LayerWeight(_) => {
+                "How much of this layer the terrain shows here, 0..1. Surfaces of a Terrain only."
+            }
             Self::WorldNormal => "The surface's normal, in world space.",
             Self::ViewDirection => "From the surface towards the camera, normalised.",
             Self::Time => "The clock, in seconds, and waves made from it.",
@@ -419,6 +430,7 @@ impl Node {
                 One,
                 "Signed distance in metres, negative inside the ground. Unwired: Sphere Base, the bare sphere.",
             )],
+            Self::Layer(_) => &[(One, "Its weight: any size, only how it compares counts.")],
             Self::ShaderOutput { kind } if kind == "ui" => &[
                 (Three, "The colour. Unwired: the node's background-color."),
                 (One, "Opacity. Unwired: 1."),
@@ -510,7 +522,9 @@ impl Node {
             Self::Sway => (Two, "The two waves."),
             Self::WorldPosition | Self::WorldNormal | Self::ViewDirection => (Three, self.about()),
             Self::PlanetDirection | Self::PlanetPosition => (Three, self.about()),
-            Self::SphereBase | Self::PlaneBase => (One, self.about()),
+            Self::SphereBase | Self::PlaneBase | Self::Slope | Self::LayerWeight(_) => {
+                (One, self.about())
+            }
             Self::Float { .. } | Self::Int { .. } | Self::ConstFloat(_) | Self::ConstInt(_) => {
                 (One, "The number.")
             }

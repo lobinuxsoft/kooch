@@ -2,7 +2,8 @@
 //! planet's generator and written into their atlas tiles.
 //!
 //! The generator is WGSL defining `fn planet(input: PlanetInput) -> f32`, the signed distance in
-//! metres; a `planet` graph writes one (#1178). Blocks wait in a [`Backlog`] and a frame takes a
+//! metres, and optionally `fn planet_material(input: PlanetInput) -> array<f32, 32>`, each layer's
+//! weight at the sample (#1951); a `terrain` graph writes both (#1178). Blocks wait in a [`Backlog`] and a frame takes a
 //! bounded batch, so a jump between planets spreads its cost over frames instead of one hitch.
 
 use std::collections::VecDeque;
@@ -10,7 +11,7 @@ use std::collections::VecDeque;
 use bytemuck::{Pod, Zeroable};
 use glam::IVec3;
 
-use super::atlas::BlockAtlas;
+use super::atlas::{BlockAtlas, MATERIAL_FORMAT};
 use super::lod::voxel_size;
 use super::{BLOCK_SAMPLES, TILE_SAMPLES};
 use super::{BlockKey, BlockPool, Planets, Residency, Shape};
@@ -20,7 +21,8 @@ use kooch_world::voxel::POOL_TEXTURE_FORMAT;
 mod tests;
 
 /// What a generator reads per sample. `altitude` is exact at any radius; `position` is f32 from
-/// the planet's centre, so detail finer than `radius · 1e-7` is lost in it.
+/// the planet's centre, so detail finer than `radius · 1e-7` is lost in it. `slope` is only set
+/// for `planet_material`: it comes from the distance, so `planet` reads 0.
 pub const PLANET_INPUT_WGSL: &str = r#"
 struct PlanetInput {
     position: vec3<f32>,
@@ -28,6 +30,7 @@ struct PlanetInput {
     direction: vec3<f32>,
     radius: f32,
     planet: u32,
+    slope: f32,
 }
 "#;
 
@@ -35,7 +38,24 @@ struct PlanetInput {
 /// graph writes too.
 pub const BARE_SPHERE: &str = "fn planet(input: PlanetInput) -> f32 { return input.altitude; }";
 
+/// Layers a terrain can hold: ids are 5 bits.
+pub const LAYERS: usize = 32;
+
+/// What a generator without `fn planet_material` paints: layer 0 everywhere.
+fn bare_material() -> String {
+    let zeros = ", 0.0".repeat(LAYERS - 1);
+    format!(
+        "fn planet_material(input: PlanetInput) -> array<f32, {LAYERS}> {{ \
+         return array<f32, {LAYERS}>(1.0{zeros}); }}"
+    )
+}
+
 const GENERATE_WGSL: &str = include_str!("../shaders/generate.wgsl");
+
+/// Whether `generator` defines its own `fn planet_material`.
+pub(crate) fn paints(generator: &str) -> bool {
+    generator.contains("fn planet_material(")
+}
 
 /// Whether `generator` compiles into the generation pass, and if not, why.
 pub fn validate_generator(generator: &str) -> Result<(), String> {
@@ -44,9 +64,15 @@ pub fn validate_generator(generator: &str) -> Result<(), String> {
 
 /// The generate shader for `generator`, over an atlas of `tiles`.
 fn compose(generator: &str, tiles: glam::UVec3) -> String {
+    let material = if paints(generator) {
+        String::new()
+    } else {
+        bare_material()
+    };
     format!(
         "const TILES_X: u32 = {}u;\nconst TILES_Y: u32 = {}u;\nconst TILE_DIM: u32 = {TILE_SAMPLES}u;\n\
-         {PLANET_INPUT_WGSL}{generator}\n{GENERATE_WGSL}",
+         const LAYERS: u32 = {LAYERS}u;\n\
+         {PLANET_INPUT_WGSL}{generator}\n{material}\n{GENERATE_WGSL}",
         tiles.x, tiles.y
     )
 }
@@ -77,6 +103,10 @@ pub struct Job {
     pub plane: u32,
     /// Per [`anchors`] of the tile, `|anchor|² − radius²`.
     pub excess: [f32; 8],
+    /// The finest level's voxel, which the material pass measures slope over at every level.
+    pub fine: f32,
+    /// WGSL rounds the struct to 16 bytes because of `index`.
+    pub _pad: [u32; 3],
 }
 
 impl Job {
@@ -97,6 +127,8 @@ impl Job {
             planet: key.planet,
             plane: u32::from(shape.base == crate::lod::Base::Plane),
             excess,
+            fine: shape.voxel as f32,
+            _pad: [0; 3],
         }
     }
 }
@@ -217,10 +249,12 @@ impl Backlog {
     }
 }
 
-/// The pipeline for one generator, and room for a batch of jobs.
+/// The pipelines for one generator, its distance and its material, and room for a batch of jobs.
 pub struct GeneratePass {
     pipeline: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
+    material: wgpu::ComputePipeline,
+    material_layout: wgpu::BindGroupLayout,
     jobs: wgpu::Buffer,
     batch: u32,
 }
@@ -237,51 +271,53 @@ impl GeneratePass {
     ) -> Result<Self, String> {
         let source = compose(generator, atlas.tiles());
         validate(&source)?;
+        let jobs_entry = wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let written = |binding, format| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::StorageTexture {
+                access: wgpu::StorageTextureAccess::WriteOnly,
+                format,
+                view_dimension: wgpu::TextureViewDimension::D3,
+            },
+            count: None,
+        };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("kooch_terrain::generate"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: POOL_TEXTURE_FORMAT,
-                        view_dimension: wgpu::TextureViewDimension::D3,
-                    },
-                    count: None,
-                },
-            ],
+            entries: &[jobs_entry, written(1, POOL_TEXTURE_FORMAT)],
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("kooch_terrain::generate"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
+        let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("kooch_terrain::generate::material"),
+            entries: &[
+                jobs_entry,
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                written(3, MATERIAL_FORMAT),
+            ],
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("kooch_terrain::generate"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("kooch_terrain::generate"),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some("generate_main"),
-            compilation_options: wgpu::PipelineCompilationOptions {
-                constants: &[],
-                zero_initialize_workgroup_memory: false,
-            },
-            cache: None,
-        });
+        let pipeline = compute(device, &module, &layout, "generate_main");
+        let material = compute(device, &module, &material_layout, "material_main");
         let batch = batch.max(1);
         let jobs = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("kooch_terrain::generate::jobs"),
@@ -292,6 +328,8 @@ impl GeneratePass {
         Ok(Self {
             pipeline,
             layout,
+            material,
+            material_layout,
             jobs,
             batch,
         })
@@ -351,6 +389,24 @@ impl GeneratePass {
                 },
             ],
         });
+        let painted = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("kooch_terrain::generate::material"),
+            layout: &self.material_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.jobs.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(atlas.view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(atlas.material_view()),
+                },
+            ],
+        });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("kooch_terrain::generate"),
             timestamp_writes: timestamps,
@@ -358,5 +414,33 @@ impl GeneratePass {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(jobs.len() as u32, 1, 1);
+        // Usage is tracked per dispatch, so this one reads what the last one wrote.
+        pass.set_pipeline(&self.material);
+        pass.set_bind_group(0, &painted, &[]);
+        pass.dispatch_workgroups(jobs.len() as u32, 1, 1);
     }
+}
+
+fn compute(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::BindGroupLayout,
+    entry: &str,
+) -> wgpu::ComputePipeline {
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("kooch_terrain::generate"),
+        bind_group_layouts: &[Some(layout)],
+        immediate_size: 0,
+    });
+    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("kooch_terrain::generate"),
+        layout: Some(&pipeline_layout),
+        module,
+        entry_point: Some(entry),
+        compilation_options: wgpu::PipelineCompilationOptions {
+            constants: &[],
+            zero_initialize_workgroup_memory: false,
+        },
+        cache: None,
+    })
 }

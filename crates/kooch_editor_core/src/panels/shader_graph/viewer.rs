@@ -374,6 +374,8 @@ pub(super) fn has_fields(node: &Node) -> bool {
             | Node::Blend { .. }
             | Node::Curve(_)
             | Node::ShaderOutput { .. }
+            | Node::Layer(_)
+            | Node::LayerWeight(_)
     )
 }
 

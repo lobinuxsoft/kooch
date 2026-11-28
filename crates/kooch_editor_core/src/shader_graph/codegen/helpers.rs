@@ -79,6 +79,10 @@ pub(super) fn helpers(graph: &Graph, volume: bool) -> String {
     );
     push(uses(&|n| matches!(n, Node::Parallax)), PARALLAX_HELPER);
     push(
+        uses(&|n| matches!(n, Node::LayerWeight(_))),
+        LAYER_WEIGHT_HELPER,
+    );
+    push(
         uses(&|n| matches!(n, Node::ImageNormal)),
         IMAGE_NORMAL_HELPER,
     );
@@ -86,6 +90,7 @@ pub(super) fn helpers(graph: &Graph, volume: bool) -> String {
 }
 
 /// Turns a coordinate around a centre.
+const LAYER_WEIGHT_HELPER: &str = include_str!("helpers/layer_weight.wgsl");
 const ROTATE_HELPER: &str = include_str!("helpers/rotate.wgsl");
 
 /// 🔴 `normalize` of a zero vector is NaN, and a graph reaches one the moment an input is left

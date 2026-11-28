@@ -92,6 +92,11 @@ pub(super) fn node_fields(ui: &mut egui::Ui, node: &mut Node, catalog: &[AssetCa
         }
         Node::VoronoiNoise { metric } => choice(ui, "metric", metric, &VORONOI_METRICS),
         Node::ShaderOutput { kind } => choice(ui, "kind", kind, &OUTPUT_KINDS),
+        Node::Layer(layer) | Node::LayerWeight(layer) => {
+            let max = kooch_terrain::LAYERS as u32 - 1;
+            ui.add(egui::DragValue::new(layer).range(0..=max).prefix("layer "))
+                .on_hover_text("Which of the terrain's layers, 0..31: its surface decides what each looks like");
+        }
         _ => {}
     }
 }

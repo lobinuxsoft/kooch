@@ -31,7 +31,9 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
 ```
 
 `SurfaceInput` carries the reconstructed point: `world_position`, `world_normal`, `world_tangent`,
-`uv`, the analytical `ddx_uv` / `ddy_uv`, `mip_bias_scale`, `frag_coord`, `camera_position`, `time`
+`uv`, the analytical `ddx_uv` / `ddy_uv`, `corner_uvs` and `barycentrics` (the triangle's three uvs as
+stored and where the point sits between them: a terrain's layers ride on them, read with **Layer
+Weight**), `mip_bias_scale`, `frag_coord`, `camera_position`, `time`
 (seconds since the engine started, for a surface that moves) and `material_id`.
 `SurfaceOutput` is what Inti lights: `base_color`, a world-space `normal`, `metallic`, `roughness`
 and `emissive`, plus `alpha` and `alpha_clip` for the shaders that are see-through (below).
@@ -307,16 +309,20 @@ A generator over a plane adds `// base: plane` under its kind line: then `altitu
 and `direction` is `+Y`. Without it the base is a sphere.
 
 `PlanetInput` carries `altitude` (metres above the base sphere), `direction` (from the centre, unit
-length), `position` (from the centre, in metres), `radius` and `planet`. **Use `altitude` and
+length), `position` (from the centre, in metres), `radius`, `planet` and `slope` (0 in `planet`). **Use `altitude` and
 `direction`**: they stay exact on a planet of any size. `position` is f32, so on a planet the size
 of the Earth it is off by about half a metre, and a shape built on it shows steps.
 
 The kind was called `planet` until #2038; files that still say so load, and the entry point keeps
 the name `planet`.
 
-A graph writes this kind too: set the Output's kind to `terrain`. Its one input is `distance`;
-unwired, it is the bare sphere. **Sphere Base** and **Plane Base** (`altitude`: one node per base
-shape, its measures on the `Terrain` component), **Planet Direction** and **Planet Position** are under
+A generator may also define `fn planet_material(input: PlanetInput) -> array<f32, 32>`: per sample,
+each layer's weight (#1951), with `input.slope` set — 0 flat, 1 a wall. The four heaviest are kept.
+Without it the ground is layer 0. See [what the ground is made of](planets.md#what-the-ground-is-made-of).
+
+A graph writes this kind too: set the Output's kind to `terrain`. Its one input is `distance`,
+unwired the bare sphere; a **Layer** node (under **Output**) weighs each layer. **Sphere Base** and **Plane Base** (`altitude`: one node per base
+shape, its measures on the `Terrain` component), **Planet Direction**, **Planet Position** and **Slope** are under
 **Input**, and every fractal noise samples in 3D, its third axis read from the coordinate's `z`.
 What has nothing to read in compute — uv, normals, the camera, time, textures, material parameters —
 stops the graph with a message that names it. The preview says it has nothing to draw.
