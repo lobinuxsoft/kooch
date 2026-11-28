@@ -147,12 +147,10 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     if planet {
         // The material pass derives the slope from the distance, so the distance cannot read it.
         if source.contains("input.slope") || outputs[0].contains("input.slope") {
-            return Err(
-                "Slope feeds only the material pins: it is measured on the distance".into(),
-            );
+            return Err("Slope feeds only Layer nodes: it is measured on the distance".into());
         }
         let _ = writeln!(source, "    return {}.x;\n}}", outputs[0]);
-        source.push_str(&material(graph, output, body.wires)?);
+        source.push_str(&material(graph, body.wires)?);
         kooch_terrain::validate_generator(&source)?;
         return finish(source);
     }
@@ -190,12 +188,16 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     finish(source)
 }
 
-/// `fn planet_material`: the Output's material pins, in a body of their own (#1951).
-fn material(
-    graph: &Graph,
-    output: NodeId,
-    wires: HashMap<InPinId, OutPinId>,
-) -> Result<String, String> {
+/// `fn planet_material`: every Layer node's weight, in a body of its own (#1951). Two nodes of one
+/// layer add up.
+fn material(graph: &Graph, wires: HashMap<InPinId, OutPinId>) -> Result<String, String> {
+    let layers: Vec<(NodeId, u32)> = graph
+        .node_ids()
+        .filter_map(|(id, cell)| match cell.node {
+            Node::Layer(layer) => Some((id, layer)),
+            _ => None,
+        })
+        .collect();
     let mut body = Body {
         graph,
         wires,
@@ -207,13 +209,34 @@ fn material(
         post: false,
         planet: true,
     };
-    let [a, b, blend] = [1, 2, 3].map(|input| body.input_or(output, input, "vec4<f32>(0.0)"));
-    let mut out = String::from("\nfn planet_material(input: PlanetInput) -> vec3<f32> {\n");
+    let count = kooch_terrain::LAYERS;
+    let mut weights = vec![String::new(); count];
+    // Without a Layer node the ground is layer 0, as it is for a hand-written generator.
+    if layers.is_empty() {
+        weights[0] = "1.0".to_owned();
+    }
+    for (id, layer) in layers {
+        let slot = weights
+            .get_mut(layer as usize)
+            .ok_or_else(|| format!("Layer {layer} is past the last layer, {}", count - 1))?;
+        let weight = body.input_or(id, 0, "vec4<f32>(0.0)")?;
+        let term = format!("{weight}.x");
+        *slot = if slot.is_empty() {
+            term
+        } else {
+            format!("{slot} + {term}")
+        };
+    }
+    let list: Vec<String> = weights
+        .into_iter()
+        .map(|w| if w.is_empty() { "0.0".to_owned() } else { w })
+        .collect();
+    let mut out = format!("\nfn planet_material(input: PlanetInput) -> array<f32, {count}> {{\n");
     out.push_str(&body.lines);
     let _ = writeln!(
         out,
-        "    return vec3<f32>({}.x, {}.x, {}.x);\n}}",
-        a?, b?, blend?
+        "    return array<f32, {count}>({});\n}}",
+        list.join(", ")
     );
     Ok(out)
 }

@@ -60,9 +60,10 @@ struct VertexOutput {
     uv: vec2<f32>,
     ddx_uv: vec2<f32>,
     ddy_uv: vec2<f32>,
-    // The uv of the triangle's corner nearest the fragment, uninterpolated: a terrain's material
-    // ids (#1951).
-    nearest_uv: vec2<f32>,
+    // The triangle's three uvs as stored, and where the fragment sits between them: a terrain
+    // packs layer ids there, which must not be interpolated (#1951).
+    corner_uvs: array<vec2<f32>, 3>,
+    barycentrics: vec3<f32>,
     world_tangent: vec4<f32>,
     material_id: u32,
     // #804 — the instance's bits, carried through so the shading path
@@ -249,8 +250,8 @@ fn resolve_surface(visible_slot: u32, tri_idx: u32, frag_coord: vec2<f32>) -> Ve
     out.uv = uv;
     out.ddx_uv = ddx_uv;
     out.ddy_uv = ddy_uv;
-    let b = pd.barycentrics;
-    out.nearest_uv = select(select(uv2, uv1, b.y >= b.z), uv0, b.x >= b.y && b.x >= b.z);
+    out.corner_uvs = array<vec2<f32>, 3>(uv0, uv1, uv2);
+    out.barycentrics = pd.barycentrics;
     out.world_tangent = world_tangent;
     out.material_id = inst.material_id;
     out.flags = inst.flags;

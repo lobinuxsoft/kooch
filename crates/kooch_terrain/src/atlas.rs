@@ -1,5 +1,5 @@
 //! The block atlas: one `R16Float` 3D texture whose tiles are the pool's slots, shared by every
-//! planet, and an `R16Uint` twin of it holding each sample's material (#1951). A slot's tile never
+//! planet, and an `R32Uint` twin of it holding each sample's material (#1951). A slot's tile never
 //! moves, so a resident block is written once.
 
 use glam::UVec3;
@@ -10,8 +10,9 @@ use kooch_world::voxel::POOL_TEXTURE_FORMAT;
 /// Tiles along X and Z; Y grows with the capacity.
 const TILES_ACROSS: u32 = 32;
 
-/// A sample's two layers and their blend, packed: `a` 5 bits, `b` 5, `blend` 6.
-pub const MATERIAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Uint;
+/// A sample's four strongest layers, packed: four ids of 5 bits, then three weights of 4 bits; the
+/// fourth weight is what the others leave of 1.
+pub const MATERIAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 
 pub struct BlockAtlas {
     texture: wgpu::Texture,

@@ -75,13 +75,12 @@ fn pack_info(q: u32, first: u32, next: u32, quads: u32, cells: u32) -> u32 {
     return q | (first << 6u) | (next << 12u) | (quads << 19u) | (cells << 25u);
 }
 
-// The material of the sample nearest a vertex, as its uv: `a + 32·b`, then the blend. A terrain's
-// uv is free for it: the ground is projected, never unwrapped. Ids are whole numbers, exact in f32.
+// The material of the sample nearest a vertex, as its uv: the four ids (20 bits), then the weights
+// (12). A terrain's uv is free for it, the ground being projected, and both halves are exact in f32.
 fn material_near(at: vec3<f32>) -> vec2<f32> {
     let s = clamp(vec3<i32>(round(at)), vec3<i32>(0), vec3<i32>(i32(TILE) - 1));
     let packed = textureLoad(materials, corner + s, 0).x;
-    let ids = f32(packed & 31u) + 32.0 * f32((packed >> 5u) & 31u);
-    return vec2<f32>(ids, f32(packed >> 10u) / 63.0);
+    return vec2<f32>(f32(packed & 0xfffffu), f32(packed >> 20u));
 }
 
 fn vertex_of(i: u32) -> u32 {

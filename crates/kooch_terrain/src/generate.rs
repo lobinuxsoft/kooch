@@ -2,8 +2,8 @@
 //! planet's generator and written into their atlas tiles.
 //!
 //! The generator is WGSL defining `fn planet(input: PlanetInput) -> f32`, the signed distance in
-//! metres, and optionally `fn planet_material(input: PlanetInput) -> vec3<f32>`, each sample's two
-//! layers and their blend (#1951); a `terrain` graph writes both (#1178). Blocks wait in a [`Backlog`] and a frame takes a
+//! metres, and optionally `fn planet_material(input: PlanetInput) -> array<f32, 32>`, each layer's
+//! weight at the sample (#1951); a `terrain` graph writes both (#1178). Blocks wait in a [`Backlog`] and a frame takes a
 //! bounded batch, so a jump between planets spreads its cost over frames instead of one hitch.
 
 use std::collections::VecDeque;
@@ -38,9 +38,17 @@ struct PlanetInput {
 /// graph writes too.
 pub const BARE_SPHERE: &str = "fn planet(input: PlanetInput) -> f32 { return input.altitude; }";
 
+/// Layers a terrain can hold: ids are 5 bits.
+pub const LAYERS: usize = 32;
+
 /// What a generator without `fn planet_material` paints: layer 0 everywhere.
-const BARE_MATERIAL: &str =
-    "fn planet_material(input: PlanetInput) -> vec3<f32> { return vec3<f32>(0.0); }";
+fn bare_material() -> String {
+    let zeros = ", 0.0".repeat(LAYERS - 1);
+    format!(
+        "fn planet_material(input: PlanetInput) -> array<f32, {LAYERS}> {{ \
+         return array<f32, {LAYERS}>(1.0{zeros}); }}"
+    )
+}
 
 const GENERATE_WGSL: &str = include_str!("../shaders/generate.wgsl");
 
@@ -56,9 +64,14 @@ pub fn validate_generator(generator: &str) -> Result<(), String> {
 
 /// The generate shader for `generator`, over an atlas of `tiles`.
 fn compose(generator: &str, tiles: glam::UVec3) -> String {
-    let material = if paints(generator) { "" } else { BARE_MATERIAL };
+    let material = if paints(generator) {
+        String::new()
+    } else {
+        bare_material()
+    };
     format!(
         "const TILES_X: u32 = {}u;\nconst TILES_Y: u32 = {}u;\nconst TILE_DIM: u32 = {TILE_SAMPLES}u;\n\
+         const LAYERS: u32 = {LAYERS}u;\n\
          {PLANET_INPUT_WGSL}{generator}\n{material}\n{GENERATE_WGSL}",
         tiles.x, tiles.y
     )

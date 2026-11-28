@@ -31,8 +31,9 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
 ```
 
 `SurfaceInput` carries the reconstructed point: `world_position`, `world_normal`, `world_tangent`,
-`uv`, the analytical `ddx_uv` / `ddy_uv`, `nearest_uv` (the uv of the triangle's nearest corner,
-uninterpolated: a terrain's material ids ride on it), `mip_bias_scale`, `frag_coord`, `camera_position`, `time`
+`uv`, the analytical `ddx_uv` / `ddy_uv`, `corner_uvs` and `barycentrics` (the triangle's three uvs as
+stored and where the point sits between them: a terrain's layers ride on them, read with **Layer
+Weight**), `mip_bias_scale`, `frag_coord`, `camera_position`, `time`
 (seconds since the engine started, for a surface that moves) and `material_id`.
 `SurfaceOutput` is what Inti lights: `base_color`, a world-space `normal`, `metallic`, `roughness`
 and `emissive`, plus `alpha` and `alpha_clip` for the shaders that are see-through (below).
@@ -315,12 +316,12 @@ of the Earth it is off by about half a metre, and a shape built on it shows step
 The kind was called `planet` until #2038; files that still say so load, and the entry point keeps
 the name `planet`.
 
-A generator may also define `fn planet_material(input: PlanetInput) -> vec3<f32>`: per sample, its
-two layers and their blend (#1951), with `input.slope` set — 0 flat, 1 a wall. Without it the ground
-is layer 0. See [what the ground is made of](planets.md#what-the-ground-is-made-of).
+A generator may also define `fn planet_material(input: PlanetInput) -> array<f32, 32>`: per sample,
+each layer's weight (#1951), with `input.slope` set — 0 flat, 1 a wall. The four heaviest are kept.
+Without it the ground is layer 0. See [what the ground is made of](planets.md#what-the-ground-is-made-of).
 
-A graph writes this kind too: set the Output's kind to `terrain`. Its inputs are `distance`,
-unwired the bare sphere, and `material a`, `material b` and `blend`, unwired 0. **Sphere Base** and **Plane Base** (`altitude`: one node per base
+A graph writes this kind too: set the Output's kind to `terrain`. Its one input is `distance`,
+unwired the bare sphere; a **Layer** node (under **Output**) weighs each layer. **Sphere Base** and **Plane Base** (`altitude`: one node per base
 shape, its measures on the `Terrain` component), **Planet Direction**, **Planet Position** and **Slope** are under
 **Input**, and every fractal noise samples in 3D, its third axis read from the coordinate's `z`.
 What has nothing to read in compute — uv, normals, the camera, time, textures, material parameters —

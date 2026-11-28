@@ -65,11 +65,6 @@ const TIME: &[(&str, Pick)] = &[
     ("cosine", Pick::Channel(2)),
     ("tenth", Pick::Channel(3)),
 ];
-const TERRAIN_LAYER: &[(&str, Pick)] = &[
-    ("a", Pick::Channel(0)),
-    ("b", Pick::Channel(1)),
-    ("blend", Pick::Channel(2)),
-];
 const VORONOI: &[(&str, Pick)] = &[
     ("F1", Pick::Field("f1")),
     ("F2", Pick::Field("f2")),
@@ -130,7 +125,8 @@ impl Node {
             Self::PlanetDirection => "Planet Direction".to_owned(),
             Self::PlanetPosition => "Planet Position".to_owned(),
             Self::Slope => "Slope".to_owned(),
-            Self::TerrainLayer => "Terrain Layer".to_owned(),
+            Self::Layer(id) => format!("Layer {id}"),
+            Self::LayerWeight(id) => format!("Layer Weight {id}"),
             Self::WorldNormal => "World Normal".to_owned(),
             Self::ViewDirection => "View Direction".to_owned(),
             Self::Time => "Time".to_owned(),
@@ -234,6 +230,7 @@ impl Node {
             | Self::Loop { .. }
             | Self::Function { .. } => &[],
             Self::Result { .. } => &["value"],
+            Self::Layer(_) => &["weight"],
             Self::Uv
             | Self::UiColor
             | Self::UiBorderColor
@@ -243,7 +240,7 @@ impl Node {
             | Self::PlanetDirection
             | Self::PlanetPosition
             | Self::Slope
-            | Self::TerrainLayer
+            | Self::LayerWeight(_)
             | Self::WorldPosition
             | Self::WorldNormal
             | Self::ViewDirection
@@ -333,9 +330,7 @@ impl Node {
             Self::Polygon => &["uv", "sides", "radius"],
             Self::Checker => &["uv", "tiles"],
             Self::ShaderOutput { kind } if kind == "sky" => &["color"],
-            Self::ShaderOutput { kind } if kind == "terrain" => {
-                &["distance", "material a", "material b", "blend"]
-            }
+            Self::ShaderOutput { kind } if kind == "terrain" => &["distance"],
             Self::ShaderOutput { kind } if kind == "post_process" || kind == "ui" => {
                 &["color", "alpha"]
             }
@@ -399,7 +394,7 @@ impl Node {
     /// The same, for a node whose pins are not read from a file.
     fn fixed_outputs(&self) -> &'static [(&'static str, Pick)] {
         match self {
-            Self::Output | Self::ShaderOutput { .. } | Self::Result { .. } => &[],
+            Self::Output | Self::ShaderOutput { .. } | Self::Result { .. } | Self::Layer(_) => &[],
             Self::Argument { .. } => XYZW,
             Self::SceneColor
             | Self::UiImage
@@ -439,7 +434,6 @@ impl Node {
             // Packed into one wire these read as nonsense — a clock, its sine and its cosine are not
             // a colour — so they come apart only.
             Self::Time => TIME,
-            Self::TerrainLayer => TERRAIN_LAYER,
             Self::Voronoi | Self::VoronoiNoise { .. } => VORONOI,
             Self::FractalNoise { .. } | Self::Noise | Self::GradientNoise | Self::SimplexNoise => {
                 FRACTAL
@@ -490,7 +484,7 @@ impl Node {
             | Self::PlanetDirection
             | Self::PlanetPosition
             | Self::Slope
-            | Self::TerrainLayer
+            | Self::LayerWeight(_)
             | Self::Time
             | Self::Param { .. }
             | Self::Float { .. }
@@ -577,7 +571,7 @@ impl Node {
             | Self::RoundedBox
             | Self::SdfFill
             | Self::SdfStroke => Category::Shape,
-            Self::Output | Self::ShaderOutput { .. } => Category::Output,
+            Self::Output | Self::ShaderOutput { .. } | Self::Layer(_) => Category::Output,
         }
     }
 

@@ -74,27 +74,28 @@ Two limits keep the ground smooth:
 
 ## What the ground is made of
 
-The generator also says what the ground is made of: grass, rock, snow. The terrain Output has
-three material pins beside `distance`: **material a** and **material b**, two layers numbered 0..31,
-and **blend**, how much of b shows (0..1). Unwired, everything is layer 0.
+The generator also says what the ground is made of: grass, rock, snow. Each layer is a **Layer** node
+in the generator's graph, numbered 0..31, with its own rule wired into its `weight`. Weights need
+not add up to anything — only how they compare counts — and two nodes of one layer add. Without any
+Layer node the ground is layer 0.
 
 Rules are graph math. **Slope** is how steep the ground is, from 0 on the flat to 1 on a wall and 2
-under a ceiling; the height is the base node you already have. Snow above forty metres on rock is
-`a = 1`, `b = 2`, `blend = Smoothstep(38, 42, Sphere Base)`; rock on cliffs is
-`blend = Smoothstep(0.3, 0.5, Slope)`. Slope only reaches the material pins: it is measured on the
-distance, so the distance cannot read it.
+under a ceiling; the height is the base node you already have. Rock on cliffs is
+`Layer 1 = Smoothstep(0.3, 0.5, Slope)`, snow above forty metres `Layer 2 = Smoothstep(38, 42, Sphere
+Base)`, and grass whatever is left, `Layer 0 = One Minus` of the two. Slope only reaches Layer
+nodes: it is measured on the distance, so the distance cannot read it.
 
-What a number *looks* like is the surface material's choice, not the generator's: in the graph of
-the `Terrain`'s `material`, **Terrain Layer** gives back `a`, `b` and `blend` at each point, and the
-graph picks a colour per layer and mixes them. Where two areas meet, keep the layer they share at
-full weight on both sides — `(grass, rock)` at blend 1 next to `(rock, snow)` at blend 0 — and the
-seam does not show. A layer per texture array slot arrives with #2047.
+Each sample keeps its **four heaviest layers**, as Godot Voxel does, so up to four blend where biomes
+meet. What a layer *looks* like is the surface material's choice: in the graph of the `Terrain`'s
+`material`, **Layer Weight** gives how much of one layer shows at each point, 0..1, and the colour is
+each layer's look times its weight, added. A texture per layer, past the four a material binds
+today, arrives with #2047.
 
 The material is measured on the surface, with the slope over the finest `voxel`, so a block looks
 the same at every level of detail: only how fine the pattern is changes. That costs seven generator
-calls per sample near the surface, and none for the rest. Each sample stores its layers in 2 bytes, as many as its distance: the material atlas is as large as
-the distance one, 68 MiB at the default 6144 blocks. On the CPU, `Generator::material` answers the
-same question at any point, for footsteps or friction.
+calls per sample near the surface, and none for the rest. Each sample stores its layers in 4 bytes,
+twice its distance: the material atlas is 137 MiB at the default 6144 blocks. On the CPU,
+`Generator::material` answers the same question at any point, for footsteps or friction.
 
 ## What it costs
 

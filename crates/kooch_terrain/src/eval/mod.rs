@@ -85,12 +85,12 @@ impl Generator {
         out.is_point().then_some(out.lo as f32)
     }
 
-    /// What the ground at `point` is made of (#1951): layers `a` and `b`, and how much of `b` shows
-    /// in 0..63, as the material pass packs them. Like the GPU, it measures on the surface nearest
-    /// `point`, with the slope over the finest voxel.
-    pub fn material(&self, shape: &Shape, point: DVec3, planet: u32) -> Option<[u8; 3]> {
+    /// What the ground at `point` is made of (#1951): its four heaviest layers and their share,
+    /// strongest first, quantised as the material pass packs them. Like the GPU, it measures on the
+    /// surface nearest `point`, with the slope over the finest voxel.
+    pub fn material(&self, shape: &Shape, point: DVec3, planet: u32) -> Option<[(u8, f32); 4]> {
         let Some(paint) = self.paint else {
-            return Some([0; 3]);
+            return Some(strongest(&[1.0]));
         };
         let rise = |axis: DVec3| -> Option<f64> {
             let up = self.sample(shape, point + axis * shape.voxel, planet)?;
@@ -111,16 +111,49 @@ impl Generator {
         }
         let value = input.value(&self.module, Mode::Point).ok()?;
         let mut machine = Machine::new(&self.module, &self.constants, Mode::Point);
-        let lanes = machine.call(paint, vec![value]).ok()?.lanes().ok()?;
-        let id = |n: Num| n.lo.round().clamp(0.0, 31.0) as u8;
-        let blend = (lanes.lane(2).lo.clamp(0.0, 1.0) * 63.0).round() as u8;
-        Some([id(lanes.lane(0)), id(lanes.lane(1)), blend])
+        let Value::Parts(parts) = machine.call(paint, vec![value]).ok()? else {
+            return None;
+        };
+        let weights: Vec<f64> = parts
+            .iter()
+            .map(|part| part.num().map(|n| n.lo))
+            .collect::<Result<_, _>>()
+            .ok()?;
+        Some(strongest(&weights))
     }
 
     fn run(&self, input: Value, mode: Mode) -> Result<Num, Fault> {
         let mut machine = Machine::new(&self.module, &self.constants, mode);
         machine.call(self.planet, vec![input])?.num()
     }
+}
+
+/// `strongest` in `generate.wgsl`: the four heaviest layers, strongest first, each share in 15ths
+/// of their sum and the fourth what the others leave. None weighs: layer 0.
+fn strongest(weights: &[f64]) -> [(u8, f32); 4] {
+    let mut top = [(0u8, 0.0f64); 4];
+    for (id, &w) in weights.iter().enumerate().take(32) {
+        if let Some(at) = top.iter().position(|&(_, held)| w > held) {
+            top.copy_within(at..3, at + 1);
+            top[at] = (id as u8, w);
+        }
+    }
+    let sum: f64 = top.iter().map(|&(_, w)| w).sum();
+    if !(sum > 0.0) {
+        return [(0, 1.0), (0, 0.0), (0, 0.0), (0, 0.0)];
+    }
+    let mut left = 15.0;
+    let mut out = [(0u8, 0.0f32); 4];
+    for (slot, &(id, w)) in top.iter().enumerate() {
+        let share = if slot < 3 {
+            (w / sum * 15.0).round()
+        } else {
+            f64::max(left, 0.0)
+        };
+        left -= share;
+        out[slot] = (id, (share / 15.0) as f32);
+    }
+    out
 }
 
 /// `PlanetInput` at one point, as the generate pass builds it.

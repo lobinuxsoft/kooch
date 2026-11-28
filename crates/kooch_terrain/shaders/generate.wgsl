@@ -117,6 +117,46 @@ fn gradient(w: u32, v: vec3<u32>, delta: vec3<f32>) -> vec3<f32> {
     return out;
 }
 
+// The four heaviest of a sample's layer weights, packed as `MATERIAL_FORMAT` in atlas.rs says:
+// ids 5 bits each, then the first three weights over their sum in 4 bits each. None weighs: layer 0.
+fn strongest(weights: array<f32, LAYERS>) -> u32 {
+    var all = weights;
+    var ids = vec4<u32>(0u);
+    var top = vec4<f32>(0.0);
+    for (var l = 0u; l < LAYERS; l++) {
+        let w = all[l];
+        if (w <= top.w) {
+            continue;
+        }
+        // Insertion into a sorted four: each place takes the one above it until `w` fits.
+        top.w = top.z;
+        ids.w = ids.z;
+        if (w <= top.z) {
+            top.z = w;
+            ids.z = l;
+            continue;
+        }
+        top.z = top.y;
+        ids.z = ids.y;
+        if (w <= top.y) {
+            top.y = w;
+            ids.y = l;
+            continue;
+        }
+        top.y = top.x;
+        ids.y = ids.x;
+        top.x = w;
+        ids.x = l;
+    }
+    let sum = top.x + top.y + top.z + top.w;
+    if (sum <= 0.0) {
+        return 15u << 20u;
+    }
+    let share = vec3<u32>(round(top.xyz / sum * 15.0));
+    return ids.x | (ids.y << 5u) | (ids.z << 10u) | (ids.w << 15u)
+        | (share.x << 20u) | (share.y << 24u) | (share.z << 28u);
+}
+
 @compute @workgroup_size(256)
 fn material_main(
     @builtin(workgroup_id) wid: vec3<u32>,
@@ -141,11 +181,7 @@ fn material_main(
                 input = input_near(wid.x, v, -normal * planet(input));
                 input.slope = 1.0 - dot(normal, up);
             }
-            let layers = planet_material(input);
-            let a = u32(clamp(round(layers.x), 0.0, 31.0));
-            let b = u32(clamp(round(layers.y), 0.0, 31.0));
-            let blend = u32(round(clamp(layers.z, 0.0, 1.0) * 63.0));
-            packed = a | (b << 5u) | (blend << 10u);
+            packed = strongest(planet_material(input));
         }
         textureStore(materials, corner + vec3<i32>(v), vec4<u32>(packed));
     }
