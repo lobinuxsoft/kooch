@@ -17,6 +17,8 @@ pub(crate) struct Rerun {
     revisions: Vec<u32>,
     /// Set when the last selection left a block unbounded, or new answers about surface arrived.
     forced: bool,
+    /// The last selection left a block unbounded: it guessed, so it is not applied.
+    partial: bool,
     /// The last selection's worst error, reported again while it is kept.
     pub worst: f64,
 }
@@ -54,7 +56,14 @@ impl Rerun {
         self.revisions.clear();
         self.revisions.extend_from_slice(inputs.revisions);
         self.forced = deferred;
+        self.partial = deferred;
         self.worst = worst;
+    }
+
+    /// Whether the last selection bounded every block it met. A guessed one is not applied: at
+    /// the cap its guesses swapped blocks on every pass and two levels stayed drawn (#2061).
+    pub fn settled(&self) -> bool {
+        !self.partial
     }
 
     /// The GPU proved blocks empty, which changes what the selection keeps.
