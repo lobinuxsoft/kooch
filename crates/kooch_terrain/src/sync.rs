@@ -112,8 +112,7 @@ pub struct PlanetTerrain {
     split: HashSet<BlockKey>,
     /// Blocks the generator bounded or the GPU counted; roaming's leftovers drop after [`KNOWN_GRACE`].
     known: HashMap<BlockKey, Known>,
-    /// Per planet index, its generator on the CPU, shared with the ground's workers; `None` keeps
-    /// every block a candidate.
+    /// Per planet index, its CPU generator shared with the ground; `None` keeps every block.
     pub(crate) generators: Vec<Option<Arc<Generator>>>,
     /// Per planet index, its generator's WGSL, which the ground's GPU pass compiles.
     pub(crate) sources: Vec<Option<Arc<str>>>,
@@ -584,8 +583,7 @@ fn fill_planets(
 }
 
 impl Shape {
-    /// `planet` measured from `base`, its generator's, grown to hold its stamps. Clamped where a
-    /// zero would stall the octree: a zero voxel never stops splitting.
+    /// `planet` measured from `base`, reaching its stamps; clamped, as a zero voxel never stops splitting.
     pub fn new(planet: &Terrain, base: Base) -> Self {
         Self {
             base,
