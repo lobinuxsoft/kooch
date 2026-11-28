@@ -15,10 +15,12 @@ pub(crate) struct Signature {
     revision: u64,
     /// Whether the generator's source was in hand, so it regenerates once it loads.
     loaded: bool,
+    /// The volumes its stamps join in, their reloads and whether each is in hand (#1957).
+    volumes: u64,
 }
 
 impl Signature {
-    pub(crate) fn new(planet: &Terrain, revision: u64, loaded: bool) -> Self {
+    pub(crate) fn new(planet: &Terrain, revision: u64, loaded: bool, volumes: u64) -> Self {
         Self {
             shape: [
                 planet.radius,
@@ -31,6 +33,7 @@ impl Signature {
             generator: planet.generator,
             revision,
             loaded,
+            volumes,
         }
     }
 }

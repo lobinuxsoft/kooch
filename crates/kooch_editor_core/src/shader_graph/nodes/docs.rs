@@ -430,6 +430,10 @@ impl Node {
                 One,
                 "Signed distance in metres, negative inside the ground. Unwired: Sphere Base, the bare sphere.",
             )],
+            Self::ShaderOutput { kind } if kind == "volume" => &[(
+                One,
+                "Signed distance in metres in the stamp's space, y up, negative inside. Kept inside the stamp's radius; unwired, all of it.",
+            )],
             Self::Layer(_) => &[(One, "Its weight: any size, only how it compares counts.")],
             Self::ShaderOutput { kind } if kind == "ui" => &[
                 (Three, "The colour. Unwired: the node's background-color."),

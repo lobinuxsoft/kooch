@@ -64,7 +64,8 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     let post = kind == "post_process";
     let sky = kind == "sky";
     let ui = kind == "ui";
-    let planet = kind == "terrain";
+    let volume = kind == "volume";
+    let planet = kind == "terrain" || volume;
     let transparent = kind == "transparent" || kind == "transparent_unlit";
 
     let wires: HashMap<InPinId, OutPinId> = graph.wires().map(|(from, to)| (to, from)).collect();
@@ -89,7 +90,9 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
         "vec4<f32>(0.0)",
     ];
     // Alpha, then the clip it is tested against (#452).
-    let fallbacks: Vec<&str> = if planet {
+    let fallbacks: Vec<&str> = if volume {
+        vec!["vec4<f32>(length(input.position) - input.radius)"]
+    } else if planet {
         vec!["vec4<f32>(input.altitude)"]
     } else if sky {
         vec!["vec4<f32>(0.0)"]
@@ -115,7 +118,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
 
     let mut source = String::new();
     let _ = writeln!(source, "// kind: {kind}");
-    if planet && plane_base(graph)? {
+    if planet && !volume && plane_base(graph)? {
         let _ = writeln!(source, "// base: plane");
     }
     source.push_str(&use_lines(graph));
@@ -128,6 +131,7 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     source.push_str(&helpers(graph, planet));
     let (function, returns) = match (unlit, post) {
         _ if ui => ("ui", "vec4<f32>"),
+        _ if volume => ("volume", "f32"),
         _ if planet => ("planet", "f32"),
         _ if sky => ("sky", "vec4<f32>"),
         (true, _) => ("unlit", "UnlitOutput"),
@@ -150,8 +154,16 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
             return Err("Slope feeds only Layer nodes: it is measured on the distance".into());
         }
         let _ = writeln!(source, "    return {}.x;\n}}", outputs[0]);
+        if volume {
+            if let Some(flat) = with_engine_uses(&source) {
+                kooch_terrain::validate_volume(&flat)?;
+            }
+            return finish(source);
+        }
         source.push_str(&material(graph, body.wires)?);
-        kooch_terrain::validate_generator(&source)?;
+        if let Some(flat) = with_engine_uses(&source) {
+            kooch_terrain::validate_generator(&flat)?;
+        }
         return finish(source);
     }
     if sky {
@@ -186,6 +198,20 @@ pub(crate) fn generate(graph: &Graph) -> Result<String, String> {
     }
     let _ = writeln!(source, "    return out;\n}}");
     finish(source)
+}
+
+/// `source` with the engine files it uses appended, as the shader loader joins them; `None` when it
+/// also uses a project file, which only the loader reads.
+fn with_engine_uses(source: &str) -> Option<String> {
+    let mut used = Vec::new();
+    for line in source.lines().take_while(|line| line.starts_with("//")) {
+        let Some(path) = line.strip_prefix("// use:").map(str::trim) else {
+            continue;
+        };
+        let text = kooch_core::shader_uses::engine_source(path)?;
+        used.push((std::path::PathBuf::from(path), text.to_owned()));
+    }
+    Some(kooch_core::shader_uses::flatten(source, &used))
 }
 
 /// `fn planet_material`: every Layer node's weight, in a body of its own (#1951). Two nodes of one

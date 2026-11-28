@@ -69,11 +69,14 @@ pub enum ShaderKind {
     /// A terrain's shape: defines `fn planet(PlanetInput) -> f32`, the signed distance in metres,
     /// which `kooch_terrain` generates its voxel blocks from (#313). Was `planet` until #2038.
     Terrain,
+    /// A shape a terrain stamps: defines `fn volume(PlanetInput) -> f32`, the signed distance in
+    /// the stamp's space, joined into the generator of every terrain that stamps it (#1957).
+    Volume,
 }
 
 impl ShaderKind {
     /// What a `// kind:` line names, in the order errors list them.
-    pub const NAMES: [&'static str; 8] = [
+    pub const NAMES: [&'static str; 9] = [
         "surface",
         "unlit",
         "post_process",
@@ -82,6 +85,7 @@ impl ShaderKind {
         "ui",
         "sky",
         "terrain",
+        "volume",
     ];
 
     fn parse(name: &str) -> Option<Self> {
@@ -94,6 +98,7 @@ impl ShaderKind {
             "ui" => Some(Self::Ui),
             "sky" => Some(Self::Sky),
             "terrain" | "planet" => Some(Self::Terrain),
+            "volume" => Some(Self::Volume),
             _ => None,
         }
     }
@@ -115,7 +120,7 @@ impl ShaderKind {
     fn glue(self) -> &'static str {
         match self {
             // Neither the UI's frame nor the terrain's generation reads any of this.
-            Self::Ui | Self::Terrain => "",
+            Self::Ui | Self::Terrain | Self::Volume => "",
             // A post-process has a frame of its own, so it needs no glue at all.
             Self::Surface | Self::PostProcess | Self::Sky => {
                 "const SURFACE_UNLIT: bool = false;\nconst SURFACE_TRANSPARENT: bool = false;\n"

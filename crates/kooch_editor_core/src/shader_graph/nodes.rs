@@ -379,7 +379,7 @@ impl Category {
 
 /// The kinds a graph generates. Not `ShaderKind::NAMES`: a kind the codegen has no body for would
 /// write a shader its pass refuses.
-pub(crate) const OUTPUT_KINDS: [&str; 8] = [
+pub(crate) const OUTPUT_KINDS: [&str; 9] = [
     "surface",
     "unlit",
     "post_process",
@@ -388,6 +388,7 @@ pub(crate) const OUTPUT_KINDS: [&str; 8] = [
     "ui",
     "sky",
     "terrain",
+    "volume",
 ];
 
 /// Every node the menu offers, one per kind, in menu order.

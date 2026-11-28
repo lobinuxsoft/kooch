@@ -12,7 +12,10 @@ use kooch_ecs::component::{ComponentNames, ComponentRegistry};
 use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::Reflect;
 use kooch_gizmos_handles::{AxisMask, HandleSet};
-use kooch_terrain::{Base, PlanetTerrain, SHAPE_BOX, Stamp, Terrain, stamp_frame};
+use kooch_terrain::{
+    Base, PlanetTerrain, SHAPE_BOX, SHAPE_CAPSULE, SHAPE_CONE, SHAPE_TORUS, Stamp, Terrain,
+    stamp_frame,
+};
 
 use crate::actions::EditorAction;
 use crate::editor_camera::input::ViewportInputDelta;
@@ -208,16 +211,30 @@ pub(crate) fn scale_selected(resources: &mut Resources, entity: Entity, by: Vec3
         SHAPE_BOX => {
             stamp.size = (stamp.size.max(Vec3::splat(SIZE_FLOOR)) * by).max(Vec3::splat(SIZE_FLOOR))
         }
-        _ => {
-            // A radius is one number: the axis that moved furthest from 1 is the factor.
-            let factor = [by.x, by.y, by.z]
-                .into_iter()
-                .max_by(|a, b| (a - 1.0).abs().total_cmp(&(b - 1.0).abs()))
-                .unwrap_or(1.0);
-            stamp.radius = (stamp.radius.max(SIZE_FLOOR) * factor).max(SIZE_FLOOR);
+        // Round sideways, sized up: the ground's axes size the radius, its up the other length.
+        SHAPE_CAPSULE | SHAPE_CONE => {
+            stamp.radius = grown(stamp.radius, furthest(&[by.x, by.z]));
+            stamp.height = grown(stamp.height, by.y);
         }
+        SHAPE_TORUS => {
+            stamp.radius = grown(stamp.radius, furthest(&[by.x, by.z]));
+            stamp.tube = grown(stamp.tube, by.y);
+        }
+        _ => stamp.radius = grown(stamp.radius, furthest(&[by.x, by.y, by.z])),
     }
     write(resources, entity, terrain.stamps);
+}
+
+/// A radius is one number: the axis that moved furthest from 1 is the factor.
+fn furthest(by: &[f32]) -> f32 {
+    by.iter()
+        .copied()
+        .max_by(|a, b| (a - 1.0).abs().total_cmp(&(b - 1.0).abs()))
+        .unwrap_or(1.0)
+}
+
+fn grown(length: f32, by: f32) -> f32 {
+    (length.max(SIZE_FLOOR) * by).max(SIZE_FLOOR)
 }
 
 /// Records the list a gizmo drag begins from. Call on the frame the drag starts.

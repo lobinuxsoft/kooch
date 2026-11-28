@@ -330,7 +330,7 @@ impl Node {
             Self::Polygon => &["uv", "sides", "radius"],
             Self::Checker => &["uv", "tiles"],
             Self::ShaderOutput { kind } if kind == "sky" => &["color"],
-            Self::ShaderOutput { kind } if kind == "terrain" => &["distance"],
+            Self::ShaderOutput { kind } if kind == "terrain" || kind == "volume" => &["distance"],
             Self::ShaderOutput { kind } if kind == "post_process" || kind == "ui" => {
                 &["color", "alpha"]
             }

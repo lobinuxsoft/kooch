@@ -26,9 +26,11 @@ pub(super) fn sync_stacks(state: &mut PlanetTerrain, placed: &[Option<usize>], f
             .and_then(Option::as_deref)
             .map_or(Base::Sphere, Base::of);
         let old = Arc::clone(&state.stacks[index]);
-        if old.stamps != *stamps {
+        let volumes = state.volumes.get(index).cloned().unwrap_or_default();
+        if old.stamps != *stamps || old.volumes != volumes {
             let shape = Shape::new(&planet.planet, base);
-            let stack = Stack::new(stamps, base, shape.voxel, old.revision.wrapping_add(1));
+            let revision = old.revision.wrapping_add(1);
+            let stack = Stack::new(stamps, &volumes, base, shape.voxel, revision);
             state.stacks[index] = Arc::new(stack);
             forget(
                 state,

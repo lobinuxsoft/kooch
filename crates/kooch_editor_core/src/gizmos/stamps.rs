@@ -6,7 +6,10 @@ use kooch_core::resource::Resources;
 use kooch_ecs::GlobalTransform;
 use kooch_ecs::entity::Entity;
 use kooch_gizmos::{Gizmos, Visualizer};
-use kooch_terrain::{OPERATION_INTERSECT, OPERATION_SUBTRACT, SHAPE_BOX, Terrain};
+use kooch_terrain::{
+    OPERATION_INTERSECT, OPERATION_SUBTRACT, SHAPE_BOX, SHAPE_CAPSULE, SHAPE_CONE, SHAPE_TORUS,
+    Terrain,
+};
 
 use super::stamp_handles::{base_of, hovered_index, selected_index, world_frame};
 
@@ -60,6 +63,21 @@ impl Visualizer<Terrain> for StampVisualizer {
                                 gizmos.line(corner(i), corner(i | bit), colour);
                             }
                         }
+                    }
+                }
+                SHAPE_CAPSULE => {
+                    let (r, half) = (stamp.radius * scale, stamp.height * scale * 0.5);
+                    gizmos.wire_capsule(at, axes, r, (half - r).max(0.0), colour);
+                }
+                SHAPE_CONE => {
+                    let half = stamp.height * scale * 0.5;
+                    gizmos.wire_cone(at, axes, stamp.radius * scale, half, colour);
+                }
+                SHAPE_TORUS => {
+                    let (r, tube) = (stamp.radius * scale, stamp.tube * scale);
+                    let (x, y, z) = (axes.x_axis, axes.y_axis, axes.z_axis);
+                    for (lift, ring) in [(0.0, r - tube), (0.0, r + tube), (tube, r), (-tube, r)] {
+                        gizmos.wire_circle(at + y * lift, x, z, ring.max(0.0), colour);
                     }
                 }
                 _ => gizmos.wire_sphere(at, axes, stamp.radius * scale, colour),

@@ -12,6 +12,7 @@ mod run;
 #[cfg(test)]
 mod tests;
 mod value;
+mod volume;
 
 use glam::DVec3;
 use naga::{Expression as E, Function, Handle, Module};
@@ -37,6 +38,8 @@ pub struct Generator {
     planet: Handle<Function>,
     /// `fn planet_material`, when the generator paints (#1951).
     paint: Option<Handle<Function>>,
+    /// `fn volume_<i>` in order, the volumes joined in (#1957).
+    volumes: Vec<Handle<Function>>,
     constants: Vec<Option<Value>>,
 }
 
@@ -61,11 +64,13 @@ impl Generator {
         };
         let planet = named("planet").ok_or("the generator has no `fn planet`")?;
         let paint = named("planet_material");
+        let volumes = (0..).map_while(|i| named(&format!("volume_{i}"))).collect();
         let constants = constants(&module);
         Ok(Self {
             module,
             planet,
             paint,
+            volumes,
             constants,
         })
     }

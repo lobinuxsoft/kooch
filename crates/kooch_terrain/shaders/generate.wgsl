@@ -108,12 +108,51 @@ fn stamp_local(w: u32, v: vec3<u32>, delta: vec3<f32>, s: Stamp) -> vec3<f32> {
     return vec3<f32>(dot(s.x, offset), dot(s.y, offset), dot(s.z, offset));
 }
 
-fn stamp_distance(s: Stamp, p: vec3<f32>) -> f32 {
-    if (s.shape == 1u) {
-        let q = abs(p) - s.size;
-        return length(max(q, vec3<f32>(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
+// Íñigo Quílez's exact primitives; `size` as `GpuStamp` packs it.
+fn stamp_distance(s: Stamp, p: vec3<f32>, planet: u32) -> f32 {
+    let z = s.size;
+    switch s.shape {
+        case 1u: {
+            let q = abs(p) - z;
+            return length(max(q, vec3<f32>(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
+        }
+        case 2u: {
+            return length(p - vec3<f32>(0.0, clamp(p.y, -z.y, z.y), 0.0)) - z.x;
+        }
+        case 3u: {
+            return length(vec2<f32>(length(p.xz) - z.x, p.y)) - z.y;
+        }
+        case 4u: {
+            return stamp_cone(p, z.x, z.y);
+        }
+        // A `volume` shader in the stamp's space, kept inside its bounding sphere (#1957).
+        case 5u: {
+            var input: PlanetInput;
+            input.position = p;
+            input.altitude = p.y;
+            input.direction = vec3<f32>(0.0, 1.0, 0.0);
+            input.radius = z.x;
+            input.planet = planet;
+            input.slope = 0.0;
+            return max(stamp_volume(u32(z.y), input), length(p) - z.x);
+        }
+        default: {
+            return length(p) - z.x;
+        }
     }
-    return length(p) - s.size.x;
+}
+
+// Base radius `r` at `-h`, apex at `+h`.
+fn stamp_cone(p: vec3<f32>, r: f32, h: f32) -> f32 {
+    let q = vec2<f32>(length(p.xz), p.y);
+    let k1 = vec2<f32>(0.0, h);
+    let k2 = vec2<f32>(-r, 2.0 * h);
+    let cap = select(0.0, r, q.y < 0.0);
+    let ca = vec2<f32>(q.x - min(q.x, cap), abs(q.y) - h);
+    let t = clamp(dot(k1 - q, k2) / max(dot(k2, k2), 1.0e-30), 0.0, 1.0);
+    let cb = q - k1 + k2 * t;
+    let sign = select(1.0, -1.0, cb.x < 0.0 && ca.y < 0.0);
+    return sign * sqrt(min(dot(ca, ca), dot(cb, cb)));
 }
 
 // Íñigo Quílez's polynomial smooth minimum; `k` 0 is the hard one.
@@ -131,7 +170,7 @@ fn stamped(w: u32, v: vec3<u32>, delta: vec3<f32>) -> f32 {
     let job = jobs[w];
     for (var i = 0u; i < job.count; i++) {
         let s = stamps[job.first + i];
-        let at = stamp_distance(s, stamp_local(w, v, delta, s));
+        let at = stamp_distance(s, stamp_local(w, v, delta, s), job.planet);
         var applied = stamp_smooth_min(d, at, s.smooth_radius);
         if (s.operation == 1u) {
             applied = -stamp_smooth_min(-d, at, s.smooth_radius);
@@ -152,7 +191,7 @@ fn stamp_paint(w: u32, v: vec3<u32>, delta: vec3<f32>, weights: array<f32, LAYER
         if (!(s.paint > 0.0)) {
             continue;
         }
-        let at = abs(stamp_distance(s, stamp_local(w, v, delta, s)));
+        let at = abs(stamp_distance(s, stamp_local(w, v, delta, s), job.planet));
         let edge = max(s.smooth_radius, 2.0 * job.fine);
         let cover = (1.0 - smoothstep(0.0, edge, at)) * s.paint * s.opacity;
         for (var l = 0u; l < LAYERS; l++) {

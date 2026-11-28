@@ -156,6 +156,11 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             continue;
         }
         if let Some(asset_type) = asset_type {
+            let shown_when_expr = match parse_field_shown_when(field) {
+                Ok(Some(expr)) => quote! { ::core::option::Option::Some(&#expr) },
+                Ok(None) => quote! { ::core::option::Option::None },
+                Err(e) => return e,
+            };
             field_metas.push(quote! {
                 ::kooch_ecs::reflect::FieldMeta {
                     name: #field_name_str,
@@ -167,8 +172,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     layer: false,
                     hidden: false,
                     range: None,
-                    // An asset picker has no variant to depend on yet.
-                    shown_when: ::core::option::Option::None,
+                    shown_when: #shown_when_expr,
                     asset_type: #asset_type,
                     requires: "",
                     doc: #field_doc,

@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use glam::{DVec3, Mat4};
+use kooch_core::Guid;
 use kooch_core::frame_pacing::{FramePace, FrameRequest};
 use kooch_core::gpu::GpuContext;
 use kooch_core::resource::Resources;
@@ -31,7 +32,7 @@ use crate::roster::{Roster, Signature};
 use crate::sight::Cone;
 use crate::stamp::Stack;
 pub use ray::{GroundHit, ground_hit_without, ground_hits};
-use twin::{crosses, load, set_generator, source};
+use twin::{crosses, joined, key_of, load, load_volumes, set_generator, source};
 
 use crate::{
     BARE_SPHERE, BlockKey, BlockPool, CountedBlock, DEFAULT_CAPACITY, Leaves, Limits, Part,
@@ -119,6 +120,8 @@ pub struct PlanetTerrain {
     pub(crate) twins: Vec<u32>,
     /// Per planet index, its stamps as the CPU twin and the GPU apply them (#1954).
     pub(crate) stacks: Vec<Arc<Stack>>,
+    /// Per planet index, the volumes joined into its generator, in index order (#1957).
+    pub(crate) volumes: Vec<Vec<Guid>>,
     frame: u32,
     planets: Planets,
     pub(crate) roster: Roster,
@@ -150,6 +153,7 @@ impl Default for PlanetTerrain {
             generators: Vec::new(),
             sources: Vec::new(),
             twins: Vec::new(),
+            volumes: Vec::new(),
             stacks: Vec::new(),
             frame: 0,
             planets: Planets::default(),
@@ -206,7 +210,9 @@ pub fn sync_planets(resources: &mut Resources) {
     for (at, planet) in found.iter().enumerate() {
         let generator = planet.planet.generator;
         let (revision, shader) = load(resources, generator);
-        let signature = Signature::new(&planet.planet, revision, shader.is_some());
+        let volumes = load_volumes(resources, &planet.planet.stamps);
+        let signature =
+            Signature::new(&planet.planet, revision, shader.is_some(), key_of(&volumes));
         let (index, changed) = state.roster.place(planet.entity, signature);
         placed[index as usize] = Some(at);
         if changed {
@@ -218,18 +224,19 @@ pub fn sync_planets(resources: &mut Resources) {
                     "its generator is not a `planet` shader; drawing the bare sphere",
                 );
             }
-            let mut source = source.as_deref().unwrap_or(BARE_SPHERE);
+            let base = source.as_deref().unwrap_or(BARE_SPHERE);
+            let (mut source, mut guids) = joined(resources, planet.entity, base, &volumes);
             if let (Some(terrain), Some((device, _))) = (&mut state.terrain, &gpu)
-                && let Err(why) = terrain.set_generator(device, &state.pool, index, source)
+                && let Err(why) = terrain.set_generator(device, &state.pool, index, &source)
             {
                 tracing::error!(
                     target: "kooch_terrain",
                     planet = %planet.entity,
                     "its generator does not compile; drawing the bare sphere:\n{why}",
                 );
-                source = BARE_SPHERE;
+                (source, guids) = (BARE_SPHERE.to_owned(), Vec::new());
             }
-            set_generator(&mut state, index, source);
+            set_generator(&mut state, index, &source, guids);
         }
     }
     placed.truncate(state.roster.len());

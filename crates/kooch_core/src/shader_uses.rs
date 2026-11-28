@@ -14,9 +14,10 @@ pub const ENGINE_PREFIX: &str = "engine:";
 
 /// The engine's functions. In the binary, so a project reaches them with no file of its own to
 /// vendor, package or keep up to date.
-pub const LIBRARY: [(&str, &str); 2] = [
+pub const LIBRARY: [(&str, &str); 3] = [
     ("engine:patterns", include_str!("shader_uses/patterns.wgsl")),
     ("engine:shapes", include_str!("shader_uses/shapes.wgsl")),
+    ("engine:volumes", include_str!("shader_uses/volumes.wgsl")),
 ];
 
 /// The text of the library file `name`.
