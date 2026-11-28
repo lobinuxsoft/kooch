@@ -37,7 +37,9 @@ impl Visualizer<Terrain> for StampVisualizer {
             hovered_index(resources, entity),
             selected_index(resources, entity),
         );
-        for (index, stamp) in terrain.stamps.iter().enumerate() {
+        let stamps = super::stamp_handles::live_stamps(resources, entity)
+            .unwrap_or_else(|| terrain.stamps.clone());
+        for (index, stamp) in stamps.iter().enumerate() {
             let (at, axes) = world_frame(matrix, stamp, base);
             let colour = match (stamp.enabled, stamp.operation) {
                 (false, _) => OFF,

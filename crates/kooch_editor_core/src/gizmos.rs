@@ -353,8 +353,8 @@ pub(crate) fn apply_handle_input(
         (HandleMode::Rotate, true) => {
             spline_handles::selected_basis(resources, target).unwrap_or(Mat3::IDENTITY)
         }
-        // A stamp turns about the ground's up and sizes along its own sides.
-        (HandleMode::Rotate | HandleMode::Scale, false) if stamp.is_some() => {
+        // A stamp's gizmo stands on its own frame in every mode: along the ground and its up.
+        (_, false) if stamp.is_some() => {
             stamp_handles::selected_basis(resources, target).unwrap_or(Mat3::IDENTITY)
         }
         _ => match rotation_mode {
@@ -364,6 +364,10 @@ pub(crate) fn apply_handle_input(
     };
     handle_set.set_origin(target_origin);
     handle_set.set_basis(basis);
+    let entity_rotation = match stamp {
+        Some(_) => stamp_handles::selected_basis(resources, target).unwrap_or(entity_rotation),
+        None => entity_rotation,
+    };
     handle_set.set_entity_rotation(entity_rotation);
     // Sized where the handles are, so the set holds its size on screen at any distance (#1433).
     handle_set.set_scale(screen_scale::factor(resources, target_origin));
@@ -472,7 +476,9 @@ pub(crate) fn apply_handle_input(
         if stamp.is_some() {
             match delta_out {
                 TransformDelta::Translation(v) => {
-                    stamp_handles::translate_selected(resources, target, v);
+                    if !stamp_handles::snap_selected(resources, delta, target) {
+                        stamp_handles::translate_selected(resources, target, v);
+                    }
                 }
                 TransformDelta::Rotation(q) => stamp_handles::turn_selected(resources, target, q),
                 TransformDelta::Scale(v) => stamp_handles::scale_selected(resources, target, v),

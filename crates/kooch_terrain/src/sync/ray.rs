@@ -31,12 +31,38 @@ pub struct GroundHit {
 /// Every planet whose ground the ray from `start` along `direction` meets, one hit each, in no
 /// order. Both are relative to the world origin, as a camera's `GlobalTransform` is.
 pub fn ground_hits(resources: &Resources, start: Vec3, direction: Vec3) -> Vec<GroundHit> {
+    hits(resources, start, direction, None)
+}
+
+/// Where the ray meets `entity`'s ground as it would be without its stamp `stamp`: what an editor
+/// drops that stamp onto, so the stamp does not catch the ray it is placed by.
+pub fn ground_hit_without(
+    resources: &Resources,
+    start: Vec3,
+    direction: Vec3,
+    entity: Entity,
+    stamp: usize,
+) -> Option<GroundHit> {
+    hits(resources, start, direction, Some((entity, stamp)))
+        .into_iter()
+        .find(|hit| hit.entity == entity)
+}
+
+fn hits(
+    resources: &Resources,
+    start: Vec3,
+    direction: Vec3,
+    skip: Option<(Entity, usize)>,
+) -> Vec<GroundHit> {
     let Some(state) = resources.get::<PlanetTerrain>() else {
         return Vec::new();
     };
     let origin = WorldOrigin::get(resources);
     let mut hits = Vec::new();
     for planet in gather(resources) {
+        if skip.is_some_and(|(entity, _)| entity != planet.entity) {
+            continue;
+        }
         let Some(index) = state.roster.index_of(planet.entity) else {
             continue;
         };
@@ -60,6 +86,14 @@ pub fn ground_hits(resources: &Resources, start: Vec3, direction: Vec3) -> Vec<G
         let Some(stack) = state.stacks.get(i) else {
             continue;
         };
+        let without = skip.map(|(_, at)| {
+            let mut stamps = stack.stamps.clone();
+            if at < stamps.len() {
+                stamps.remove(at);
+            }
+            Stack::new(&stamps, shape.base, shape.voxel, 0)
+        });
+        let stack = without.as_ref().unwrap_or(stack);
         let planet_ray = PlanetRay {
             generator,
             stack,

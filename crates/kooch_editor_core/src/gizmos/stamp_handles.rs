@@ -30,6 +30,9 @@ pub(crate) struct StampHandleState {
     pub(super) selected: Option<(Entity, usize)>,
     /// The list as the gizmo drag found it, so the gesture is one undo step.
     start: Option<Vec<Stamp>>,
+    /// The list while a drag runs. Kept here, not on the component, so the ground is regenerated
+    /// once on release rather than every frame of the drag.
+    live: Option<(Entity, Vec<Stamp>)>,
 }
 
 /// A stamp's centre and axes in world space: x and z along the ground, y its up.
@@ -221,8 +224,48 @@ pub(crate) fn scale_selected(resources: &mut Resources, entity: Entity, by: Vec3
 pub(crate) fn began_gizmo_drag(resources: &mut Resources, entity: Entity) {
     let start = read(resources, entity).map(|(terrain, _)| terrain.stamps);
     if let Some(state) = resources.get_mut::<StampHandleState>() {
+        state.live = start.clone().map(|stamps| (entity, stamps));
         state.start = start;
     }
+}
+
+/// Drops the selected stamp where the cursor meets its terrain's ground, when the author asks for
+/// a surface snap (Ctrl+Shift). The ray skips the stamp itself, so it cannot climb its own hill.
+pub(crate) fn snap_selected(
+    resources: &mut Resources,
+    delta: ViewportInputDelta,
+    entity: Entity,
+) -> bool {
+    if !crate::surface_snap::engaged(delta) {
+        return false;
+    }
+    let Some((mut terrain, matrix, index)) = chosen(resources, entity) else {
+        return false;
+    };
+    let Some((origin, direction)) = super::shape_handles::cursor_ray(resources, delta) else {
+        return false;
+    };
+    let Some(hit) = kooch_terrain::ground_hit_without(resources, origin, direction, entity, index)
+    else {
+        return false;
+    };
+    if !(matrix.determinant().abs() > 1.0e-12) {
+        return false;
+    }
+    let point = matrix
+        .inverse()
+        .transform_point3(origin + direction * hit.distance);
+    if let Some(stamp) = terrain.stamps.get_mut(index) {
+        stamp.position = point;
+    }
+    write(resources, entity, terrain.stamps);
+    true
+}
+
+/// The stamps a drag holds for `entity`, which the visualizer draws in place of the component's.
+pub(super) fn live_stamps(resources: &Resources, entity: Entity) -> Option<Vec<Stamp>> {
+    let (held, stamps) = resources.get::<StampHandleState>()?.live.as_ref()?;
+    (*held == entity).then(|| stamps.clone())
 }
 
 /// Emits the edit for a finished gizmo drag, when a stamp actually changed.
@@ -231,12 +274,16 @@ pub(crate) fn ended_gizmo_drag(
     entity: Entity,
     actions: &mut Vec<EditorAction>,
 ) {
-    let Some(start) = resources
-        .get_mut::<StampHandleState>()
-        .and_then(|state| state.start.take())
-    else {
+    let Some(state) = resources.get_mut::<StampHandleState>() else {
         return;
     };
+    let (Some(start), live) = (state.start.take(), state.live.take()) else {
+        return;
+    };
+    // The ground regenerates now, once, from what the drag left.
+    if let Some((held, stamps)) = live.filter(|(held, _)| *held == entity) {
+        store(resources, held, stamps);
+    }
     let Some((after, _)) = read(resources, entity) else {
         return;
     };
@@ -277,14 +324,30 @@ pub(super) fn hovered_index(resources: &Resources, entity: Entity) -> Option<usi
     (held == entity).then_some(index)
 }
 
+/// The terrain with the stamps a running drag holds, if any.
 fn read(resources: &Resources, entity: Entity) -> Option<(Terrain, Mat4)> {
     let registry = resources.get::<ComponentRegistry>()?;
-    let terrain = registry.get_cpu::<Terrain>()?.get(entity)?.clone();
+    let mut terrain = registry.get_cpu::<Terrain>()?.get(entity)?.clone();
     let matrix = registry.get_cpu::<GlobalTransform>()?.get(entity)?.matrix;
+    if let Some(stamps) = live_stamps(resources, entity) {
+        terrain.stamps = stamps;
+    }
     Some((terrain, matrix))
 }
 
+/// Into the running drag when there is one, else onto the component.
 fn write(resources: &mut Resources, entity: Entity, stamps: Vec<Stamp>) {
+    if let Some(state) = resources.get_mut::<StampHandleState>()
+        && let Some((held, live)) = state.live.as_mut()
+        && *held == entity
+    {
+        *live = stamps;
+        return;
+    }
+    store(resources, entity, stamps);
+}
+
+fn store(resources: &mut Resources, entity: Entity, stamps: Vec<Stamp>) {
     if let Some(registry) = resources.get_mut::<ComponentRegistry>()
         && let Some(mut storage) = registry.get_cpu_mut::<Terrain>()
         && let Some(held) = storage.get_mut(entity)

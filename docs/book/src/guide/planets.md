@@ -118,8 +118,10 @@ Each stamp has a **shape** (sphere or box), an **operation** and a placement:
 
 With the terrain selected, every stamp is drawn as its shape (green adds, red digs, blue
 intersects, grey is off) with a grip at its centre. Click a grip and the transform gizmo moves the
-stamp, turns it about the ground's up and sizes it along its own sides; the terrain stays put, and
-one drag undoes in one step.
+stamp, turns it about the ground's up and sizes it along its own sides — its axes follow the
+stamp's frame on the ground, not the world's. Hold Ctrl+Shift while moving to drop the stamp where
+the cursor meets the ground. The shape follows the drag; the ground is regenerated once, on
+release, and one drag undoes in one step.
 
 A Terra-sized hill: `Add`, sphere, position `(0, 58, 0)`, radius `8`, smooth `3`. A pit next to it:
 `Subtract`, box, position `(12, 60, 0)`, size `(3, 4, 3)`, smooth `1`.

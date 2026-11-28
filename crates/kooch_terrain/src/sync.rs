@@ -30,7 +30,7 @@ use crate::rerun::{Inputs, Rerun};
 use crate::roster::{Roster, Signature};
 use crate::sight::Cone;
 use crate::stamp::Stack;
-pub use ray::{GroundHit, ground_hits};
+pub use ray::{GroundHit, ground_hit_without, ground_hits};
 use twin::{crosses, load, set_generator, source};
 
 use crate::{
