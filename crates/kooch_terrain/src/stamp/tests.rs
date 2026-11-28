@@ -20,6 +20,29 @@ fn stack() -> Stack {
             opacity: 0.7,
             ..Stamp::default()
         },
+        Stamp {
+            shape: SHAPE_CAPSULE,
+            position: Vec3::new(-2.0, 51.0, 2.0),
+            radius: 1.5,
+            height: 6.0,
+            ..Stamp::default()
+        },
+        Stamp {
+            shape: SHAPE_TORUS,
+            operation: OPERATION_SUBTRACT,
+            position: Vec3::new(1.0, 53.0, -2.0),
+            radius: 3.0,
+            tube: 1.0,
+            ..Stamp::default()
+        },
+        Stamp {
+            shape: SHAPE_CONE,
+            position: Vec3::new(2.0, 54.0, 2.0),
+            radius: 3.0,
+            height: 5.0,
+            turn: -40.0,
+            ..Stamp::default()
+        },
     ];
     Stack::new(&stamps, Base::Sphere, 0.5, 0)
 }

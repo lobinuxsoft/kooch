@@ -54,8 +54,8 @@ pub use recent::{BatchMean, RECENT};
 pub use seam::{Leaves, Near};
 pub use sight::Cone;
 pub use stamp::{
-    GpuStamp, OPERATION_ADD, OPERATION_INTERSECT, OPERATION_SUBTRACT, SHAPE_BOX, SHAPE_SPHERE,
-    Stamp, StampBuffer, frame as stamp_frame,
+    GpuStamp, OPERATION_ADD, OPERATION_INTERSECT, OPERATION_SUBTRACT, SHAPE_BOX, SHAPE_CAPSULE,
+    SHAPE_CONE, SHAPE_SPHERE, SHAPE_TORUS, Stamp, StampBuffer, frame as stamp_frame,
 };
 pub use sync::{
     GroundHit, PlanetStats, PlanetTerrain, PlanetViewers, ground_hit_without, ground_hits,

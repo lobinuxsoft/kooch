@@ -19,6 +19,12 @@ pub use buffer::StampBuffer;
 
 pub const SHAPE_SPHERE: u32 = 0;
 pub const SHAPE_BOX: u32 = 1;
+/// Upright, `height` from cap to cap.
+pub const SHAPE_CAPSULE: u32 = 2;
+/// Lying along the ground: `radius` to the tube's centre, `tube` its thickness.
+pub const SHAPE_TORUS: u32 = 3;
+/// Base `radius` below, apex `height` above it, centred between the two.
+pub const SHAPE_CONE: u32 = 4;
 
 pub const OPERATION_ADD: u32 = 0;
 pub const OPERATION_SUBTRACT: u32 = 1;
@@ -40,11 +46,17 @@ pub struct Stamp {
     /// Degrees the shape turns about the ground's up at `position`.
     #[reflect(range = TURN_RANGE)]
     pub turn: f32,
-    #[reflect(range = LENGTH_RANGE, shown_when = IS_SPHERE)]
+    #[reflect(range = LENGTH_RANGE, shown_when = IS_ROUND)]
     pub radius: f32,
     /// Half the box's side on each axis: x and z along the ground, y up.
     #[reflect(shown_when = IS_BOX)]
     pub size: Vec3,
+    /// The full height of a capsule or a cone, along the ground's up.
+    #[reflect(range = LENGTH_RANGE, shown_when = IS_TALL)]
+    pub height: f32,
+    /// A torus' tube radius.
+    #[reflect(range = LENGTH_RANGE, shown_when = IS_TORUS)]
+    pub tube: f32,
     /// Metres over which the shape melts into the ground; 0 is a sharp edge.
     #[reflect(range = LENGTH_RANGE)]
     pub smooth: f32,
@@ -69,6 +81,8 @@ impl Default for Stamp {
             turn: 0.0,
             radius: 5.0,
             size: Vec3::splat(5.0),
+            height: 10.0,
+            tube: 1.5,
             smooth: 1.0,
             opacity: 1.0,
             layer: 1,
@@ -85,6 +99,18 @@ pub static SHAPE_CHOICES: &[FieldChoice] = &[
     FieldChoice {
         label: "Box",
         value: SHAPE_BOX as i64,
+    },
+    FieldChoice {
+        label: "Capsule",
+        value: SHAPE_CAPSULE as i64,
+    },
+    FieldChoice {
+        label: "Torus",
+        value: SHAPE_TORUS as i64,
+    },
+    FieldChoice {
+        label: "Cone",
+        value: SHAPE_CONE as i64,
     },
 ];
 
@@ -103,9 +129,24 @@ pub static OPERATION_CHOICES: &[FieldChoice] = &[
     },
 ];
 
-static IS_SPHERE: FieldCondition = FieldCondition {
+static IS_ROUND: FieldCondition = FieldCondition {
     field: "shape",
-    values: &[SHAPE_SPHERE as i64],
+    values: &[
+        SHAPE_SPHERE as i64,
+        SHAPE_CAPSULE as i64,
+        SHAPE_TORUS as i64,
+        SHAPE_CONE as i64,
+    ],
+};
+
+static IS_TALL: FieldCondition = FieldCondition {
+    field: "shape",
+    values: &[SHAPE_CAPSULE as i64, SHAPE_CONE as i64],
+};
+
+static IS_TORUS: FieldCondition = FieldCondition {
+    field: "shape",
+    values: &[SHAPE_TORUS as i64],
 };
 
 static IS_BOX: FieldCondition = FieldCondition {
@@ -155,7 +196,8 @@ pub struct GpuStamp {
     pub opacity: f32,
     pub z: [f32; 3],
     pub layer: u32,
-    /// Half extents; a sphere's radius in `x`.
+    /// Half extents of a box; else the radius in `x` and, by shape, the capsule's half segment,
+    /// the torus' tube or the cone's half height in `y`.
     pub size: [f32; 3],
     pub paint: f32,
 }
@@ -275,10 +317,7 @@ pub(crate) fn overlaps(min: DVec3, max: DVec3, lo: DVec3, hi: DVec3) -> bool {
 /// The box a stamp's shape and its blend stay inside, in the terrain's space.
 fn reach(stamp: &Stamp, base: Base) -> (DVec3, DVec3) {
     let placed = place(stamp, base);
-    let r = match placed.shape {
-        SHAPE_BOX => placed.size.length(),
-        _ => placed.size.x,
-    } + placed.smooth;
+    let r = bounding(&placed) + placed.smooth;
     (placed.centre - r, placed.centre + r)
 }
 
@@ -330,9 +369,14 @@ fn place(stamp: &Stamp, base: Base) -> Placed {
     let (sin, cos) = f64::from(stamp.turn).to_radians().sin_cos();
     let x = east * cos - north * sin;
     let z = east * sin + north * cos;
+    let radius = f64::from(stamp.radius.max(0.0));
+    let half = f64::from(stamp.height.max(0.0)) * 0.5;
     let size = match stamp.shape {
         SHAPE_BOX => stamp.size.as_dvec3().max(DVec3::ZERO),
-        _ => DVec3::splat(f64::from(stamp.radius.max(0.0))),
+        SHAPE_CAPSULE => DVec3::new(radius, (half - radius).max(0.0), 0.0),
+        SHAPE_TORUS => DVec3::new(radius, f64::from(stamp.tube.max(0.0)), 0.0),
+        SHAPE_CONE => DVec3::new(radius, half, 0.0),
+        _ => DVec3::new(radius, 0.0, 0.0),
     };
     Placed {
         centre,
@@ -365,15 +409,44 @@ fn record(stamp: &Stamp, placed: &Placed, fine: f64) -> GpuStamp {
     }
 }
 
-/// The shape's SDF at `p`, in its own space.
+/// How far from its centre the shape reaches.
+fn bounding(stamp: &Placed) -> f64 {
+    let s = stamp.size;
+    match stamp.shape {
+        SHAPE_BOX => s.length(),
+        SHAPE_CAPSULE | SHAPE_TORUS => s.x + s.y,
+        SHAPE_CONE => s.x.hypot(s.y),
+        _ => s.x,
+    }
+}
+
+/// The shape's SDF at `p`, in its own space. Íñigo Quílez's exact primitives.
 fn distance(stamp: &Placed, p: DVec3) -> f64 {
+    let s = stamp.size;
     match stamp.shape {
         SHAPE_BOX => {
-            let q = p.abs() - stamp.size;
+            let q = p.abs() - s;
             q.max(DVec3::ZERO).length() + q.max_element().min(0.0)
         }
-        _ => p.length() - stamp.size.x,
+        SHAPE_CAPSULE => (p - DVec3::Y * p.y.clamp(-s.y, s.y)).length() - s.x,
+        SHAPE_TORUS => glam::DVec2::new(p.x.hypot(p.z) - s.x, p.y).length() - s.y,
+        SHAPE_CONE => cone(p, s.x, s.y),
+        _ => p.length() - s.x,
     }
+}
+
+/// A cone of base radius `r` at `-h` and apex at `+h` (`sdCappedCone` with a zero top).
+fn cone(p: DVec3, r: f64, h: f64) -> f64 {
+    use glam::DVec2;
+    let q = DVec2::new(p.x.hypot(p.z), p.y);
+    let k1 = DVec2::new(0.0, h);
+    let k2 = DVec2::new(-r, 2.0 * h);
+    let cap = if q.y < 0.0 { r } else { 0.0 };
+    let ca = DVec2::new(q.x - q.x.min(cap), q.y.abs() - h);
+    let t = ((k1 - q).dot(k2) / k2.length_squared().max(f64::MIN_POSITIVE)).clamp(0.0, 1.0);
+    let cb = q - k1 + k2 * t;
+    let sign = if cb.x < 0.0 && ca.y < 0.0 { -1.0 } else { 1.0 };
+    sign * ca.length_squared().min(cb.length_squared()).sqrt()
 }
 
 /// Íñigo Quílez's polynomial smooth minimum; `k` 0 is the hard one.
