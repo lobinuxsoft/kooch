@@ -113,10 +113,14 @@ impl GpuGlobalMeshPool {
         pool: &GlobalMeshPool,
         moves: &[Move],
     ) {
+        // The slack stops at the binding limit, as in `grow`: a compaction doubling 70 MB of
+        // vertices asked for a buffer no bind group accepts (#1968).
+        let ceiling = device.limits().max_storage_buffer_binding_size;
         let sized = |len: usize, stride: usize, label| {
+            let needed = ((len * stride) as u64).max(4).next_multiple_of(4);
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
-                size: ((len * stride) as u64).max(4).next_multiple_of(4) * GROWTH,
+                size: (needed * GROWTH).min(ceiling.max(needed)),
                 usage: USAGE,
                 mapped_at_creation: false,
             })
