@@ -52,6 +52,9 @@ pub struct Shape {
     pub voxel: f64,
     /// Reach of the finest level from the camera; each coarser level reaches twice as far.
     pub lod_distance: f64,
+    /// How far from the centre any stamp reaches: the root blocks cover it, while relief and
+    /// depth stay the generator's (#2055).
+    pub reach: f64,
 }
 
 /// Blocks a planet gets before the others compete, and the most it may hold.
@@ -72,6 +75,10 @@ pub struct Planets {
     pub cone: Vec<Cone>,
     pub views: usize,
     pub limits: Vec<Limits>,
+    /// Every planet's stamp boxes, in its local space; `stamped` holds each planet's
+    /// `[first, count]`. A block in one is kept although it is outside the shell (#2055).
+    pub boxes: Vec<[DVec3; 2]>,
+    pub stamped: Vec<[u32; 2]>,
 }
 
 impl Planets {
@@ -106,7 +113,32 @@ impl Planets {
         }));
         self.shape.push(shape);
         self.limits.push(limits);
+        self.stamped.push([self.boxes.len() as u32, 0]);
         (self.shape.len() - 1) as u32
+    }
+
+    /// The stamp boxes of the planet pushed last.
+    pub fn hold(&mut self, boxes: impl IntoIterator<Item = (DVec3, DVec3)>) {
+        let before = self.boxes.len();
+        self.boxes
+            .extend(boxes.into_iter().map(|(min, max)| [min, max]));
+        if let Some(range) = self.stamped.last_mut() {
+            range[1] += (self.boxes.len() - before) as u32;
+        }
+    }
+
+    /// Whether box `min..max` meets one of `planet`'s stamps.
+    fn stamps_meet(&self, planet: u32, min: DVec3, max: DVec3) -> bool {
+        let Some(&[first, count]) = self.stamped.get(planet as usize) else {
+            return false;
+        };
+        let boxes = self
+            .boxes
+            .get(first as usize..(first + count) as usize)
+            .unwrap_or_default();
+        boxes
+            .iter()
+            .any(|[lo, hi]| min.cmple(*hi).all() && max.cmpge(*lo).all())
     }
 
     /// Empties it for the next frame, keeping its allocations.
@@ -116,6 +148,8 @@ impl Planets {
         self.cone.clear();
         self.views = 0;
         self.limits.clear();
+        self.boxes.clear();
+        self.stamped.clear();
     }
 
     /// `planet`'s viewers, in its local space.
@@ -395,10 +429,11 @@ impl<S: FnMut(BlockKey, DVec3, DVec3) -> bool, K: Fn(BlockKey) -> bool> Refine<'
         (out, count)
     }
 
-    /// The planet-wide band first, as it costs nothing; then the generator.
+    /// The planet-wide band or a stamp's box first, as they cost nothing; then the generator.
     fn touches(&mut self, shape: &Shape, key: BlockKey) -> bool {
         let (min, max) = bounds(shape, key);
-        touches_shell(shape, min, max) && (self.surface)(key, min, max)
+        let near = touches_shell(shape, min, max) || self.planets.stamps_meet(key.planet, min, max);
+        near && (self.surface)(key, min, max)
     }
 
     /// Queues a leaf that can still split; one that cannot stays a finished leaf.
@@ -463,18 +498,22 @@ fn behind_core(viewer: DVec3, point: DVec3, reach: f64) -> bool {
 /// How far from the centre the ground can reach, on any axis.
 pub(crate) fn outer(shape: &Shape) -> f64 {
     match shape.base {
-        Base::Sphere => shape.radius + shape.relief,
-        Base::Plane => shape.extent.max(shape.relief).max(shape.depth),
+        Base::Sphere => (shape.radius + shape.relief).max(shape.reach),
+        Base::Plane => shape
+            .extent
+            .max(shape.relief)
+            .max(shape.depth)
+            .max(shape.reach),
     }
 }
 
 /// The radius of a sphere around the centre that holds all the ground.
 pub(crate) fn bounding(shape: &Shape) -> f64 {
     match shape.base {
-        Base::Sphere => shape.radius + shape.relief,
-        Base::Plane => {
-            DVec3::new(shape.extent, shape.relief.max(shape.depth), shape.extent).length()
-        }
+        Base::Sphere => (shape.radius + shape.relief).max(shape.reach),
+        Base::Plane => DVec3::new(shape.extent, shape.relief.max(shape.depth), shape.extent)
+            .length()
+            .max(shape.reach),
     }
 }
 
