@@ -62,6 +62,8 @@ egui-snarl.workspace = true
 bevy_lookup_curve.workspace = true
 ron.workspace = true
 gltf.workspace = true
+# Reads an image's 16-bit brightness for a heightmap field (#709).
+image.workspace = true
 sysinfo.workspace = true
 process-wrap.workspace = true
 

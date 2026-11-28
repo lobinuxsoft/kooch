@@ -293,6 +293,10 @@ impl GeneratePass {
             binding: 4,
             ..jobs_entry
         };
+        let fields_entry = wgpu::BindGroupLayoutEntry {
+            binding: 5,
+            ..jobs_entry
+        };
         let written = |binding, format| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -305,7 +309,12 @@ impl GeneratePass {
         };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("kooch_terrain::generate"),
-            entries: &[jobs_entry, written(1, POOL_TEXTURE_FORMAT), stamps_entry],
+            entries: &[
+                jobs_entry,
+                written(1, POOL_TEXTURE_FORMAT),
+                stamps_entry,
+                fields_entry,
+            ],
         });
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("kooch_terrain::generate::material"),
@@ -323,6 +332,7 @@ impl GeneratePass {
                 },
                 written(3, MATERIAL_FORMAT),
                 stamps_entry,
+                fields_entry,
             ],
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -361,7 +371,7 @@ impl GeneratePass {
         queue: &wgpu::Queue,
         atlas: &BlockAtlas,
         jobs: &[Job],
-        stamps: &wgpu::Buffer,
+        stamps: &crate::StampBuffer,
     ) {
         if jobs.is_empty() {
             return;
@@ -384,7 +394,7 @@ impl GeneratePass {
         encoder: &mut wgpu::CommandEncoder,
         atlas: &BlockAtlas,
         jobs: &[Job],
-        stamps: &wgpu::Buffer,
+        stamps: &crate::StampBuffer,
         timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) {
         let jobs = &jobs[..jobs.len().min(self.batch as usize)];
@@ -406,7 +416,11 @@ impl GeneratePass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: stamps.as_entire_binding(),
+                    resource: stamps.buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: stamps.fields().as_entire_binding(),
                 },
             ],
         });
@@ -428,7 +442,11 @@ impl GeneratePass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: stamps.as_entire_binding(),
+                    resource: stamps.buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: stamps.fields().as_entire_binding(),
                 },
             ],
         });

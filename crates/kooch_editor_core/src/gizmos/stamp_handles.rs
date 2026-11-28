@@ -13,8 +13,8 @@ use kooch_ecs::entity::Entity;
 use kooch_ecs::reflect::Reflect;
 use kooch_gizmos_handles::{AxisMask, HandleSet};
 use kooch_terrain::{
-    Base, PlanetTerrain, SHAPE_BOX, SHAPE_CAPSULE, SHAPE_CONE, SHAPE_TORUS, Stamp, Terrain,
-    stamp_frame,
+    Base, PlanetTerrain, SHAPE_BOX, SHAPE_CAPSULE, SHAPE_CONE, SHAPE_FIELD, SHAPE_TORUS, Stamp,
+    Terrain, stamp_frame,
 };
 
 use crate::actions::EditorAction;
@@ -208,7 +208,7 @@ pub(crate) fn scale_selected(resources: &mut Resources, entity: Entity, by: Vec3
         return;
     };
     match stamp.shape {
-        SHAPE_BOX => {
+        SHAPE_BOX | SHAPE_FIELD => {
             stamp.size = (stamp.size.max(Vec3::splat(SIZE_FLOOR)) * by).max(Vec3::splat(SIZE_FLOOR))
         }
         // Round sideways, sized up: the ground's axes size the radius, its up the other length.

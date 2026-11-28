@@ -12,9 +12,10 @@ use std::sync::Arc;
 use glam::DVec3;
 
 use super::PlanetTerrain;
+use crate::Field;
 use crate::eval::{Generator, may_cross};
 use crate::lod::voxel_size;
-use crate::stamp::{SHAPE_VOLUME, Stack, Stamp};
+use crate::stamp::{SHAPE_FIELD, SHAPE_VOLUME, Stack, Stamp};
 use crate::{BlockKey, Planets};
 
 /// The generator planet `index` now has: its WGSL for the ground's GPU pass, its CPU twin, and
@@ -82,6 +83,36 @@ pub(super) fn load_volumes(resources: &mut Resources, stamps: &[Stamp]) -> Vec<V
             (guid, revision, shader)
         })
         .collect()
+}
+
+/// The fields `stamps` name that have loaded, each once, in the order they are first named.
+pub(super) fn load_fields(resources: &mut Resources, stamps: &[Stamp]) -> Vec<(Guid, Arc<Field>)> {
+    let mut found: Vec<(Guid, Arc<Field>)> = Vec::new();
+    for stamp in stamps.iter().filter(|s| s.shape == SHAPE_FIELD) {
+        let Some(guid) = stamp.field else { continue };
+        if found.iter().any(|(held, _)| *held == guid) {
+            continue;
+        }
+        let Some(mut server) = resources.remove::<AssetServer>() else {
+            break;
+        };
+        let handle = server.load_by_guid::<Field>(guid, resources).ok();
+        resources.insert(server);
+        let field =
+            handle.and_then(|handle| resources.get::<Assets<Field>>()?.get(handle).cloned());
+        if let Some(field) = field {
+            found.push((guid, Arc::new(field)));
+        }
+    }
+    found
+}
+
+pub(super) fn store_fields(state: &mut PlanetTerrain, index: u32, fields: Vec<(Guid, Arc<Field>)>) {
+    let at = index as usize;
+    if state.fields.len() <= at {
+        state.fields.resize_with(at + 1, Vec::new);
+    }
+    state.fields[at] = fields;
 }
 
 /// What changes when a volume is named, reloaded or comes in, for the planet's signature.

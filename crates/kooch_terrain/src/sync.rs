@@ -32,7 +32,9 @@ use crate::roster::{Roster, Signature};
 use crate::sight::Cone;
 use crate::stamp::Stack;
 pub use ray::{GroundHit, ground_hit_without, ground_hits};
-use twin::{crosses, joined, key_of, load, load_volumes, set_generator, source};
+use twin::{
+    crosses, joined, key_of, load, load_fields, load_volumes, set_generator, source, store_fields,
+};
 
 use crate::{
     BARE_SPHERE, BlockKey, BlockPool, CountedBlock, DEFAULT_CAPACITY, Leaves, Limits, Part,
@@ -108,11 +110,10 @@ pub struct PlanetTerrain {
     wanted: Vec<BlockKey>,
     /// Every block the pool held a descendant of last frame, for the selection's hysteresis.
     split: HashSet<BlockKey>,
-    /// Blocks the generator bounded or the GPU counted. One with no surface takes no slot; what
-    /// roaming leaves behind is dropped after [`KNOWN_GRACE`].
+    /// Blocks the generator bounded or the GPU counted; roaming's leftovers drop after [`KNOWN_GRACE`].
     known: HashMap<BlockKey, Known>,
-    /// Per planet index, its generator on the CPU; `None` keeps every block a candidate.
-    /// Shared, so the ground's workers mesh from it off the main thread.
+    /// Per planet index, its generator on the CPU, shared with the ground's workers; `None` keeps
+    /// every block a candidate.
     pub(crate) generators: Vec<Option<Arc<Generator>>>,
     /// Per planet index, its generator's WGSL, which the ground's GPU pass compiles.
     pub(crate) sources: Vec<Option<Arc<str>>>,
@@ -122,6 +123,8 @@ pub struct PlanetTerrain {
     pub(crate) stacks: Vec<Arc<Stack>>,
     /// Per planet index, the volumes joined into its generator, in index order (#1957).
     pub(crate) volumes: Vec<Vec<Guid>>,
+    /// Per planet index, the fields its stamps name, loaded (#709).
+    pub(crate) fields: Vec<Vec<(Guid, Arc<crate::Field>)>>,
     frame: u32,
     planets: Planets,
     pub(crate) roster: Roster,
@@ -154,6 +157,7 @@ impl Default for PlanetTerrain {
             sources: Vec::new(),
             twins: Vec::new(),
             volumes: Vec::new(),
+            fields: Vec::new(),
             stacks: Vec::new(),
             frame: 0,
             planets: Planets::default(),
@@ -180,8 +184,7 @@ pub(crate) struct Found {
 
 /// Chooses, generates and draws every planet's blocks. Does nothing where nothing draws.
 pub fn sync_planets(resources: &mut Resources) {
-    // The generators are read without a GPU too: the remote host simulates, and its ground
-    // colliders are meshed from them (#1949).
+    // Read without a GPU too: the remote host meshes its ground colliders from them (#1949).
     let gpu = resources
         .get::<GpuContext>()
         .map(|gpu| (gpu.device().clone(), gpu.queue().clone()));
@@ -211,10 +214,12 @@ pub fn sync_planets(resources: &mut Resources) {
         let generator = planet.planet.generator;
         let (revision, shader) = load(resources, generator);
         let volumes = load_volumes(resources, &planet.planet.stamps);
+        let fields = load_fields(resources, &planet.planet.stamps);
         let signature =
             Signature::new(&planet.planet, revision, shader.is_some(), key_of(&volumes));
         let (index, changed) = state.roster.place(planet.entity, signature);
         placed[index as usize] = Some(at);
+        store_fields(&mut state, index, fields);
         if changed {
             let source = shader.and_then(|handle| source(resources, handle));
             if generator.is_some() && shader.is_some() && source.is_none() {
@@ -363,9 +368,7 @@ pub fn sync_planets(resources: &mut Resources) {
             &mut meshed,
         );
     }
-    // Only the finest level's empty count is final: a coarser block samples every 2^level voxels
-    // and misses a ridge thinner than that, and calling it empty would prune its children (#1945).
-    // Empty means every mesh: a generated block counts all of them in the same batch.
+    // Only the finest level's empty count is final: a coarser one misses thin ridges (#1945).
     let surfaced: HashSet<BlockKey> = meshed
         .iter()
         .filter(|b| b.sizes.meshlets != 0)
