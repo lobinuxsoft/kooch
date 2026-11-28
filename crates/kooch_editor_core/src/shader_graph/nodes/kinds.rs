@@ -15,6 +15,11 @@ impl Node {
         if kind == "terrain" {
             return self.fits_planet();
         }
+        // A volume has a stamp's space, not a planet's: Plane Base is its local `y`.
+        if kind == "volume" {
+            return self.fits_planet()
+                && !matches!(self, Self::Slope | Self::Layer(_) | Self::SphereBase);
+        }
         match self {
             Self::Argument { .. } | Self::Result { .. } => false,
             Self::SphereBase

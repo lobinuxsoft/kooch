@@ -10,9 +10,11 @@ mod tests;
 
 use bytemuck::{Pod, Zeroable};
 use glam::{DMat3, DVec3, Vec3};
+use kooch_core::Guid;
 use kooch_ecs::Reflect;
 use kooch_ecs::reflect::{FieldChoice, FieldCondition, FieldRange};
 
+use crate::eval::Generator;
 use crate::lod::{Base, Shape};
 
 pub use buffer::StampBuffer;
@@ -25,6 +27,8 @@ pub const SHAPE_CAPSULE: u32 = 2;
 pub const SHAPE_TORUS: u32 = 3;
 /// Base `radius` below, apex `height` above it, centred between the two.
 pub const SHAPE_CONE: u32 = 4;
+/// A `volume` shader's shape (#1957), kept inside `radius`.
+pub const SHAPE_VOLUME: u32 = 5;
 
 pub const OPERATION_ADD: u32 = 0;
 pub const OPERATION_SUBTRACT: u32 = 1;
@@ -57,6 +61,12 @@ pub struct Stamp {
     /// A torus' tube radius.
     #[reflect(range = LENGTH_RANGE, shown_when = IS_TORUS)]
     pub tube: f32,
+    /// The `volume` shader whose shape it stamps, in the stamp's space with `y` up.
+    #[reflect(
+        asset = "kooch_render::material::shader::Shader",
+        shown_when = IS_VOLUME
+    )]
+    pub volume: Option<Guid>,
     /// Metres over which the shape melts into the ground; 0 is a sharp edge.
     #[reflect(range = LENGTH_RANGE)]
     pub smooth: f32,
@@ -83,6 +93,7 @@ impl Default for Stamp {
             size: Vec3::splat(5.0),
             height: 10.0,
             tube: 1.5,
+            volume: None,
             smooth: 1.0,
             opacity: 1.0,
             layer: 1,
@@ -112,6 +123,10 @@ pub static SHAPE_CHOICES: &[FieldChoice] = &[
         label: "Cone",
         value: SHAPE_CONE as i64,
     },
+    FieldChoice {
+        label: "Volume",
+        value: SHAPE_VOLUME as i64,
+    },
 ];
 
 pub static OPERATION_CHOICES: &[FieldChoice] = &[
@@ -136,7 +151,13 @@ static IS_ROUND: FieldCondition = FieldCondition {
         SHAPE_CAPSULE as i64,
         SHAPE_TORUS as i64,
         SHAPE_CONE as i64,
+        SHAPE_VOLUME as i64,
     ],
+};
+
+static IS_VOLUME: FieldCondition = FieldCondition {
+    field: "shape",
+    values: &[SHAPE_VOLUME as i64],
 };
 
 static IS_TALL: FieldCondition = FieldCondition {
@@ -197,7 +218,7 @@ pub struct GpuStamp {
     pub z: [f32; 3],
     pub layer: u32,
     /// Half extents of a box; else the radius in `x` and, by shape, the capsule's half segment,
-    /// the torus' tube or the cone's half height in `y`.
+    /// the torus' tube, the cone's half height or the volume's index in `y`.
     pub size: [f32; 3],
     pub paint: f32,
 }
@@ -220,6 +241,8 @@ struct Placed {
 pub struct Stack {
     /// What it was built from, to tell what an edit changed.
     pub(crate) stamps: Vec<Stamp>,
+    /// The volumes joined into the generator, in index order; a volume stamp naming none is off.
+    pub(crate) volumes: Vec<Guid>,
     placed: Vec<Placed>,
     pub(crate) gpu: std::sync::Arc<[GpuStamp]>,
     /// Bumped on every change, so a collider built before it is rebuilt.
@@ -227,22 +250,34 @@ pub struct Stack {
 }
 
 impl Stack {
-    /// `stamps` on a ground of `base` whose finest voxel is `fine` metres.
-    pub(crate) fn new(stamps: &[Stamp], base: Base, fine: f64, revision: u32) -> Self {
-        let placed: Vec<Placed> = stamps
+    /// `stamps` on a ground of `base` whose finest voxel is `fine` metres, with `volumes` joined.
+    pub(crate) fn new(
+        stamps: &[Stamp],
+        volumes: &[Guid],
+        base: Base,
+        fine: f64,
+        revision: u32,
+    ) -> Self {
+        let live: Vec<(&Stamp, Placed)> = stamps
             .iter()
             .filter(|stamp| stamp.enabled && stamp.opacity > 0.0)
-            .map(|stamp| place(stamp, base))
+            .filter_map(|stamp| {
+                let mut placed = place(stamp, base);
+                if stamp.shape == SHAPE_VOLUME {
+                    let index = volumes.iter().position(|v| Some(*v) == stamp.volume)?;
+                    placed.size.y = index as f64;
+                }
+                Some((stamp, placed))
+            })
             .collect();
-        let gpu = stamps
+        let gpu = live
             .iter()
-            .filter(|stamp| stamp.enabled && stamp.opacity > 0.0)
-            .zip(&placed)
             .map(|(stamp, placed)| record(stamp, placed, fine))
             .collect();
         Self {
             stamps: stamps.to_vec(),
-            placed,
+            volumes: volumes.to_vec(),
+            placed: live.into_iter().map(|(_, placed)| placed).collect(),
             gpu,
             revision,
         }
@@ -252,10 +287,10 @@ impl Stack {
         self.placed.is_empty()
     }
 
-    /// `d`, the generator's SDF at `point`, with every stamp applied.
-    pub(crate) fn apply(&self, point: DVec3, d: f64) -> f64 {
+    /// `d`, the generator's SDF at `point`, with every stamp applied. `joined` evaluates volumes.
+    pub(crate) fn apply(&self, point: DVec3, d: f64, joined: Joined<'_>) -> f64 {
         self.placed.iter().fold(d, |d, stamp| {
-            let s = distance(stamp, stamp.turn * (point - stamp.centre));
+            let s = distance(stamp, stamp.turn * (point - stamp.centre), joined);
             let k = stamp.smooth;
             let applied = match stamp.operation {
                 OPERATION_SUBTRACT => smooth_max(d, -s, k),
@@ -268,12 +303,17 @@ impl Stack {
 
     /// `(lo, hi)`, the generator's range over the box, with every stamp applied: each shape is
     /// bounded from the box's centre, an SDF changing by at most its distance.
-    pub(crate) fn bound(&self, min: DVec3, max: DVec3, range: (f64, f64)) -> (f64, f64) {
+    pub(crate) fn bound(
+        &self,
+        (min, max): (DVec3, DVec3),
+        range: (f64, f64),
+        joined: Joined<'_>,
+    ) -> (f64, f64) {
         let centre = (min + max) * 0.5;
         let reach = (max - min).length() * 0.5;
         self.placed.iter().fold(range, |(lo, hi), stamp| {
-            let s = distance(stamp, stamp.turn * (centre - stamp.centre));
-            let (slo, shi) = (s - reach, s + reach);
+            let (slo, shi) =
+                shape_range(stamp, stamp.turn * (centre - stamp.centre), reach, joined);
             // A smooth blend moves the hard result by at most a quarter of its radius.
             let k = stamp.smooth * 0.25;
             let (alo, ahi) = match stamp.operation {
@@ -409,6 +449,28 @@ fn record(stamp: &Stamp, placed: &Placed, fine: f64) -> GpuStamp {
     }
 }
 
+/// The generator a stack's volumes were joined into, and the planet index its input reads.
+pub(crate) type Joined<'a> = Option<(&'a Generator, u32)>;
+
+/// The shape's SDF over a ball of `reach` around `p`. A volume is bounded by its own range over
+/// the ball's box, as a graph's SDF need not be a true distance; the sphere it is kept in by distance.
+fn shape_range(stamp: &Placed, p: DVec3, reach: f64, joined: Joined<'_>) -> (f64, f64) {
+    let r = stamp.size.x;
+    let ball = p.length() - r;
+    let (blo, bhi) = (ball - reach, ball + reach);
+    if stamp.shape != SHAPE_VOLUME {
+        let s = distance(stamp, p, joined);
+        return (s - reach, s + reach);
+    }
+    let around = (p - DVec3::splat(reach), p + DVec3::splat(reach));
+    let (vlo, vhi) = joined
+        .and_then(|(generator, planet)| {
+            generator.volume_range(stamp.size.y as u32, around, r, planet)
+        })
+        .unwrap_or((f64::NEG_INFINITY, f64::INFINITY));
+    (vlo.max(blo), vhi.max(bhi))
+}
+
 /// How far from its centre the shape reaches.
 fn bounding(stamp: &Placed) -> f64 {
     let s = stamp.size;
@@ -421,7 +483,7 @@ fn bounding(stamp: &Placed) -> f64 {
 }
 
 /// The shape's SDF at `p`, in its own space. Íñigo Quílez's exact primitives.
-fn distance(stamp: &Placed, p: DVec3) -> f64 {
+fn distance(stamp: &Placed, p: DVec3, joined: Joined<'_>) -> f64 {
     let s = stamp.size;
     match stamp.shape {
         SHAPE_BOX => {
@@ -431,6 +493,13 @@ fn distance(stamp: &Placed, p: DVec3) -> f64 {
         SHAPE_CAPSULE => (p - DVec3::Y * p.y.clamp(-s.y, s.y)).length() - s.x,
         SHAPE_TORUS => glam::DVec2::new(p.x.hypot(p.z) - s.x, p.y).length() - s.y,
         SHAPE_CONE => cone(p, s.x, s.y),
+        // Without the generator the CPU keeps the bounding sphere.
+        SHAPE_VOLUME => {
+            let ball = p.length() - s.x;
+            let inside =
+                joined.and_then(|(generator, planet)| generator.volume(s.y as u32, p, s.x, planet));
+            inside.map_or(ball, |v| v.max(ball))
+        }
         _ => p.length() - s.x,
     }
 }

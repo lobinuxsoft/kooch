@@ -330,6 +330,29 @@ shape, its measures on the `Terrain` component), **Planet Direction**, **Planet 
 What has nothing to read in compute — uv, normals, the camera, time, textures, material parameters —
 stops the graph with a message that names it. The preview says it has nothing to draw.
 
+### Volume
+
+A `volume` shader is a shape a terrain [stamps](planets.md#volumes): `fn volume(input: PlanetInput)
+-> f32`, the signed distance in metres in the stamp's space. `position` is from the stamp's centre,
+`altitude` its `y` (the ground's up), `direction` `+Y` and `radius` the stamp's. The engine joins it
+into the generator of each terrain that stamps it and keeps it inside the stamp's radius.
+
+```wgsl
+// kind: volume
+// use: engine:volumes
+
+fn volume(input: PlanetInput) -> f32 {
+    // A rock spire: a tall rod melted into a wide base.
+    let rod = lib_capsule(input.position, vec3<f32>(0.0), vec3<f32>(0.0, 14.0, 0.0), 1.5);
+    let base = lib_ball(input.position, vec3<f32>(0.0, -2.0, 0.0), 4.0);
+    return min(rod, base);
+}
+```
+
+A graph writes it with the Output's kind set to `volume`: the terrain nodes but **Sphere Base**,
+**Slope** and **Layer**, which have no meaning in a stamp. Helpers it shares with the generator are
+joined once, so a noise used on both sides costs one copy.
+
 ## Parameters
 
 A shader's parameters are plain WGSL, the closest WGSL gets to an HLSL `cbuffer` and `Texture2D`:

@@ -91,7 +91,7 @@ fn hits(
             if at < stamps.len() {
                 stamps.remove(at);
             }
-            Stack::new(&stamps, shape.base, shape.voxel, 0)
+            Stack::new(&stamps, &stack.volumes, shape.base, shape.voxel, 0)
         });
         let stack = without.as_ref().unwrap_or(stack);
         let planet_ray = PlanetRay {
@@ -135,10 +135,14 @@ struct PlanetRay<'a> {
 }
 
 impl PlanetRay<'_> {
+    fn joined(&self) -> crate::stamp::Joined<'_> {
+        Some((self.generator, self.index))
+    }
+
     /// The ground's SDF at `point`: the generator's, the stamps applied.
     fn sample(&self, point: DVec3) -> Option<f64> {
         let d = self.generator.sample(self.shape, point, self.index)?;
-        Some(self.stack.apply(point, f64::from(d)))
+        Some(self.stack.apply(point, f64::from(d), self.joined()))
     }
 
     /// The nearest `t` where the ray enters the ground. Segments the generator bounds above zero
@@ -159,7 +163,7 @@ impl PlanetRay<'_> {
             let range = self
                 .generator
                 .range(self.shape, min, max, self.index)
-                .map(|range| self.stack.bound(min, max, range));
+                .map(|range| self.stack.bound((min, max), range, self.joined()));
             if range.is_some_and(|(lo, _)| lo > 0.0) {
                 continue;
             }

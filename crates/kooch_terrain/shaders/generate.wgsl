@@ -109,7 +109,7 @@ fn stamp_local(w: u32, v: vec3<u32>, delta: vec3<f32>, s: Stamp) -> vec3<f32> {
 }
 
 // Íñigo Quílez's exact primitives; `size` as `GpuStamp` packs it.
-fn stamp_distance(s: Stamp, p: vec3<f32>) -> f32 {
+fn stamp_distance(s: Stamp, p: vec3<f32>, planet: u32) -> f32 {
     let z = s.size;
     switch s.shape {
         case 1u: {
@@ -124,6 +124,17 @@ fn stamp_distance(s: Stamp, p: vec3<f32>) -> f32 {
         }
         case 4u: {
             return stamp_cone(p, z.x, z.y);
+        }
+        // A `volume` shader in the stamp's space, kept inside its bounding sphere (#1957).
+        case 5u: {
+            var input: PlanetInput;
+            input.position = p;
+            input.altitude = p.y;
+            input.direction = vec3<f32>(0.0, 1.0, 0.0);
+            input.radius = z.x;
+            input.planet = planet;
+            input.slope = 0.0;
+            return max(stamp_volume(u32(z.y), input), length(p) - z.x);
         }
         default: {
             return length(p) - z.x;
@@ -159,7 +170,7 @@ fn stamped(w: u32, v: vec3<u32>, delta: vec3<f32>) -> f32 {
     let job = jobs[w];
     for (var i = 0u; i < job.count; i++) {
         let s = stamps[job.first + i];
-        let at = stamp_distance(s, stamp_local(w, v, delta, s));
+        let at = stamp_distance(s, stamp_local(w, v, delta, s), job.planet);
         var applied = stamp_smooth_min(d, at, s.smooth_radius);
         if (s.operation == 1u) {
             applied = -stamp_smooth_min(-d, at, s.smooth_radius);
@@ -180,7 +191,7 @@ fn stamp_paint(w: u32, v: vec3<u32>, delta: vec3<f32>, weights: array<f32, LAYER
         if (!(s.paint > 0.0)) {
             continue;
         }
-        let at = abs(stamp_distance(s, stamp_local(w, v, delta, s)));
+        let at = abs(stamp_distance(s, stamp_local(w, v, delta, s), job.planet));
         let edge = max(s.smooth_radius, 2.0 * job.fine);
         let cover = (1.0 - smoothstep(0.0, edge, at)) * s.paint * s.opacity;
         for (var l = 0u; l < LAYERS; l++) {

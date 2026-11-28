@@ -104,13 +104,17 @@ live in the `Terrain`'s **stamps** list and apply in list order, first to last, 
 generator made. Nothing is baked: move one, reorder the list or switch one off, and the ground
 follows.
 
-Each stamp has a **shape** (sphere or box), an **operation** and a placement:
+Each stamp has a **shape** (sphere, box, capsule, torus, cone or volume), an **operation** and a
+placement:
 
 - **Add** raises rock, **Subtract** digs, **Intersect** keeps only what is inside the shape (it
   reaches the whole terrain, so changing one regenerates all of it).
 - **position** is the centre in the terrain's space, in metres. Its up is the ground's: away from a
   sphere's centre, or +Y on a plane. **turn** spins it about that up, in degrees.
-- **radius** for a sphere; **size** for a box, half its side on each axis, y up.
+- **radius** for a sphere; **size** for a box, half its side on each axis, y up. A **capsule** and a
+  **cone** take a **radius** and a full **height** up the ground; a **torus** lies flat, **radius**
+  to the middle of its **tube**.
+- A **volume** stamps a `volume` shader (below), kept inside **radius**.
 - **smooth** melts the edge into the ground over that many metres; 0 is sharp.
 - **opacity** fades the stamp: 0 is the ground without it.
 - **layer** and **paint** lay a material layer (see above) over the surface the stamp made, so a
@@ -126,10 +130,28 @@ release, and one drag undoes in one step.
 A Terra-sized hill: `Add`, sphere, position `(0, 58, 0)`, radius `8`, smooth `3`. A pit next to it:
 `Subtract`, box, position `(12, 60, 0)`, size `(3, 4, 3)`, smooth `1`.
 
+### Volumes
+
+A `volume` shader is a shape authored once and stamped anywhere: an arch, a mesa, a rock spire. Its
+graph writes a signed distance in the stamp's own space, metres from its centre with y the ground's
+up, and **Plane Base** is that `y`. The **engine:volumes** functions (`ball`, `block`, `torus`,
+`capsule`, `cylinder`) are its nodes, reading **Planet Position**; **Smooth Min** joins two, and the
+**Max** of one and `0 − other` (a **Subtract**) cuts the other out. Whatever it writes is kept inside the stamp's **radius**.
+
+An arch: `block` centre `(0, 4, 0)` extent `(8, 5, 2)`, cut by `cylinder` from `(0, 0, -3)` to
+`(0, 0, 3)` radius `5` — the Max of the block and `0 − cylinder` into the Output. Stamp it as a
+volume of radius `10`, `Add`, on Terra; stamp it twice and the ball rolls under both.
+
+A volume joins the generator of every terrain that stamps it, once: naming a new one recompiles
+that generator, while moving, copying or reordering its stamps does not. A volume shader that does
+not compile, or defines a helper differently from the generator, leaves its stamps off and says so in
+the log.
+
 A stamp is data the generate pass reads, not code: moving one recompiles nothing, and only the
 blocks inside its old and new reach generate again, the rest of the planet as it was. The ground's
 `relief` and `depth` grow on their own to hold a stamp that reaches past them. The CPU twin applies
-the same stack, so collision and the ground raycast follow every stamp. More shapes, and shapes
+the same stack, so collision and the ground raycast follow every stamp; a volume is bounded by the
+range of its own graph there, as a graph's distance need not be a true one. More shapes, and shapes
 authored as graphs, come with #1957; shapes from a 3D texture or a heightmap with #709.
 
 ## What it costs

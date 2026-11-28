@@ -64,11 +64,15 @@ pub fn validate_generator(generator: &str) -> Result<(), String> {
 
 /// The generate shader for `generator`, over an atlas of `tiles`.
 fn compose(generator: &str, tiles: glam::UVec3) -> String {
-    let material = if paints(generator) {
+    let mut material = if paints(generator) {
         String::new()
     } else {
         bare_material()
     };
+    if !generator.contains("fn stamp_volume(") {
+        material.push('\n');
+        material.push_str(crate::volume::NO_VOLUMES);
+    }
     format!(
         "const TILES_X: u32 = {}u;\nconst TILES_Y: u32 = {}u;\nconst TILE_DIM: u32 = {TILE_SAMPLES}u;\n\
          const LAYERS: u32 = {LAYERS}u;\n\

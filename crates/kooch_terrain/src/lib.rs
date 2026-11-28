@@ -32,6 +32,7 @@ mod terrain;
 mod test_device;
 #[cfg(test)]
 mod tests;
+mod volume;
 
 use glam::IVec3;
 
@@ -62,6 +63,7 @@ pub use sync::{
     sync_planets,
 };
 pub use terrain::{CountedBlock, GpuTimes, MESH_BATCH, Pipeline};
+pub use volume::{join as join_volumes, validate_volume};
 
 use kooch_world::voxel::SUBGRID_DIM;
 
