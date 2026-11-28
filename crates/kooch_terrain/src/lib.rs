@@ -55,7 +55,7 @@ pub use seam::{Leaves, Near};
 pub use sight::Cone;
 pub use stamp::{
     GpuStamp, OPERATION_ADD, OPERATION_INTERSECT, OPERATION_SUBTRACT, SHAPE_BOX, SHAPE_SPHERE,
-    Stamp, StampBuffer,
+    Stamp, StampBuffer, frame as stamp_frame,
 };
 pub use sync::{GroundHit, PlanetStats, PlanetTerrain, PlanetViewers, ground_hits, sync_planets};
 pub use terrain::{CountedBlock, GpuTimes, MESH_BATCH, Pipeline};

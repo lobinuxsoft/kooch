@@ -130,6 +130,15 @@ pub struct PlanetTerrain {
     pub(crate) blocks: Blocks,
 }
 
+impl PlanetTerrain {
+    /// The base shape `entity`'s generator picked, once its generator is loaded.
+    pub fn base(&self, entity: Entity) -> Option<Base> {
+        let index = self.roster.index_of(entity)?;
+        let source = self.sources.get(index as usize)?.as_deref()?;
+        Some(Base::of(source))
+    }
+}
+
 impl Default for PlanetTerrain {
     fn default() -> Self {
         Self {

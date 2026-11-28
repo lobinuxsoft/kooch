@@ -308,6 +308,13 @@ impl Shape {
     }
 }
 
+/// Where `stamp` stands in the terrain's space: its centre, and its axes as columns — x and z along
+/// the ground, turned by `turn`, y the ground's up. What an editor draws it and its gizmo in.
+pub fn frame(stamp: &Stamp, base: Base) -> (DVec3, DMat3) {
+    let placed = place(stamp, base);
+    (placed.centre, placed.turn.transpose())
+}
+
 fn place(stamp: &Stamp, base: Base) -> Placed {
     let centre = stamp.position.as_dvec3();
     let up = match base {

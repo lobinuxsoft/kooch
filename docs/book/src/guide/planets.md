@@ -116,6 +116,11 @@ Each stamp has a **shape** (sphere or box), an **operation** and a placement:
 - **layer** and **paint** lay a material layer (see above) over the surface the stamp made, so a
   crater can be rock in a grass field.
 
+With the terrain selected, every stamp is drawn as its shape (green adds, red digs, blue
+intersects, grey is off) with a grip at its centre. Click a grip and the transform gizmo moves the
+stamp, turns it about the ground's up and sizes it along its own sides; the terrain stays put, and
+one drag undoes in one step.
+
 A Terra-sized hill: `Add`, sphere, position `(0, 58, 0)`, radius `8`, smooth `3`. A pit next to it:
 `Subtract`, box, position `(12, 60, 0)`, size `(3, 4, 3)`, smooth `1`.
 
