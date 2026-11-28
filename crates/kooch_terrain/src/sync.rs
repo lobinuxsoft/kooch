@@ -5,6 +5,7 @@
 //! GPU, so the editor draws a playing game's planets itself, as it does a block's mesh.
 
 mod ray;
+mod stack;
 mod twin;
 
 use std::collections::{HashMap, HashSet};
@@ -23,13 +24,14 @@ use kooch_render::meshlet::GpuMeshes;
 
 use crate::component::Terrain;
 use crate::draw::{Blocks, Frame};
-use crate::eval::{Generator, may_cross};
-use crate::lod::{Base, root_level, voxel_size};
+use crate::eval::Generator;
+use crate::lod::{Base, root_level};
 use crate::rerun::{Inputs, Rerun};
 use crate::roster::{Roster, Signature};
 use crate::sight::Cone;
-pub use ray::{GroundHit, ground_hits};
-use twin::{load, set_generator, source};
+use crate::stamp::Stack;
+pub use ray::{GroundHit, ground_hit_without, ground_hits};
+use twin::{crosses, load, set_generator, source};
 
 use crate::{
     BARE_SPHERE, BlockKey, BlockPool, CountedBlock, DEFAULT_CAPACITY, Leaves, Limits, Part,
@@ -115,6 +117,8 @@ pub struct PlanetTerrain {
     pub(crate) sources: Vec<Option<Arc<str>>>,
     /// Per planet index, bumped whenever its generator is replaced.
     pub(crate) twins: Vec<u32>,
+    /// Per planet index, its stamps as the CPU twin and the GPU apply them (#1954).
+    pub(crate) stacks: Vec<Arc<Stack>>,
     frame: u32,
     planets: Planets,
     pub(crate) roster: Roster,
@@ -124,6 +128,15 @@ pub struct PlanetTerrain {
     meshed: Vec<CountedBlock>,
     rerun: Rerun,
     pub(crate) blocks: Blocks,
+}
+
+impl PlanetTerrain {
+    /// The base shape `entity`'s generator picked, once its generator is loaded.
+    pub fn base(&self, entity: Entity) -> Option<Base> {
+        let index = self.roster.index_of(entity)?;
+        let source = self.sources.get(index as usize)?.as_deref()?;
+        Some(Base::of(source))
+    }
 }
 
 impl Default for PlanetTerrain {
@@ -137,6 +150,7 @@ impl Default for PlanetTerrain {
             generators: Vec::new(),
             sources: Vec::new(),
             twins: Vec::new(),
+            stacks: Vec::new(),
             frame: 0,
             planets: Planets::default(),
             roster: Roster::default(),
@@ -219,6 +233,7 @@ pub fn sync_planets(resources: &mut Resources) {
         }
     }
     placed.truncate(state.roster.len());
+    stack::sync_stacks(&mut state, &placed, &found);
     let Some((device, queue)) = gpu else {
         resources.insert(state);
         return;
@@ -280,7 +295,8 @@ pub fn sync_planets(resources: &mut Resources) {
                                 return true;
                             }
                             profiling::scope!("planet: bound");
-                            let surface = crosses(&state.generators, &state.planets, key, min, max);
+                            let twin = (&state.generators[..], &state.stacks[..]);
+                            let surface = crosses(twin, &state.planets, key, min, max);
                             let known = Known {
                                 revision,
                                 seen: frame,
@@ -427,28 +443,6 @@ pub fn sync_planets(resources: &mut Resources) {
     resources.insert(stats);
 }
 
-/// Whether the generator leaves `key`'s tile a chance of holding surface. The tile reaches one
-/// sample past the block on every side, so its border is bounded too.
-pub(crate) fn crosses(
-    generators: &[Option<Arc<Generator>>],
-    planets: &Planets,
-    key: BlockKey,
-    min: DVec3,
-    max: DVec3,
-) -> bool {
-    let planet = key.planet as usize;
-    let (Some(Some(generator)), Some(shape)) = (generators.get(planet), planets.shape.get(planet))
-    else {
-        return true;
-    };
-    let voxel = voxel_size(shape, key.level);
-    let pad = DVec3::splat(voxel);
-    may_cross(
-        generator.range(shape, min - pad, max + pad, key.planet),
-        voxel,
-    )
-}
-
 pub(crate) fn gather(resources: &Resources) -> Vec<Found> {
     use kooch_ecs::hierarchy::GridCell;
     let origin = kooch_ecs::hierarchy::WorldOrigin::get(resources);
@@ -579,8 +573,8 @@ fn fill_planets(
 }
 
 impl Shape {
-    /// `planet` measured from `base`, its generator's. Clamped where a zero would stall the
-    /// octree: a zero voxel never stops splitting.
+    /// `planet` measured from `base`, its generator's, grown to hold its stamps. Clamped where a
+    /// zero would stall the octree: a zero voxel never stops splitting.
     pub fn new(planet: &Terrain, base: Base) -> Self {
         Self {
             base,
@@ -591,5 +585,6 @@ impl Shape {
             voxel: f64::from(planet.voxel.max(0.01)),
             lod_distance: f64::from(planet.lod_distance.max(0.0)),
         }
+        .hold(&planet.stamps)
     }
 }

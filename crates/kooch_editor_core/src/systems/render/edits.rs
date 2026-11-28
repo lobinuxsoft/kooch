@@ -80,6 +80,8 @@ pub(super) fn apply_viewport_edits(
         delta, resources, &selected, snap, actions,
     ) || crate::gizmos::spline_handles::apply_spline_handles(
         delta, resources, &selected, snap, actions,
+    ) || crate::gizmos::stamp_handles::apply_stamp_handles(
+        delta, resources, &selected,
     ) || crate::gizmos::apply_handle_input(
         delta,
         resources,

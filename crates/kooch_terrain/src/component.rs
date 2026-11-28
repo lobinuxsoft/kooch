@@ -5,6 +5,8 @@ use kooch_ecs::Reflect;
 use kooch_ecs::component::Component;
 use kooch_ecs::reflect::FieldRange;
 
+use crate::stamp::Stamp;
+
 /// Voxel ground: a base shape that its generator moves by up to `relief` above and `depth` below,
 /// drawn from voxel blocks of the pool every terrain shares (#2035). The generator's base node
 /// picks the shape: a sphere of `radius`, or a plane `extent` either side (#1950).
@@ -46,6 +48,9 @@ pub struct Terrain {
     /// What the ground is drawn with.
     #[reflect(asset = "kooch_render::material::asset::Material")]
     pub material: Option<Guid>,
+    /// Shapes applied over the generator in list order, first to last (#1954). Moving one
+    /// regenerates only the blocks it reaches.
+    pub stamps: Vec<Stamp>,
 }
 
 const LENGTH_RANGE: FieldRange = FieldRange {
@@ -71,6 +76,7 @@ impl Default for Terrain {
             lod_distance: 32.0,
             generator: None,
             material: None,
+            stamps: Vec::new(),
         }
     }
 }

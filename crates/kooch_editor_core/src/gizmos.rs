@@ -19,6 +19,8 @@ pub(crate) mod screen_scale;
 pub(crate) mod shape_handles;
 mod spline;
 pub(crate) mod spline_handles;
+pub(crate) mod stamp_handles;
+mod stamps;
 
 pub(crate) use ground_debug::{render as render_ground_debug, render_game as render_ground_game};
 pub(crate) use physics_debug::{PhysicsDebugOverlay, PhysicsSwitches};
@@ -92,6 +94,8 @@ pub(crate) fn register_builtin_visualizers_system(resources: &mut Resources) {
     // A collider is authored as numbers and is otherwise invisible; the outline is the only way to
     // see whether the shape wraps the model. Which faces of a block are selected.
     registry.register::<kooch_ecs::spline::Spline, spline::SplineVisualizer>();
+    // A stamp is numbers in a list until it is drawn as the shape it carves (#1954).
+    registry.register::<kooch_terrain::Terrain, stamps::StampVisualizer>();
     // What the model occupies, which until now was only inferable by dragging something into it:
     // the volume is what a snap rests on and what a collider is supposed to wrap (#1455).
     registry.register::<kooch_ecs::mesh_renderer::MeshRenderer, bounds::MeshBoundsVisualizer>();
@@ -302,6 +306,7 @@ pub(crate) fn apply_handle_input(
     // A selected knot takes the gizmo the same way a face selection does: a gizmo at the entity
     // while the thing you grabbed is metres away reads as a gizmo for something else (#1441).
     let knot = spline_handles::selected_origin(resources, target);
+    let stamp = stamp_handles::selected_origin(resources, target);
 
     // 🔴 Each consumer declares what it accepts, next to the code that applies it (#1469). A knot
     // answers first because it also took the origin below: the two have to describe the same
@@ -312,6 +317,7 @@ pub(crate) fn apply_handle_input(
     // Gated on the mode the same way `editing` above is: a face selection left over from an
     // earlier element mode must not narrow what the whole entity accepts.
     let offer = spline_handles::accepts(resources, target)
+        .or_else(|| stamp_handles::accepts(resources, target))
         .or_else(|| match editing.is_some() {
             true => crate::block_edit::accepts(resources, target),
             false => None,
@@ -325,6 +331,7 @@ pub(crate) fn apply_handle_input(
     }
 
     let target_origin = match knot
+        .or(stamp)
         .or(editing)
         .or_else(|| entity_world_position(resources, target))
     {
@@ -346,6 +353,10 @@ pub(crate) fn apply_handle_input(
         (HandleMode::Rotate, true) => {
             spline_handles::selected_basis(resources, target).unwrap_or(Mat3::IDENTITY)
         }
+        // A stamp's gizmo stands on its own frame in every mode: along the ground and its up.
+        (_, false) if stamp.is_some() => {
+            stamp_handles::selected_basis(resources, target).unwrap_or(Mat3::IDENTITY)
+        }
         _ => match rotation_mode {
             RotationDisplayMode::Local => entity_rotation,
             RotationDisplayMode::World => Mat3::IDENTITY,
@@ -353,6 +364,10 @@ pub(crate) fn apply_handle_input(
     };
     handle_set.set_origin(target_origin);
     handle_set.set_basis(basis);
+    let entity_rotation = match stamp {
+        Some(_) => stamp_handles::selected_basis(resources, target).unwrap_or(entity_rotation),
+        None => entity_rotation,
+    };
     handle_set.set_entity_rotation(entity_rotation);
     // Sized where the handles are, so the set holds its size on screen at any distance (#1433).
     handle_set.set_scale(screen_scale::factor(resources, target_origin));
@@ -386,6 +401,9 @@ pub(crate) fn apply_handle_input(
         if knot.is_some() {
             spline_handles::began_gizmo_drag(resources);
         }
+        if stamp.is_some() {
+            stamp_handles::began_gizmo_drag(resources, target);
+        }
     }
 
     // 🔴 A surface snap REPLACES the handle's delta, it does not compose with it. The handle
@@ -401,7 +419,7 @@ pub(crate) fn apply_handle_input(
             // 🔴 A face and a knot ARE points, so their pivot goes on the surface. An entity has a
             // volume, and putting its pivot there buries half the model in the floor.
             Some(hit) => {
-                let point = match editing.is_some() || knot.is_some() {
+                let point = match editing.is_some() || knot.is_some() || stamp.is_some() {
                     true => hit.point,
                     false => {
                         // 🔴 Turn first, measure second. `rest_on` reads the mesh through the
@@ -454,6 +472,20 @@ pub(crate) fn apply_handle_input(
             return true;
         }
 
+        // Same rule for a stamp: the gizmo moves the stamp, never the terrain.
+        if stamp.is_some() {
+            match delta_out {
+                TransformDelta::Translation(v) => {
+                    if !stamp_handles::snap_selected(resources, delta, target) {
+                        stamp_handles::translate_selected(resources, target, v);
+                    }
+                }
+                TransformDelta::Rotation(q) => stamp_handles::turn_selected(resources, target, q),
+                TransformDelta::Scale(v) => stamp_handles::scale_selected(resources, target, v),
+            }
+            return true;
+        }
+
         let mut mutated = false;
         if let Some(registry) = resources.get_mut::<ComponentRegistry>()
             && let Some(mut storage) = registry.get_cpu_mut::<Transform>()
@@ -500,6 +532,7 @@ pub(crate) fn apply_handle_input(
     // it belongs — the scene only has to be told it has unsaved work.
     if was_dragging && !dragging {
         spline_handles::ended_gizmo_drag(resources, actions);
+        stamp_handles::ended_gizmo_drag(resources, target, actions);
     }
 
     if was_dragging

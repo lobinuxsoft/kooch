@@ -84,7 +84,16 @@ fn generate(
         .map(|(slot, &k)| Job::new(k, slot, shape))
         .collect();
     let mut encoder = device.create_command_encoder(&Default::default());
-    pass.record(device, queue, &mut encoder, &atlas, &jobs, None);
+    let stamps = crate::StampBuffer::new(device);
+    pass.record(
+        device,
+        queue,
+        &mut encoder,
+        &atlas,
+        &jobs,
+        stamps.buffer(),
+        None,
+    );
     queue.submit([encoder.finish()]);
     (atlas, keys, jobs)
 }

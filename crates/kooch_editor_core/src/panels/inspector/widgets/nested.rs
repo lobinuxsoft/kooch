@@ -17,6 +17,14 @@ pub(super) fn draw_struct(
         .spacing([6.0, 2.0])
         .show(ui, |ui| {
             for (index, (name, value)) in members.iter().enumerate() {
+                // A row's `shown_when` reads its sibling members, as a component's reads its fields.
+                if !crate::panels::inspector::single::field_is_shown(
+                    Some(field.fields),
+                    name,
+                    members,
+                ) {
+                    continue;
+                }
                 let meta = field.fields.iter().find(|meta| meta.name == name);
                 let label = ui.label(name.as_str());
                 if let Some(meta) = meta.filter(|meta| !meta.doc.is_empty()) {

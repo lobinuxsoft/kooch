@@ -25,6 +25,7 @@ use super::gpu::{GroundGpu, Order};
 use super::mesh_block;
 use super::patch::{self, Merged, Patch};
 use crate::lod::{Base, bounds, voxel_size};
+use crate::stamp::Stack;
 use crate::sync::{PlanetTerrain, gather};
 use crate::{BLOCK_SAMPLES, BlockKey, Shape};
 
@@ -63,6 +64,8 @@ pub(super) struct Held {
     /// In its planet's patch in the solver.
     pub(super) merged: bool,
     twin: u32,
+    /// Its planet's stack revision when built; a stamp edit rebuilds it.
+    edit: u32,
     /// The last frame a body was within its keeping ring; any other frame drops it.
     seen: u32,
     pub(super) place: Place,
@@ -89,6 +92,7 @@ pub struct GroundWire {
 struct Done {
     key: BlockKey,
     twin: u32,
+    edit: u32,
     epoch: u32,
     mesh: Option<Arc<GroundWire>>,
     place: Place,
@@ -116,6 +120,7 @@ pub struct GroundColliders {
 struct Ticket {
     key: BlockKey,
     twin: u32,
+    edit: u32,
     epoch: u32,
     voxel: f32,
     transform: Transform,
@@ -137,6 +142,8 @@ struct Want {
     shape: Shape,
     /// Its planet's CPU generator revision; a new one rebuilds the block.
     twin: u32,
+    /// Its planet's stamps (#1954).
+    stack: Arc<Stack>,
     /// From the nearest body, in metres: what goes to the workers first.
     distance: f64,
     transform: Transform,
@@ -217,6 +224,9 @@ fn reach(resources: &Resources, ground: &GroundColliders) -> Reached {
             continue;
         };
         let twin = state.twins.get(index as usize).copied().unwrap_or(0);
+        let Some(stack) = state.stacks.get(index as usize) else {
+            continue;
+        };
         let shape = Shape::new(&planet.planet, Base::of(source));
         let basis = Mat3::from_mat4(planet.world).as_dmat3();
         if !(basis.determinant().abs() > 1e-12) {
@@ -250,7 +260,8 @@ fn reach(resources: &Resources, ground: &GroundColliders) -> Reached {
                 };
                 let held = ground.held.get(&key);
                 let near = offset.abs().max_element() <= ring;
-                let fresh = held.is_some_and(|held| held.twin == twin);
+                let fresh =
+                    held.is_some_and(|held| held.twin == twin && held.edit == stack.revision);
                 if held.is_some() && (fresh || !near) {
                     reached.seen.push(key);
                 }
@@ -279,6 +290,7 @@ fn reach(resources: &Resources, ground: &GroundColliders) -> Reached {
                     source: Arc::clone(source),
                     shape,
                     twin,
+                    stack: Arc::clone(stack),
                     distance,
                     transform,
                     cell: planet.cell,
@@ -379,6 +391,7 @@ fn dispatch(resources: &Resources, ground: &mut GroundColliders, wants: Vec<Want
         .filter(|want| !ground.pending.contains_key(&want.key))
         .take(free)
         .map(|want| Order {
+            stack: Arc::clone(&want.stack),
             key: want.key,
             shape: want.shape,
             twin: want.twin,
@@ -386,6 +399,7 @@ fn dispatch(resources: &Resources, ground: &mut GroundColliders, wants: Vec<Want
             ticket: Ticket {
                 key: want.key,
                 twin: want.twin,
+                edit: want.stack.revision,
                 epoch: ground.epoch,
                 voxel: voxel_size(&want.shape, 0) as f32,
                 transform: want.transform,
@@ -426,6 +440,7 @@ fn mesh(ticket: Ticket, samples: &[f32]) -> Done {
     Done {
         key: ticket.key,
         twin: ticket.twin,
+        edit: ticket.edit,
         epoch: ticket.epoch,
         mesh,
         place: ticket.place(),
@@ -461,6 +476,7 @@ fn publish(ground: &mut GroundColliders, done: Vec<Done>) {
             id: ground.next_id,
             merged: false,
             twin: block.twin,
+            edit: block.edit,
             seen: ground.frame,
             place: block.place,
             wire: block.mesh,
