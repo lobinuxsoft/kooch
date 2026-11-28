@@ -12,6 +12,45 @@ impl Field {
         build(FIELD_HEIGHT, [width, 1, depth], [1.0; 3], &unit, (0.0, 1.0))
     }
 
+    /// [`Field::from_heights`] with at most `most` texels along the longer side: each texel the
+    /// mean of the source texels it covers. Past a voxel's size, texels only cost memory.
+    pub fn from_heights_at(width: u32, depth: u32, heights: &[f32], most: u32) -> Option<Self> {
+        let longest = width.max(depth);
+        if longest <= most.max(2) {
+            return Self::from_heights(width, depth, heights);
+        }
+        if u64::from(width) * u64::from(depth) != heights.len() as u64 {
+            return None;
+        }
+        let scale = f64::from(most.max(2)) / f64::from(longest);
+        let shrink = |n: u32| ((f64::from(n) * scale).round() as u32).max(2);
+        let (w, d) = (shrink(width), shrink(depth));
+        let span = |i: u32, n: u32, of: u32| {
+            let a = (u64::from(i) * u64::from(of) / u64::from(n)) as usize;
+            let b = (u64::from(i + 1) * u64::from(of)).div_ceil(u64::from(n)) as usize;
+            a..b.max(a + 1)
+        };
+        let mut out = Vec::with_capacity((w * d) as usize);
+        for z in 0..d {
+            for x in 0..w {
+                let (mut sum, mut count) = (0.0f64, 0u32);
+                for sz in span(z, d, depth) {
+                    for sx in span(x, w, width) {
+                        sum += f64::from(
+                            heights
+                                .get(sx + sz * width as usize)
+                                .copied()
+                                .unwrap_or(0.0),
+                        );
+                        count += 1;
+                    }
+                }
+                out.push((sum / f64::from(count.max(1))) as f32);
+            }
+        }
+        Self::from_heights(w, d, &out)
+    }
+
     /// Signed distances over a `size` grid, in units of the box's largest half-extent, whose
     /// half-extents over that largest are `extent`.
     pub fn from_distances(size: [u32; 3], extent: [f32; 3], distances: &[f32]) -> Option<Self> {

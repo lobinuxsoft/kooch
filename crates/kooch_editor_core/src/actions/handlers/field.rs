@@ -19,6 +19,7 @@ const ASSET_TYPE: &str = "kooch_terrain::field::Field";
 /// Room around the mesh, over its largest half-extent, so the field still reaches outside it.
 const PADDING: f32 = 0.1;
 const MOST_RESOLUTION: u32 = 256;
+const MOST_HEIGHTS: u32 = 4096;
 
 pub(super) fn handle_bake_sdf(resources: &mut Resources, source: Guid, resolution: u32) {
     let Some((path, bytes)) = read_source(resources, source) else {
@@ -81,7 +82,7 @@ pub(super) fn handle_bake_sdf(resources: &mut Resources, source: Guid, resolutio
     write(resources, &path, "sdf", source, hash_of(&bytes), &field);
 }
 
-pub(super) fn handle_bake_height(resources: &mut Resources, source: Guid) {
+pub(super) fn handle_bake_height(resources: &mut Resources, source: Guid, resolution: u32) {
     let Some((path, bytes)) = read_source(resources, source) else {
         return;
     };
@@ -93,7 +94,8 @@ pub(super) fn handle_bake_height(resources: &mut Resources, source: Guid) {
         }
     };
     let (width, depth) = image.dimensions();
-    let Some(field) = Field::from_heights(width, depth, image.as_raw()) else {
+    let most = resolution.clamp(16, MOST_HEIGHTS);
+    let Some(field) = Field::from_heights_at(width, depth, image.as_raw(), most) else {
         tracing::warn!(guid = %source, width, depth, "Create height field: too large, or not finite");
         return;
     };

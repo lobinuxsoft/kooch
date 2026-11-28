@@ -158,7 +158,8 @@ stamp's box **size** (x and z along the ground, y up).
   apart by how many times the surface wraps a point, not by a ray. Stamped with `Add`, the mesh
   stands in the ground, overhangs and all; with `Subtract`, it carves its mould.
 - **From an image:** select it and press **Create height field**. Its brightness is the height,
-  black at the box's floor and white at its top; a 16-bit PNG keeps all of its precision. It lands
+  black at the box's floor and white at its top; a 16-bit PNG keeps all of its precision. A larger
+  image is averaged down to `resolution` texels along its longer side (256 by default). It lands
   in `assets/terrain/<image>_height.kfield`. Sink the box's floor below the ground, or the stamp
   shows its walls.
 
@@ -169,7 +170,10 @@ ground.
 The texels stay on the CPU as well and both sides filter them by hand, with the same weights, so the
 ball collides with what is drawn. A field keeps its steepest slope from the bake, and the stamp scales
 its value by it, so a squashed map stays a true distance for the range analysis. A field is 2 bytes a
-texel: a 2048² map is 8 MiB, a 64³ volume 512 KiB.
+texel: a 2048² map is 8 MiB, a 64³ volume 512 KiB. Every field in the scene shares one storage
+buffer capped at 128 MiB; past it the editor logs an error and keeps the fields it had, so bake at
+the resolution the voxels can show — 256 texels over a 100 m stamp is already finer than a 0.5 m
+voxel.
 
 A stamp is data the generate pass reads, not code: moving one recompiles nothing, and only the
 blocks inside its old and new reach generate again, the rest of the planet as it was. The ground's

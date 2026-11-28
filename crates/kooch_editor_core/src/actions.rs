@@ -325,6 +325,8 @@ pub(crate) enum EditorAction {
     /// Turns an image's brightness into a heightmap `.kfield` (#709).
     BakeHeightField {
         source: kooch_core::Guid,
+        /// Texels along the image's longest side.
+        resolution: u32,
     },
     /// Rewrites a texture's `[import]` table and re-imports it.
     SetImageImport {

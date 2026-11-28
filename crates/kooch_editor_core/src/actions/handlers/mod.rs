@@ -158,8 +158,8 @@ pub(super) fn apply_non_ecs_action(
         EditorAction::BakeSdfField { source, resolution } => {
             field::handle_bake_sdf(resources, *source, *resolution);
         }
-        EditorAction::BakeHeightField { source } => {
-            field::handle_bake_height(resources, *source);
+        EditorAction::BakeHeightField { source, resolution } => {
+            field::handle_bake_height(resources, *source, *resolution);
         }
         EditorAction::SetImageImport { guid, import } => {
             handle_set_image_import(resources, *guid, *import);

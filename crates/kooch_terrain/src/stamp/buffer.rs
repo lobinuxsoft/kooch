@@ -106,8 +106,20 @@ impl StampBuffer {
         if !same {
             let words = pack(&table);
             let needed = (words.len() as u64).max(DESCRIPTOR as u64);
+            let ceiling = device.limits().max_storage_buffer_binding_size / 4;
+            if needed > ceiling {
+                // Past the binding the buffer would come back invalid and take the render with
+                // it; the fields uploaded last stay instead.
+                tracing::error!(
+                    fields = table.len(),
+                    mib = (needed * 4) >> 20,
+                    ceiling_mib = (ceiling * 4) >> 20,
+                    "terrain fields exceed the storage binding; bake them at a lower resolution"
+                );
+                return;
+            }
             if needed > self.field_capacity {
-                self.field_capacity = needed.next_power_of_two();
+                self.field_capacity = needed.next_power_of_two().min(ceiling);
                 self.fields = create(device, "kooch_terrain::fields", self.field_capacity * 4);
             }
             if !words.is_empty() {
